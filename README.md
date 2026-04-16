@@ -24,6 +24,21 @@ python -m infra.scripts.manage --db-path state/workflow.db reset-db
 python -m infra.scripts.manage --db-path state/workflow.db smoke
 ```
 
+## Offline validation
+
+If you want one-shot offline acceptance after disconnecting the machine from the network:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\infra\scripts\run_offline_validation.ps1
+```
+
+The script writes a JSON report to `state/offline_validation_report.json` and verifies:
+
+- offline reachability probes fail
+- CLI flow passes
+- smoke flow passes
+- API flow passes
+
 ## Common commands
 
 - `workflowctl --db-path state/workflow.db preset list`

@@ -1,8 +1,8 @@
-# Universal Agentic Workflow OS (v2.1) - M0 阶段重新评估报告 (Re-Evaluation Report)
+# Universal Agentic Workflow OS (v2.1) - M0 阶段完成评估报告 (Post-Implementation Review)
 
 **评估人：** Gemini (Antigravity)
-**评估基准：** 更新后的 v2.1 规划与任务拆解文件及 m0_phase_docs
-**评估结论：** **完全通过 (Ready for Execution)**
+**评估基准：** 更新后的 v2.1 规划与任务拆解文件及 m0_phase_docs，并基于 Codex 实际完成的 M0 代码。
+**评估结论：** **M0 代码完全通过验收 (Ready for M1)**
 
 ---
 
@@ -39,7 +39,7 @@
 ## 3. 极少数遗留观察项 (Minor Observations for Future)
 
 虽然没有任何阻断型问题 (Blockers)，但系统在启动 Phase 0 和 Phase 1 后仍需在执行时留意以下边缘细节（开发者自我觉察即可）：
-1. **Unknown Fields 向后兼容落位**：在 Pydantic 设计 Schema (`T0-03`) 的落地实操时，请开发人员确保 `extra = "allow"` 或等效验证规则没有遗漏，以接住未来 M1/M2 会出现的数据扩张。
+1. **Unknown Fields 向向后兼容落位**：在 Pydantic 设计 Schema (`T0-03`) 的落地实操时，请开发人员确保 `extra = "allow"` 或等效验证规则没有遗漏，以接住未来 M1/M2 会出现的数据扩张。
 2. **SQLite WAL 配置**：在进行 `T0-12` 实际写代码时，确保预铺 PRAGMA 语句开启 WAL 模式以支撑单机并发隔离底线。
 
 ---
@@ -48,9 +48,31 @@
 
 **绿灯放行 (Greenlight)**。
 
-当前文档库的状态已无须在宏观思辨和文案修饰上花费更多时间调整（防止陷入“分析瘫痪”）。
+当前文档库与代码库的状态高度一致，M0 的执行彻底落到了实处。
 
 **推荐操作：**
-1. 正式锁定 `universal_agentic_workflow_os_M0_phase_plan_v2_1.md` / `local_first_plan_v2_1.md` / `task_breakdown_v2_1.md` 为只读状态（除非发现严重 blocker）。
-2. 从 `T0-01` 开始，执行建仓（Mono-repo结构孵化、Python pyproject.toml 实装）。
-3. 开发团队进入高度专注的 **Phase 0 & Phase 1** 并发实施阶段。
+1. 正式锁定 M0 的各基线与文档，全状态变为只读，不再对其进行重构探讨。
+2. 立即启动 M1 (Phase 2 & 3) 的设计与实施，主要聚焦于：挂载 LangGraph 并整合 LLM 交互逻辑，验证 State 的防腐性以及并发调度的健壮性。
+
+---
+
+## 5. M0 搭建实操代码验收结论 (M0 Code Implementation Review by Gemini)
+
+经详细检视 Codex 所生成的代码库，已确认 **M0 阶段的脚手架与基础域逻辑全部兑现，且质量极高：**
+
+### 5.1 架构纪律坚守
+* **LangGraph 防腐层硬隔离达标：** `packages/contracts/` 与 `packages/core_domain/` 目录下未出现任何对 `langgraph` 的引用。隔离墙完全建立成功。
+* **物理目录分层：** 成功分理出了 `apps` (Operator CLI / Orchestrator API)、`packages` 以及 `infra` 目录。
+* **零-LLM API 设计：** 整个 M0 流（含 `core_domain/services.py` 里的 `execute_run` 等）完全依赖假编译 (`thin compile`) 并且未使用任何大模型依赖。
+
+### 5.2 遗留观察项圆满解决
+在前期评估中提到的两大细微“边缘细节”已全部完美落地：
+* **Unknown Fields 向后兼容落位**：在 `packages/contracts/models.py` 的 `ContractModel` 中有效施加了 `model_config = ConfigDict(extra="allow", use_enum_values=True)`。
+* **SQLite WAL 配置**：在 `packages/core_domain/db.py` 中实现了 `apply_sqlite_pragmas` 函数，完美预铺了 `PRAGMA journal_mode = WAL;`、`PRAGMA foreign_keys = ON;` 以及 `synchronous = NORMAL` 的标准组合。
+
+### 5.3 核心基建完成度
+* **数据模型 (Contracts)**: Pydantic 的使用非常规范 (`TaskPacket`, `Evidence`, `ReviewVerdict`，`preset_id` UUID 强类型支持等非常清晰)。
+* **API 与 CLI**: 基于 FastAPI 的 `orchestrator_api` 与基于 Typer 的 `operator_cli` 完成了构建。异常处理也映射为了标准的 `WorkflowError` 到 HTTP Status 映射（`errors.py`）。
+* **数据库基础设施 (Infra)**: 001 初始迁移文件非常标准地还原了所有的表的建构，SQLite 外键支持与级联删除均部署到位。
+
+**结语**：Codex 交付的代码不仅遵守了所有的重构意图，并且实现优雅且干净。项目地基非常牢靠，请无缝推进至 M1。

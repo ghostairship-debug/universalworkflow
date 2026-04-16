@@ -30,6 +30,14 @@ If GNU Make is not available:
 python -m infra.scripts.manage --db-path state/workflow.db smoke
 ```
 
+For a stricter offline acceptance run after physically disconnecting the machine from the network:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\infra\scripts\run_offline_validation.ps1
+```
+
+That wrapper runs the offline probe, CLI flow, smoke flow, and API flow, then writes a JSON report to `state/offline_validation_report.json`.
+
 ## Expected outcome
 
 - The command completes in a few seconds on a local machine.

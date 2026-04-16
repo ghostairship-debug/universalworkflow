@@ -7,6 +7,8 @@
 - Governance docs, ADRs, contracts, presets, persistence, API skeleton, runtime boundary, execution loop, CLI, DX entry points, smoke doc, and review artifacts now exist in the repo.
 - Contracts, repositories, API, runtime boundary, execution loop, and CLI tests pass.
 - Smoke is automated through `infra/scripts/manage.py` and mirrored in the `Makefile`.
+- Offline acceptance is automated through `infra/scripts/offline_validation.py` and the PowerShell wrapper `infra/scripts/run_offline_validation.ps1`.
+- Offline validation completed successfully on 2026-04-16 with `overall_passed = true`.
 
 ## Non-goals still respected
 
