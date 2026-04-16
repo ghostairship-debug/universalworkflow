@@ -1,0 +1,21 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Test caches
+.pytest_cache/
+.coverage
+
+# Local runtime state
+state/*
+!state/.gitkeep
+!state/artifacts/
+state/artifacts/*
+!state/artifacts/.gitkeep
+
+# Local editor files
+.vscode/
+.idea/
+
+# Logs
+*.log

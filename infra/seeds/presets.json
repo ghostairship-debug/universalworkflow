@@ -1,0 +1,31 @@
+[
+  {
+    "preset_id": "feature_delivery",
+    "name": "Feature Delivery",
+    "description": "Produce a narrow implementation artifact through one shell-backed runtime task.",
+    "allowed_task_kinds": [
+      "shell_exec"
+    ],
+    "default_review_policy": "auto_only",
+    "default_budget_policy": {
+      "max_retries": 1,
+      "timeout_seconds": 120
+    },
+    "requires_manual_approval": false
+  },
+  {
+    "preset_id": "research_spike",
+    "name": "Research Spike",
+    "description": "Capture a narrow research artifact with conservative execution and manual review preference.",
+    "allowed_task_kinds": [
+      "shell_exec",
+      "noop"
+    ],
+    "default_review_policy": "human_required",
+    "default_budget_policy": {
+      "max_retries": 0,
+      "timeout_seconds": 90
+    },
+    "requires_manual_approval": true
+  }
+]
