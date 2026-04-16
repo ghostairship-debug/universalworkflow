@@ -20,6 +20,7 @@ from packages.contracts.models import (
     TaskPacket,
     TaskStatus,
 )
+from packages.contracts.runtime import PresetSuggestion, RuntimeGateway, RuntimeStateRef
 
 __all__ = [
     "ArtifactRef",
@@ -37,7 +38,10 @@ __all__ = [
     "RunEvent",
     "RunEventType",
     "RunStatus",
+    "RuntimeGateway",
+    "RuntimeStateRef",
     "RuntimeTask",
+    "PresetSuggestion",
     "TaskCard",
     "TaskKind",
     "TaskPacket",

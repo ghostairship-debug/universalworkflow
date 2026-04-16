@@ -25,6 +25,37 @@ LLM_ENV_KEYS = {
     "COHERE_API_KEY",
     "DEEPSEEK_API_KEY",
 }
+AUTO_TIMELINE = [
+    "run_created",
+    "preset_selected",
+    "phase_created",
+    "phase_created",
+    "handoff_created",
+    "runtime_task_created",
+    "run_compiled",
+    "runtime_resumed",
+    "runtime_task_started",
+    "runtime_task_completed",
+    "evidence_submitted",
+    "review_submitted",
+    "run_completed",
+]
+HUMAN_TIMELINE = [
+    "run_created",
+    "preset_selected",
+    "phase_created",
+    "phase_created",
+    "handoff_created",
+    "runtime_task_created",
+    "run_compiled",
+    "runtime_resumed",
+    "runtime_task_started",
+    "runtime_task_completed",
+    "evidence_submitted",
+    "review_requested",
+    "review_submitted",
+    "run_completed",
+]
 
 
 def sanitize_llm_environment() -> dict[str, str]:
@@ -47,34 +78,45 @@ def run_smoke(db_path: Path) -> dict:
         migrate(db_path)
         PresetRepository(db_path).seed_defaults()
         service = OrchestratorService(db_path)
-        run = service.create_run("M0 smoke run", "feature_delivery")
-        prepared = service.prepare_run(run.run_id)
-        executed = service.execute_run(run.run_id)
-        timeline = service.get_timeline(run.run_id)
-        evidence = service.get_task_evidence(prepared.task_packet.runtime_task_id)
-        expected_events = {
-            "run_created",
-            "preset_selected",
-            "phase_created",
-            "runtime_task_created",
-            "runtime_task_started",
-            "runtime_task_completed",
-            "evidence_submitted",
-            "review_submitted",
-            "run_completed",
-        }
-        actual_events = {event.event_type for event in timeline}
-        missing_events = sorted(expected_events - actual_events)
-        if missing_events:
-            raise RuntimeError(f"missing smoke events: {missing_events}")
+
+        auto_run = service.create_run("M1 smoke auto path", "feature_delivery")
+        auto_prepared = service.compile_run(auto_run.run_id)
+        auto_executed = service.resume_run(auto_run.run_id)
+        auto_timeline = [event.event_type for event in service.get_timeline(auto_run.run_id)]
+        auto_evidence = service.get_task_evidence(auto_prepared.task_packet.runtime_task_id)
+        if auto_timeline != AUTO_TIMELINE:
+            raise RuntimeError(f"unexpected auto timeline: {auto_timeline}")
+
+        human_run = service.create_run("M1 smoke human path", "research_spike")
+        human_prepared = service.compile_run(human_run.run_id)
+        human_resumed = service.resume_run(human_run.run_id)
+        if human_resumed.run.status != "awaiting_review":
+            raise RuntimeError(f"human path did not enter awaiting_review: {human_resumed.run.status}")
+        human_reviewed = service.approve_run_review(human_run.run_id)
+        human_timeline = [event.event_type for event in service.get_timeline(human_run.run_id)]
+        if human_timeline != HUMAN_TIMELINE:
+            raise RuntimeError(f"unexpected human timeline: {human_timeline}")
+
         return {
             "db_path": db_path.as_posix(),
             "removed_env_keys": sorted(removed_env),
-            "run_id": run.run_id,
-            "runtime_task_id": prepared.task_packet.runtime_task_id,
-            "evidence_id": evidence.evidence_id,
-            "status": executed.run.status,
-            "timeline_events": [event.event_type for event in timeline],
+            "status": "completed",
+            "auto_run": {
+                "run_id": auto_run.run_id,
+                "runtime_task_id": auto_prepared.task_packet.runtime_task_id,
+                "evidence_id": auto_evidence.evidence_id,
+                "review_decision": auto_executed.review_verdict.decision if auto_executed.review_verdict else None,
+                "status": auto_executed.run.status,
+                "timeline_events": auto_timeline,
+            },
+            "human_run": {
+                "run_id": human_run.run_id,
+                "runtime_task_id": human_prepared.task_packet.runtime_task_id,
+                "evidence_id": human_reviewed.evidence.evidence_id,
+                "review_decision": human_reviewed.review_verdict.decision,
+                "status": human_reviewed.run.status,
+                "timeline_events": human_timeline,
+            },
         }
     finally:
         restore_environment(removed_env)
@@ -88,7 +130,7 @@ def logs_tail(log_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Development commands for the M0 bootstrap.")
+    parser = argparse.ArgumentParser(description="Development commands for the M1 local-first runtime.")
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     subparsers = parser.add_subparsers(dest="command", required=True)
 

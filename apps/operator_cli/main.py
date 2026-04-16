@@ -70,16 +70,89 @@ def run_create(
 ) -> None:
     service = _service(ctx)
     run = service.create_run(goal=goal, preset_id=preset)
-    payload: dict = {"run": run.model_dump(mode="json")}
+    current_run = run
+    payload: dict = {}
     if prepare or execute:
-        prepared = service.prepare_run(run.run_id)
+        prepared = service.compile_run(run.run_id)
+        current_run = prepared.run
         payload["prepared_task_id"] = prepared.task_packet.runtime_task_id
         payload["expected_artifacts"] = prepared.task_packet.expected_artifacts
+        payload["handoff_id"] = prepared.handoff.handoff_id
+        payload["state_ref_id"] = prepared.state_ref.state_ref_id
     if execute:
-        executed = service.execute_run(run.run_id)
-        payload["review_decision"] = executed.review_verdict.decision
+        executed = service.resume_run(run.run_id)
+        current_run = executed.run
+        payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
         payload["evidence_id"] = executed.evidence.evidence_id
+    payload["run"] = current_run.model_dump(mode="json")
     _emit_json(payload)
+
+
+@run_app.command("suggest-presets")
+def run_suggest_presets(ctx: typer.Context, goal: str = typer.Option(..., "--goal")) -> None:
+    _emit_json([item.model_dump(mode="json") for item in _service(ctx).suggest_presets(goal)])
+
+
+@run_app.command("compile")
+def run_compile(ctx: typer.Context, run_id: str) -> None:
+    prepared = _service(ctx).compile_run(run_id)
+    _emit_json(
+        {
+            "run": prepared.run.model_dump(mode="json"),
+            "runtime_task_id": prepared.task_packet.runtime_task_id,
+            "handoff_id": prepared.handoff.handoff_id,
+            "state_ref_id": prepared.state_ref.state_ref_id,
+        }
+    )
+
+
+@run_app.command("recompile")
+def run_recompile(ctx: typer.Context, run_id: str) -> None:
+    prepared = _service(ctx).recompile_run(run_id)
+    _emit_json(
+        {
+            "run": prepared.run.model_dump(mode="json"),
+            "runtime_task_id": prepared.task_packet.runtime_task_id,
+            "handoff_id": prepared.handoff.handoff_id,
+            "state_ref_id": prepared.state_ref.state_ref_id,
+        }
+    )
+
+
+@run_app.command("resume")
+def run_resume(ctx: typer.Context, run_id: str) -> None:
+    executed = _service(ctx).resume_run(run_id)
+    _emit_json(
+        {
+            "run": executed.run.model_dump(mode="json"),
+            "evidence_id": executed.evidence.evidence_id,
+            "review_decision": executed.review_verdict.decision if executed.review_verdict is not None else None,
+        }
+    )
+
+
+@run_app.command("approve")
+def run_approve(ctx: typer.Context, run_id: str) -> None:
+    reviewed = _service(ctx).approve_run_review(run_id)
+    _emit_json(
+        {
+            "run": reviewed.run.model_dump(mode="json"),
+            "evidence_id": reviewed.evidence.evidence_id,
+            "review_decision": reviewed.review_verdict.decision,
+        }
+    )
+
+
+@run_app.command("reject")
+def run_reject(ctx: typer.Context, run_id: str) -> None:
+    reviewed = _service(ctx).reject_run_review(run_id)
+    _emit_json(
+        {
+            "run": reviewed.run.model_dump(mode="json"),
+            "evidence_id": reviewed.evidence.evidence_id,
+            "review_decision": reviewed.review_verdict.decision,
+        }
+    )
 
 
 @run_app.command("cancel")
@@ -97,6 +170,11 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
     _emit_json(payload)
 
 
+@run_app.command("status-detail")
+def run_status_detail(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_service(ctx).get_status_detail(run_id))
+
+
 @run_app.command("timeline")
 def run_timeline(ctx: typer.Context, run_id: str, as_json: bool = typer.Option(False, "--json")) -> None:
     timeline = _service(ctx).get_timeline(run_id)
@@ -105,6 +183,11 @@ def run_timeline(ctx: typer.Context, run_id: str, as_json: bool = typer.Option(F
         return
     for event in timeline:
         typer.echo(f"{event.created_at.isoformat()} | {event.event_type} | {event.summary}")
+
+
+@run_app.command("handoffs")
+def run_handoffs(ctx: typer.Context, run_id: str) -> None:
+    _emit_json([handoff.model_dump(mode="json") for handoff in _service(ctx).list_handoffs(run_id)])
 
 
 @task_app.command("evidence")

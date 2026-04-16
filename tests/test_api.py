@@ -73,6 +73,97 @@ def test_prepare_run_is_internal_and_persists_compile_bundle(tmp_path: Path) -> 
     assert bundle.task_packet.expected_artifacts
     timeline = service.get_timeline(run.run_id)
     assert [event.event_type for event in timeline][-2:] == [
-        RunEventType.phase_created,
         RunEventType.runtime_task_created,
+        RunEventType.run_compiled,
     ]
+
+
+def test_api_compile_and_status_detail_are_public_in_m1(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Compile via API", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+
+    compile_response = client.post(f"/runs/{run_id}/compile")
+    assert compile_response.status_code == 200
+    compile_payload = compile_response.json()
+    assert compile_payload["run"]["status"] == "prepared"
+
+    status_detail = client.get(f"/runs/{run_id}/status-detail")
+    assert status_detail.status_code == 200
+    detail_payload = status_detail.json()
+    assert detail_payload["run"]["status"] == "prepared"
+    assert detail_payload["next_action"] == "resume"
+    assert detail_payload["handoffs"]
+    assert detail_payload["runtime_state_refs"]
+
+    handoffs_response = client.get(f"/runs/{run_id}/handoffs")
+    assert handoffs_response.status_code == 200
+    assert len(handoffs_response.json()) == 1
+
+
+def test_api_recompile_requires_prepared_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Recompile via API", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+
+    invalid_recompile = client.post(f"/runs/{run_id}/recompile")
+    assert invalid_recompile.status_code == 409
+
+    compile_response = client.post(f"/runs/{run_id}/compile")
+    assert compile_response.status_code == 200
+
+    recompile_response = client.post(f"/runs/{run_id}/recompile")
+    assert recompile_response.status_code == 200
+    assert recompile_response.json()["run"]["status"] == "prepared"
+
+
+def test_api_resume_runs_prepared_execution_path(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Resume via API", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+    client.post(f"/runs/{run_id}/compile")
+
+    resume_response = client.post(f"/runs/{run_id}/resume")
+    assert resume_response.status_code == 200
+    assert resume_response.json()["run"]["status"] == "completed"
+
+    timeline = client.get(f"/runs/{run_id}/timeline").json()
+    assert "runtime_resumed" in [item["event_type"] for item in timeline]
+
+
+def test_api_human_review_path_requires_approval(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Research via API", "preset_id": "research_spike"})
+    run_id = create_response.json()["run_id"]
+    client.post(f"/runs/{run_id}/compile")
+
+    resume_response = client.post(f"/runs/{run_id}/resume")
+    assert resume_response.status_code == 200
+    assert resume_response.json()["run"]["status"] == "awaiting_review"
+    assert resume_response.json()["review_decision"] is None
+
+    approve_response = client.post(f"/runs/{run_id}/approve")
+    assert approve_response.status_code == 200
+    assert approve_response.json()["run"]["status"] == "completed"
+
+
+def test_api_human_review_reject_fails_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Research reject via API", "preset_id": "research_spike"})
+    run_id = create_response.json()["run_id"]
+    client.post(f"/runs/{run_id}/compile")
+    client.post(f"/runs/{run_id}/resume")
+
+    reject_response = client.post(f"/runs/{run_id}/reject")
+    assert reject_response.status_code == 200
+    assert reject_response.json()["run"]["status"] == "failed"

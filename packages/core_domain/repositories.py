@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from packages.contracts import (
     Evidence,
+    HandoffLite,
     Phase,
     PresetDefinition,
     ReviewVerdict,
     Run,
     RunEvent,
+    RuntimeStateRef,
     RuntimeTask,
     TaskCard,
     TaskPacket,
@@ -33,11 +37,26 @@ class RepositoryBase:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
 
+    @contextmanager
+    def _connection(self, connection: sqlite3.Connection | None = None, commit: bool = False):
+        if connection is not None:
+            yield connection
+            return
+        with get_connection(self.db_path) as managed:
+            try:
+                yield managed
+                if commit:
+                    managed.commit()
+            except Exception:
+                if commit:
+                    managed.rollback()
+                raise
+
 
 class RunRepository(RepositoryBase):
-    def create(self, run: Run) -> Run:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create(self, run: Run, connection: sqlite3.Connection | None = None) -> Run:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO runs (run_id, goal, preset_id, status, schema_version, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -52,25 +71,23 @@ class RunRepository(RepositoryBase):
                     run.updated_at.isoformat(),
                 ),
             )
-            connection.commit()
         return run
 
-    def get(self, run_id: str) -> Run | None:
-        with get_connection(self.db_path) as connection:
-            row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+    def get(self, run_id: str, connection: sqlite3.Connection | None = None) -> Run | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return Run.model_validate(dict(row)) if row else None
 
-    def update_status(self, run_id: str, status: str) -> Run | None:
-        with get_connection(self.db_path) as connection:
-            connection.execute("UPDATE runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?", (status, run_id))
-            connection.commit()
-        return self.get(run_id)
+    def update_status(self, run_id: str, status: str, connection: sqlite3.Connection | None = None) -> Run | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute("UPDATE runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?", (status, run_id))
+        return self.get(run_id, connection=connection)
 
 
 class PresetRepository(RepositoryBase):
-    def upsert(self, preset: PresetDefinition) -> PresetDefinition:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def upsert(self, preset: PresetDefinition, connection: sqlite3.Connection | None = None) -> PresetDefinition:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT OR REPLACE INTO preset_definitions (
                   preset_id, name, description, allowed_task_kinds_json, default_review_policy,
@@ -89,28 +106,24 @@ class PresetRepository(RepositoryBase):
                     preset.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return preset
 
-    def seed_defaults(self) -> list[PresetDefinition]:
+    def seed_defaults(self, connection: sqlite3.Connection | None = None) -> list[PresetDefinition]:
         presets = load_seed_presets()
         for preset in presets:
-            self.upsert(preset)
+            self.upsert(preset, connection=connection)
         return presets
 
-    def get(self, preset_id: str) -> PresetDefinition | None:
-        with get_connection(self.db_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM preset_definitions WHERE preset_id = ?",
-                (preset_id,),
-            ).fetchone()
+    def get(self, preset_id: str, connection: sqlite3.Connection | None = None) -> PresetDefinition | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM preset_definitions WHERE preset_id = ?", (preset_id,)).fetchone()
         if row is None:
             return None
         return self._row_to_model(row)
 
-    def list(self) -> list[PresetDefinition]:
-        with get_connection(self.db_path) as connection:
-            rows = connection.execute("SELECT * FROM preset_definitions ORDER BY preset_id").fetchall()
+    def list(self, connection: sqlite3.Connection | None = None) -> list[PresetDefinition]:
+        with self._connection(connection) as conn:
+            rows = conn.execute("SELECT * FROM preset_definitions ORDER BY preset_id").fetchall()
         return [self._row_to_model(row) for row in rows]
 
     def _row_to_model(self, row: Any) -> PresetDefinition:
@@ -122,9 +135,9 @@ class PresetRepository(RepositoryBase):
 
 
 class TaskRepository(RepositoryBase):
-    def create_phase(self, phase: Phase) -> Phase:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create_phase(self, phase: Phase, connection: sqlite3.Connection | None = None) -> Phase:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO phases (phase_id, run_id, name, order_index, status, schema_version, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -139,12 +152,11 @@ class TaskRepository(RepositoryBase):
                     phase.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return phase
 
-    def create_task_card(self, task_card: TaskCard) -> TaskCard:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create_task_card(self, task_card: TaskCard, connection: sqlite3.Connection | None = None) -> TaskCard:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO task_cards (task_card_id, run_id, title, description, acceptance_criteria_json, schema_version, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -159,12 +171,11 @@ class TaskRepository(RepositoryBase):
                     task_card.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return task_card
 
-    def create_runtime_task(self, runtime_task: RuntimeTask) -> RuntimeTask:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create_runtime_task(self, runtime_task: RuntimeTask, connection: sqlite3.Connection | None = None) -> RuntimeTask:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO runtime_tasks (
                   runtime_task_id, run_id, phase_id, task_card_id, task_kind, status, summary, schema_version, created_at
@@ -182,12 +193,11 @@ class TaskRepository(RepositoryBase):
                     runtime_task.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return runtime_task
 
-    def create_task_packet(self, task_packet: TaskPacket) -> TaskPacket:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create_task_packet(self, task_packet: TaskPacket, connection: sqlite3.Connection | None = None) -> TaskPacket:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO task_packets (
                   task_packet_id, runtime_task_id, run_id, task_kind, command_json, working_directory,
@@ -207,32 +217,26 @@ class TaskRepository(RepositoryBase):
                     task_packet.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return task_packet
 
-    def update_runtime_task_status(self, runtime_task_id: str, status: TaskStatus | str) -> RuntimeTask | None:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
-                "UPDATE runtime_tasks SET status = ? WHERE runtime_task_id = ?",
-                (str(status), runtime_task_id),
-            )
-            connection.commit()
-        return self.get_runtime_task(runtime_task_id)
+    def update_runtime_task_status(
+        self,
+        runtime_task_id: str,
+        status: TaskStatus | str,
+        connection: sqlite3.Connection | None = None,
+    ) -> RuntimeTask | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute("UPDATE runtime_tasks SET status = ? WHERE runtime_task_id = ?", (str(status), runtime_task_id))
+        return self.get_runtime_task(runtime_task_id, connection=connection)
 
-    def get_runtime_task(self, runtime_task_id: str) -> RuntimeTask | None:
-        with get_connection(self.db_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM runtime_tasks WHERE runtime_task_id = ?",
-                (runtime_task_id,),
-            ).fetchone()
+    def get_runtime_task(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> RuntimeTask | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM runtime_tasks WHERE runtime_task_id = ?", (runtime_task_id,)).fetchone()
         return RuntimeTask.model_validate(dict(row)) if row else None
 
-    def get_task_packet(self, runtime_task_id: str) -> TaskPacket | None:
-        with get_connection(self.db_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM task_packets WHERE runtime_task_id = ?",
-                (runtime_task_id,),
-            ).fetchone()
+    def get_task_packet(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> TaskPacket | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM task_packets WHERE runtime_task_id = ?", (runtime_task_id,)).fetchone()
         if row is None:
             return None
         data = dict(row)
@@ -241,19 +245,26 @@ class TaskRepository(RepositoryBase):
         data["expected_artifacts"] = _json_load(data.pop("expected_artifacts_json"))
         return TaskPacket.model_validate(data)
 
-    def list_runtime_tasks_for_run(self, run_id: str) -> list[RuntimeTask]:
-        with get_connection(self.db_path) as connection:
-            rows = connection.execute(
+    def list_runtime_tasks_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeTask]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
                 "SELECT * FROM runtime_tasks WHERE run_id = ? ORDER BY created_at, runtime_task_id",
                 (run_id,),
             ).fetchall()
         return [RuntimeTask.model_validate(dict(row)) for row in rows]
 
+    def clear_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute("DELETE FROM task_packets WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM runtime_tasks WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM task_cards WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM phases WHERE run_id = ?", (run_id,))
+
 
 class EvidenceRepository(RepositoryBase):
-    def create(self, evidence: Evidence) -> Evidence:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create(self, evidence: Evidence, connection: sqlite3.Connection | None = None) -> Evidence:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO evidence (
                   evidence_id, run_id, runtime_task_id, summary, changed_files_json, checks_json,
@@ -275,15 +286,11 @@ class EvidenceRepository(RepositoryBase):
                     evidence.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return evidence
 
-    def get_by_task(self, runtime_task_id: str) -> Evidence | None:
-        with get_connection(self.db_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM evidence WHERE runtime_task_id = ?",
-                (runtime_task_id,),
-            ).fetchone()
+    def get_by_task(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> Evidence | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM evidence WHERE runtime_task_id = ?", (runtime_task_id,)).fetchone()
         if row is None:
             return None
         data = dict(row)
@@ -296,9 +303,9 @@ class EvidenceRepository(RepositoryBase):
 
 
 class ReviewRepository(RepositoryBase):
-    def create(self, verdict: ReviewVerdict) -> ReviewVerdict:
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+    def create(self, verdict: ReviewVerdict, connection: sqlite3.Connection | None = None) -> ReviewVerdict:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO review_verdicts (
                   verdict_id, run_id, evidence_id, decision, rationale, reviewer_type,
@@ -317,23 +324,19 @@ class ReviewRepository(RepositoryBase):
                     verdict.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return verdict
 
-    def get_by_evidence(self, evidence_id: str) -> ReviewVerdict | None:
-        with get_connection(self.db_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM review_verdicts WHERE evidence_id = ?",
-                (evidence_id,),
-            ).fetchone()
+    def get_by_evidence(self, evidence_id: str, connection: sqlite3.Connection | None = None) -> ReviewVerdict | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM review_verdicts WHERE evidence_id = ?", (evidence_id,)).fetchone()
         return ReviewVerdict.model_validate(dict(row)) if row else None
 
 
 class EventRepository(RepositoryBase):
-    def append(self, event: RunEvent) -> RunEvent:
+    def append(self, event: RunEvent, connection: sqlite3.Connection | None = None) -> RunEvent:
         payload = validate_event_payload(event.event_type, event.payload_json)
-        with get_connection(self.db_path) as connection:
-            connection.execute(
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
                 """
                 INSERT INTO run_events (
                   event_id, run_id, event_type, object_type, object_id, summary,
@@ -352,12 +355,11 @@ class EventRepository(RepositoryBase):
                     event.created_at.isoformat(),
                 ),
             )
-            connection.commit()
         return RunEvent.model_validate({**event.model_dump(mode="json"), "payload_json": payload})
 
-    def list_for_run(self, run_id: str) -> list[RunEvent]:
-        with get_connection(self.db_path) as connection:
-            rows = connection.execute(
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RunEvent]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
                 "SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at, event_id",
                 (run_id,),
             ).fetchall()
@@ -367,3 +369,108 @@ class EventRepository(RepositoryBase):
             data["payload_json"] = _json_load(data["payload_json"])
             events.append(RunEvent.model_validate(data))
         return events
+
+
+class HandoffRepository(RepositoryBase):
+    def create(self, handoff: HandoffLite, connection: sqlite3.Connection | None = None) -> HandoffLite:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO handoff_lite (
+                  handoff_id, run_id, from_phase_id, to_phase_id, summary, blocking_risks_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    handoff.handoff_id,
+                    handoff.run_id,
+                    handoff.from_phase_id,
+                    handoff.to_phase_id,
+                    handoff.summary,
+                    _json_dump(handoff.blocking_risks),
+                    handoff.schema_version,
+                    handoff.created_at.isoformat(),
+                ),
+            )
+        return handoff
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[HandoffLite]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM handoff_lite WHERE run_id = ? ORDER BY created_at, handoff_id",
+                (run_id,),
+            ).fetchall()
+        handoffs: list[HandoffLite] = []
+        for row in rows:
+            data = dict(row)
+            data["blocking_risks"] = _json_load(data.pop("blocking_risks_json"))
+            handoffs.append(HandoffLite.model_validate(data))
+        return handoffs
+
+    def clear_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute("DELETE FROM handoff_lite WHERE run_id = ?", (run_id,))
+
+
+class RuntimeStateRepository(RepositoryBase):
+    def upsert(self, state_ref: RuntimeStateRef, connection: sqlite3.Connection | None = None) -> RuntimeStateRef:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_state_refs (
+                  state_ref_id, run_id, runtime_task_id, graph_step, state_payload_json,
+                  is_terminal, updated_at, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(runtime_task_id) DO UPDATE SET
+                  state_ref_id = excluded.state_ref_id,
+                  graph_step = excluded.graph_step,
+                  state_payload_json = excluded.state_payload_json,
+                  is_terminal = excluded.is_terminal,
+                  updated_at = excluded.updated_at,
+                  schema_version = excluded.schema_version
+                """,
+                (
+                    state_ref.state_ref_id,
+                    state_ref.run_id,
+                    state_ref.runtime_task_id,
+                    state_ref.graph_step,
+                    _json_dump(state_ref.state_payload),
+                    1 if state_ref.is_terminal else 0,
+                    state_ref.updated_at.isoformat(),
+                    state_ref.schema_version,
+                    state_ref.created_at.isoformat(),
+                ),
+            )
+        stored = self.get_by_task(state_ref.runtime_task_id, connection=connection)
+        assert stored is not None
+        return stored
+
+    def get_by_task(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> RuntimeStateRef | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT * FROM runtime_state_refs WHERE runtime_task_id = ?",
+                (runtime_task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["state_payload"] = _json_load(data.pop("state_payload_json"))
+        data["is_terminal"] = bool(data["is_terminal"])
+        return RuntimeStateRef.model_validate(data)
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeStateRef]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM runtime_state_refs WHERE run_id = ? ORDER BY updated_at, state_ref_id",
+                (run_id,),
+            ).fetchall()
+        state_refs: list[RuntimeStateRef] = []
+        for row in rows:
+            data = dict(row)
+            data["state_payload"] = _json_load(data.pop("state_payload_json"))
+            data["is_terminal"] = bool(data["is_terminal"])
+            state_refs.append(RuntimeStateRef.model_validate(data))
+        return state_refs
+
+    def clear_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute("DELETE FROM runtime_state_refs WHERE run_id = ?", (run_id,))

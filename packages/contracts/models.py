@@ -29,6 +29,7 @@ class RunStatus(StrEnum):
     pending = "pending"
     prepared = "prepared"
     running = "running"
+    awaiting_review = "awaiting_review"
     completed = "completed"
     failed = "failed"
     cancelled = "cancelled"

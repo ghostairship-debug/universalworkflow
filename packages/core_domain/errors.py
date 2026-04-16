@@ -23,3 +23,18 @@ class EntityNotFoundError(WorkflowError):
 
     def __init__(self, entity: str, entity_id: str):
         super().__init__(f"{entity} not found: {entity_id}", {"entity": entity, "entity_id": entity_id})
+
+
+class InvalidStateTransitionError(WorkflowError):
+    code = "invalid_state_transition"
+    status_code = 409
+
+    def __init__(self, action: str, current_status: str, allowed_statuses: list[str]):
+        super().__init__(
+            f"cannot {action} when run status is {current_status}",
+            {
+                "action": action,
+                "current_status": current_status,
+                "allowed_statuses": allowed_statuses,
+            },
+        )

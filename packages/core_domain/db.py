@@ -31,6 +31,17 @@ def get_connection(db_path: str | Path | None = None):
         connection.close()
 
 
+@contextmanager
+def unit_of_work(db_path: str | Path | None = None):
+    with get_connection(db_path) as connection:
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+
 def apply_sqlite_pragmas(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON;")
     connection.execute("PRAGMA journal_mode = WAL;")

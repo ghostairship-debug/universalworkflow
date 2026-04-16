@@ -32,6 +32,59 @@ def test_execute_run_success_path(tmp_path: Path) -> None:
     assert bundle.review_verdict.decision == "pass"
 
 
+def test_compile_run_creates_handoff_and_runtime_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Prepare compile snapshot", "feature_delivery")
+    prepared = service.compile_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert prepared.run.status == "prepared"
+    assert detail["handoffs"]
+    assert detail["runtime_state_refs"]
+    assert detail["next_action"] == "resume"
+
+
+def test_resume_run_updates_terminal_runtime_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Resume through prepared state", "feature_delivery")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert detail["runtime_state_refs"][0]["is_terminal"] is True
+    assert detail["runtime_state_refs"][0]["graph_step"] == "completed"
+
+
+def test_human_required_path_waits_for_manual_review(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Research runtime choices", "research_spike")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+
+    assert bundle.run.status == "awaiting_review"
+    assert bundle.review_verdict is None
+
+    approved = service.approve_run_review(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert approved.run.status == "completed"
+    assert detail["runtime_state_refs"][0]["is_terminal"] is True
+    assert detail["runtime_state_refs"][0]["graph_step"] == "completed"
+
+
 def test_auto_review_fails_for_non_zero_return_code(tmp_path: Path) -> None:
     task_packet = TaskPacket(
         runtime_task_id="task_fail",

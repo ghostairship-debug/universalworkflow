@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from packages.contracts import Phase, PresetDefinition, RuntimeTask, TaskCard, TaskKind, TaskPacket
+from packages.contracts import HandoffLite, Phase, PresetDefinition, RuntimeTask, TaskCard, TaskKind, TaskPacket
 
 
 def _artifact_path_for(run_id: str, preset_id: str) -> Path:
@@ -20,8 +21,19 @@ def _python_command_for(goal: str, preset_id: str, artifact_path: Path) -> list[
     return ["python", "-c", body]
 
 
-def compile_run(goal: str, preset: PresetDefinition, run_id: str, working_directory: str = ".") -> tuple[Phase, TaskCard, RuntimeTask, TaskPacket]:
-    phase = Phase(run_id=run_id, name="bootstrap_execution", order_index=0)
+@dataclass(slots=True)
+class CompileSnapshot:
+    compile_phase: Phase
+    execution_phase: Phase
+    handoff: HandoffLite
+    task_card: TaskCard
+    runtime_task: RuntimeTask
+    task_packet: TaskPacket
+
+
+def compile_run(goal: str, preset: PresetDefinition, run_id: str, working_directory: str = ".") -> CompileSnapshot:
+    compile_phase = Phase(run_id=run_id, name="compile", order_index=0)
+    execution_phase = Phase(run_id=run_id, name="execution", order_index=1)
     task_card = TaskCard(
         run_id=run_id,
         title=f"{preset.name} task",
@@ -31,7 +43,7 @@ def compile_run(goal: str, preset: PresetDefinition, run_id: str, working_direct
     task_kind = preset.allowed_task_kinds[0]
     runtime_task = RuntimeTask(
         run_id=run_id,
-        phase_id=phase.phase_id,
+        phase_id=execution_phase.phase_id,
         task_card_id=task_card.task_card_id,
         task_kind=task_kind,
         summary=f"Execute `{preset.preset_id}` for run `{run_id}`.",
@@ -47,4 +59,17 @@ def compile_run(goal: str, preset: PresetDefinition, run_id: str, working_direct
         working_directory=working_directory,
         expected_artifacts=[artifact_path.as_posix()],
     )
-    return phase, task_card, runtime_task, task_packet
+    handoff = HandoffLite(
+        run_id=run_id,
+        from_phase_id=compile_phase.phase_id,
+        to_phase_id=execution_phase.phase_id,
+        summary=f"Compile prepared runtime task `{runtime_task.runtime_task_id}` for execution.",
+    )
+    return CompileSnapshot(
+        compile_phase=compile_phase,
+        execution_phase=execution_phase,
+        handoff=handoff,
+        task_card=task_card,
+        runtime_task=runtime_task,
+        task_packet=task_packet,
+    )

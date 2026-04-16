@@ -7,9 +7,8 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,20 +16,36 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REPORT_PATH = PROJECT_ROOT / "state" / "offline_validation_report.json"
-EXPECTED_FULL_TIMELINE = [
+AUTO_TIMELINE = [
     "run_created",
     "preset_selected",
     "phase_created",
+    "phase_created",
+    "handoff_created",
     "runtime_task_created",
+    "run_compiled",
+    "runtime_resumed",
     "runtime_task_started",
     "runtime_task_completed",
     "evidence_submitted",
     "review_submitted",
     "run_completed",
 ]
-EXPECTED_API_CREATE_TIMELINE = [
+HUMAN_TIMELINE = [
     "run_created",
     "preset_selected",
+    "phase_created",
+    "phase_created",
+    "handoff_created",
+    "runtime_task_created",
+    "run_compiled",
+    "runtime_resumed",
+    "runtime_task_started",
+    "runtime_task_completed",
+    "evidence_submitted",
+    "review_requested",
+    "review_submitted",
+    "run_completed",
 ]
 LLM_ENV_KEYS = {
     "OPENAI_API_KEY",
@@ -77,12 +92,7 @@ def run_command(command: list[str], env: dict[str, str]) -> CommandResult:
         text=True,
         check=False,
     )
-    return CommandResult(
-        command=command,
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-    )
+    return CommandResult(command=command, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
 
 
 def run_json_command(command: list[str], env: dict[str, str]) -> tuple[dict[str, Any] | list[Any], CommandResult]:
@@ -94,9 +104,7 @@ def run_json_command(command: list[str], env: dict[str, str]) -> tuple[dict[str,
     try:
         return json.loads(result.stdout), result
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"command did not return valid JSON: {' '.join(command)}\nstdout:\n{result.stdout}"
-        ) from exc
+        raise RuntimeError(f"command did not return valid JSON: {' '.join(command)}\nstdout:\n{result.stdout}") from exc
 
 
 def tcp_probe(host: str, port: int, timeout: float = 2.0) -> dict[str, Any]:
@@ -115,8 +123,8 @@ def http_get_json(url: str, timeout: float = 3.0) -> Any:
         return json.loads(response.read().decode("utf-8"))
 
 
-def http_post_json(url: str, payload: dict[str, Any], timeout: float = 3.0) -> Any:
-    body = json.dumps(payload).encode("utf-8")
+def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: float = 3.0) -> Any:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=body,
@@ -147,19 +155,25 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         env,
     )
     preset_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "preset", "list", "--json"],
+        env,
+    )
+    suggest_payload, _ = run_json_command(
         [
             sys.executable,
             "-m",
             "apps.operator_cli.main",
             "--db-path",
             db_path.as_posix(),
-            "preset",
-            "list",
-            "--json",
+            "run",
+            "suggest-presets",
+            "--goal",
+            "Research runtime architecture",
         ],
         env,
     )
-    create_payload, _ = run_json_command(
+
+    auto_create_payload, _ = run_json_command(
         [
             sys.executable,
             "-m",
@@ -169,7 +183,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "run",
             "create",
             "--goal",
-            "Offline validation run",
+            "Offline validation auto run",
             "--preset",
             "feature_delivery",
             "--prepare",
@@ -177,13 +191,22 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         ],
         env,
     )
-    run_id = create_payload["run"]["run_id"]
-    runtime_task_id = create_payload["prepared_task_id"]
-    status_payload, _ = run_json_command(
-        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status", run_id],
+    auto_run_id = auto_create_payload["run"]["run_id"]
+    auto_runtime_task_id = auto_create_payload["prepared_task_id"]
+    auto_status_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status", auto_run_id],
         env,
     )
-    timeline_payload, _ = run_json_command(
+    auto_timeline_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "timeline", auto_run_id, "--json"],
+        env,
+    )
+    auto_evidence_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "task", "evidence", auto_runtime_task_id],
+        env,
+    )
+
+    human_create_payload, _ = run_json_command(
         [
             sys.executable,
             "-m",
@@ -191,25 +214,40 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "--db-path",
             db_path.as_posix(),
             "run",
-            "timeline",
-            run_id,
-            "--json",
+            "create",
+            "--goal",
+            "Offline validation human run",
+            "--preset",
+            "research_spike",
         ],
         env,
     )
-    evidence_payload, _ = run_json_command(
-        [
-            sys.executable,
-            "-m",
-            "apps.operator_cli.main",
-            "--db-path",
-            db_path.as_posix(),
-            "task",
-            "evidence",
-            runtime_task_id,
-        ],
+    human_run_id = human_create_payload["run"]["run_id"]
+    human_compile_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "compile", human_run_id],
         env,
     )
+    human_detail_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status-detail", human_run_id],
+        env,
+    )
+    human_resume_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "resume", human_run_id],
+        env,
+    )
+    human_approve_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "approve", human_run_id],
+        env,
+    )
+    human_handoffs_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "handoffs", human_run_id],
+        env,
+    )
+    human_timeline_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "timeline", human_run_id, "--json"],
+        env,
+    )
+
     cancel_create_payload, _ = run_json_command(
         [
             sys.executable,
@@ -227,38 +265,37 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         env,
     )
     cancel_run_id = cancel_create_payload["run"]["run_id"]
-    _, _ = run_json_command(
+    run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "cancel", cancel_run_id],
+        env,
+    )
+    run_json_command(
         [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "cancel", cancel_run_id],
         env,
     )
     cancel_status_payload, _ = run_json_command(
-        [
-            sys.executable,
-            "-m",
-            "apps.operator_cli.main",
-            "--db-path",
-            db_path.as_posix(),
-            "run",
-            "status",
-            cancel_run_id,
-        ],
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status", cancel_run_id],
         env,
     )
 
-    artifact_refs = evidence_payload.get("artifact_refs", [])
+    artifact_refs = auto_evidence_payload.get("artifact_refs", [])
     artifact_paths_exist = all(Path(item["path"]).exists() for item in artifact_refs)
-    timeline_events = [item["event_type"] for item in timeline_payload]
+    auto_timeline_events = [item["event_type"] for item in auto_timeline_payload]
+    human_timeline_events = [item["event_type"] for item in human_timeline_payload]
     result.update(
         {
             "db_reset_seeded": reset_payload.get("seeded_presets", []),
             "preset_ids": [item["preset_id"] for item in preset_payload],
-            "run_id": run_id,
-            "runtime_task_id": runtime_task_id,
-            "run_status": status_payload.get("status"),
-            "review_decision": create_payload.get("review_decision"),
-            "timeline_events": timeline_events,
-            "evidence_return_code": evidence_payload.get("return_code"),
-            "evidence_known_gaps": evidence_payload.get("known_gaps", []),
+            "suggest_top_preset": suggest_payload[0]["preset_id"] if suggest_payload else None,
+            "auto_run_status": auto_status_payload.get("status"),
+            "auto_review_decision": auto_create_payload.get("review_decision"),
+            "auto_timeline_events": auto_timeline_events,
+            "human_compile_status": human_compile_payload["run"]["status"],
+            "human_next_action": human_detail_payload.get("next_action"),
+            "human_resume_status": human_resume_payload["run"]["status"],
+            "human_approve_status": human_approve_payload["run"]["status"],
+            "human_handoffs_count": len(human_handoffs_payload),
+            "human_timeline_events": human_timeline_events,
             "artifact_ref_fields": list(artifact_refs[0].keys()) if artifact_refs else [],
             "artifact_paths_exist": artifact_paths_exist,
             "cancel_status": cancel_status_payload.get("status"),
@@ -268,10 +305,16 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         [
             result["db_reset_seeded"] == ["feature_delivery", "research_spike"],
             set(result["preset_ids"]) == {"feature_delivery", "research_spike"},
-            result["run_status"] == "completed",
-            result["review_decision"] == "pass",
-            result["timeline_events"] == EXPECTED_FULL_TIMELINE,
-            result["evidence_return_code"] == 0,
+            result["suggest_top_preset"] == "research_spike",
+            result["auto_run_status"] == "completed",
+            result["auto_review_decision"] == "pass",
+            result["auto_timeline_events"] == AUTO_TIMELINE,
+            result["human_compile_status"] == "prepared",
+            result["human_next_action"] == "resume",
+            result["human_resume_status"] == "awaiting_review",
+            result["human_approve_status"] == "completed",
+            result["human_handoffs_count"] == 1,
+            result["human_timeline_events"] == HUMAN_TIMELINE,
             set(result["artifact_ref_fields"]) == {"path", "sha256", "mtime", "size_bytes"},
             result["artifact_paths_exist"],
             result["cancel_status"] == "cancelled",
@@ -287,7 +330,10 @@ def validate_smoke_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
     )
     return {
         "passed": payload.get("status") == "completed"
-        and payload.get("timeline_events") == EXPECTED_FULL_TIMELINE,
+        and payload.get("auto_run", {}).get("status") == "completed"
+        and payload.get("human_run", {}).get("status") == "completed"
+        and payload.get("auto_run", {}).get("timeline_events") == AUTO_TIMELINE
+        and payload.get("human_run", {}).get("timeline_events") == HUMAN_TIMELINE,
         **payload,
     }
 
@@ -320,26 +366,48 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
     try:
         wait_for_api(base_url)
         presets = http_get_json(f"{base_url}/presets")
-        run = http_post_json(
-            f"{base_url}/runs",
-            {"goal": "Offline API validation", "preset_id": "feature_delivery"},
-        )
-        run_info = http_get_json(f"{base_url}/runs/{run['run_id']}")
-        timeline = http_get_json(f"{base_url}/runs/{run['run_id']}/timeline")
-        timeline_events = [item["event_type"] for item in timeline]
+
+        auto_run = http_post_json(f"{base_url}/runs", {"goal": "Offline API validation", "preset_id": "feature_delivery"})
+        auto_run_id = auto_run["run_id"]
+        auto_compile = http_post_json(f"{base_url}/runs/{auto_run_id}/compile")
+        auto_detail = http_get_json(f"{base_url}/runs/{auto_run_id}/status-detail")
+        auto_handoffs = http_get_json(f"{base_url}/runs/{auto_run_id}/handoffs")
+        auto_resume = http_post_json(f"{base_url}/runs/{auto_run_id}/resume")
+        auto_timeline = http_get_json(f"{base_url}/runs/{auto_run_id}/timeline")
+
+        human_run = http_post_json(f"{base_url}/runs", {"goal": "Offline API human validation", "preset_id": "research_spike"})
+        human_run_id = human_run["run_id"]
+        http_post_json(f"{base_url}/runs/{human_run_id}/compile")
+        human_resume = http_post_json(f"{base_url}/runs/{human_run_id}/resume")
+        human_approve = http_post_json(f"{base_url}/runs/{human_run_id}/approve")
+        human_timeline = http_get_json(f"{base_url}/runs/{human_run_id}/timeline")
+
+        auto_timeline_events = [item["event_type"] for item in auto_timeline]
+        human_timeline_events = [item["event_type"] for item in human_timeline]
         result.update(
             {
                 "preset_ids": [item["preset_id"] for item in presets],
-                "run_id": run["run_id"],
-                "run_status": run_info["status"],
-                "timeline_events": timeline_events,
+                "auto_run_status": auto_resume["run"]["status"],
+                "auto_compile_status": auto_compile["run"]["status"],
+                "auto_next_action": auto_detail["next_action"],
+                "auto_handoffs_count": len(auto_handoffs),
+                "auto_timeline_events": auto_timeline_events,
+                "human_resume_status": human_resume["run"]["status"],
+                "human_approve_status": human_approve["run"]["status"],
+                "human_timeline_events": human_timeline_events,
             }
         )
         result["passed"] = all(
             [
                 set(result["preset_ids"]) == {"feature_delivery", "research_spike"},
-                result["run_status"] == "pending",
-                result["timeline_events"] == EXPECTED_API_CREATE_TIMELINE,
+                result["auto_compile_status"] == "prepared",
+                result["auto_next_action"] == "resume",
+                result["auto_handoffs_count"] == 1,
+                result["auto_run_status"] == "completed",
+                result["auto_timeline_events"] == AUTO_TIMELINE,
+                result["human_resume_status"] == "awaiting_review",
+                result["human_approve_status"] == "completed",
+                result["human_timeline_events"] == HUMAN_TIMELINE,
             ]
         )
         return result
@@ -364,7 +432,6 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     }
 
     checks: dict[str, Any] = {}
-
     if args.skip_offline_probe:
         checks["offline_probe"] = {
             "passed": None,
@@ -412,18 +479,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Offline validation runner for the M0 bootstrap.")
-    parser.add_argument(
-        "--report-path",
-        default=str(DEFAULT_REPORT_PATH),
-        help="Where to write the JSON validation report.",
-    )
-    parser.add_argument(
-        "--api-port",
-        type=int,
-        default=8011,
-        help="Port used for the temporary API validation server.",
-    )
+    parser = argparse.ArgumentParser(description="Offline validation runner for the M1 local-first runtime.")
+    parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH), help="Where to write the JSON validation report.")
+    parser.add_argument("--api-port", type=int, default=8011, help="Port used for the temporary API validation server.")
     parser.add_argument(
         "--skip-offline-probe",
         action="store_true",

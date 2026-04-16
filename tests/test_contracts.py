@@ -9,10 +9,12 @@ from packages.contracts import (
     Evidence,
     HandoffLite,
     Phase,
+    PresetSuggestion,
     PresetDefinition,
     ReviewDecision,
     ReviewVerdict,
     Run,
+    RuntimeStateRef,
     RuntimeTask,
     TaskCard,
     TaskKind,
@@ -63,12 +65,21 @@ def test_wave1_contracts_round_trip() -> None:
         to_phase_id=phase.phase_id,
         summary="No handoff used in M0 runtime path.",
     )
+    state_ref = RuntimeStateRef(
+        run_id=run.run_id,
+        runtime_task_id=runtime_task.runtime_task_id,
+        graph_step="compiled",
+        state_payload={"entrypoint": "resume"},
+    )
+    suggestion = PresetSuggestion(preset_id="feature_delivery", score=10, reason="keyword match")
 
-    models = [run, phase, task_card, runtime_task, packet, evidence, verdict, handoff]
+    models = [run, phase, task_card, runtime_task, packet, evidence, verdict, handoff, state_ref, suggestion]
     for model in models:
         dumped = model.model_dump(mode="json")
-        assert dumped["schema_version"] == "v1"
-        assert dumped["created_at"]
+        if "schema_version" in dumped:
+            assert dumped["schema_version"] == "v1"
+        if "created_at" in dumped:
+            assert dumped["created_at"]
         restored = type(model).model_validate(dumped)
         assert restored.model_dump(mode="json") == dumped
 
@@ -81,6 +92,11 @@ def test_review_verdict_defaults_to_auto_reviewer() -> None:
         rationale="looks good",
     )
     assert verdict.reviewer_type == "auto"
+
+
+def test_run_status_supports_awaiting_review() -> None:
+    run = Run(goal="await human review", preset_id="research_spike", status="awaiting_review")
+    assert run.status == "awaiting_review"
 
 
 def test_preset_seed_file_parses() -> None:
@@ -99,6 +115,18 @@ def test_manual_preset_selection_is_required_and_strict() -> None:
         resolver.manual_select("missing")
     preset = resolver.manual_select("feature_delivery")
     assert preset.preset_id == "feature_delivery"
+
+
+def test_preset_suggestions_are_deterministic_and_explained() -> None:
+    resolver = PresetResolver()
+    suggestions = resolver.suggest("Research and compare implementation options")
+    assert suggestions[0].preset_id == "research_spike"
+    assert suggestions[0].score >= suggestions[1].score
+    assert suggestions[0].reason
+
+    fallback = resolver.suggest("General task")
+    assert [item.preset_id for item in fallback] == ["feature_delivery", "research_spike"]
+    assert all(item.reason for item in fallback)
 
 
 def test_budget_policy_value_domains_are_validated() -> None:

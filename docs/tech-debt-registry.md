@@ -1,7 +1,7 @@
-# M0 技术债登记簿
+# M1 技术债登记簿
 
-**文档定位：** 记录在 M0 阶段被显式接受、但延后到后续阶段偿还的技术债务。  
-**使用方式：** 本文档应在 `M0 freeze review` 中作为必审材料，所有 `go / no-go` 结论都必须显式检查本表是否完整。
+**文档定位：** 记录在 M1 结束时仍然被显式接受、但延后到后续阶段偿还的技术债务，同时保留已在 M1 偿还的 M0 债务历史。  
+**使用方式：** 本文档应在 `M1 freeze review` 中作为必审材料，所有 `go / no-go` 结论都必须显式检查本表是否完整。
 
 ---
 
@@ -14,36 +14,43 @@
 
 ---
 
-# 2. 当前技术债
+# 2. M1 已偿还债务
 
-| ID | 债务描述 | 引入阶段 | 计划偿还阶段 | 阻塞影响 |
+| ID | 债务描述 | 引入阶段 | 偿还阶段 | 结果 |
 | --- | --- | --- | --- | --- |
-| TD-001 | Claim 只保留语义占位，未在 M0 落表或执行真实资源占用控制 | M0 | M2 | 阻塞并发安全与冲突调度 |
-| TD-002 | `PresetResolver` 仅支持 `manual_select`，不提供建议或自动推断 | M0 | M1 | 用户需手动选择 preset，可能增加使用门槛 |
-| TD-003 | `HandoffLite` 在 M0 只冻结语义，不进入首批持久化范围 | M0 | M1 | 阻塞跨阶段交接与 retry lineage 的系统化落地 |
-| TD-004 | thin compile 仅作为内部占位能力，不暴露公共 compile API | M0 | M1 | 阻塞独立 compile / recompile 工作流 |
-| TD-005 | 仅接入 `ShellAdapter`，未接第二执行器与能力路由 | M0 | M1.5 | 阻塞多执行器统一调度验证 |
-| TD-006 | `Auto-Review v0` 仅提供 pass / fail 基线，不具备 richer review policy | M0 | M1 / M3 | 阻塞质量判断精细化 |
-| TD-007 | `run_events` 仅定义最小 payload schema，不承载完整 trace 与 metrics | M0 | M3 | 阻塞深度 observability 与 replay 能力 |
-| TD-008 | LangGraph 仅以最薄防腐层接入，不实现复杂 interrupt / resume 流程 | M0 | M1 / M2 | 阻塞复杂运行时恢复 |
-| TD-009 | M0 仅采用串行执行语义，不引入 Claim/Lease/Barrier 的真实实现 | M0 | M2 | 阻塞安全并发执行 |
-| TD-010 | 技术债只以本登记簿管理，尚未接入自动化校验或 dashboard | M0 | M3 | 阻塞技术债量化跟踪 |
+| TD-002 | `PresetResolver` 仅支持 `manual_select`，不提供建议 | M0 | M1 | 已补齐确定性离线 `suggest()`，但仍不做自动代选 |
+| TD-003 | `HandoffLite` 仅冻结语义，不进入持久化范围 | M0 | M1 | 已持久化并进入 `status-detail`、`handoffs`、smoke 与 offline validation |
+| TD-004 | thin compile 仅是内部占位能力，不暴露公共 compile API | M0 | M1 | 已补齐 `compile / recompile / resume` 公共生命周期接口 |
 
 ---
 
-# 3. Freeze Review 必查问题
+# 3. M1 后仍然有效的技术债
 
-在 M0 Freeze Review 中，必须逐条回答：
+| ID | 债务描述 | 引入阶段 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
+| --- | --- | --- | --- | --- | --- |
+| TD-001 | Claim 只保留语义占位，未执行真实资源占用控制 | M0 | M2 | 未偿还 | 阻塞并发安全与冲突调度 |
+| TD-005 | 仅接入 `ShellAdapter`，未接第二执行器与能力路由 | M0 | M1.5 | 未偿还 | 阻塞多执行器统一调度验证 |
+| TD-006 | review policy 仍然只有 `auto_only` 与最小 `human_required`，缺少 richer policy | M0 | M3 | 部分偿还 | M1 已打通人工审核闭环，但仍阻塞更细粒度质量策略 |
+| TD-007 | `run_events` 仍然只承载最小摘要 payload，不承载完整 trace 与 metrics | M0 | M3 | 未偿还 | 阻塞深度 observability 与 replay 能力 |
+| TD-008 | 运行时只实现纯 Python resumable 主链，不实现复杂 interrupt / resume / checkpoint merge | M0 | M2 | 部分偿还 | M1 已打通可恢复主链，但仍阻塞复杂运行时恢复 |
+| TD-009 | 系统仍采用串行执行语义，不引入 Claim / Lease / Barrier 的真实实现 | M0 | M2 | 未偿还 | 阻塞安全并发执行 |
+| TD-010 | 技术债只以本登记簿管理，尚未接入自动化校验或 dashboard | M0 | M3 | 未偿还 | 阻塞技术债量化跟踪 |
+
+---
+
+# 4. Freeze Review 必查问题
+
+在 M1 Freeze Review 中，必须逐条回答：
 
 1. 当前延后项是否都已经登记
 2. 是否存在未登记但实际被后移的工作
 3. 每条债务的偿还阶段是否仍然合理
-4. 是否有任何债务已经从“可接受”升级为“阻塞进入 M1”
+4. 是否有任何债务已经从“可接受”升级为“阻塞进入 M2”
 
 ---
 
-# 4. 更新约束
+# 5. 更新约束
 
 - 新增债务时必须补充 ID、阶段和影响
 - 偿还债务时不得直接删除，应先在 review 中确认，再从表中移除或转入历史记录
-- 如果 M0 结束时本表为空，通常说明文档登记不完整，而不是技术债真的不存在
+- 如果 M1 结束时本表为空，通常说明文档登记不完整，而不是技术债真的不存在
