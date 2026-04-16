@@ -197,6 +197,14 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status", auto_run_id],
         env,
     )
+    auto_detail_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status-detail", auto_run_id],
+        env,
+    )
+    auto_inspection_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "inspect", auto_run_id],
+        env,
+    )
     auto_timeline_payload, _ = run_json_command(
         [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "timeline", auto_run_id, "--json"],
         env,
@@ -229,6 +237,10 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
     )
     human_detail_payload, _ = run_json_command(
         [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "status-detail", human_run_id],
+        env,
+    )
+    human_inspection_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "run", "inspect", human_run_id],
         env,
     )
     human_resume_payload, _ = run_json_command(
@@ -289,9 +301,18 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "suggest_top_preset": suggest_payload[0]["preset_id"] if suggest_payload else None,
             "auto_run_status": auto_status_payload.get("status"),
             "auto_review_decision": auto_create_payload.get("review_decision"),
+            "auto_failure_reason": auto_detail_payload.get("failure_reason"),
+            "auto_last_runtime_step": auto_detail_payload.get("last_runtime_state", {}).get("graph_step"),
+            "auto_inspection_passed": auto_inspection_payload.get("passed"),
+            "auto_inspection_problem_count": auto_inspection_payload.get("problem_count"),
             "auto_timeline_events": auto_timeline_events,
             "human_compile_status": human_compile_payload["run"]["status"],
             "human_next_action": human_detail_payload.get("next_action"),
+            "human_waiting_reason": human_detail_payload.get("waiting_reason"),
+            "human_last_runtime_step": human_detail_payload.get("last_runtime_state", {}).get("graph_step"),
+            "human_recoverability_hint": human_detail_payload.get("recoverability_hint"),
+            "human_inspection_passed": human_inspection_payload.get("passed"),
+            "human_inspection_problem_count": human_inspection_payload.get("problem_count"),
             "human_resume_status": human_resume_payload["run"]["status"],
             "human_approve_status": human_approve_payload["run"]["status"],
             "human_handoffs_count": len(human_handoffs_payload),
@@ -308,9 +329,18 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             result["suggest_top_preset"] == "research_spike",
             result["auto_run_status"] == "completed",
             result["auto_review_decision"] == "pass",
+            result["auto_failure_reason"] is None,
+            result["auto_last_runtime_step"] == "completed",
+            result["auto_inspection_passed"] is True,
+            result["auto_inspection_problem_count"] == 0,
             result["auto_timeline_events"] == AUTO_TIMELINE,
             result["human_compile_status"] == "prepared",
             result["human_next_action"] == "resume",
+            result["human_waiting_reason"] == "awaiting_runtime_resume",
+            result["human_last_runtime_step"] == "compiled",
+            result["human_recoverability_hint"] == "resume_run",
+            result["human_inspection_passed"] is True,
+            result["human_inspection_problem_count"] == 0,
             result["human_resume_status"] == "awaiting_review",
             result["human_approve_status"] == "completed",
             result["human_handoffs_count"] == 1,
@@ -371,6 +401,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         auto_run_id = auto_run["run_id"]
         auto_compile = http_post_json(f"{base_url}/runs/{auto_run_id}/compile")
         auto_detail = http_get_json(f"{base_url}/runs/{auto_run_id}/status-detail")
+        auto_inspection = http_get_json(f"{base_url}/runs/{auto_run_id}/inspection")
         auto_handoffs = http_get_json(f"{base_url}/runs/{auto_run_id}/handoffs")
         auto_resume = http_post_json(f"{base_url}/runs/{auto_run_id}/resume")
         auto_timeline = http_get_json(f"{base_url}/runs/{auto_run_id}/timeline")
@@ -378,6 +409,8 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         human_run = http_post_json(f"{base_url}/runs", {"goal": "Offline API human validation", "preset_id": "research_spike"})
         human_run_id = human_run["run_id"]
         http_post_json(f"{base_url}/runs/{human_run_id}/compile")
+        human_detail = http_get_json(f"{base_url}/runs/{human_run_id}/status-detail")
+        human_inspection = http_get_json(f"{base_url}/runs/{human_run_id}/inspection")
         human_resume = http_post_json(f"{base_url}/runs/{human_run_id}/resume")
         human_approve = http_post_json(f"{base_url}/runs/{human_run_id}/approve")
         human_timeline = http_get_json(f"{base_url}/runs/{human_run_id}/timeline")
@@ -390,8 +423,17 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "auto_run_status": auto_resume["run"]["status"],
                 "auto_compile_status": auto_compile["run"]["status"],
                 "auto_next_action": auto_detail["next_action"],
+                "auto_waiting_reason": auto_detail["waiting_reason"],
+                "auto_last_runtime_step": auto_detail["last_runtime_state"]["graph_step"],
+                "auto_inspection_passed": auto_inspection["passed"],
+                "auto_inspection_problem_count": auto_inspection["problem_count"],
                 "auto_handoffs_count": len(auto_handoffs),
                 "auto_timeline_events": auto_timeline_events,
+                "human_waiting_reason": human_detail["waiting_reason"],
+                "human_last_runtime_step": human_detail["last_runtime_state"]["graph_step"],
+                "human_recoverability_hint": human_detail["recoverability_hint"],
+                "human_inspection_passed": human_inspection["passed"],
+                "human_inspection_problem_count": human_inspection["problem_count"],
                 "human_resume_status": human_resume["run"]["status"],
                 "human_approve_status": human_approve["run"]["status"],
                 "human_timeline_events": human_timeline_events,
@@ -402,9 +444,18 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 set(result["preset_ids"]) == {"feature_delivery", "research_spike"},
                 result["auto_compile_status"] == "prepared",
                 result["auto_next_action"] == "resume",
+                result["auto_waiting_reason"] == "awaiting_runtime_resume",
+                result["auto_last_runtime_step"] == "compiled",
+                result["auto_inspection_passed"] is True,
+                result["auto_inspection_problem_count"] == 0,
                 result["auto_handoffs_count"] == 1,
                 result["auto_run_status"] == "completed",
                 result["auto_timeline_events"] == AUTO_TIMELINE,
+                result["human_waiting_reason"] == "awaiting_runtime_resume",
+                result["human_last_runtime_step"] == "compiled",
+                result["human_recoverability_hint"] == "resume_run",
+                result["human_inspection_passed"] is True,
+                result["human_inspection_problem_count"] == 0,
                 result["human_resume_status"] == "awaiting_review",
                 result["human_approve_status"] == "completed",
                 result["human_timeline_events"] == HUMAN_TIMELINE,

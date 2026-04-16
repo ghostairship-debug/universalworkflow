@@ -35,6 +35,28 @@ class RunStatus(StrEnum):
     cancelled = "cancelled"
 
 
+RUN_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
+    RunStatus.pending: frozenset({RunStatus.prepared, RunStatus.cancelled}),
+    RunStatus.prepared: frozenset({RunStatus.prepared, RunStatus.running, RunStatus.cancelled}),
+    RunStatus.running: frozenset({RunStatus.awaiting_review, RunStatus.completed, RunStatus.failed}),
+    RunStatus.awaiting_review: frozenset({RunStatus.completed, RunStatus.failed, RunStatus.cancelled}),
+    RunStatus.completed: frozenset({RunStatus.completed}),
+    RunStatus.failed: frozenset({RunStatus.failed}),
+    RunStatus.cancelled: frozenset({RunStatus.cancelled}),
+}
+
+
+def allowed_run_status_transitions(current_status: RunStatus | str) -> tuple[RunStatus, ...]:
+    normalized = RunStatus(current_status)
+    return tuple(sorted(RUN_STATUS_TRANSITIONS[normalized], key=str))
+
+
+def can_transition_run_status(current_status: RunStatus | str, next_status: RunStatus | str) -> bool:
+    normalized_current = RunStatus(current_status)
+    normalized_next = RunStatus(next_status)
+    return normalized_next in RUN_STATUS_TRANSITIONS[normalized_current]
+
+
 class PhaseStatus(StrEnum):
     pending = "pending"
     active = "active"

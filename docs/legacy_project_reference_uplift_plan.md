@@ -1,5 +1,7 @@
 # 遗产项目参考提升计划
 
+> 对应当前仓库 `M1` 基线的专项落地版，请同时参阅 [docs/m1_legacy_reference_uplift_plan.md](/D:/Universal%20Agentic%20workflow/docs/m1_legacy_reference_uplift_plan.md:1)。本文保留跨 `M1.5 / M2 / M3` 的总览视角；专项执行时以 M1 专项计划为先。
+
 ## 1. 文档定位
 
 本文档用于回答两个问题：

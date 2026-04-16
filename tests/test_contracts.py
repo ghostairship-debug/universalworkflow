@@ -8,17 +8,24 @@ from pydantic import ValidationError
 from packages.contracts import (
     Evidence,
     HandoffLite,
+    NON_TERMINAL_RUNTIME_GRAPH_STEPS,
     Phase,
     PresetSuggestion,
     PresetDefinition,
     ReviewDecision,
     ReviewVerdict,
     Run,
+    RUN_STATUS_TRANSITIONS,
+    RunStatus,
+    RuntimeGraphStep,
+    TERMINAL_RUNTIME_GRAPH_STEPS,
     RuntimeStateRef,
     RuntimeTask,
     TaskCard,
     TaskKind,
     TaskPacket,
+    allowed_run_status_transitions,
+    can_transition_run_status,
 )
 from packages.core_domain import PresetNotFoundError, PresetRequiredError, PresetResolver, load_seed_presets
 
@@ -97,6 +104,48 @@ def test_review_verdict_defaults_to_auto_reviewer() -> None:
 def test_run_status_supports_awaiting_review() -> None:
     run = Run(goal="await human review", preset_id="research_spike", status="awaiting_review")
     assert run.status == "awaiting_review"
+
+
+def test_run_status_transition_matrix_is_explicit() -> None:
+    assert can_transition_run_status("pending", "prepared") is True
+    assert can_transition_run_status("prepared", "running") is True
+    assert can_transition_run_status("running", "awaiting_review") is True
+    assert can_transition_run_status("awaiting_review", "completed") is True
+    assert can_transition_run_status("completed", "running") is False
+    assert can_transition_run_status("failed", "prepared") is False
+    assert can_transition_run_status("cancelled", "awaiting_review") is False
+    assert {str(status) for status in allowed_run_status_transitions("prepared")} == {
+        "prepared",
+        "running",
+        "cancelled",
+    }
+    assert {str(status) for status in RUN_STATUS_TRANSITIONS[RunStatus.awaiting_review]} == {
+        "completed",
+        "failed",
+        "cancelled",
+    }
+
+
+def test_runtime_graph_step_terminality_is_explicit() -> None:
+    assert RuntimeGraphStep.completed in TERMINAL_RUNTIME_GRAPH_STEPS
+    assert RuntimeGraphStep.compiled in NON_TERMINAL_RUNTIME_GRAPH_STEPS
+
+    state_ref = RuntimeStateRef(
+        run_id="run_123",
+        runtime_task_id="task_123",
+        graph_step=RuntimeGraphStep.compiled,
+        state_payload={"entrypoint": "resume"},
+    )
+    assert state_ref.is_terminal is False
+
+    with pytest.raises(ValidationError):
+        RuntimeStateRef(
+            run_id="run_123",
+            runtime_task_id="task_123",
+            graph_step=RuntimeGraphStep.completed,
+            state_payload={},
+            is_terminal=False,
+        )
 
 
 def test_preset_seed_file_parses() -> None:

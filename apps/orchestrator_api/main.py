@@ -109,6 +109,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def get_run_status_detail(run_id: str) -> dict:
         return service.get_status_detail(run_id)
 
+    @app.get("/runs/{run_id}/inspection")
+    def inspect_run_state(run_id: str) -> dict:
+        return service.inspect_run_state(run_id)
+
     @app.get("/runs/{run_id}/handoffs")
     def get_run_handoffs(run_id: str) -> list[dict]:
         return [handoff.model_dump(mode="json") for handoff in service.list_handoffs(run_id)]

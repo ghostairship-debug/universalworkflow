@@ -163,16 +163,26 @@ def run_cancel(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("status")
 def run_status(ctx: typer.Context, run_id: str) -> None:
     service = _service(ctx)
-    run = service.get_run(run_id)
-    runtime_tasks = TaskRepository(_db_path_from_context(ctx)).list_runtime_tasks_for_run(run_id)
-    payload = run.model_dump(mode="json")
-    payload["runtime_task_ids"] = [task.runtime_task_id for task in runtime_tasks]
+    detail = service.get_status_detail(run_id)
+    payload = detail["run"]
+    payload["runtime_task_ids"] = detail["runtime_task_ids"]
+    payload["effective_review_state"] = detail["effective_review_state"]
+    payload["latest_review_verdict"] = detail["latest_review_verdict"]
+    payload["next_action"] = detail["next_action"]
+    payload["failure_reason"] = detail["failure_reason"]
+    payload["waiting_reason"] = detail["waiting_reason"]
+    payload["recoverability_hint"] = detail["recoverability_hint"]
     _emit_json(payload)
 
 
 @run_app.command("status-detail")
 def run_status_detail(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_service(ctx).get_status_detail(run_id))
+
+
+@run_app.command("inspect")
+def run_inspect(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_service(ctx).inspect_run_state(run_id))
 
 
 @run_app.command("timeline")

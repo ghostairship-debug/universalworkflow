@@ -58,6 +58,10 @@ def test_cli_run_create_status_timeline_and_evidence(tmp_path: Path) -> None:
     status_payload = json.loads(status_result.stdout)
     assert status_payload["status"] == "completed"
     assert runtime_task_id in status_payload["runtime_task_ids"]
+    assert status_payload["effective_review_state"] == "auto_passed"
+    assert status_payload["latest_review_verdict"]["decision"] == "pass"
+    assert status_payload["failure_reason"] is None
+    assert status_payload["recoverability_hint"] == "none"
 
     timeline_result = _invoke(tmp_path, "run", "timeline", run_id, "--json")
     assert timeline_result.exit_code == 0
@@ -119,7 +123,20 @@ def test_cli_compile_recompile_status_detail_and_handoffs(tmp_path: Path) -> Non
     assert detail_result.exit_code == 0
     detail_payload = json.loads(detail_result.stdout)
     assert detail_payload["next_action"] == "resume"
+    assert detail_payload["waiting_reason"] == "awaiting_runtime_resume"
+    assert detail_payload["failure_reason"] is None
+    assert detail_payload["last_runtime_state"]["graph_step"] == "compiled"
+    assert detail_payload["last_review_verdict"] is None
+    assert detail_payload["recoverability_hint"] == "resume_run"
     assert detail_payload["handoffs"]
+    assert detail_payload["effective_review_state"] == "not_requested"
+
+    inspection_result = _invoke(tmp_path, "run", "inspect", run_id)
+    assert inspection_result.exit_code == 0
+    inspection_payload = json.loads(inspection_result.stdout)
+    assert inspection_payload["passed"] is True
+    assert inspection_payload["problem_count"] == 0
+    assert inspection_payload["recommended_action"] == "none"
 
     handoffs_result = _invoke(tmp_path, "run", "handoffs", run_id)
     assert handoffs_result.exit_code == 0
@@ -199,9 +216,19 @@ def test_cli_human_review_approve_and_reject_paths(tmp_path: Path) -> None:
     assert resume_payload["run"]["status"] == "awaiting_review"
     assert resume_payload["review_decision"] is None
 
+    waiting_status = _invoke(tmp_path, "run", "status", approve_run_id)
+    waiting_payload = json.loads(waiting_status.stdout)
+    assert waiting_payload["effective_review_state"] == "human_pending"
+    assert waiting_payload["latest_review_verdict"] is None
+
     approve_result = _invoke(tmp_path, "run", "approve", approve_run_id)
     assert approve_result.exit_code == 0
     assert json.loads(approve_result.stdout)["run"]["status"] == "completed"
+
+    approved_status = _invoke(tmp_path, "run", "status", approve_run_id)
+    approved_payload = json.loads(approved_status.stdout)
+    assert approved_payload["effective_review_state"] == "human_approved"
+    assert approved_payload["latest_review_verdict"]["reviewer_type"] == "human"
 
     reject_create = _invoke(
         tmp_path,
@@ -219,3 +246,10 @@ def test_cli_human_review_approve_and_reject_paths(tmp_path: Path) -> None:
     reject_result = _invoke(tmp_path, "run", "reject", reject_run_id)
     assert reject_result.exit_code == 0
     assert json.loads(reject_result.stdout)["run"]["status"] == "failed"
+
+    rejected_status = _invoke(tmp_path, "run", "status", reject_run_id)
+    rejected_payload = json.loads(rejected_status.stdout)
+    assert rejected_payload["effective_review_state"] == "human_rejected"
+    assert rejected_payload["latest_review_verdict"]["decision"] == "fail"
+    assert rejected_payload["failure_reason"] == "human_review_rejected"
+    assert rejected_payload["recoverability_hint"] == "inspect_evidence_then_recompile"

@@ -95,8 +95,20 @@ def test_api_compile_and_status_detail_are_public_in_m1(tmp_path: Path) -> None:
     detail_payload = status_detail.json()
     assert detail_payload["run"]["status"] == "prepared"
     assert detail_payload["next_action"] == "resume"
+    assert detail_payload["waiting_reason"] == "awaiting_runtime_resume"
+    assert detail_payload["failure_reason"] is None
+    assert detail_payload["last_runtime_state"]["graph_step"] == "compiled"
+    assert detail_payload["last_review_verdict"] is None
+    assert detail_payload["recoverability_hint"] == "resume_run"
     assert detail_payload["handoffs"]
     assert detail_payload["runtime_state_refs"]
+
+    inspection_response = client.get(f"/runs/{run_id}/inspection")
+    assert inspection_response.status_code == 200
+    inspection_payload = inspection_response.json()
+    assert inspection_payload["passed"] is True
+    assert inspection_payload["problem_count"] == 0
+    assert inspection_payload["recommended_action"] == "none"
 
     handoffs_response = client.get(f"/runs/{run_id}/handoffs")
     assert handoffs_response.status_code == 200
@@ -150,9 +162,19 @@ def test_api_human_review_path_requires_approval(tmp_path: Path) -> None:
     assert resume_response.json()["run"]["status"] == "awaiting_review"
     assert resume_response.json()["review_decision"] is None
 
+    detail_response = client.get(f"/runs/{run_id}/status-detail")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["effective_review_state"] == "human_pending"
+    assert detail_response.json()["latest_review_verdict"] is None
+
     approve_response = client.post(f"/runs/{run_id}/approve")
     assert approve_response.status_code == 200
     assert approve_response.json()["run"]["status"] == "completed"
+
+    approved_detail = client.get(f"/runs/{run_id}/status-detail")
+    assert approved_detail.status_code == 200
+    assert approved_detail.json()["effective_review_state"] == "human_approved"
+    assert approved_detail.json()["latest_review_verdict"]["reviewer_type"] == "human"
 
 
 def test_api_human_review_reject_fails_run(tmp_path: Path) -> None:
@@ -167,3 +189,50 @@ def test_api_human_review_reject_fails_run(tmp_path: Path) -> None:
     reject_response = client.post(f"/runs/{run_id}/reject")
     assert reject_response.status_code == 200
     assert reject_response.json()["run"]["status"] == "failed"
+
+    detail_response = client.get(f"/runs/{run_id}/status-detail")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["effective_review_state"] == "human_rejected"
+    assert detail_response.json()["latest_review_verdict"]["decision"] == "fail"
+    assert detail_response.json()["failure_reason"] == "human_review_rejected"
+    assert detail_response.json()["recoverability_hint"] == "inspect_evidence_then_recompile"
+
+
+def test_api_blocks_resume_before_compile(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Resume too early", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+
+    response = client.post(f"/runs/{run_id}/resume")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "invalid_state_transition"
+    assert response.json()["error"]["details"]["allowed_statuses"] == ["prepared"]
+
+
+def test_api_blocks_review_before_awaiting_review(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Review too early", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+    client.post(f"/runs/{run_id}/compile")
+
+    approve_response = client.post(f"/runs/{run_id}/approve")
+    assert approve_response.status_code == 409
+    assert approve_response.json()["error"]["code"] == "invalid_state_transition"
+
+
+def test_api_blocks_recompile_after_terminal_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Terminal recompile", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+    client.post(f"/runs/{run_id}/compile")
+    client.post(f"/runs/{run_id}/resume")
+
+    recompile_response = client.post(f"/runs/{run_id}/recompile")
+    assert recompile_response.status_code == 409
+    assert recompile_response.json()["error"]["code"] == "invalid_state_transition"

@@ -54,6 +54,7 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db run approve <run_id>`
 - `workflowctl --db-path state/workflow.db run reject <run_id>`
 - `workflowctl --db-path state/workflow.db run status-detail <run_id>`
+- `workflowctl --db-path state/workflow.db run inspect <run_id>`
 - `workflowctl --db-path state/workflow.db run handoffs <run_id>`
 - `workflowctl --db-path state/workflow.db task evidence <runtime_task_id>`
 - `workflowctl --db-path state/workflow.db run cancel <run_id>`
@@ -67,6 +68,8 @@ Auto-review path:
 python -m apps.operator_cli.main --db-path state/workflow.db db reset
 python -m apps.operator_cli.main --db-path state/workflow.db run create --goal "Build a smoke artifact" --preset feature_delivery
 python -m apps.operator_cli.main --db-path state/workflow.db run compile <run_id>
+python -m apps.operator_cli.main --db-path state/workflow.db run status-detail <run_id>
+python -m apps.operator_cli.main --db-path state/workflow.db run inspect <run_id>
 python -m apps.operator_cli.main --db-path state/workflow.db run resume <run_id>
 ```
 
@@ -75,6 +78,8 @@ Human-review path:
 ```bash
 python -m apps.operator_cli.main --db-path state/workflow.db run create --goal "Research a design choice" --preset research_spike
 python -m apps.operator_cli.main --db-path state/workflow.db run compile <run_id>
+python -m apps.operator_cli.main --db-path state/workflow.db run status-detail <run_id>
+python -m apps.operator_cli.main --db-path state/workflow.db run inspect <run_id>
 python -m apps.operator_cli.main --db-path state/workflow.db run resume <run_id>
 python -m apps.operator_cli.main --db-path state/workflow.db run approve <run_id>
 ```
@@ -98,6 +103,7 @@ The M1 routes are:
 - `POST /runs/{id}/reject`
 - `GET /runs/{id}/timeline`
 - `GET /runs/{id}/status-detail`
+- `GET /runs/{id}/inspection`
 - `GET /runs/{id}/handoffs`
 - `GET /presets`
 - `GET /tasks/{id}/evidence`
@@ -107,5 +113,7 @@ The M1 routes are:
 - `POST /runs` only creates the run and records preset selection.
 - `compile`, `recompile`, `resume`, `approve`, and `reject` are explicit lifecycle steps in M1.
 - `research_spike` enters `awaiting_review` after `resume`; it does not auto-complete.
+- `status-detail` now includes operator-facing diagnostics such as `failure_reason`, `waiting_reason`, `last_runtime_state`, and `recoverability_hint`.
+- `inspection` is a read-only dry-run surface that flags inconsistent states without mutating the database.
 - Smoke clears known LLM API key variables before execution and restores them afterward.
 - See [docs/smoke/m1-smoke.md](/D:/Universal%20Agentic%20workflow/docs/smoke/m1-smoke.md:1) for the M1 acceptance flow.

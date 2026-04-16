@@ -154,6 +154,14 @@ class TaskRepository(RepositoryBase):
             )
         return phase
 
+    def list_phases_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[Phase]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM phases WHERE run_id = ? ORDER BY order_index, phase_id",
+                (run_id,),
+            ).fetchall()
+        return [Phase.model_validate(dict(row)) for row in rows]
+
     def create_task_card(self, task_card: TaskCard, connection: sqlite3.Connection | None = None) -> TaskCard:
         with self._connection(connection, commit=True) as conn:
             conn.execute(
@@ -172,6 +180,19 @@ class TaskRepository(RepositoryBase):
                 ),
             )
         return task_card
+
+    def list_task_cards_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[TaskCard]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM task_cards WHERE run_id = ? ORDER BY created_at, task_card_id",
+                (run_id,),
+            ).fetchall()
+        task_cards: list[TaskCard] = []
+        for row in rows:
+            data = dict(row)
+            data["acceptance_criteria"] = _json_load(data.pop("acceptance_criteria_json"))
+            task_cards.append(TaskCard.model_validate(data))
+        return task_cards
 
     def create_runtime_task(self, runtime_task: RuntimeTask, connection: sqlite3.Connection | None = None) -> RuntimeTask:
         with self._connection(connection, commit=True) as conn:
@@ -329,6 +350,27 @@ class ReviewRepository(RepositoryBase):
     def get_by_evidence(self, evidence_id: str, connection: sqlite3.Connection | None = None) -> ReviewVerdict | None:
         with self._connection(connection) as conn:
             row = conn.execute("SELECT * FROM review_verdicts WHERE evidence_id = ?", (evidence_id,)).fetchone()
+        return ReviewVerdict.model_validate(dict(row)) if row else None
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[ReviewVerdict]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM review_verdicts WHERE run_id = ? ORDER BY reviewed_at, verdict_id",
+                (run_id,),
+            ).fetchall()
+        return [ReviewVerdict.model_validate(dict(row)) for row in rows]
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> ReviewVerdict | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM review_verdicts
+                WHERE run_id = ?
+                ORDER BY reviewed_at DESC, verdict_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
         return ReviewVerdict.model_validate(dict(row)) if row else None
 
 

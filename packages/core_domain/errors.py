@@ -29,12 +29,13 @@ class InvalidStateTransitionError(WorkflowError):
     code = "invalid_state_transition"
     status_code = 409
 
-    def __init__(self, action: str, current_status: str, allowed_statuses: list[str]):
+    def __init__(self, action: str, current_status: str, allowed_statuses: list[str], target_status: str | None = None):
         super().__init__(
             f"cannot {action} when run status is {current_status}",
             {
                 "action": action,
                 "current_status": current_status,
                 "allowed_statuses": allowed_statuses,
+                "target_status": target_status,
             },
         )
