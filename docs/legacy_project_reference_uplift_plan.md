@@ -2,6 +2,8 @@
 
 > 对应当前仓库 `M1` 基线的专项落地版，请同时参阅 [docs/m1_legacy_reference_uplift_plan.md](/D:/Universal%20Agentic%20workflow/docs/m1_legacy_reference_uplift_plan.md:1)。本文保留跨 `M1.5 / M2 / M3` 的总览视角；专项执行时以 M1 专项计划为先。
 
+> 命名归一说明：仓库里的历史文件 `m1_phase_docs/phase_5_second_executor_and_capability_routing.md` 实际对应 `M1.5`，而不是 `M1 freeze` 的一部分。统一口径见 [docs/m1_to_m2_progression.md](/D:/Universal%20Agentic%20workflow/docs/m1_to_m2_progression.md:1)。
+
 ## 1. 文档定位
 
 本文档用于回答两个问题：

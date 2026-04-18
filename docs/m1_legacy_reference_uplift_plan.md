@@ -4,6 +4,8 @@
 
 Status: `completed`
 
+Scope note: this plan covers the dedicated `M1` legacy hardening batch only. It is separate from the later `M1.5` second-executor / capability-routing hardening stage. The milestone sequence is documented in [docs/m1_to_m2_progression.md](/D:/Universal%20Agentic%20workflow/docs/m1_to_m2_progression.md:1).
+
 The first uplift batch defined in this plan has now been implemented without reopening the M1 architecture.
 
 - `Phase A` is complete: explicit run/runtime transition matrix, guard helpers, and invalid-transition tests are in place.

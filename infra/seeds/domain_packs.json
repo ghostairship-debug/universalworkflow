@@ -1,0 +1,40 @@
+[
+  {
+    "domain_pack_id": "software_delivery_pack",
+    "name": "Software Delivery Pack",
+    "description": "A minimal M4 domain pack that decorates feature-delivery style runs with software-delivery context and artifact labeling.",
+    "enabled": true,
+    "match": {
+      "preset_ids": [
+        "feature_delivery",
+        "advisory_delivery",
+        "guarded_delivery"
+      ],
+      "task_kinds": [
+        "shell_exec"
+      ]
+    },
+    "capability_exposure": {
+      "preferred_adapter_name": "shell",
+      "capability_tags": [
+        "artifact_generation",
+        "software_delivery"
+      ]
+    },
+    "compile_projection": {
+      "artifact_label": "software_delivery",
+      "goal_prefix": "[software-delivery]",
+      "artifact_context_lines": [
+        "domain_context: software_delivery",
+        "pack_scope: minimal_platform_baseline"
+      ]
+    },
+    "runtime_projection": {
+      "operator_label": "software-delivery",
+      "evidence_expectations": [
+        "artifact exists",
+        "artifact includes runtime brief when available"
+      ]
+    }
+  }
+]

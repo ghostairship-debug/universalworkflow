@@ -4,6 +4,8 @@
 
 This document defines how `D:\AI Agent` should be used as a reference source for the current repository.
 
+Historical note: this document was written before the repository milestone naming was fully normalized. Some items originally described here as `M1.5 hardening` were later implemented through the dedicated `M1 legacy hardening uplift`, while the shipped post-freeze `M1.5` phase focused on second-executor / capability-routing hardening. The canonical sequence is [docs/m1_to_m2_progression.md](/D:/Universal%20Agentic%20workflow/docs/m1_to_m2_progression.md:1).
+
 It is intentionally **not** a migration plan.
 It is also **not** part of the M1 critical path.
 
@@ -178,8 +180,8 @@ Each indexed item should use the following fields:
 | `L-RUNTIME-001` | `runtime` | `src/agentic_kernel/domain/task_state.py` | `semantic` | `M2` | `rewrite` | Shows a fuller runtime snapshot lifecycle and terminal/non-terminal separation. | future runtime state refinement | Do not copy status names that do not fit the current run model. | `indexed` |
 | `L-RUNTIME-002` | `runtime_storage` | `src/agentic_kernel/storage/task_store.py` | `pattern` | `M2` | `rewrite` | Good reference for runtime attempt persistence and latest/live lookup patterns. | runtime repository evolution | Do not copy the full schema or task-centric ownership model. | `indexed` |
 | `L-REVIEW-001` | `review` | `src/agentic_kernel/storage/review_store.py` | `pattern` | `M1.5` | `rewrite` | Clean minimal persistence model for review gates and project events. | future review persistence hardening | Do not inherit project event schema verbatim. | `indexed` |
-| `L-REVIEW-002` | `review` | `src/agentic_kernel/services/review_service.py` | `semantic` | `M1.5` | `rewrite` | Useful for approved/rejected/pending gate semantics and latest-gate evaluation. | human review loop expansion | Do not copy service API names directly. | `indexed` |
-| `L-QUALITY-001` | `review_policy` | `tests/services/test_review_policy_routing.py` | `test` | `M1.5` | `guardrail_only` | Strong source of edge cases for optional/mandatory/recommended review policy behavior. | future review policy tests | Do not pull phase/task-card machinery into current core. | `indexed` |
+| `L-REVIEW-002` | `review` | `src/agentic_kernel/services/review_service.py` | `semantic` | `M1.5` | `rewrite` | Useful for approved/rejected/pending gate semantics and latest-gate evaluation. | human review loop expansion | Do not copy service API names directly. | `consulted` |
+| `L-QUALITY-001` | `review_policy` | `tests/services/test_review_policy_routing.py` | `test` | `M1.5` | `guardrail_only` | Strong source of edge cases for optional/mandatory/recommended review policy behavior. | future review policy tests | Do not pull phase/task-card machinery into current core. | `adopted` |
 | `L-QUALITY-002` | `quality_loop` | `tests/services/test_quality_loop_runtime.py` | `test` | `M2` | `guardrail_only` | Good source for structured summary validation and review-driven progression cases. | richer operator/review acceptance testing | Do not adopt legacy agent routing assumptions. | `indexed` |
 | `L-RECON-001` | `reconcile` | `src/agentic_kernel/services/progression_service.py` | `semantic` | `M2` | `read_only` | Captures how review results, blocked descendants, and phase completion interact. | future progression hardening | Do not import phase/task-card progression engine into current M1 line. | `indexed` |
 | `L-RECON-002` | `reconcile` | `src/agentic_kernel/services/runtime_reconcile_service.py` | `semantic` | `M2` | `read_only` | Very useful as a catalog of failure modes and repair actions for drifted workflow state. | M2+ repair/recovery design | Do not copy the service surface or broad dependency graph. | `indexed` |

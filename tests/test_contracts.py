@@ -6,8 +6,16 @@ import pytest
 from pydantic import ValidationError
 
 from packages.contracts import (
+    BudgetLedger,
+    CapabilityRoute,
+    DomainPackResolution,
+    DomainPackDefinition,
     Evidence,
     HandoffLite,
+    MemoryCandidate,
+    MemoryItem,
+    MemoryNamespace,
+    MemoryRetrievalPreview,
     NON_TERMINAL_RUNTIME_GRAPH_STEPS,
     Phase,
     PresetSuggestion,
@@ -15,8 +23,20 @@ from packages.contracts import (
     ReviewDecision,
     ReviewVerdict,
     Run,
+    RunSnapshot,
+    RunSnapshotStage,
+    RuntimeAttempt,
+    RuntimeAttemptStatus,
+    RuntimeAttemptTrigger,
     RUN_STATUS_TRANSITIONS,
     RunStatus,
+    SimulationPolicyDefinition,
+    SimulationRecord,
+    SimulationRecordSource,
+    SimulationReport,
+    SimulationTriggerPolicy,
+    RuntimeClaim,
+    RuntimeClaimStatus,
     RuntimeGraphStep,
     TERMINAL_RUNTIME_GRAPH_STEPS,
     RuntimeStateRef,
@@ -24,10 +44,15 @@ from packages.contracts import (
     TaskCard,
     TaskKind,
     TaskPacket,
+    WorkerLease,
+    WorkerLeaseStatus,
     allowed_run_status_transitions,
     can_transition_run_status,
 )
 from packages.core_domain import PresetNotFoundError, PresetRequiredError, PresetResolver, load_seed_presets
+from packages.core_domain.domain_packs import DomainPackRegistry, load_seed_domain_packs
+from packages.core_domain.memory import load_seed_memory_namespaces
+from packages.core_domain.simulation import load_seed_simulation_policies
 
 
 def test_wave1_contracts_round_trip() -> None:
@@ -79,8 +104,136 @@ def test_wave1_contracts_round_trip() -> None:
         state_payload={"entrypoint": "resume"},
     )
     suggestion = PresetSuggestion(preset_id="feature_delivery", score=10, reason="keyword match")
+    capability_route = CapabilityRoute(capability="shell_exec", adapter_name="shell", adapter_class="ShellAdapter")
+    domain_pack = DomainPackDefinition(
+        domain_pack_id="software_delivery_pack",
+        name="Software Delivery Pack",
+        description="test pack",
+        preset_ids=["feature_delivery"],
+        task_kinds=[TaskKind.shell_exec],
+        artifact_label="software_delivery",
+    )
+    claim = RuntimeClaim(
+        run_id=run.run_id,
+        runtime_task_id=runtime_task.runtime_task_id,
+        lease_expires_at=run.created_at,
+    )
+    snapshot = RunSnapshot(
+        run_id=run.run_id,
+        stage=RunSnapshotStage.compiled,
+        run_status=RunStatus.prepared,
+        runtime_task_id=runtime_task.runtime_task_id,
+        summary="Compile snapshot captured.",
+        snapshot_payload={"phase_ids": [phase.phase_id], "task_card_ids": [task_card.task_card_id]},
+    )
+    ledger = BudgetLedger(
+        run_id=run.run_id,
+        preset_id=run.preset_id,
+        max_retries=2,
+        timeout_seconds=300,
+        compile_count=1,
+    )
+    worker_lease = WorkerLease(
+        run_id=run.run_id,
+        runtime_task_id=runtime_task.runtime_task_id,
+        adapter_name="shell",
+        lease_expires_at=run.created_at,
+    )
+    runtime_attempt = RuntimeAttempt(
+        run_id=run.run_id,
+        runtime_task_id=runtime_task.runtime_task_id,
+        sequence_no=1,
+        trigger=RuntimeAttemptTrigger.compile,
+    )
+    memory_namespace = MemoryNamespace(
+        namespace_id="repo",
+        name="Repository Memory",
+        kind="working_context",
+        scope="run_and_repo",
+        retention_policy="retain_recent_successes",
+        retrieval_policy="rule_based_context_pack",
+    )
+    memory_candidate = MemoryCandidate(
+        run_id=run.run_id,
+        namespace_id="repo",
+        title="candidate",
+        summary="summary",
+        source_refs=[f"run:{run.run_id}"],
+    )
+    memory_item = MemoryItem(
+        run_id=run.run_id,
+        namespace_id="repo",
+        source_candidate_id=f"memcand_{run.run_id}_repo",
+        title="item",
+        summary="summary",
+        source_refs=[f"run:{run.run_id}"],
+    )
+    memory_retrieval_preview = MemoryRetrievalPreview(
+        run_id=run.run_id,
+        preset_id=run.preset_id,
+        namespace_ids=["repo"],
+        selected_memory_item_ids=[memory_item.memory_item_id],
+        source_run_ids=[run.run_id],
+        item_count=1,
+        brief_lines=["[repo] item: summary"],
+        items=[memory_item],
+    )
+    simulation_policy = SimulationPolicyDefinition(
+        policy_id="delivery_consistency_simulation",
+        name="Delivery Consistency Simulation",
+        description="test simulation policy",
+        preset_ids=["feature_delivery"],
+        trigger_policy=SimulationTriggerPolicy.always,
+        check_ids=["inspection_consistency"],
+    )
+    simulation_report = SimulationReport(
+        run_id=run.run_id,
+        preset_id=run.preset_id,
+        policy_id=simulation_policy.policy_id,
+        trigger_policy=simulation_policy.trigger_policy,
+        simulator_name="local_consistency_check",
+        triggered=True,
+        status="passed",
+        reason="triggered_by_always_policy",
+        summary="Simulation passed.",
+        check_results=[],
+    )
+    simulation_record = SimulationRecord(
+        run_id=run.run_id,
+        policy_id=simulation_policy.policy_id,
+        status=simulation_report.status,
+        triggered=simulation_report.triggered,
+        summary=simulation_report.summary,
+        recorded_from=SimulationRecordSource.lifecycle_terminal,
+        report=simulation_report,
+    )
 
-    models = [run, phase, task_card, runtime_task, packet, evidence, verdict, handoff, state_ref, suggestion]
+    models = [
+        run,
+        phase,
+        task_card,
+        runtime_task,
+        packet,
+        evidence,
+        verdict,
+        handoff,
+        state_ref,
+        suggestion,
+        capability_route,
+        domain_pack,
+        claim,
+        snapshot,
+        ledger,
+        worker_lease,
+        runtime_attempt,
+        memory_namespace,
+        memory_candidate,
+        memory_item,
+        memory_retrieval_preview,
+        simulation_policy,
+        simulation_report,
+        simulation_record,
+    ]
     for model in models:
         dumped = model.model_dump(mode="json")
         if "schema_version" in dumped:
@@ -148,12 +301,143 @@ def test_runtime_graph_step_terminality_is_explicit() -> None:
         )
 
 
+def test_runtime_claim_requires_release_metadata_when_not_active() -> None:
+    active_claim = RuntimeClaim(
+        run_id="run_123",
+        runtime_task_id="task_123",
+        lease_expires_at=Run(goal="g", preset_id="feature_delivery").created_at,
+    )
+    assert active_claim.status == "active"
+
+    with pytest.raises(ValidationError):
+        RuntimeClaim(
+            run_id="run_123",
+            runtime_task_id="task_123",
+            status=RuntimeClaimStatus.released,
+            lease_expires_at=Run(goal="g", preset_id="feature_delivery").created_at,
+        )
+
+
+def test_run_snapshot_requires_lightweight_projection_fields() -> None:
+    snapshot = RunSnapshot(
+        run_id="run_123",
+        stage=RunSnapshotStage.repaired,
+        run_status=RunStatus.prepared,
+        summary="Repair snapshot",
+        snapshot_payload={"problem": "prepared_compile_snapshot_incomplete"},
+    )
+
+    dumped = snapshot.model_dump(mode="json")
+    assert dumped["stage"] == "repaired"
+    assert dumped["run_status"] == "prepared"
+    assert dumped["snapshot_payload"]["problem"] == "prepared_compile_snapshot_incomplete"
+
+
+def test_budget_ledger_tracks_non_negative_counters() -> None:
+    ledger = BudgetLedger(
+        run_id="run_123",
+        preset_id="feature_delivery",
+        max_retries=1,
+        timeout_seconds=120,
+        compile_count=1,
+        execution_count=1,
+        total_runtime_ms=55,
+        last_return_code=0,
+    )
+    dumped = ledger.model_dump(mode="json")
+    assert dumped["compile_count"] == 1
+    assert dumped["execution_count"] == 1
+    assert dumped["total_runtime_ms"] == 55
+
+
+def test_worker_lease_requires_release_metadata_when_not_active() -> None:
+    active_lease = WorkerLease(
+        run_id="run_123",
+        runtime_task_id="task_123",
+        adapter_name="shell",
+        lease_expires_at=Run(goal="g", preset_id="feature_delivery").created_at,
+    )
+    assert active_lease.status == "active"
+
+    with pytest.raises(ValidationError):
+        WorkerLease(
+            run_id="run_123",
+            runtime_task_id="task_123",
+            adapter_name="shell",
+            status=WorkerLeaseStatus.released,
+            lease_expires_at=Run(goal="g", preset_id="feature_delivery").created_at,
+        )
+
+
+def test_runtime_attempt_requires_supersede_or_close_metadata() -> None:
+    current_attempt = RuntimeAttempt(
+        run_id="run_123",
+        runtime_task_id="task_123",
+        sequence_no=1,
+        trigger=RuntimeAttemptTrigger.compile,
+    )
+    assert current_attempt.status == "current"
+
+    superseded_attempt = RuntimeAttempt(
+        run_id="run_123",
+        runtime_task_id="task_123",
+        sequence_no=1,
+        trigger=RuntimeAttemptTrigger.compile,
+        status=RuntimeAttemptStatus.superseded,
+        superseded_by_attempt_id="attempt_next",
+        superseded_at=Run(goal="g", preset_id="feature_delivery").created_at,
+        supersede_reason="recompile",
+    )
+    assert superseded_attempt.status == "superseded"
+
+    with pytest.raises(ValidationError):
+        RuntimeAttempt(
+            run_id="run_123",
+            runtime_task_id="task_123",
+            sequence_no=1,
+            trigger=RuntimeAttemptTrigger.resume,
+            status=RuntimeAttemptStatus.interrupted,
+        )
+
+    with pytest.raises(ValidationError):
+        RuntimeAttempt(
+            run_id="run_123",
+            runtime_task_id="task_123",
+            sequence_no=1,
+            trigger=RuntimeAttemptTrigger.compile,
+            status=RuntimeAttemptStatus.current,
+            close_reason="should-not-be-set",
+        )
+
+
 def test_preset_seed_file_parses() -> None:
     presets = load_seed_presets(Path("infra/seeds/presets.json"))
-    assert {preset.preset_id for preset in presets} == {"feature_delivery", "research_spike"}
+    assert {preset.preset_id for preset in presets} == {
+        "feature_delivery",
+        "research_spike",
+        "advisory_delivery",
+        "guarded_delivery",
+    }
     for preset in presets:
         assert isinstance(preset, PresetDefinition)
         assert preset.default_budget_policy.timeout_seconds > 0
+
+
+def test_memory_namespace_seed_file_parses() -> None:
+    namespaces = load_seed_memory_namespaces(Path("infra/seeds/memory_namespaces.json"))
+    assert [namespace.namespace_id for namespace in namespaces] == ["repo", "failure", "policy", "release"]
+    assert namespaces[0].retrieval_policy == "rule_based_context_pack"
+
+
+def test_simulation_policy_seed_file_parses() -> None:
+    policies = load_seed_simulation_policies(Path("infra/seeds/simulation_policies.json"))
+    assert [policy.policy_id for policy in policies] == [
+        "delivery_consistency_simulation",
+        "advisory_failure_simulation",
+        "research_no_simulation",
+    ]
+    assert policies[0].trigger_policy == "always"
+    assert policies[1].simulator_name == "local_consistency_check"
 
 
 def test_manual_preset_selection_is_required_and_strict() -> None:
@@ -166,6 +450,104 @@ def test_manual_preset_selection_is_required_and_strict() -> None:
     assert preset.preset_id == "feature_delivery"
 
 
+def test_domain_pack_seed_file_parses() -> None:
+    domain_packs = load_seed_domain_packs(Path("infra/seeds/domain_packs.json"))
+    assert [domain_pack.domain_pack_id for domain_pack in domain_packs] == ["software_delivery_pack"]
+    assert domain_packs[0].enabled is True
+    assert domain_packs[0].match.preset_ids == ["feature_delivery", "advisory_delivery", "guarded_delivery"]
+    assert domain_packs[0].compile_projection.artifact_label == "software_delivery"
+    assert domain_packs[0].capability_exposure.preferred_adapter_name == "shell"
+    assert domain_packs[0].runtime_projection.operator_label == "software-delivery"
+
+
+def test_domain_pack_definition_supports_flat_shape_upgrade() -> None:
+    domain_pack = DomainPackDefinition.model_validate(
+        {
+            "domain_pack_id": "flat_pack",
+            "name": "Flat Pack",
+            "description": "legacy flat shape",
+            "preset_ids": ["feature_delivery"],
+            "task_kinds": ["shell_exec"],
+            "artifact_label": "legacy",
+            "goal_prefix": "[legacy]",
+        }
+    )
+
+    assert domain_pack.match.preset_ids == ["feature_delivery"]
+    assert domain_pack.compile_projection.artifact_label == "legacy"
+    assert domain_pack.goal_prefix == "[legacy]"
+
+
+def test_domain_pack_resolution_round_trip() -> None:
+    resolution = DomainPackResolution.model_validate(
+        {
+            "domain_pack_id": "software_delivery_pack",
+            "name": "Software Delivery Pack",
+            "description": "test resolution",
+            "matched_preset_id": "feature_delivery",
+            "matched_task_kind": "shell_exec",
+            "capability_exposure": {
+                "preferred_adapter_name": "shell",
+                "capability_tags": ["artifact_generation"],
+            },
+            "compile_projection": {
+                "artifact_label": "software_delivery",
+                "goal_prefix": "[software-delivery]",
+                "artifact_context_lines": ["domain_context: software_delivery"],
+            },
+            "runtime_projection": {
+                "operator_label": "software-delivery",
+                "evidence_expectations": ["artifact exists"],
+            },
+        }
+    )
+
+    dumped = resolution.model_dump(mode="json")
+    restored = DomainPackResolution.model_validate(dumped)
+    assert restored.model_dump(mode="json") == dumped
+
+
+def test_domain_pack_catalog_validation_reports_invalid_preferred_adapter() -> None:
+    presets = load_seed_presets(Path("infra/seeds/presets.json"))
+    registry = DomainPackRegistry(
+        [
+            DomainPackDefinition.model_validate(
+                {
+                    "domain_pack_id": "bad_pack",
+                    "name": "Bad Pack",
+                    "description": "invalid preferred adapter",
+                    "match": {
+                        "preset_ids": ["feature_delivery"],
+                        "task_kinds": ["shell_exec"],
+                    },
+                    "capability_exposure": {
+                        "preferred_adapter_name": "missing_adapter",
+                        "capability_tags": [],
+                    },
+                    "compile_projection": {
+                        "artifact_label": "bad",
+                    },
+                    "runtime_projection": {
+                        "operator_label": "bad-pack",
+                    },
+                }
+            )
+        ]
+    )
+
+    report = registry.validate_catalog(
+        presets,
+        [
+            {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+            {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
+        ],
+    )
+
+    assert report["passed"] is False
+    assert report["issue_count"] == 1
+    assert report["issues"][0]["issue_code"] == "preferred_adapter_unavailable"
+
+
 def test_preset_suggestions_are_deterministic_and_explained() -> None:
     resolver = PresetResolver()
     suggestions = resolver.suggest("Research and compare implementation options")
@@ -173,8 +555,17 @@ def test_preset_suggestions_are_deterministic_and_explained() -> None:
     assert suggestions[0].score >= suggestions[1].score
     assert suggestions[0].reason
 
+    guarded = resolver.suggest("Sensitive compliance change that needs approval")
+    assert guarded[0].preset_id == "guarded_delivery"
+    assert guarded[0].reason
+
     fallback = resolver.suggest("General task")
-    assert [item.preset_id for item in fallback] == ["feature_delivery", "research_spike"]
+    assert [item.preset_id for item in fallback] == [
+        "feature_delivery",
+        "research_spike",
+        "advisory_delivery",
+        "guarded_delivery",
+    ]
     assert all(item.reason for item in fallback)
 
 

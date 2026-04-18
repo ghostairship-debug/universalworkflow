@@ -30,6 +30,22 @@ class PresetResolver:
                 "evaluate",
                 "study",
             },
+            "advisory_delivery": {
+                "advisory",
+                "recommend",
+                "quality",
+                "check",
+                "guardrail",
+                "warn",
+            },
+            "guarded_delivery": {
+                "approval",
+                "approve",
+                "guarded",
+                "sensitive",
+                "risk",
+                "compliance",
+            },
         }
 
     def list_presets(self) -> list[PresetDefinition]:
@@ -37,8 +53,8 @@ class PresetResolver:
 
     def suggest(self, goal_text: str) -> list[PresetSuggestion]:
         normalized = goal_text.lower()
-        suggestions: list[PresetSuggestion] = []
-        for preset in self.list_presets():
+        ranked: list[tuple[int, int, PresetSuggestion]] = []
+        for index, preset in enumerate(self.list_presets()):
             matched_keywords = sorted(keyword for keyword in self._keyword_rules.get(preset.preset_id, set()) if keyword in normalized)
             if matched_keywords:
                 score = len(matched_keywords) * 10
@@ -46,8 +62,8 @@ class PresetResolver:
             else:
                 score = 0
                 reason = "default fallback ordering"
-            suggestions.append(PresetSuggestion(preset_id=preset.preset_id, score=score, reason=reason))
-        return sorted(suggestions, key=lambda item: (-item.score, item.preset_id))
+            ranked.append((score, index, PresetSuggestion(preset_id=preset.preset_id, score=score, reason=reason)))
+        return [item for _, _, item in sorted(ranked, key=lambda item: (-item[0], item[1]))]
 
     def manual_select(self, preset_id: str | None) -> PresetDefinition:
         if not preset_id:

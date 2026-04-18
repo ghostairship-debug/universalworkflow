@@ -1,0 +1,44 @@
+[
+  {
+    "policy_id": "delivery_consistency_simulation",
+    "name": "Delivery Consistency Simulation",
+    "description": "Run the deterministic local consistency simulation for delivery-oriented presets.",
+    "preset_ids": [
+      "feature_delivery",
+      "guarded_delivery"
+    ],
+    "trigger_policy": "always",
+    "simulator_name": "local_consistency_check",
+    "check_ids": [
+      "inspection_consistency",
+      "runtime_terminal_alignment",
+      "review_state_alignment"
+    ]
+  },
+  {
+    "policy_id": "advisory_failure_simulation",
+    "name": "Advisory Failure Simulation",
+    "description": "Only trigger simulation when advisory delivery enters a failure-like state.",
+    "preset_ids": [
+      "advisory_delivery"
+    ],
+    "trigger_policy": "failure_only",
+    "simulator_name": "local_consistency_check",
+    "check_ids": [
+      "inspection_consistency",
+      "runtime_terminal_alignment",
+      "review_state_alignment"
+    ]
+  },
+  {
+    "policy_id": "research_no_simulation",
+    "name": "Research No Simulation",
+    "description": "Keep research runs outside the first deterministic simulation slice.",
+    "preset_ids": [
+      "research_spike"
+    ],
+    "trigger_policy": "disabled",
+    "simulator_name": "local_consistency_check",
+    "check_ids": []
+  }
+]

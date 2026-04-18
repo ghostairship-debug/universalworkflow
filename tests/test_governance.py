@@ -1,0 +1,180 @@
+import json
+from pathlib import Path
+
+from packages.core_domain.governance import (
+    build_domain_pack_platform_report,
+    build_release_readiness_report,
+    build_review_policy_report,
+    build_tech_debt_report,
+)
+
+
+def test_build_tech_debt_report_parses_registry_sections(tmp_path: Path) -> None:
+    registry_path = tmp_path / "tech-debt-registry.md"
+    registry_path.write_text(
+        """# Technical Debt Registry
+
+# 2. Repaid Debt
+
+| ID | Description | Introduced In | Repaid In | Result |
+| --- | --- | --- | --- | --- |
+| TD-002 | resolver gap | M0 | M1 | fixed |
+
+# 3. Open Debt
+
+| ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
+| --- | --- | --- | --- | --- | --- |
+| TD-007 | events minimal | M0 | M3 | partially_repaid | blocks observability |
+| TD-010 | debt docs only | M0 | M3 | partially_repaid | blocks dashboard |
+
+# 4. Freeze Review Questions
+
+1. Are all accepted deferrals recorded?
+2. Is any moved work still missing from the registry?
+""",
+        encoding="utf-8",
+    )
+
+    report = build_tech_debt_report(registry_path)
+
+    assert report["repaid_debt_count"] == 1
+    assert report["open_debt_count"] == 2
+    assert report["status_counts"] == {"partially_repaid": 2}
+    assert report["planned_phase_counts"] == {"M3": 2}
+    assert [item["debt_id"] for item in report["m3_focus_items"]] == ["TD-007", "TD-010"]
+    assert report["freeze_review_questions"] == [
+        "Are all accepted deferrals recorded?",
+        "Is any moved work still missing from the registry?",
+    ]
+
+
+def test_build_review_policy_report_projects_current_and_future_policy_catalog(tmp_path: Path) -> None:
+    registry_path = tmp_path / "tech-debt-registry.md"
+    registry_path.write_text(
+        """# Technical Debt Registry
+
+# 2. Repaid Debt
+
+| ID | Description | Introduced In | Repaid In | Result |
+| --- | --- | --- | --- | --- |
+| TD-002 | resolver gap | M0 | M1 | fixed |
+
+# 3. Open Debt
+
+| ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
+| --- | --- | --- | --- | --- | --- |
+| TD-006 | review policy narrow | M0 | M4 | partially_repaid | blocks richer policy |
+
+# 4. Freeze Review Questions
+
+1. Are all accepted deferrals recorded?
+""",
+        encoding="utf-8",
+    )
+    decision_table_path = tmp_path / "decision-table.md"
+    decision_table_path.write_text(
+        """# M1 Review Semantics Decision Table
+
+## Cases
+
+| Path | Latest Verdict | Effective Review State |
+| --- | --- | --- |
+| `auto_only` run completed successfully | auto pass | `auto_passed` |
+| `auto_only` run completed with failing review | auto fail | `auto_failed` |
+| `recommended` run completed after auto pass | auto pass | `auto_passed` |
+| `recommended` run escalated after auto fail and is waiting for operator decision | auto fail | `human_pending` |
+| `human_required` run waiting for operator decision | none | `human_pending` |
+| `mandatory` run is waiting for operator decision after auto pass | auto pass | `human_pending` |
+| `mandatory` run rejected by operator | human fail | `human_rejected` |
+
+## Notes
+
+- Keep current states backward compatible.
+- `optional` is still reference-only.
+""",
+        encoding="utf-8",
+    )
+
+    report = build_review_policy_report(
+        decision_table_path=decision_table_path,
+        registry_path=registry_path,
+    )
+
+    assert report["supported_policy_count"] == 4
+    assert [item["policy"] for item in report["supported_policies"]] == [
+        "auto_only",
+        "recommended",
+        "human_required",
+        "mandatory",
+    ]
+    assert report["expansion_readiness"]["reference_only_candidates"] == ["optional"]
+    assert report["debt_linkage"]["debt_id"] == "TD-006"
+    assert "human_pending" in report["operator_effective_states"]
+    assert "mandatory" in report["expansion_readiness"]["implemented_policies"]
+    advisory = next(item for item in report["preset_policy_map"] if item["preset_id"] == "advisory_delivery")
+    guarded = next(item for item in report["preset_policy_map"] if item["preset_id"] == "guarded_delivery")
+    assert advisory["runtime_shape"] == "execution_then_auto_review_or_human_escalation"
+    assert guarded["requires_manual_approval"] is True
+
+
+def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path: Path) -> None:
+    validation_report_path = tmp_path / "offline_validation_report.json"
+    validation_report_path.write_text(
+        json.dumps(
+            {
+                "overall_passed": True,
+                "checks": {
+                    "cli_flow": {"passed": True},
+                    "smoke_flow": {"passed": True},
+                    "api_flow": {"passed": True},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_release_readiness_report(validation_report_path=validation_report_path)
+
+    assert report["overall_ready"] is True
+    assert [gate["gate"] for gate in report["gates"]] == [
+        "offline_validation",
+        "review_policy_runtime",
+        "capability_registry",
+        "domain_pack_baseline",
+    ]
+    assert report["validation_summary"]["overall_passed"] is True
+    assert report["review_policy_summary"]["supported_policy_count"] == 4
+    assert report["capability_routes"] == [
+        {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
+        {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+        {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
+    ]
+    assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]
+    assert "platformized domain pack" in report["gates"][3]["detail"]
+    assert "optional review policy remains reference-only" in report["remaining_gaps"]
+
+
+def test_build_domain_pack_platform_report_projects_platform_sections() -> None:
+    report = build_domain_pack_platform_report()
+
+    assert report["platformized_pack_count"] == 1
+    assert report["overall_platformized"] is True
+    pack = report["pack_summaries"][0]
+    assert pack["domain_pack_id"] == "software_delivery_pack"
+    assert pack["preferred_adapter_name"] == "shell"
+    assert pack["artifact_label"] == "software_delivery"
+    assert pack["operator_label"] == "software-delivery"
+    assert all(pack["platform_sections_present"].values())
+
+
+def test_build_review_policy_report_falls_back_to_seed_presets_when_db_is_not_bootstrapped(tmp_path: Path) -> None:
+    report = build_review_policy_report(db_path=tmp_path / "missing.db")
+
+    assert report["supported_policy_count"] == 4
+    assert [item["preset_id"] for item in report["preset_policy_map"]] == [
+        "feature_delivery",
+        "research_spike",
+        "advisory_delivery",
+        "guarded_delivery",
+    ]

@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 from packages.contracts import ArtifactRef, CheckResult, Evidence
-from packages.worker_adapters.shell_adapter import ExecutionResult
+from packages.worker_adapters.base import ExecutionResult
 
 
 class EvidenceBuilder:
@@ -44,6 +44,7 @@ class EvidenceBuilder:
             artifact_refs=artifact_refs,
             return_code=result.return_code,
             raw_execution={
+                "adapter_name": result.adapter_name,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "started_at": result.started_at.isoformat(),

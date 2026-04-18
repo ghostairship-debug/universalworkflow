@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -79,9 +79,23 @@ class TaskKind(StrEnum):
     noop = "noop"
 
 
+class CapabilityRoute(ContractModel):
+    capability: str
+    adapter_name: str
+    adapter_class: str
+
+
 class ReviewPolicy(StrEnum):
     auto_only = "auto_only"
+    recommended = "recommended"
     human_required = "human_required"
+    mandatory = "mandatory"
+
+
+class SimulationTriggerPolicy(StrEnum):
+    disabled = "disabled"
+    failure_only = "failure_only"
+    always = "always"
 
 
 class ReviewDecision(StrEnum):
@@ -180,6 +194,20 @@ class BudgetPolicy(ContractModel):
     timeout_seconds: int = Field(gt=0)
 
 
+class BudgetLedger(PersistedContractModel):
+    ledger_id: str = Field(default_factory=lambda: new_id("ledger"))
+    run_id: str
+    preset_id: str
+    max_retries: int = Field(ge=0)
+    timeout_seconds: int = Field(gt=0)
+    compile_count: int = Field(default=0, ge=0)
+    recompile_count: int = Field(default=0, ge=0)
+    execution_count: int = Field(default=0, ge=0)
+    total_runtime_ms: int = Field(default=0, ge=0)
+    last_return_code: int | None = None
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class PresetDefinition(PersistedContractModel):
     preset_id: str
     name: str
@@ -188,6 +216,201 @@ class PresetDefinition(PersistedContractModel):
     default_review_policy: ReviewPolicy
     default_budget_policy: BudgetPolicy
     requires_manual_approval: bool = False
+
+
+class DomainPackMatchRule(ContractModel):
+    preset_ids: list[str] = Field(default_factory=list)
+    task_kinds: list[TaskKind] = Field(default_factory=list)
+
+
+class DomainPackCapabilityExposure(ContractModel):
+    preferred_adapter_name: str | None = None
+    capability_tags: list[str] = Field(default_factory=list)
+
+
+class DomainPackCompileProjection(ContractModel):
+    artifact_label: str
+    goal_prefix: str | None = None
+    artifact_context_lines: list[str] = Field(default_factory=list)
+
+
+class DomainPackRuntimeProjection(ContractModel):
+    operator_label: str | None = None
+    evidence_expectations: list[str] = Field(default_factory=list)
+
+
+class DomainPackDefinition(PersistedContractModel):
+    domain_pack_id: str
+    name: str
+    description: str
+    enabled: bool = True
+    match: DomainPackMatchRule = Field(default_factory=DomainPackMatchRule)
+    capability_exposure: DomainPackCapabilityExposure = Field(default_factory=DomainPackCapabilityExposure)
+    compile_projection: DomainPackCompileProjection
+    runtime_projection: DomainPackRuntimeProjection = Field(default_factory=DomainPackRuntimeProjection)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade_flat_shape(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        if "match" not in payload:
+            payload["match"] = {
+                "preset_ids": payload.pop("preset_ids", []),
+                "task_kinds": payload.pop("task_kinds", []),
+            }
+        if "capability_exposure" not in payload:
+            payload["capability_exposure"] = {
+                "preferred_adapter_name": payload.pop("preferred_adapter_name", None),
+                "capability_tags": payload.pop("capability_tags", []),
+            }
+        if "compile_projection" not in payload:
+            payload["compile_projection"] = {
+                "artifact_label": payload.pop("artifact_label"),
+                "goal_prefix": payload.pop("goal_prefix", None),
+                "artifact_context_lines": payload.pop("artifact_context_lines", []),
+            }
+        if "runtime_projection" not in payload:
+            payload["runtime_projection"] = {
+                "operator_label": payload.pop("operator_label", None),
+                "evidence_expectations": payload.pop("evidence_expectations", []),
+            }
+        return payload
+
+    @property
+    def preset_ids(self) -> list[str]:
+        return self.match.preset_ids
+
+    @property
+    def task_kinds(self) -> list[TaskKind]:
+        return self.match.task_kinds
+
+    @property
+    def artifact_label(self) -> str:
+        return self.compile_projection.artifact_label
+
+    @property
+    def goal_prefix(self) -> str | None:
+        return self.compile_projection.goal_prefix
+
+    @property
+    def preferred_adapter_name(self) -> str | None:
+        return self.capability_exposure.preferred_adapter_name
+
+    @property
+    def capability_tags(self) -> list[str]:
+        return self.capability_exposure.capability_tags
+
+    @property
+    def operator_label(self) -> str | None:
+        return self.runtime_projection.operator_label
+
+    @property
+    def evidence_expectations(self) -> list[str]:
+        return self.runtime_projection.evidence_expectations
+
+
+class DomainPackResolution(ContractModel):
+    domain_pack_id: str
+    name: str
+    description: str
+    matched_preset_id: str
+    matched_task_kind: TaskKind
+    capability_exposure: DomainPackCapabilityExposure = Field(default_factory=DomainPackCapabilityExposure)
+    compile_projection: DomainPackCompileProjection
+    runtime_projection: DomainPackRuntimeProjection = Field(default_factory=DomainPackRuntimeProjection)
+
+
+class MemoryNamespace(PersistedContractModel):
+    namespace_id: str
+    name: str
+    kind: str
+    scope: str
+    retention_policy: str
+    retrieval_policy: str
+
+
+class MemoryCandidate(ContractModel):
+    candidate_id: str = Field(default_factory=lambda: new_id("memcand"))
+    run_id: str
+    namespace_id: str
+    title: str
+    summary: str
+    tags: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class MemoryItem(PersistedContractModel):
+    memory_item_id: str = Field(default_factory=lambda: new_id("memory"))
+    run_id: str
+    namespace_id: str
+    source_candidate_id: str
+    title: str
+    summary: str
+    tags: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    materialized_from: str = "run_memory_candidate"
+
+
+class MemoryRetrievalPreview(ContractModel):
+    run_id: str | None = None
+    preset_id: str | None = None
+    namespace_ids: list[str] = Field(default_factory=list)
+    selected_memory_item_ids: list[str] = Field(default_factory=list)
+    source_run_ids: list[str] = Field(default_factory=list)
+    item_count: int = Field(ge=0)
+    brief_lines: list[str] = Field(default_factory=list)
+    items: list[MemoryItem] = Field(default_factory=list)
+
+
+class SimulationPolicyDefinition(PersistedContractModel):
+    policy_id: str
+    name: str
+    description: str
+    preset_ids: list[str] = Field(default_factory=list)
+    trigger_policy: SimulationTriggerPolicy = SimulationTriggerPolicy.disabled
+    simulator_name: str = "local_consistency_check"
+    check_ids: list[str] = Field(default_factory=list)
+
+
+class SimulationReportStatus(StrEnum):
+    skipped = "skipped"
+    passed = "passed"
+    failed = "failed"
+
+
+class SimulationRecordSource(StrEnum):
+    manual_request = "manual_request"
+    lifecycle_awaiting_review = "lifecycle_awaiting_review"
+    lifecycle_terminal = "lifecycle_terminal"
+    lifecycle_cancelled = "lifecycle_cancelled"
+
+
+class SimulationReport(ContractModel):
+    run_id: str
+    preset_id: str
+    policy_id: str
+    trigger_policy: SimulationTriggerPolicy
+    simulator_name: str
+    triggered: bool
+    status: SimulationReportStatus
+    reason: str
+    summary: str
+    finding_codes: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
+    check_results: list[CheckResult] = Field(default_factory=list)
+
+
+class SimulationRecord(PersistedContractModel):
+    record_id: str = Field(default_factory=lambda: new_id("simrec"))
+    run_id: str
+    policy_id: str
+    status: SimulationReportStatus
+    triggered: bool
+    summary: str
+    recorded_from: SimulationRecordSource = SimulationRecordSource.manual_request
+    report: SimulationReport
 
 
 class HandoffLite(PersistedContractModel):

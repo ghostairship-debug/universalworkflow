@@ -39,3 +39,117 @@ class InvalidStateTransitionError(WorkflowError):
                 "target_status": target_status,
             },
         )
+
+
+class UnsupportedTaskKindError(WorkflowError):
+    code = "unsupported_task_kind"
+    status_code = 422
+
+    def __init__(self, task_kind: str, available_task_kinds: list[str]):
+        super().__init__(
+            f"unsupported task kind: {task_kind}",
+            {"task_kind": task_kind, "available_task_kinds": available_task_kinds},
+        )
+
+
+class CapabilityAdapterNotFoundError(WorkflowError):
+    code = "capability_adapter_not_found"
+    status_code = 422
+
+    def __init__(self, capability: str, adapter_name: str, available_adapters: list[str]):
+        super().__init__(
+            f"adapter `{adapter_name}` is not available for capability `{capability}`",
+            {
+                "capability": capability,
+                "adapter_name": adapter_name,
+                "available_adapters": available_adapters,
+            },
+        )
+
+
+class WorkerAdapterUnavailableError(WorkflowError):
+    code = "worker_adapter_unavailable"
+    status_code = 503
+
+    def __init__(self, adapter_name: str, reason: str, details: dict | None = None):
+        super().__init__(
+            f"worker adapter `{adapter_name}` is unavailable: {reason}",
+            {"adapter_name": adapter_name, "reason": reason, **(details or {})},
+        )
+
+
+class TaskKindNotAllowedError(WorkflowError):
+    code = "task_kind_not_allowed"
+    status_code = 409
+
+    def __init__(self, preset_id: str, task_kind: str, allowed_task_kinds: list[str]):
+        super().__init__(
+            f"task kind `{task_kind}` is not allowed for preset `{preset_id}`",
+            {
+                "preset_id": preset_id,
+                "task_kind": task_kind,
+                "allowed_task_kinds": allowed_task_kinds,
+            },
+        )
+
+
+class UnsupportedRepairActionError(WorkflowError):
+    code = "unsupported_repair_action"
+    status_code = 422
+
+    def __init__(self, action: str, available_actions: list[str]):
+        super().__init__(
+            f"unsupported repair action: {action}",
+            {"action": action, "available_actions": available_actions},
+        )
+
+
+class RepairActionNotAvailableError(WorkflowError):
+    code = "repair_action_not_available"
+    status_code = 409
+
+    def __init__(self, run_id: str, action: str | None, available_actions: list[str]):
+        super().__init__(
+            f"repair action is not available for run `{run_id}`",
+            {"run_id": run_id, "action": action, "available_actions": available_actions},
+        )
+
+
+class RuntimeClaimConflictError(WorkflowError):
+    code = "runtime_claim_conflict"
+    status_code = 409
+
+    def __init__(self, runtime_task_id: str, claim_id: str, lease_expires_at: str):
+        super().__init__(
+            f"runtime task `{runtime_task_id}` already has an active claim",
+            {
+                "runtime_task_id": runtime_task_id,
+                "claim_id": claim_id,
+                "lease_expires_at": lease_expires_at,
+            },
+        )
+
+
+class BudgetExhaustedError(WorkflowError):
+    code = "budget_exhausted"
+    status_code = 409
+
+    def __init__(self, run_id: str, remaining_retries: int, max_retries: int):
+        super().__init__(
+            f"budget exhausted for run `{run_id}`",
+            {
+                "run_id": run_id,
+                "remaining_retries": remaining_retries,
+                "max_retries": max_retries,
+            },
+        )
+
+
+class RuntimeGatewayConfigurationError(WorkflowError):
+    code = "runtime_gateway_configuration_error"
+    status_code = 422
+
+
+class RuntimeGatewayExecutionError(WorkflowError):
+    code = "runtime_gateway_execution_error"
+    status_code = 502

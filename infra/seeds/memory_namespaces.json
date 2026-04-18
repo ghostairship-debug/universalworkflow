@@ -1,0 +1,34 @@
+[
+  {
+    "namespace_id": "repo",
+    "name": "Repository Memory",
+    "kind": "working_context",
+    "scope": "run_and_repo",
+    "retention_policy": "retain_recent_successes",
+    "retrieval_policy": "rule_based_context_pack"
+  },
+  {
+    "namespace_id": "failure",
+    "name": "Failure Memory",
+    "kind": "failure_analysis",
+    "scope": "cross_run",
+    "retention_policy": "retain_failures_and_repairs",
+    "retrieval_policy": "rule_based_failure_lookup"
+  },
+  {
+    "namespace_id": "policy",
+    "name": "Policy Memory",
+    "kind": "governance_context",
+    "scope": "cross_run",
+    "retention_policy": "retain_active_policy_decisions",
+    "retrieval_policy": "rule_based_policy_lookup"
+  },
+  {
+    "namespace_id": "release",
+    "name": "Release Memory",
+    "kind": "delivery_context",
+    "scope": "run_and_release",
+    "retention_policy": "retain_release_ready_runs",
+    "retrieval_policy": "rule_based_release_lookup"
+  }
+]

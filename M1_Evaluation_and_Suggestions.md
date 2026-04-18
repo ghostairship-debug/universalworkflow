@@ -1,66 +1,80 @@
-# Universal Agentic Workflow OS (v2.1) - M1 阶段评估报告 (Phase Plan Review)
+# Universal Agentic Workflow OS (v2.1) - M1 阶段实现评估报告 (Implementation Review)
 
 **评估人：** Gemini (Antigravity) 
-**评估日期：** 2026-04-16  
-**评估基准：** `universal_agentic_workflow_os_M1_phase_plan_v2_1.md`
-**评估结论：** **M1 Phase Plan 评审通过，高度赞赏。可以按此基线直接推进 M1 开发设计。**  
+**评估日期：** 2026-04-19
+**评估基准：** M1 Phase 实际代码落地 (packages/, apps/, infra/)
+**评估结论：** **M1 Phase 实现完美闭环，符合 Local-First 且高度解耦的架构初衷，建议重构部分巨型类后稳步推进 M1.5/M2。**
 
 ---
 
-## 1. 总体重评摘要 (Executive Summary)
+## 1. 总体实现情况摘要 (Current Implementation Status)
 
-Codex 输出的 M1 Phase 总览与执行计划不仅逻辑严密，而且展现了极强的工程项目管理素养。该计划准确评估了当前 M0 的完成度，并基于此将 M1 的目标从“建设最窄主轴”调整为“将 Bootstrap 主轴升级为具备状态恢复、重编译和可审查特性的最小可运作主链”。
+经过对代码库和测试结果的深度扫描，M1 阶段的实现在架构纪律和业务完整度上达到了极高水准。当前的测试覆盖率极佳（`pytest` 208项全数通过），且脱机验证（Offline Validation）也已闭环。
 
-更出彩的是，Codex 在此阶段引入了极具纪律性的“Task Card 驱动开发”的强制标准（要求 Task Card 下探到受影响接口、改动文件、回滚点及测试方案层面），从流程上预防了 Agent 在自我演进中常常陷入的“写到哪算哪”与“范围失控”怪圈。
-
----
-
-## 2. 计划与策略亮点评估 (Highlights & Strengths)
-
-### 2.1 极其准确的阶段边界界定 (Scope Definition)
-计划非常理智地将以下高诱惑力但引入高复杂度的特性**明确排除**在了 M1 之外：
-* 真实并发控制（Claim / Lease / Barrier）
-* 第二执行器与能力动态路由
-* 过于沉重的 LangGraph 全家桶（完全发挥回放、分叉等特性被延作后续需求）
-这一剥离确保了 M1 能专注收口“事务性、幂等性与可恢复性”，降低了失败的风险。
-
-### 2.2 完美吸收 M0 评审债的跟进 (Incorporation of Technical Debt)
-计划直接将 M0 遗留与建议列为了 M1 阶段的核心交付目标：
-* `PresetResolver.suggest` 仅限推荐功能的明确。
-* `HandoffLite` 落入真实查询表的设计。
-* 执行态守护（execute_run 状态前置守卫、cancel 的幂等）。
-* 引入 Unit of Work (事务写入) 保障容错率。
-
-### 2.3 严谨的 Phase 编排与依赖树 (Phase Sequencing)
-M1 的 5 个阶段推演合理，逻辑因果清晰：
-* **Phase 0 (Rebaseline):** 先锁定增量协议和数据结构的变动，避免后续开发中频繁推翻重作。
-* **Phase 1 (Contracts/Persistence Delta):** 完成 Schema 扩展和所有的 DB Migrations，奠定基础。
-* **Phase 2 (Preset & Compile):** 让准备态工作流变得显式可见。
-* **Phase 3 (Resumable Runtime):** 贯通核心能力。
-* **Phase 4 (Review Policy & DX):** 改善用户与系统交互路径，回归并清理账面。
-
-### 2.4 Code-Level Task 卡片纪律 (Task Card Discipline)
-将 Task Card 的写法拉升至“代码级别执行卡”（要求读写集、测试方案、风险与回滚点、具体到函数路由级），极大地减少了在代码生成过程中的“Agent 幻觉”问题，也是后续开发能实现精细控制的底气。
+**已落地的核心高价值特性：**
+* **工作流显式化：** 成功将内部状态升级为显式的 `compile / recompile / resume` 暴露接口。
+* **防腐层与隔离墙：** `langgraph` 被极其严格地限制在了 `packages/runtime_langgraph/gateway.py` 中，`core_domain` 和 `contracts` 完美保持了纯 Python/SQLite 的无状态特性。
+* **审查策略引擎：** 实现了四种 Review Policy (`auto_only`, `recommended`, `human_required`, `mandatory`)，并能正确触发状态机的转换。
+* **持久化能力增强：** `HandoffLite` 已经成功落表，且 Operator TUI 提供了极佳的只读监控体验。
+* **技术债偿还：** 成功偿还了 M0 遗留的 TD-002 (`PresetResolver.suggest`)、TD-003 (`HandoffLite` 作用域) 和 TD-004 (Thin compile 占位)。
 
 ---
 
-## 3. 面向 M1 实际开发的进一步建议 (Forward-looking Suggestions)
+## 2. 存在的风险隐患 (Identified Risks)
 
-虽然 M1 的 Phase Plan 已经非常优秀，但在马上要开始的详细开发中，建议补充关注以下几条微小但也可能影响执行顺畅度的细节：
+尽管系统跑通了，但从代码组织和演进角度来看，存在以下几个不容忽视的风险：
 
-1. **测试数据的迁移策略：** Phase 1 会进行 Schema 扩展，注意说明是否需要兼容 M0 已生成的数据（M0 仅作为临时测试，可直接使用 Db Reset 清理，建议在 M1 开发前显式明确“允许破坏性清理本地数据库”）。
-2. **LangGraph 防腐层的重构切入点：** 之前在 M0 的深度 Review 中提出，`RuntimeGateway` 从 `core_domain` 对 `runtime` 的引用关系会导致隔离墙容易被打破。Phase 1（或 Phase 0 边界冻结时）请务必包含“将 `RuntimeGateway` ABC 抽象提取至 `packages/contracts/` 中”的任务，从而实现真正的依赖倒置（Dependency Inversion）。
-3. **UoW (Unit of Work) 的粒度设计：** 引入事务非常核心，在具体实施 Phase 3 前，最好单独分出一个专门的 ADR 或者独立任务去梳理 `contextmanager` 是做在 API 的 Request 级，还是做在 Service 方法的内部。
+1. **“上帝类”的出现 (God Object Anti-Pattern)：**
+   `packages/core_domain/services.py` 中的 `OrchestratorService` 代码量已经超过 3600 行（165KB），承担了状态流转、凭证校验、资源回收、预算审计等几乎所有业务。这是一个非常危险的维护瓶颈，容易导致后续开发出现隐式耦合和合并冲突。
+2. **并发控制仍处于“纸面防御”阶段：**
+   技术债注册表显示，虽然引入了 `Claim` 和 `Worker-Lease` 的数据结构，但 M1 依然没有强制的并发拦截器（TD-001, TD-009）。如果后续存在多个调度器或终端同时操作同一个 Run，极易引发状态撕裂。
+3. **测试过度依赖 Shell 集成：**
+   目前的 E2E 验证大量依赖于 `make smoke` 和 `infra.scripts.offline_validation` 脚本。这种重量级的全链路测试在引入真正的 LLM Gateway 时，可能会面临极高的 Flaky（不稳定）风险。
 
 ---
 
-## 4. 最终结论 (Final Verdict)
+## 3. 需要修改的建议 (Refactoring & Modification Suggestions)
 
-**绿灯放行 (Greenlight)**。
+在全面进入 M2 前，建议插入一个极短的技术债清理阶段（Refactoring Phase）：
 
-Codex 对接下来的目标理解透彻，规划细致且充满实战工程经验。不需要对其宏观策略做任何更改。
+* **重构拆分 OrchestratorService（最高优先级）：**
+  必须将 `OrchestratorService` 拆分为职责单一的多个 Service。例如：
+  * `RunLifecycleService`: 负责 create, compile, status transition
+  * `ReviewGovernanceService`: 负责 evidence, review, policy check
+  * `ResourceLeaseService`: 负责 claim 和 worker_lease
+  * `TelemetryDiagnosticService`: 负责 event, snapshot, inspection
+* **策略硬编码的抽离：**
+  目前 Review 策略（如 `recommended` 退化为 `human_required`）的部分逻辑写死在主流程中。建议通过策略模式（Strategy Pattern）将不同 Policy 的处理引擎拆分，以便未来扩展（TD-006）。
+* **自动化恢复机制：**
+  当前的 `reconcile` 偏向于将异常状态呈现给 Operator，建议针对常见的网络闪断导致的 Lease 过期，提供自动 Retry 和 Repair 的内置 Handler。
 
-**下一步行动建议：**
-按照提出的框架，启动 **Phase 0** 的执行：
-1. 建立 M1 的具体业务接口与合约对象的 Delta 定义。
-2. 着手编写 `m1_phase_docs/phase_0_x.md` 等具体产物文件，以开启新一轮的开发循环。
+---
+
+## 4. 下一步开发方案 (Next Steps: M1.5 & M2)
+
+结合当前的技术债列表，后续路线应当如此规划：
+
+### M1.5：执行器路由完善 (Executor Routing)
+* 重点偿还 **TD-005**。
+* 让 `OpenCodeAdapter` 与 `ShellAdapter` 并行工作，跑通真正的 `WorkerRouter` 动态分发。这是引入复杂多模态 Agent 的基础。
+
+### M2：并发控制与断点恢复 (Concurrency & Resumability)
+* 重点偿还 **TD-001, TD-008, TD-009**。
+* 强制执行 `Claim / Lease / Barrier`。确保同一个 RuntimeTask 在同一个时间分片内只有唯一的 Executor 在跑。
+* 实现完整的 `interrupt / resume / checkpoint merge` 闭环。
+
+### M3：深度观测与控制台 (Observability & UI)
+* 偿还 **TD-007, TD-010**。
+* 丰富 Event 的 Payload，提供完整的 Trace ID 与 Metrics。
+* 开发可视化的 Web Dashboard 取代当前的 Terminal TUI。
+
+---
+
+## 5. 其他没想到的点 (Other Insights & Blind Spots)
+
+1. **上下文爆炸与修剪 (Context Pruning Strategy)：**
+   随着 `memory_items` 和长生命周期 Run 的增加，在恢复（Resume）时发送给 LLM Gateway 的状态上下文（Payload/Prompt）会迅速膨胀并触及 Token 限制。目前系统里缺乏明确的 **“记忆遗忘/修剪策略”**（Memory Summarization/Eviction），建议在 M2 加入相关能力。
+2. **Schema 迁移的脆弱性：**
+   随着状态表越来越复杂，如果 SQLite 的 Migration 依然靠纯手工编写 SQL，极易出现 Schema Drift。建议考虑引入轻量级的 ORM 迁移工具（如 Alembic，虽然保持模型轻量，但 Schema 管理可以工具化）以提升容错率。
+3. **离线与在线状态的平滑降级：**
+   目前的网络感知大多停留在离线探针（Offline Probe）。如果 LLM 请求在中途挂起超过 5 分钟，系统的断网降级体验还比较生硬。建议引入一个全局的 `Circuit Breaker`（熔断器），在 Gateway 连续超时后主动挂起任务，避免耗尽重试预算（Budget Ledger）。

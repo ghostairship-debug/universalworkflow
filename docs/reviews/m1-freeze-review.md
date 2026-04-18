@@ -2,6 +2,8 @@
 
 **Decision:** `go`
 
+**Scope note:** This review closes `M1 Phase 0` to `M1 Phase 4` only. The later second-executor / capability-routing work is tracked as `M1.5`, not as part of the freeze scope. See [docs/m1_to_m2_progression.md](/D:/Universal%20Agentic%20workflow/docs/m1_to_m2_progression.md:1).
+
 ## Evidence
 
 - `Phase 0` to `Phase 4` were completed in order, and the phase docs plus task cards are present in the repository.

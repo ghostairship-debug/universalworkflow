@@ -27,5 +27,33 @@
       "timeout_seconds": 90
     },
     "requires_manual_approval": true
+  },
+  {
+    "preset_id": "advisory_delivery",
+    "name": "Advisory Delivery",
+    "description": "Produce a narrow implementation artifact with auto review, escalating to human review only if the automated gate fails.",
+    "allowed_task_kinds": [
+      "shell_exec"
+    ],
+    "default_review_policy": "recommended",
+    "default_budget_policy": {
+      "max_retries": 1,
+      "timeout_seconds": 120
+    },
+    "requires_manual_approval": false
+  },
+  {
+    "preset_id": "guarded_delivery",
+    "name": "Guarded Delivery",
+    "description": "Produce a narrow implementation artifact with auto review evidence plus mandatory human sign-off.",
+    "allowed_task_kinds": [
+      "shell_exec"
+    ],
+    "default_review_policy": "mandatory",
+    "default_budget_policy": {
+      "max_retries": 1,
+      "timeout_seconds": 150
+    },
+    "requires_manual_approval": true
   }
 ]

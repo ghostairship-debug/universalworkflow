@@ -28,13 +28,13 @@
 
 | ID | 债务描述 | 引入阶段 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
-| TD-001 | Claim 只保留语义占位，未执行真实资源占用控制 | M0 | M2 | 未偿还 | 阻塞并发安全与冲突调度 |
-| TD-005 | 仅接入 `ShellAdapter`，未接第二执行器与能力路由 | M0 | M1.5 | 未偿还 | 阻塞多执行器统一调度验证 |
-| TD-006 | review policy 仍然只有 `auto_only` 与最小 `human_required`，缺少 richer policy | M0 | M3 | 部分偿还 | M1 已打通人工审核闭环，但仍阻塞更细粒度质量策略 |
-| TD-007 | `run_events` 仍然只承载最小摘要 payload，不承载完整 trace 与 metrics | M0 | M3 | 未偿还 | 阻塞深度 observability 与 replay 能力 |
-| TD-008 | 运行时只实现纯 Python resumable 主链，不实现复杂 interrupt / resume / checkpoint merge | M0 | M2 | 部分偿还 | M1 已打通可恢复主链，但仍阻塞复杂运行时恢复 |
-| TD-009 | 系统仍采用串行执行语义，不引入 Claim / Lease / Barrier 的真实实现 | M0 | M2 | 未偿还 | 阻塞安全并发执行 |
-| TD-010 | 技术债只以本登记簿管理，尚未接入自动化校验或 dashboard | M0 | M3 | 未偿还 | 阻塞技术债量化跟踪 |
+| TD-001 | 仅有本地 claim / worker-lease 基线，仍未执行真实分布式资源占用控制 | M0 | M2 | 部分偿还 | 已具备本地 ownership 守卫与诊断，但仍阻塞真正的并发安全与冲突调度 |
+| TD-005 | 仅接入 `ShellAdapter`，未接第二执行器与能力路由 | M0 | M1.5 | 已偿还 | 已补齐 `NoopAdapter`、`WorkerRouter` 与显式 task-kind 路由验证 |
+| TD-006 | review policy 仍然缺少完整 richer policy 体系 | M0 | Next Cycle | 部分偿还 | 已补齐结构化 review-policy governance report、decision-table 基线，以及 `recommended` / `mandatory` 的 run-level runtime 语义；`optional` 在当前周期 freeze 时明确保留为 next-cycle candidate |
+| TD-007 | `run_events` 仍然只承载最小摘要 payload，不承载完整 trace 与 metrics | M0 | M3 | 部分偿还 | 已补齐 summary / timeline digest、richer event inspection、closure-audit 与 run audit-report 基线，但仍阻塞深度 observability 与 replay 能力 |
+| TD-008 | 运行时只实现本地 resumable 主链，不实现复杂 interrupt / resume / checkpoint merge | M0 | M2 | 部分偿还 | 已补齐 reconcile、snapshot、claim、worker-lease 与 runtime-attempt 基线，但仍阻塞复杂运行时恢复 |
+| TD-009 | 系统仍采用串行执行语义，尚未进入 Claim / Lease / Barrier 的真实并发实现 | M0 | M2 | 部分偿还 | 已具备本地 claim / worker-lease 语义，但仍阻塞安全并发执行 |
+| TD-010 | 技术债只以本登记簿管理，尚未接入自动化校验或 dashboard | M0 | M3 | 部分偿还 | 已通过结构化 governance report、summary、event inspection、run audit-report、review materials、release-readiness report 与 offline validation 补强治理基线，但仍阻塞技术债量化跟踪与 dashboard 化 |
 
 ---
 

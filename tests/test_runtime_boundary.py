@@ -4,7 +4,26 @@ import ast
 from pathlib import Path
 
 from packages.contracts import RuntimeStateRef
-from packages.runtime_langgraph.gateway import NullRuntimeGateway
+from packages.runtime_langgraph.gateway import NullRuntimeGateway, OpenAIRuntimeGateway
+
+
+class _FakeResponse:
+    id = "resp_fake"
+    output_text = "Outcome: create artifact Risk: stale assumptions Check: verify output file"
+
+
+class _FakeResponses:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return _FakeResponse()
+
+
+class _FakeOpenAIClient:
+    def __init__(self):
+        self.responses = _FakeResponses()
 
 
 def test_contracts_and_core_domain_do_not_import_langgraph() -> None:
@@ -27,3 +46,30 @@ def test_runtime_gateway_state_is_lightweight() -> None:
     assert state_ref.runtime_task_id == "task_123"
     assert isinstance(state_ref.graph_step, str)
     assert isinstance(state_ref.state_payload, dict)
+    assert gateway.describe()["provider"] == "null"
+
+
+def test_openai_runtime_gateway_generates_execution_brief_with_fake_client() -> None:
+    fake_client = _FakeOpenAIClient()
+    gateway = OpenAIRuntimeGateway(client=fake_client, model="gpt-5.4-mini")
+
+    compiled_state = gateway.start("run_456", "task_456")
+    compiled_state = RuntimeStateRef.model_validate(
+        {
+            **compiled_state.model_dump(mode="json"),
+            "state_payload": {
+                **compiled_state.state_payload,
+                "goal": "Draft an execution note",
+                "preset_id": "feature_delivery",
+                "task_kind": "shell_exec",
+                "expected_artifacts": ["state/artifacts/run_456_feature_delivery.md"],
+            },
+        }
+    )
+    resumed_state = gateway.resume(compiled_state)
+
+    assert gateway.describe()["provider"] == "openai"
+    assert resumed_state.state_payload["runtime_gateway_provider"] == "openai"
+    assert resumed_state.state_payload["llm_model"] == "gpt-5.4-mini"
+    assert resumed_state.state_payload["runtime_brief"].startswith("Outcome:")
+    assert fake_client.responses.calls[0]["model"] == "gpt-5.4-mini"

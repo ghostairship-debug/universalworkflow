@@ -3,19 +3,27 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from packages.contracts import (
+    BudgetLedger,
     Evidence,
     HandoffLite,
+    MemoryItem,
     Phase,
     PresetDefinition,
     ReviewVerdict,
     Run,
     RunEvent,
+    SimulationRecord,
+    RuntimeAttempt,
+    RunSnapshot,
+    RuntimeClaim,
     RuntimeStateRef,
     RuntimeTask,
+    WorkerLease,
     TaskCard,
     TaskPacket,
     TaskStatus,
@@ -31,6 +39,10 @@ def _json_dump(value: Any) -> str:
 
 def _json_load(value: str) -> Any:
     return json.loads(value)
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 class RepositoryBase:
@@ -78,9 +90,22 @@ class RunRepository(RepositoryBase):
             row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return Run.model_validate(dict(row)) if row else None
 
+    def list(self, limit: int | None = None, connection: sqlite3.Connection | None = None) -> list[Run]:
+        query = "SELECT * FROM runs ORDER BY updated_at DESC, created_at DESC, run_id DESC"
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [Run.model_validate(dict(row)) for row in rows]
+
     def update_status(self, run_id: str, status: str, connection: sqlite3.Connection | None = None) -> Run | None:
         with self._connection(connection, commit=True) as conn:
-            conn.execute("UPDATE runs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?", (status, run_id))
+            conn.execute(
+                "UPDATE runs SET status = ?, updated_at = ? WHERE run_id = ?",
+                (status, _utc_now_iso(), run_id),
+            )
         return self.get(run_id, connection=connection)
 
 
@@ -413,6 +438,157 @@ class EventRepository(RepositoryBase):
         return events
 
 
+class MemoryItemRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> MemoryItem:
+        data = dict(row)
+        data["tags"] = _json_load(data.pop("tags_json"))
+        data["source_refs"] = _json_load(data.pop("source_refs_json"))
+        return MemoryItem.model_validate(data)
+
+    def create(self, memory_item: MemoryItem, connection: sqlite3.Connection | None = None) -> MemoryItem:
+        existing = self.get_by_source_candidate(memory_item.source_candidate_id, connection=connection)
+        if existing is not None:
+            return existing
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_items (
+                  memory_item_id, run_id, namespace_id, source_candidate_id, title, summary,
+                  tags_json, source_refs_json, materialized_from, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    memory_item.memory_item_id,
+                    memory_item.run_id,
+                    memory_item.namespace_id,
+                    memory_item.source_candidate_id,
+                    memory_item.title,
+                    memory_item.summary,
+                    _json_dump(memory_item.tags),
+                    _json_dump(memory_item.source_refs),
+                    memory_item.materialized_from,
+                    memory_item.schema_version,
+                    memory_item.created_at.isoformat(),
+                ),
+            )
+        return memory_item
+
+    def get(self, memory_item_id: str, connection: sqlite3.Connection | None = None) -> MemoryItem | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM memory_items WHERE memory_item_id = ?", (memory_item_id,)).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def get_by_source_candidate(
+        self,
+        source_candidate_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> MemoryItem | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT * FROM memory_items WHERE source_candidate_id = ?",
+                (source_candidate_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def list(
+        self,
+        *,
+        run_id: str | None = None,
+        namespace_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[MemoryItem]:
+        query = "SELECT * FROM memory_items"
+        predicates: list[str] = []
+        params: list[Any] = []
+        if run_id is not None:
+            predicates.append("run_id = ?")
+            params.append(run_id)
+        if namespace_id is not None:
+            predicates.append("namespace_id = ?")
+            params.append(namespace_id)
+        if predicates:
+            query += " WHERE " + " AND ".join(predicates)
+        query += " ORDER BY created_at, memory_item_id"
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[MemoryItem]:
+        return self.list(run_id=run_id, connection=connection)
+
+    def list_for_namespace(self, namespace_id: str, connection: sqlite3.Connection | None = None) -> list[MemoryItem]:
+        return self.list(namespace_id=namespace_id, connection=connection)
+
+
+class SimulationRecordRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> SimulationRecord:
+        data = dict(row)
+        data["triggered"] = bool(data["triggered"])
+        data["report"] = _json_load(data.pop("report_json"))
+        return SimulationRecord.model_validate(data)
+
+    def create(
+        self,
+        record: SimulationRecord,
+        connection: sqlite3.Connection | None = None,
+    ) -> SimulationRecord:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO simulation_records (
+                  record_id, run_id, policy_id, status, triggered, summary, recorded_from,
+                  report_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.record_id,
+                    record.run_id,
+                    record.policy_id,
+                    record.status,
+                    1 if record.triggered else 0,
+                    record.summary,
+                    record.recorded_from,
+                    _json_dump(record.report.model_dump(mode="json")),
+                    record.schema_version,
+                    record.created_at.isoformat(),
+                ),
+            )
+        return record
+
+    def get(self, record_id: str, connection: sqlite3.Connection | None = None) -> SimulationRecord | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT * FROM simulation_records WHERE record_id = ?",
+                (record_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[SimulationRecord]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM simulation_records
+                WHERE run_id = ?
+                ORDER BY created_at, record_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> SimulationRecord | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM simulation_records
+                WHERE run_id = ?
+                ORDER BY created_at DESC, record_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+
 class HandoffRepository(RepositoryBase):
     def create(self, handoff: HandoffLite, connection: sqlite3.Connection | None = None) -> HandoffLite:
         with self._connection(connection, commit=True) as conn:
@@ -454,6 +630,12 @@ class HandoffRepository(RepositoryBase):
 
 
 class RuntimeStateRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> RuntimeStateRef:
+        data = dict(row)
+        data["state_payload"] = _json_load(data.pop("state_payload_json"))
+        data["is_terminal"] = bool(data["is_terminal"])
+        return RuntimeStateRef.model_validate(data)
+
     def upsert(self, state_ref: RuntimeStateRef, connection: sqlite3.Connection | None = None) -> RuntimeStateRef:
         with self._connection(connection, commit=True) as conn:
             conn.execute(
@@ -492,12 +674,44 @@ class RuntimeStateRepository(RepositoryBase):
                 "SELECT * FROM runtime_state_refs WHERE runtime_task_id = ?",
                 (runtime_task_id,),
             ).fetchone()
-        if row is None:
-            return None
-        data = dict(row)
-        data["state_payload"] = _json_load(data.pop("state_payload_json"))
-        data["is_terminal"] = bool(data["is_terminal"])
-        return RuntimeStateRef.model_validate(data)
+        return self._row_to_model(row) if row is not None else None
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> RuntimeStateRef | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM runtime_state_refs
+                WHERE run_id = ?
+                ORDER BY updated_at DESC, created_at DESC, state_ref_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def list_live_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeStateRef]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runtime_state_refs
+                WHERE run_id = ? AND is_terminal = 0
+                ORDER BY updated_at, state_ref_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def list_terminal_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeStateRef]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runtime_state_refs
+                WHERE run_id = ? AND is_terminal = 1
+                ORDER BY updated_at, state_ref_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
 
     def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeStateRef]:
         with self._connection(connection) as conn:
@@ -505,14 +719,481 @@ class RuntimeStateRepository(RepositoryBase):
                 "SELECT * FROM runtime_state_refs WHERE run_id = ? ORDER BY updated_at, state_ref_id",
                 (run_id,),
             ).fetchall()
-        state_refs: list[RuntimeStateRef] = []
-        for row in rows:
-            data = dict(row)
-            data["state_payload"] = _json_load(data.pop("state_payload_json"))
-            data["is_terminal"] = bool(data["is_terminal"])
-            state_refs.append(RuntimeStateRef.model_validate(data))
-        return state_refs
+        return [self._row_to_model(row) for row in rows]
 
     def clear_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> None:
         with self._connection(connection, commit=True) as conn:
             conn.execute("DELETE FROM runtime_state_refs WHERE run_id = ?", (run_id,))
+
+
+class RuntimeClaimRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> RuntimeClaim:
+        return RuntimeClaim.model_validate(dict(row))
+
+    def create(self, claim: RuntimeClaim, connection: sqlite3.Connection | None = None) -> RuntimeClaim:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_claims (
+                  claim_id, run_id, runtime_task_id, owner, status, lease_expires_at,
+                  released_at, release_reason, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    claim.claim_id,
+                    claim.run_id,
+                    claim.runtime_task_id,
+                    claim.owner,
+                    claim.status,
+                    claim.lease_expires_at.isoformat(),
+                    claim.released_at.isoformat() if claim.released_at is not None else None,
+                    claim.release_reason,
+                    claim.schema_version,
+                    claim.created_at.isoformat(),
+                ),
+            )
+        return claim
+
+    def get(self, claim_id: str, connection: sqlite3.Connection | None = None) -> RuntimeClaim | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM runtime_claims WHERE claim_id = ?", (claim_id,)).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def get_active_for_task(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> RuntimeClaim | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM runtime_claims
+                WHERE runtime_task_id = ? AND status = 'active'
+                ORDER BY created_at DESC, claim_id DESC
+                LIMIT 1
+                """,
+                (runtime_task_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def list_active_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeClaim]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runtime_claims
+                WHERE run_id = ? AND status = 'active'
+                ORDER BY created_at, claim_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeClaim]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM runtime_claims WHERE run_id = ? ORDER BY created_at, claim_id",
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> RuntimeClaim | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM runtime_claims
+                WHERE run_id = ?
+                ORDER BY created_at DESC, claim_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def release(
+        self,
+        claim_id: str,
+        *,
+        released_at: str,
+        release_reason: str,
+        status: str = "released",
+        connection: sqlite3.Connection | None = None,
+    ) -> RuntimeClaim | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE runtime_claims
+                SET status = ?, released_at = ?, release_reason = ?
+                WHERE claim_id = ?
+                """,
+                (status, released_at, release_reason, claim_id),
+            )
+        return self.get(claim_id, connection=connection)
+
+
+class RunSnapshotRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> RunSnapshot:
+        data = dict(row)
+        data["snapshot_payload"] = _json_load(data.pop("snapshot_payload_json"))
+        return RunSnapshot.model_validate(data)
+
+    def create(self, snapshot: RunSnapshot, connection: sqlite3.Connection | None = None) -> RunSnapshot:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO run_snapshots (
+                  snapshot_id, run_id, stage, run_status, runtime_task_id, summary,
+                  snapshot_payload_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.snapshot_id,
+                    snapshot.run_id,
+                    snapshot.stage,
+                    snapshot.run_status,
+                    snapshot.runtime_task_id,
+                    snapshot.summary,
+                    _json_dump(snapshot.snapshot_payload),
+                    snapshot.schema_version,
+                    snapshot.created_at.isoformat(),
+                ),
+            )
+        return snapshot
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RunSnapshot]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM run_snapshots
+                WHERE run_id = ?
+                ORDER BY created_at, snapshot_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> RunSnapshot | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM run_snapshots
+                WHERE run_id = ?
+                ORDER BY created_at DESC, snapshot_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+
+class RuntimeAttemptRepository(RepositoryBase):
+    def create(self, attempt: RuntimeAttempt, connection: sqlite3.Connection | None = None) -> RuntimeAttempt:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_attempts (
+                  attempt_id, run_id, runtime_task_id, sequence_no, trigger, status,
+                  superseded_by_attempt_id, superseded_at, supersede_reason,
+                  closed_at, close_reason, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt.attempt_id,
+                    attempt.run_id,
+                    attempt.runtime_task_id,
+                    attempt.sequence_no,
+                    attempt.trigger,
+                    attempt.status,
+                    attempt.superseded_by_attempt_id,
+                    attempt.superseded_at.isoformat() if attempt.superseded_at is not None else None,
+                    attempt.supersede_reason,
+                    attempt.closed_at.isoformat() if attempt.closed_at is not None else None,
+                    attempt.close_reason,
+                    attempt.schema_version,
+                    attempt.created_at.isoformat(),
+                ),
+            )
+        return attempt
+
+    def get(self, attempt_id: str, connection: sqlite3.Connection | None = None) -> RuntimeAttempt | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM runtime_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone()
+        return RuntimeAttempt.model_validate(dict(row)) if row is not None else None
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeAttempt]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runtime_attempts
+                WHERE run_id = ?
+                ORDER BY sequence_no, created_at, attempt_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [RuntimeAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_for_task(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeAttempt]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runtime_attempts
+                WHERE runtime_task_id = ?
+                ORDER BY sequence_no, created_at, attempt_id
+                """,
+                (runtime_task_id,),
+            ).fetchall()
+        return [RuntimeAttempt.model_validate(dict(row)) for row in rows]
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> RuntimeAttempt | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM runtime_attempts
+                WHERE run_id = ?
+                ORDER BY sequence_no DESC, created_at DESC, attempt_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return RuntimeAttempt.model_validate(dict(row)) if row is not None else None
+
+    def current_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> RuntimeAttempt | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM runtime_attempts
+                WHERE run_id = ? AND status = 'current'
+                ORDER BY sequence_no DESC, created_at DESC, attempt_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return RuntimeAttempt.model_validate(dict(row)) if row is not None else None
+
+    def list_superseded_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeAttempt]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runtime_attempts
+                WHERE run_id = ? AND status = 'superseded'
+                ORDER BY sequence_no, created_at, attempt_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [RuntimeAttempt.model_validate(dict(row)) for row in rows]
+
+    def next_sequence_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> int:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(sequence_no), 0) AS max_sequence_no FROM runtime_attempts WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        max_sequence_no = int(row["max_sequence_no"]) if row is not None else 0
+        return max_sequence_no + 1
+
+    def supersede(
+        self,
+        attempt_id: str,
+        *,
+        superseded_by_attempt_id: str,
+        superseded_at: str,
+        supersede_reason: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> RuntimeAttempt | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE runtime_attempts
+                SET status = 'superseded',
+                    superseded_by_attempt_id = ?,
+                    superseded_at = ?,
+                    supersede_reason = ?,
+                    closed_at = NULL,
+                    close_reason = NULL
+                WHERE attempt_id = ?
+                """,
+                (superseded_by_attempt_id, superseded_at, supersede_reason, attempt_id),
+            )
+        return self.get(attempt_id, connection=connection)
+
+    def close(
+        self,
+        attempt_id: str,
+        *,
+        status: str,
+        closed_at: str,
+        close_reason: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> RuntimeAttempt | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE runtime_attempts
+                SET status = ?,
+                    closed_at = ?,
+                    close_reason = ?,
+                    superseded_by_attempt_id = NULL,
+                    superseded_at = NULL,
+                    supersede_reason = NULL
+                WHERE attempt_id = ?
+                """,
+                (status, closed_at, close_reason, attempt_id),
+            )
+        return self.get(attempt_id, connection=connection)
+
+
+class BudgetLedgerRepository(RepositoryBase):
+    def create(self, ledger: BudgetLedger, connection: sqlite3.Connection | None = None) -> BudgetLedger:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO budget_ledgers (
+                  ledger_id, run_id, preset_id, max_retries, timeout_seconds,
+                  compile_count, recompile_count, execution_count, total_runtime_ms,
+                  last_return_code, updated_at, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ledger.ledger_id,
+                    ledger.run_id,
+                    ledger.preset_id,
+                    ledger.max_retries,
+                    ledger.timeout_seconds,
+                    ledger.compile_count,
+                    ledger.recompile_count,
+                    ledger.execution_count,
+                    ledger.total_runtime_ms,
+                    ledger.last_return_code,
+                    ledger.updated_at.isoformat(),
+                    ledger.schema_version,
+                    ledger.created_at.isoformat(),
+                ),
+            )
+        return ledger
+
+    def get_by_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> BudgetLedger | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM budget_ledgers WHERE run_id = ?", (run_id,)).fetchone()
+        return BudgetLedger.model_validate(dict(row)) if row is not None else None
+
+    def update(self, ledger: BudgetLedger, connection: sqlite3.Connection | None = None) -> BudgetLedger:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE budget_ledgers
+                SET preset_id = ?, max_retries = ?, timeout_seconds = ?, compile_count = ?,
+                    recompile_count = ?, execution_count = ?, total_runtime_ms = ?,
+                    last_return_code = ?, updated_at = ?, schema_version = ?
+                WHERE run_id = ?
+                """,
+                (
+                    ledger.preset_id,
+                    ledger.max_retries,
+                    ledger.timeout_seconds,
+                    ledger.compile_count,
+                    ledger.recompile_count,
+                    ledger.execution_count,
+                    ledger.total_runtime_ms,
+                    ledger.last_return_code,
+                    ledger.updated_at.isoformat(),
+                    ledger.schema_version,
+                    ledger.run_id,
+                ),
+            )
+        stored = self.get_by_run(ledger.run_id, connection=connection)
+        assert stored is not None
+        return stored
+
+
+class WorkerLeaseRepository(RepositoryBase):
+    def create(self, lease: WorkerLease, connection: sqlite3.Connection | None = None) -> WorkerLease:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO worker_leases (
+                  lease_id, run_id, runtime_task_id, worker_name, adapter_name, status,
+                  heartbeat_at, lease_expires_at, released_at, release_reason, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    lease.lease_id,
+                    lease.run_id,
+                    lease.runtime_task_id,
+                    lease.worker_name,
+                    lease.adapter_name,
+                    lease.status,
+                    lease.heartbeat_at.isoformat(),
+                    lease.lease_expires_at.isoformat(),
+                    lease.released_at.isoformat() if lease.released_at is not None else None,
+                    lease.release_reason,
+                    lease.schema_version,
+                    lease.created_at.isoformat(),
+                ),
+            )
+        return lease
+
+    def get(self, lease_id: str, connection: sqlite3.Connection | None = None) -> WorkerLease | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM worker_leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        return WorkerLease.model_validate(dict(row)) if row is not None else None
+
+    def get_active_for_task(self, runtime_task_id: str, connection: sqlite3.Connection | None = None) -> WorkerLease | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM worker_leases
+                WHERE runtime_task_id = ? AND status = 'active'
+                ORDER BY created_at DESC, lease_id DESC
+                LIMIT 1
+                """,
+                (runtime_task_id,),
+            ).fetchone()
+        return WorkerLease.model_validate(dict(row)) if row is not None else None
+
+    def list_active_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[WorkerLease]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM worker_leases
+                WHERE run_id = ? AND status = 'active'
+                ORDER BY created_at, lease_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [WorkerLease.model_validate(dict(row)) for row in rows]
+
+    def list_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[WorkerLease]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM worker_leases WHERE run_id = ? ORDER BY created_at, lease_id",
+                (run_id,),
+            ).fetchall()
+        return [WorkerLease.model_validate(dict(row)) for row in rows]
+
+    def latest_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> WorkerLease | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM worker_leases
+                WHERE run_id = ?
+                ORDER BY created_at DESC, lease_id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return WorkerLease.model_validate(dict(row)) if row is not None else None
+
+    def release(
+        self,
+        lease_id: str,
+        *,
+        released_at: str,
+        release_reason: str,
+        status: str = "released",
+        connection: sqlite3.Connection | None = None,
+    ) -> WorkerLease | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE worker_leases
+                SET status = ?, released_at = ?, release_reason = ?
+                WHERE lease_id = ?
+                """,
+                (status, released_at, release_reason, lease_id),
+            )
+        return self.get(lease_id, connection=connection)

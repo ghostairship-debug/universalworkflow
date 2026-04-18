@@ -3,10 +3,19 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Callable, Optional, TypeVar
 
 import typer
 
+from apps.operator_tui.dashboard import run_dashboard
 from packages.core_domain.db import DEFAULT_DB_PATH, migrate, reset_db
+from packages.core_domain.errors import WorkflowError
+from packages.core_domain.governance import (
+    build_domain_pack_platform_report,
+    build_release_readiness_report,
+    build_review_policy_report,
+    build_tech_debt_report,
+)
 from packages.core_domain.repositories import PresetRepository, TaskRepository
 from packages.core_domain.services import OrchestratorService
 
@@ -14,12 +23,30 @@ app = typer.Typer(help="Workflow operator CLI.")
 run_app = typer.Typer(help="Run lifecycle commands.")
 task_app = typer.Typer(help="Task inspection commands.")
 preset_app = typer.Typer(help="Preset inspection commands.")
+domain_pack_app = typer.Typer(help="Domain pack inspection commands.")
+capability_app = typer.Typer(help="Capability registry inspection commands.")
+simulation_app = typer.Typer(help="Simulation policy commands.")
+simulation_policy_app = typer.Typer(help="Simulation policy catalog commands.")
+memory_app = typer.Typer(help="Memory-plane inspection commands.")
+memory_namespace_app = typer.Typer(help="Memory namespace inspection commands.")
+memory_item_app = typer.Typer(help="Persistent memory item commands.")
 db_app = typer.Typer(help="Development database commands.")
+governance_app = typer.Typer(help="Governance and debt visibility commands.")
 
 app.add_typer(run_app, name="run")
 app.add_typer(task_app, name="task")
 app.add_typer(preset_app, name="preset")
+app.add_typer(domain_pack_app, name="domain-pack")
+app.add_typer(capability_app, name="capability")
+app.add_typer(simulation_app, name="simulation")
+app.add_typer(memory_app, name="memory")
 app.add_typer(db_app, name="db")
+app.add_typer(governance_app, name="governance")
+memory_app.add_typer(memory_namespace_app, name="namespace")
+memory_app.add_typer(memory_item_app, name="item")
+simulation_app.add_typer(simulation_policy_app, name="policy")
+
+T = TypeVar("T")
 
 
 def _db_path_from_context(ctx: typer.Context) -> Path:
@@ -36,6 +63,18 @@ def _emit_json(payload: dict | list) -> None:
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _workflow_error_payload(exc: WorkflowError) -> dict:
+    return {"error": {"code": exc.code, "message": exc.message, "details": exc.details}}
+
+
+def _run_workflow_action(action: Callable[[], T]) -> T:
+    try:
+        return action()
+    except WorkflowError as exc:
+        _emit_json(_workflow_error_payload(exc))
+        raise typer.Exit(code=1) from exc
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -48,9 +87,34 @@ def main(
     ctx.obj = {"db_path": db_path}
 
 
+@app.command("tui")
+def launch_tui(
+    ctx: typer.Context,
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Focus a specific run in the dashboard."),
+    limit: int = typer.Option(8, "--limit", min=1, help="Maximum number of recent runs to render."),
+    refresh_seconds: float = typer.Option(2.0, "--refresh-seconds", min=0.2, help="Refresh interval in watch mode."),
+    once: bool = typer.Option(False, "--once", help="Render one snapshot instead of entering watch mode."),
+    cycles: Optional[int] = typer.Option(
+        None,
+        "--cycles",
+        min=1,
+        help="Maximum refresh cycles in watch mode. Useful for tests.",
+    ),
+) -> None:
+    service = _service(ctx)
+    run_dashboard(
+        service,
+        run_id=run_id,
+        limit=limit,
+        refresh_seconds=refresh_seconds,
+        once=once,
+        cycles=cycles,
+    )
+
+
 @preset_app.command("list")
 def preset_list(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")) -> None:
-    presets = _service(ctx).list_presets()
+    presets = _run_workflow_action(lambda: _service(ctx).list_presets())
     if as_json:
         _emit_json([preset.model_dump(mode="json") for preset in presets])
         return
@@ -60,27 +124,127 @@ def preset_list(ctx: typer.Context, as_json: bool = typer.Option(False, "--json"
         )
 
 
+@domain_pack_app.command("list")
+def domain_pack_list(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")) -> None:
+    domain_packs = _run_workflow_action(lambda: _service(ctx).list_domain_packs())
+    if as_json:
+        _emit_json([domain_pack.model_dump(mode="json") for domain_pack in domain_packs])
+        return
+    for domain_pack in domain_packs:
+        typer.echo(
+            f"{domain_pack.domain_pack_id} | enabled={domain_pack.enabled} | presets={','.join(domain_pack.preset_ids)}"
+        )
+
+
+@domain_pack_app.command("resolve")
+def domain_pack_resolve(
+    ctx: typer.Context,
+    preset: str = typer.Option(..., "--preset"),
+    task_kind: Optional[str] = typer.Option(None, "--task-kind"),
+    adapter: Optional[str] = typer.Option(None, "--adapter"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).preview_domain_pack_resolution(
+                preset_id=preset,
+                task_kind=task_kind,
+                adapter_name=adapter,
+            )
+        )
+    )
+
+
+@domain_pack_app.command("validate")
+def domain_pack_validate(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).validate_domain_pack_catalog()))
+
+
+@capability_app.command("list")
+def capability_list(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_routes()))
+
+
+@simulation_policy_app.command("list")
+def simulation_policy_list(ctx: typer.Context) -> None:
+    policies = _run_workflow_action(lambda: _service(ctx).list_simulation_policies())
+    _emit_json([policy.model_dump(mode="json") for policy in policies])
+
+
+@memory_namespace_app.command("list")
+def memory_namespace_list(ctx: typer.Context) -> None:
+    namespaces = _run_workflow_action(lambda: _service(ctx).list_memory_namespaces())
+    _emit_json([namespace.model_dump(mode="json") for namespace in namespaces])
+
+
+@memory_item_app.command("list")
+def memory_item_list(
+    ctx: typer.Context,
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    namespace: Optional[str] = typer.Option(None, "--namespace"),
+) -> None:
+    items = _run_workflow_action(lambda: _service(ctx).list_memory_items(run_id=run_id, namespace_id=namespace))
+    _emit_json([item.model_dump(mode="json") for item in items])
+
+
+@memory_app.command("retrieve-preview")
+def memory_retrieve_preview(
+    ctx: typer.Context,
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    namespace: Optional[str] = typer.Option(None, "--namespace"),
+    memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id"),
+    limit: int = typer.Option(5, "--limit", min=1),
+) -> None:
+    preview = _run_workflow_action(
+        lambda: _service(ctx).preview_memory_retrieval(
+            preset_id=preset,
+            run_id=run_id,
+            namespace_id=namespace,
+            memory_item_ids=memory_item_id,
+            limit=limit,
+        )
+    )
+    _emit_json(preview.model_dump(mode="json"))
+
+
 @run_app.command("create")
 def run_create(
     ctx: typer.Context,
     goal: str = typer.Option(..., "--goal"),
     preset: str = typer.Option(..., "--preset"),
+    task_kind: Optional[str] = typer.Option(None, "--task-kind", help="Requested task kind when compiling."),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Requested adapter override when compiling."),
+    memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id", help="Explicit memory item ids."),
     prepare: bool = typer.Option(False, "--prepare", help="Prepare the run internally after creation."),
     execute: bool = typer.Option(False, "--execute", help="Execute the prepared run internally."),
 ) -> None:
     service = _service(ctx)
-    run = service.create_run(goal=goal, preset_id=preset)
+    run = _run_workflow_action(lambda: service.create_run(goal=goal, preset_id=preset))
     current_run = run
     payload: dict = {}
     if prepare or execute:
-        prepared = service.compile_run(run.run_id)
+        prepared = _run_workflow_action(
+            lambda: service.compile_run(
+                run.run_id,
+                task_kind=task_kind,
+                adapter_name=adapter,
+                memory_item_ids=memory_item_id,
+            )
+        )
         current_run = prepared.run
         payload["prepared_task_id"] = prepared.task_packet.runtime_task_id
         payload["expected_artifacts"] = prepared.task_packet.expected_artifacts
         payload["handoff_id"] = prepared.handoff.handoff_id
         payload["state_ref_id"] = prepared.state_ref.state_ref_id
+        payload["domain_pack_id"] = prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None
+        payload["capability_adapter"] = (
+            prepared.capability_route.adapter_name if prepared.capability_route is not None else None
+        )
+        payload["memory_preview"] = (
+            prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None
+        )
     if execute:
-        executed = service.resume_run(run.run_id)
+        executed = _run_workflow_action(lambda: service.resume_run(run.run_id))
         current_run = executed.run
         payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
         payload["evidence_id"] = executed.evidence.evidence_id
@@ -90,38 +254,71 @@ def run_create(
 
 @run_app.command("suggest-presets")
 def run_suggest_presets(ctx: typer.Context, goal: str = typer.Option(..., "--goal")) -> None:
-    _emit_json([item.model_dump(mode="json") for item in _service(ctx).suggest_presets(goal)])
+    suggestions = _run_workflow_action(lambda: _service(ctx).suggest_presets(goal))
+    _emit_json([item.model_dump(mode="json") for item in suggestions])
 
 
 @run_app.command("compile")
-def run_compile(ctx: typer.Context, run_id: str) -> None:
-    prepared = _service(ctx).compile_run(run_id)
+def run_compile(
+    ctx: typer.Context,
+    run_id: str,
+    task_kind: Optional[str] = typer.Option(None, "--task-kind", help="Requested task kind override."),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Requested adapter override."),
+    memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id", help="Explicit memory item ids."),
+) -> None:
+    prepared = _run_workflow_action(
+        lambda: _service(ctx).compile_run(
+            run_id,
+            task_kind=task_kind,
+            adapter_name=adapter,
+            memory_item_ids=memory_item_id,
+        )
+    )
     _emit_json(
         {
             "run": prepared.run.model_dump(mode="json"),
             "runtime_task_id": prepared.task_packet.runtime_task_id,
             "handoff_id": prepared.handoff.handoff_id,
             "state_ref_id": prepared.state_ref.state_ref_id,
+            "domain_pack_id": prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None,
+            "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
+            "memory_preview": prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None,
         }
     )
 
 
 @run_app.command("recompile")
-def run_recompile(ctx: typer.Context, run_id: str) -> None:
-    prepared = _service(ctx).recompile_run(run_id)
+def run_recompile(
+    ctx: typer.Context,
+    run_id: str,
+    task_kind: Optional[str] = typer.Option(None, "--task-kind", help="Requested task kind override."),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Requested adapter override."),
+    memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id", help="Explicit memory item ids."),
+) -> None:
+    prepared = _run_workflow_action(
+        lambda: _service(ctx).recompile_run(
+            run_id,
+            task_kind=task_kind,
+            adapter_name=adapter,
+            memory_item_ids=memory_item_id,
+        )
+    )
     _emit_json(
         {
             "run": prepared.run.model_dump(mode="json"),
             "runtime_task_id": prepared.task_packet.runtime_task_id,
             "handoff_id": prepared.handoff.handoff_id,
             "state_ref_id": prepared.state_ref.state_ref_id,
+            "domain_pack_id": prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None,
+            "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
+            "memory_preview": prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None,
         }
     )
 
 
 @run_app.command("resume")
 def run_resume(ctx: typer.Context, run_id: str) -> None:
-    executed = _service(ctx).resume_run(run_id)
+    executed = _run_workflow_action(lambda: _service(ctx).resume_run(run_id))
     _emit_json(
         {
             "run": executed.run.model_dump(mode="json"),
@@ -133,7 +330,7 @@ def run_resume(ctx: typer.Context, run_id: str) -> None:
 
 @run_app.command("approve")
 def run_approve(ctx: typer.Context, run_id: str) -> None:
-    reviewed = _service(ctx).approve_run_review(run_id)
+    reviewed = _run_workflow_action(lambda: _service(ctx).approve_run_review(run_id))
     _emit_json(
         {
             "run": reviewed.run.model_dump(mode="json"),
@@ -145,7 +342,7 @@ def run_approve(ctx: typer.Context, run_id: str) -> None:
 
 @run_app.command("reject")
 def run_reject(ctx: typer.Context, run_id: str) -> None:
-    reviewed = _service(ctx).reject_run_review(run_id)
+    reviewed = _run_workflow_action(lambda: _service(ctx).reject_run_review(run_id))
     _emit_json(
         {
             "run": reviewed.run.model_dump(mode="json"),
@@ -157,17 +354,31 @@ def run_reject(ctx: typer.Context, run_id: str) -> None:
 
 @run_app.command("cancel")
 def run_cancel(ctx: typer.Context, run_id: str) -> None:
-    _emit_json(_service(ctx).cancel_run(run_id).model_dump(mode="json"))
+    run = _run_workflow_action(lambda: _service(ctx).cancel_run(run_id))
+    _emit_json(run.model_dump(mode="json"))
 
 
 @run_app.command("status")
 def run_status(ctx: typer.Context, run_id: str) -> None:
     service = _service(ctx)
-    detail = service.get_status_detail(run_id)
+    detail = _run_workflow_action(lambda: service.get_status_detail(run_id))
     payload = detail["run"]
+    payload["runtime_gateway"] = detail["runtime_gateway"]
+    payload["review_policy"] = detail["review_policy"]
     payload["runtime_task_ids"] = detail["runtime_task_ids"]
+    payload["current_runtime_attempt"] = detail["current_runtime_attempt"]
+    payload["latest_runtime_attempt"] = detail["latest_runtime_attempt"]
+    payload["runtime_attempt_projection"] = detail["runtime_attempt_projection"]
+    payload["active_claims"] = detail["active_claims"]
+    payload["latest_claim"] = detail["latest_claim"]
+    payload["active_worker_leases"] = detail["active_worker_leases"]
+    payload["latest_worker_lease"] = detail["latest_worker_lease"]
+    payload["worker_lease_projection"] = detail["worker_lease_projection"]
     payload["effective_review_state"] = detail["effective_review_state"]
+    payload["domain_pack"] = detail["domain_pack"]
+    payload["capability_resolution"] = detail["capability_resolution"]
     payload["latest_review_verdict"] = detail["latest_review_verdict"]
+    payload["latest_simulation_record"] = detail["latest_simulation_record"]
     payload["next_action"] = detail["next_action"]
     payload["failure_reason"] = detail["failure_reason"]
     payload["waiting_reason"] = detail["waiting_reason"]
@@ -177,17 +388,122 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
 
 @run_app.command("status-detail")
 def run_status_detail(ctx: typer.Context, run_id: str) -> None:
-    _emit_json(_service(ctx).get_status_detail(run_id))
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_status_detail(run_id)))
+
+
+@run_app.command("summary")
+def run_summary(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_summary(run_id)))
+
+
+@run_app.command("simulation")
+def run_simulation(ctx: typer.Context, run_id: str) -> None:
+    report = _run_workflow_action(lambda: _service(ctx).get_run_simulation(run_id))
+    _emit_json(report.model_dump(mode="json"))
+
+
+@run_app.command("record-simulation")
+def run_record_simulation(ctx: typer.Context, run_id: str) -> None:
+    record = _run_workflow_action(lambda: _service(ctx).record_run_simulation(run_id))
+    _emit_json(record.model_dump(mode="json"))
+
+
+@run_app.command("simulations")
+def run_simulations(ctx: typer.Context, run_id: str) -> None:
+    records = _run_workflow_action(lambda: _service(ctx).list_simulation_records(run_id))
+    _emit_json([record.model_dump(mode="json") for record in records])
+
+
+@run_app.command("event-inspection")
+def run_event_inspection(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_event_inspection(run_id)))
+
+
+@run_app.command("audit-report")
+def run_audit_report(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_audit_report(run_id)))
+
+
+@run_app.command("memory-candidates")
+def run_memory_candidates(ctx: typer.Context, run_id: str) -> None:
+    candidates = _run_workflow_action(lambda: _service(ctx).get_run_memory_candidates(run_id))
+    _emit_json([candidate.model_dump(mode="json") for candidate in candidates])
+
+
+@run_app.command("materialize-memory")
+def run_materialize_memory(
+    ctx: typer.Context,
+    run_id: str,
+    candidate_id: str = typer.Option(..., "--candidate-id"),
+) -> None:
+    memory_item = _run_workflow_action(lambda: _service(ctx).materialize_run_memory_candidate(run_id, candidate_id))
+    _emit_json(memory_item.model_dump(mode="json"))
+
+
+@run_app.command("memory-items")
+def run_memory_items(ctx: typer.Context, run_id: str) -> None:
+    items = _run_workflow_action(lambda: _service(ctx).list_memory_items(run_id=run_id))
+    _emit_json([item.model_dump(mode="json") for item in items])
+
+
+@run_app.command("claims")
+def run_claims(ctx: typer.Context, run_id: str) -> None:
+    claims = _run_workflow_action(lambda: _service(ctx).list_claims(run_id))
+    _emit_json([claim.model_dump(mode="json") for claim in claims])
+
+
+@run_app.command("leases")
+def run_leases(ctx: typer.Context, run_id: str) -> None:
+    leases = _run_workflow_action(lambda: _service(ctx).list_worker_leases(run_id))
+    _emit_json([lease.model_dump(mode="json") for lease in leases])
+
+
+@run_app.command("attempts")
+def run_attempts(ctx: typer.Context, run_id: str) -> None:
+    attempts = _run_workflow_action(lambda: _service(ctx).list_runtime_attempts(run_id))
+    _emit_json([attempt.model_dump(mode="json") for attempt in attempts])
+
+
+@run_app.command("snapshots")
+def run_snapshots(ctx: typer.Context, run_id: str) -> None:
+    snapshots = _run_workflow_action(lambda: _service(ctx).list_snapshots(run_id))
+    _emit_json([snapshot.model_dump(mode="json") for snapshot in snapshots])
+
+
+@run_app.command("budget")
+def run_budget(ctx: typer.Context, run_id: str) -> None:
+    detail = _run_workflow_action(lambda: _service(ctx).get_status_detail(run_id))
+    _emit_json(
+        {
+            "run": detail["run"],
+            "budget_ledger": detail["budget_ledger"],
+            "budget_projection": detail["budget_projection"],
+        }
+    )
 
 
 @run_app.command("inspect")
 def run_inspect(ctx: typer.Context, run_id: str) -> None:
-    _emit_json(_service(ctx).inspect_run_state(run_id))
+    _emit_json(_run_workflow_action(lambda: _service(ctx).inspect_run_state(run_id)))
+
+
+@run_app.command("reconcile")
+def run_reconcile(
+    ctx: typer.Context,
+    run_id: str,
+    apply: bool = typer.Option(False, "--apply", help="Apply the selected repair action instead of only planning it."),
+    action: Optional[str] = typer.Option(None, "--action", help="Explicit repair action override."),
+) -> None:
+    service = _service(ctx)
+    if apply:
+        _emit_json(_run_workflow_action(lambda: service.apply_run_repair(run_id, action=action)))
+        return
+    _emit_json(_run_workflow_action(lambda: service.reconcile_run(run_id)))
 
 
 @run_app.command("timeline")
 def run_timeline(ctx: typer.Context, run_id: str, as_json: bool = typer.Option(False, "--json")) -> None:
-    timeline = _service(ctx).get_timeline(run_id)
+    timeline = _run_workflow_action(lambda: _service(ctx).get_timeline(run_id))
     if as_json:
         _emit_json([event.model_dump(mode="json") for event in timeline])
         return
@@ -197,12 +513,14 @@ def run_timeline(ctx: typer.Context, run_id: str, as_json: bool = typer.Option(F
 
 @run_app.command("handoffs")
 def run_handoffs(ctx: typer.Context, run_id: str) -> None:
-    _emit_json([handoff.model_dump(mode="json") for handoff in _service(ctx).list_handoffs(run_id)])
+    handoffs = _run_workflow_action(lambda: _service(ctx).list_handoffs(run_id))
+    _emit_json([handoff.model_dump(mode="json") for handoff in handoffs])
 
 
 @task_app.command("evidence")
 def task_evidence(ctx: typer.Context, runtime_task_id: str) -> None:
-    _emit_json(_service(ctx).get_task_evidence(runtime_task_id).model_dump(mode="json"))
+    evidence = _run_workflow_action(lambda: _service(ctx).get_task_evidence(runtime_task_id))
+    _emit_json(evidence.model_dump(mode="json"))
 
 
 @db_app.command("reset")
@@ -217,6 +535,54 @@ def db_reset(
     if seed_presets:
         seeded = [preset.preset_id for preset in PresetRepository(db_path).seed_defaults()]
     _emit_json({"db_path": db_path.as_posix(), "seeded_presets": seeded})
+
+
+@governance_app.command("tech-debt")
+def governance_tech_debt(
+    registry_path: Optional[str] = typer.Option(None, "--registry-path", help="Override tech-debt registry path."),
+) -> None:
+    _emit_json(build_tech_debt_report(registry_path))
+
+
+@governance_app.command("review-policy")
+def governance_review_policy(
+    ctx: typer.Context,
+    decision_table_path: Optional[str] = typer.Option(None, "--decision-table-path", help="Override decision table path."),
+    registry_path: Optional[str] = typer.Option(None, "--registry-path", help="Override tech-debt registry path."),
+) -> None:
+    _emit_json(
+        build_review_policy_report(
+            db_path=_db_path_from_context(ctx),
+            decision_table_path=decision_table_path,
+            registry_path=registry_path,
+        )
+    )
+
+
+@governance_app.command("release-readiness")
+def governance_release_readiness(
+    ctx: typer.Context,
+    validation_report_path: Optional[str] = typer.Option(
+        None,
+        "--validation-report-path",
+        help="Override offline validation report path.",
+    ),
+    decision_table_path: Optional[str] = typer.Option(None, "--decision-table-path", help="Override decision table path."),
+    registry_path: Optional[str] = typer.Option(None, "--registry-path", help="Override tech-debt registry path."),
+) -> None:
+    _emit_json(
+        build_release_readiness_report(
+            db_path=_db_path_from_context(ctx),
+            validation_report_path=validation_report_path,
+            decision_table_path=decision_table_path,
+            registry_path=registry_path,
+        )
+    )
+
+
+@governance_app.command("domain-pack")
+def governance_domain_pack() -> None:
+    _emit_json(build_domain_pack_platform_report())
 
 
 def run() -> None:
