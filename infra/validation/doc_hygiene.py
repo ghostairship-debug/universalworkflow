@@ -14,7 +14,7 @@ DEFAULT_LIVING_DOCS = [
     Path("docs/documentation_governance.md"),
     Path("docs/source_package_export_policy.md"),
     Path("docs/governance/README.md"),
-    Path("docs/reviews/m8-freeze-review.md"),
+    Path("docs/reviews/m10-freeze-review.md"),
     Path("docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md"),
 ]
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")

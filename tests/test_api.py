@@ -78,6 +78,7 @@ def test_api_lists_seeded_presets(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert {item["preset_id"] for item in response.json()} == {
         "feature_delivery",
+        "optional_delivery",
         "research_spike",
         "research_spike_reviewable",
         "advisory_delivery",
@@ -302,9 +303,9 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["open_debt_count"] >= 1
-    assert "TD-010" in [item["debt_id"] for item in payload["open_items"]]
+    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019"]
     assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"]["Next Cycle"] >= 1
+    assert payload["planned_phase_counts"]["M11"] == 1
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
@@ -314,14 +315,15 @@ def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
     response = client.get("/governance/review-policy")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["supported_policy_count"] == 4
+    assert payload["supported_policy_count"] == 5
     assert [item["policy"] for item in payload["supported_policies"]] == [
         "auto_only",
+        "optional",
         "recommended",
         "human_required",
         "mandatory",
     ]
-    assert payload["expansion_readiness"]["reference_only_candidates"] == ["optional"]
+    assert payload["expansion_readiness"]["reference_only_candidates"] == []
     assert "TD-006" == payload["debt_linkage"]["debt_id"]
 
 
@@ -351,6 +353,39 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     assert payload["validation_summary"]["overall_passed"] is True
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in payload["gates"][3]["detail"]
+    assert payload["gates"][5]["gate"] == "m10_scope_closure"
+    assert payload["remaining_gaps"] == ["true external worker pools and multi-node scheduling are still deferred into M11"]
+
+
+def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    validation_report_path = tmp_path / "offline_validation_report.json"
+    validation_report_path.write_text(
+        json.dumps(
+            {
+                "overall_passed": True,
+                "checks": {
+                    "cli_flow": {"passed": True},
+                    "smoke_flow": {"passed": True},
+                    "api_flow": {"passed": True},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    metrics_response = client.get("/governance/metrics", params={"validation_report_path": str(validation_report_path)})
+    alerts_response = client.get("/governance/alerts", params={"validation_report_path": str(validation_report_path)})
+
+    assert metrics_response.status_code == 200
+    assert metrics_response.json()["review_policy"]["supported_policy_count"] == 5
+    assert metrics_response.json()["automation"]["governance_metrics_available"] is True
+
+    assert alerts_response.status_code == 200
+    assert alerts_response.json()["overall_status"] == "degraded"
+    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
 
 
 def test_api_exposes_governance_domain_pack_platform_report(tmp_path: Path) -> None:
@@ -425,6 +460,23 @@ def test_api_compile_and_status_detail_are_public_in_m1(tmp_path: Path) -> None:
     handoffs_response = client.get(f"/runs/{run_id}/handoffs")
     assert handoffs_response.status_code == 200
     assert len(handoffs_response.json()) == 1
+
+
+def test_api_exposes_run_replay_packet(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    run = client.post("/runs", json={"goal": "Replay packet via API", "preset_id": "feature_delivery"}).json()
+    client.post(f"/runs/{run['run_id']}/compile")
+    client.post(f"/runs/{run['run_id']}/resume")
+
+    response = client.get(f"/runs/{run['run_id']}/replay-packet")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["packet_version"] == "m9_phase_1_v1"
+    assert payload["metrics"]["counts"]["events"] >= 1
+    assert payload["review_lineage"]["effective_review_state"] == "auto_passed"
 
 
 def test_api_compile_can_pin_opencode_adapter(tmp_path: Path) -> None:
@@ -827,7 +879,11 @@ def test_api_exposes_claim_history_and_status_projection(tmp_path: Path) -> None
     claims_payload = claims_response.json()
     assert detail_payload["active_claims"] == []
     assert detail_payload["latest_claim"]["status"] == "released"
+    assert detail_payload["latest_claim"]["owner_kind"] == "control_plane"
+    assert detail_payload["latest_claim"]["owner_id"] == "control_plane_local"
+    assert detail_payload["ownership_topology"]["claim"]["domain_kind"] == "runtime_task"
     assert claims_payload[0]["release_reason"] == "run_terminal"
+    assert claims_payload[0]["owner_id"] == "control_plane_local"
 
 
 def test_api_exposes_worker_lease_projection_via_status_and_inspection(tmp_path: Path) -> None:
@@ -848,8 +904,13 @@ def test_api_exposes_worker_lease_projection_via_status_and_inspection(tmp_path:
     inspection_payload = inspection_response.json()
     assert detail_payload["active_worker_leases"] == []
     assert detail_payload["latest_worker_lease"]["status"] == "released"
+    assert detail_payload["latest_worker_lease"]["worker_kind"] == "worker"
+    assert detail_payload["latest_worker_lease"]["claim_id"] == detail_payload["latest_claim"]["claim_id"]
+    assert detail_payload["ownership_topology"]["worker_lease"]["worker_id"] == "worker_shell_local"
+    assert detail_payload["ownership_topology"]["topology_aligned"] is True
     assert detail_payload["worker_lease_projection"]["latest_adapter_name"] == "shell"
     assert inspection_payload["latest_worker_lease"]["status"] == "released"
+    assert inspection_payload["ownership_topology"]["worker_lease"]["domain_kind"] == "runtime_task"
     assert inspection_payload["worker_lease_projection"]["active_lease_count"] == 0
 
 
@@ -888,6 +949,32 @@ def test_api_exposes_worker_lease_history_endpoint(tmp_path: Path) -> None:
     assert len(payload) == 1
     assert payload[0]["status"] == "released"
     assert payload[0]["adapter_name"] == "shell"
+    assert payload[0]["worker_id"] == "worker_shell_local"
+
+
+def test_api_batch_resume_returns_parallel_batch_summary(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    first_create = client.post("/runs", json={"goal": "API parallel batch first", "preset_id": "feature_delivery"})
+    second_create = client.post("/runs", json={"goal": "API parallel batch second", "preset_id": "feature_delivery"})
+    first_run_id = first_create.json()["run_id"]
+    second_run_id = second_create.json()["run_id"]
+    client.post(f"/runs/{first_run_id}/compile")
+    client.post(f"/runs/{second_run_id}/compile")
+
+    batch_response = client.post(
+        "/runs/batch-resume",
+        json={"run_ids": [first_run_id, second_run_id], "max_workers": 2},
+    )
+    first_detail = client.get(f"/runs/{first_run_id}/status-detail")
+
+    assert batch_response.status_code == 200
+    payload = batch_response.json()
+    assert payload["status"] == "completed"
+    assert payload["member_count"] == 2
+    assert len(payload["results"]) == 2
+    assert first_detail.json()["parallel_batch"]["barrier_id"] == payload["barrier_id"]
 
 
 def test_api_exposes_runtime_attempt_history_endpoint(tmp_path: Path) -> None:

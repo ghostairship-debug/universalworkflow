@@ -12,6 +12,16 @@
       "effective_review_state": "auto_failed"
     },
     {
+      "path": "`optional` run completed after advisory auto pass",
+      "latest_verdict": "auto pass",
+      "effective_review_state": "advisory_passed"
+    },
+    {
+      "path": "`optional` run failed during execution after advisory auto fail",
+      "latest_verdict": "auto fail",
+      "effective_review_state": "advisory_failed"
+    },
+    {
       "path": "`recommended` run completed after auto pass",
       "latest_verdict": "auto pass",
       "effective_review_state": "auto_passed"
@@ -74,8 +84,8 @@
   ],
   "notes": [
     "The current table remains operator-facing and backward-compatible even after runtime policy growth.",
-    "`recommended` and `mandatory` are now executable run-level policies.",
-    "`optional` remains reference-only because the current run model does not yet expose a clean advisory-only terminal shape.",
+    "`optional`, `recommended`, and `mandatory` are executable run-level policies.",
+    "`optional` uses an advisory-only terminal shape: auto review always runs, but execution status remains authoritative.",
     "Any future expansion should preserve the current states as backward-compatible operator-facing values.",
     "`M3 Phase 4` governance surfaces and `M4 Phase 0` runtime policy expansion consume this table as a canonical operator-facing baseline; expanding policy semantics should update this table first."
   ]

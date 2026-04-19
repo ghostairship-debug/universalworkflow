@@ -902,6 +902,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             result["db_reset_seeded"]
             == [
                 "feature_delivery",
+                "optional_delivery",
                 "research_spike",
                 "advisory_delivery",
                 "guarded_delivery",
@@ -910,6 +911,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             set(result["preset_ids"])
             == {
                 "feature_delivery",
+                "optional_delivery",
                 "research_spike",
                 "advisory_delivery",
                 "guarded_delivery",
@@ -945,9 +947,9 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                 "research_no_simulation",
             ],
             result["governance_open_debt_count"] >= 1,
-            result["governance_active_gate_focus_ids"] == [],
+            result["governance_active_gate_focus_ids"] == ["TD-019"],
             result["governance_supported_review_policies"]
-            == ["auto_only", "recommended", "human_required", "mandatory"],
+            == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
             result["governance_review_policy_debt_id"] == "TD-006",
             result["governance_release_ready"] is True,
             result["governance_release_domain_pack_ids"] == ["software_delivery_pack"],

@@ -180,6 +180,7 @@ class TraceContext(ContractModel):
 
 class ReviewPolicy(StrEnum):
     auto_only = "auto_only"
+    optional = "optional"
     recommended = "recommended"
     human_required = "human_required"
     mandatory = "mandatory"

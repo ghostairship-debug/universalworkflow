@@ -14,6 +14,20 @@
     "requires_manual_approval": false
   },
   {
+    "preset_id": "optional_delivery",
+    "name": "Optional Delivery",
+    "description": "Produce a narrow implementation artifact with advisory auto review that never blocks the execution terminal state.",
+    "allowed_task_kinds": [
+      "shell_exec"
+    ],
+    "default_review_policy": "optional",
+    "default_budget_policy": {
+      "max_retries": 1,
+      "timeout_seconds": 120
+    },
+    "requires_manual_approval": false
+  },
+  {
     "preset_id": "research_spike",
     "name": "Research Spike",
     "description": "Capture a narrow research artifact with conservative execution and manual review preference.",

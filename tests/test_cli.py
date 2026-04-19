@@ -25,6 +25,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
     payload = json.loads(reset_result.stdout)
     assert payload["seeded_presets"] == [
         "feature_delivery",
+        "optional_delivery",
         "research_spike",
         "advisory_delivery",
         "guarded_delivery",
@@ -36,6 +37,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
     presets = json.loads(preset_result.stdout)
     assert {preset["preset_id"] for preset in presets} == {
         "feature_delivery",
+        "optional_delivery",
         "research_spike",
         "research_spike_reviewable",
         "advisory_delivery",
@@ -161,9 +163,9 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["open_debt_count"] >= 1
-    assert "TD-010" in [item["debt_id"] for item in payload["open_items"]]
+    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019"]
     assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"]["Next Cycle"] >= 1
+    assert payload["planned_phase_counts"]["M11"] == 1
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
@@ -171,14 +173,15 @@ def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "governance", "review-policy")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["supported_policy_count"] == 4
+    assert payload["supported_policy_count"] == 5
     assert [item["policy"] for item in payload["supported_policies"]] == [
         "auto_only",
+        "optional",
         "recommended",
         "human_required",
         "mandatory",
     ]
-    assert payload["expansion_readiness"]["reference_only_candidates"] == ["optional"]
+    assert payload["expansion_readiness"]["reference_only_candidates"] == []
     assert payload["debt_linkage"]["debt_id"] == "TD-006"
 
 
@@ -213,6 +216,52 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     assert payload["validation_summary"]["overall_passed"] is True
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in payload["gates"][3]["detail"]
+    assert payload["gates"][5]["gate"] == "m10_scope_closure"
+    assert payload["remaining_gaps"] == ["true external worker pools and multi-node scheduling are still deferred into M11"]
+
+
+def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    validation_report_path = tmp_path / "offline_validation_report.json"
+    validation_report_path.write_text(
+        json.dumps(
+            {
+                "overall_passed": True,
+                "checks": {
+                    "cli_flow": {"passed": True},
+                    "smoke_flow": {"passed": True},
+                    "api_flow": {"passed": True},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    metrics_result = _invoke(
+        tmp_path,
+        "governance",
+        "metrics",
+        "--validation-report-path",
+        str(validation_report_path),
+    )
+    alerts_result = _invoke(
+        tmp_path,
+        "governance",
+        "alerts",
+        "--validation-report-path",
+        str(validation_report_path),
+    )
+
+    assert metrics_result.exit_code == 0
+    metrics_payload = json.loads(metrics_result.stdout)
+    assert metrics_payload["review_policy"]["supported_policy_count"] == 5
+    assert metrics_payload["automation"]["governance_alerts_available"] is True
+
+    assert alerts_result.exit_code == 0
+    alerts_payload = json.loads(alerts_result.stdout)
+    assert alerts_payload["overall_status"] == "degraded"
+    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
 
 
 def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(tmp_path: Path) -> None:
@@ -318,6 +367,30 @@ def test_cli_run_create_status_timeline_and_evidence(tmp_path: Path) -> None:
     assert evidence_result.exit_code == 0
     evidence = json.loads(evidence_result.stdout)
     assert evidence["artifact_refs"]
+
+
+def test_cli_run_replay_packet_projects_metrics(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    create_result = _invoke(
+        tmp_path,
+        "run",
+        "create",
+        "--goal",
+        "Build one replayable CLI artifact",
+        "--preset",
+        "feature_delivery",
+        "--prepare",
+        "--execute",
+    )
+    run_id = json.loads(create_result.stdout)["run"]["run_id"]
+
+    replay_result = _invoke(tmp_path, "run", "replay-packet", run_id)
+
+    assert replay_result.exit_code == 0
+    replay_payload = json.loads(replay_result.stdout)
+    assert replay_payload["packet_version"] == "m9_phase_1_v1"
+    assert replay_payload["metrics"]["counts"]["events"] >= 1
+    assert replay_payload["review_lineage"]["effective_review_state"] == "auto_passed"
 
     memory_result = _invoke(tmp_path, "run", "memory-candidates", run_id)
     assert memory_result.exit_code == 0
@@ -1031,7 +1104,13 @@ def test_cli_status_and_claims_expose_claim_history(tmp_path: Path) -> None:
     claims_payload = json.loads(claims_result.stdout)
     assert status_payload["active_claims"] == []
     assert status_payload["latest_claim"]["status"] == "released"
+    assert status_payload["latest_claim"]["owner_kind"] == "control_plane"
+    assert status_payload["latest_claim"]["owner_id"] == "control_plane_local"
+    assert status_payload["latest_claim"]["domain_kind"] == "runtime_task"
+    assert status_payload["ownership_topology"]["claim"]["owner_id"] == "control_plane_local"
     assert claims_payload[0]["release_reason"] == "run_terminal"
+    assert claims_payload[0]["owner_id"] == "control_plane_local"
+    assert claims_payload[0]["domain_key"] == status_payload["latest_claim"]["domain_key"]
 
 
 def test_cli_status_detail_and_inspect_expose_worker_lease_projection(tmp_path: Path) -> None:
@@ -1058,9 +1137,53 @@ def test_cli_status_detail_and_inspect_expose_worker_lease_projection(tmp_path: 
     inspect_payload = json.loads(inspect_result.stdout)
     assert detail_payload["active_worker_leases"] == []
     assert detail_payload["latest_worker_lease"]["status"] == "released"
+    assert detail_payload["latest_worker_lease"]["worker_kind"] == "worker"
+    assert detail_payload["latest_worker_lease"]["claim_id"] == detail_payload["latest_claim"]["claim_id"]
+    assert detail_payload["ownership_topology"]["worker_lease"]["worker_id"] == "worker_shell_local"
+    assert detail_payload["ownership_topology"]["topology_aligned"] is True
     assert detail_payload["worker_lease_projection"]["latest_adapter_name"] == "shell"
+    assert inspect_payload["latest_claim"]["owner_kind"] == "control_plane"
     assert inspect_payload["latest_worker_lease"]["status"] == "released"
+    assert inspect_payload["ownership_topology"]["worker_lease"]["domain_kind"] == "runtime_task"
     assert inspect_payload["worker_lease_projection"]["active_lease_count"] == 0
+
+
+def test_cli_batch_resume_returns_parallel_batch_summary(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    first_create = _invoke(
+        tmp_path,
+        "run",
+        "create",
+        "--goal",
+        "CLI parallel batch first",
+        "--preset",
+        "feature_delivery",
+        "--prepare",
+    )
+    second_create = _invoke(
+        tmp_path,
+        "run",
+        "create",
+        "--goal",
+        "CLI parallel batch second",
+        "--preset",
+        "feature_delivery",
+        "--prepare",
+    )
+    first_run_id = json.loads(first_create.stdout)["run"]["run_id"]
+    second_run_id = json.loads(second_create.stdout)["run"]["run_id"]
+
+    batch_result = _invoke(tmp_path, "run", "batch-resume", first_run_id, second_run_id, "--max-workers", "2")
+    first_status_result = _invoke(tmp_path, "run", "status", first_run_id)
+    first_detail_result = _invoke(tmp_path, "run", "status-detail", first_run_id)
+
+    assert batch_result.exit_code == 0
+    payload = json.loads(batch_result.stdout)
+    assert payload["status"] == "completed"
+    assert payload["member_count"] == 2
+    assert len(payload["results"]) == 2
+    assert json.loads(first_status_result.stdout)["parallel_batch"]["barrier_id"] == payload["barrier_id"]
+    assert json.loads(first_detail_result.stdout)["parallel_batch"]["barrier_id"] == payload["barrier_id"]
 
 
 def test_cli_status_detail_and_inspect_expose_runtime_attempt_projection(tmp_path: Path) -> None:

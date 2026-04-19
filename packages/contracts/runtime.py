@@ -57,6 +57,16 @@ class WorkerLeaseStatus(StrEnum):
     expired = "expired"
 
 
+class OwnershipActorKind(StrEnum):
+    control_plane = "control_plane"
+    worker = "worker"
+
+
+class OwnershipDomainKind(StrEnum):
+    runtime_task = "runtime_task"
+    batch_barrier = "batch_barrier"
+
+
 class RuntimeAttemptTrigger(StrEnum):
     compile = "compile"
     recompile = "recompile"
@@ -107,6 +117,11 @@ class RuntimeClaim(PersistedContractModel):
     run_id: str
     runtime_task_id: str
     owner: str = "local_orchestrator"
+    owner_kind: OwnershipActorKind = OwnershipActorKind.control_plane
+    owner_id: str = "control_plane_local"
+    domain_kind: OwnershipDomainKind = OwnershipDomainKind.runtime_task
+    domain_key: str | None = None
+    attempt_id: str | None = None
     status: RuntimeClaimStatus = RuntimeClaimStatus.active
     lease_expires_at: datetime = Field(default_factory=runtime_utc_now)
     released_at: datetime | None = None
@@ -114,6 +129,8 @@ class RuntimeClaim(PersistedContractModel):
 
     @model_validator(mode="after")
     def validate_claim_lifecycle(self) -> "RuntimeClaim":
+        if self.domain_key is None:
+            self.domain_key = self.runtime_task_id
         if self.status == RuntimeClaimStatus.active:
             if self.released_at is not None or self.release_reason is not None:
                 raise ValueError("active runtime claim cannot have released_at or release_reason")
@@ -130,6 +147,12 @@ class WorkerLease(PersistedContractModel):
     run_id: str
     runtime_task_id: str
     worker_name: str = "local_worker"
+    worker_kind: OwnershipActorKind = OwnershipActorKind.worker
+    worker_id: str = "worker_local"
+    domain_kind: OwnershipDomainKind = OwnershipDomainKind.runtime_task
+    domain_key: str | None = None
+    claim_id: str | None = None
+    attempt_id: str | None = None
     adapter_name: str
     status: WorkerLeaseStatus = WorkerLeaseStatus.active
     heartbeat_at: datetime = Field(default_factory=runtime_utc_now)
@@ -139,6 +162,8 @@ class WorkerLease(PersistedContractModel):
 
     @model_validator(mode="after")
     def validate_worker_lease_lifecycle(self) -> "WorkerLease":
+        if self.domain_key is None:
+            self.domain_key = self.runtime_task_id
         if self.status == WorkerLeaseStatus.active:
             if self.released_at is not None or self.release_reason is not None:
                 raise ValueError("active worker lease cannot have released_at or release_reason")

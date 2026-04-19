@@ -37,6 +37,8 @@ from packages.contracts import (
     RuntimeGateway,
     RuntimeGraphStep,
     RuntimeStateRef,
+    OwnershipActorKind,
+    OwnershipDomainKind,
     RunStatus,
     SimulationPolicyDefinition,
     SimulationRecord,
@@ -243,7 +245,26 @@ class OrchestratorService(
             return "observe"
         return "none"
 
-    def _effective_review_state(self, run: Run, latest_review_verdict: ReviewVerdict | None) -> str:
+    def _review_policy_for_context(
+        self,
+        context: RunDiagnosticContext,
+        *,
+        last_runtime_state: RuntimeStateRef | None = None,
+    ) -> str:
+        if context.preset is not None:
+            return str(context.preset.default_review_policy)
+        state_ref = last_runtime_state or self._last_runtime_state(context)
+        if state_ref is not None and state_ref.state_payload.get("review_policy"):
+            return str(state_ref.state_payload["review_policy"])
+        return str(ReviewPolicy.auto_only)
+
+    def _effective_review_state(
+        self,
+        run: Run,
+        latest_review_verdict: ReviewVerdict | None,
+        review_policy: ReviewPolicy | str | None = None,
+    ) -> str:
+        normalized_policy = str(review_policy or ReviewPolicy.auto_only)
         if str(run.status) == RunStatus.awaiting_review:
             if latest_review_verdict is None:
                 return "human_pending"
@@ -253,6 +274,8 @@ class OrchestratorService(
             return "not_requested"
         if str(latest_review_verdict.reviewer_type) == ReviewerType.human:
             return "human_approved" if str(latest_review_verdict.decision) == ReviewDecision.pass_ else "human_rejected"
+        if normalized_policy == str(ReviewPolicy.optional):
+            return "advisory_passed" if str(latest_review_verdict.decision) == ReviewDecision.pass_ else "advisory_failed"
         return "auto_passed" if str(latest_review_verdict.decision) == ReviewDecision.pass_ else "auto_failed"
 
     def _serialize_contract(self, value: Evidence | ReviewVerdict | RuntimeStateRef | None) -> dict[str, Any] | None:
@@ -269,6 +292,31 @@ class OrchestratorService(
 
     def _serialize_attempt(self, value: RuntimeAttempt | None) -> dict[str, Any] | None:
         return value.model_dump(mode="json") if value is not None else None
+
+    def _control_plane_identity(self) -> tuple[str, str, str]:
+        return (
+            str(OwnershipActorKind.control_plane),
+            "control_plane_local",
+            "local_orchestrator",
+        )
+
+    def _worker_identity(self, adapter_name: str, *, worker_name: str | None = None) -> tuple[str, str, str]:
+        normalized_adapter = (adapter_name or "worker").strip().lower().replace(" ", "_")
+        return (
+            str(OwnershipActorKind.worker),
+            f"worker_{normalized_adapter}_local",
+            worker_name or "local_worker",
+        )
+
+    def _ownership_domain_for(
+        self,
+        runtime_task_id: str,
+        *,
+        domain_kind: OwnershipDomainKind | str = OwnershipDomainKind.runtime_task,
+        domain_key: str | None = None,
+    ) -> tuple[str, str]:
+        normalized_kind = str(OwnershipDomainKind(domain_kind))
+        return normalized_kind, domain_key or runtime_task_id
 
     def _utc_now(self) -> datetime:
         return datetime.now(UTC)
@@ -339,12 +387,104 @@ class OrchestratorService(
     def _durable_refs_for_state(self, state_ref: RuntimeStateRef | None) -> dict[str, str]:
         if state_ref is None:
             return {}
+        durable_runtime = state_ref.state_payload.get("durable_runtime")
+        if isinstance(durable_runtime, dict):
+            current_refs = durable_runtime.get("current_refs")
+            if isinstance(current_refs, dict):
+                refs = {
+                    "thread_id": current_refs.get("thread_id"),
+                    "checkpoint_id": current_refs.get("checkpoint_id"),
+                    "assistant_id": current_refs.get("assistant_id"),
+                }
+                filtered = {key: value for key, value in refs.items() if value}
+                if filtered:
+                    return filtered
         refs = {
             "thread_id": state_ref.state_payload.get("thread_id"),
             "checkpoint_id": state_ref.state_payload.get("checkpoint_id"),
             "assistant_id": state_ref.state_payload.get("assistant_id"),
         }
         return {key: value for key, value in refs.items() if value}
+
+    def _durable_lineage_for_state(self, state_ref: RuntimeStateRef | None) -> dict[str, Any] | None:
+        refs = self._durable_refs_for_state(state_ref)
+        if state_ref is None:
+            return None
+        durable_runtime = state_ref.state_payload.get("durable_runtime")
+        if isinstance(durable_runtime, dict):
+            history = durable_runtime.get("history")
+            normalized_history = [dict(item) for item in history] if isinstance(history, list) else []
+            return {
+                "current_refs": refs,
+                "history": normalized_history,
+                "transition_count": len(normalized_history),
+                "checkpoint_count": int(durable_runtime.get("checkpoint_count") or 0),
+                "review_decision_count": int(durable_runtime.get("review_decision_count") or 0),
+                "latest_reason": durable_runtime.get("latest_reason"),
+                "latest_transition_at": durable_runtime.get("latest_transition_at"),
+            }
+        if not refs:
+            return None
+        return {
+            "current_refs": refs,
+            "history": [],
+            "transition_count": 0,
+            "checkpoint_count": 0,
+            "review_decision_count": 0,
+            "latest_reason": None,
+            "latest_transition_at": None,
+        }
+
+    def _state_ref_with_durable_transition(
+        self,
+        state_ref: RuntimeStateRef,
+        *,
+        reason: str,
+        refs: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RuntimeStateRef:
+        previous_lineage = self._durable_lineage_for_state(state_ref)
+        previous_refs = previous_lineage["current_refs"] if previous_lineage is not None else {}
+        resolved_refs = {
+            key: value
+            for key, value in (refs or previous_refs).items()
+            if key in {"thread_id", "checkpoint_id", "assistant_id"} and value
+        }
+        if not resolved_refs and previous_lineage is None:
+            return state_ref
+        history = list(previous_lineage["history"]) if previous_lineage is not None else []
+        transition = {
+            "index": len(history) + 1,
+            "reason": reason,
+            "graph_step": str(state_ref.graph_step),
+            "is_terminal": state_ref.is_terminal,
+            "at": state_ref.updated_at.isoformat(),
+            "refs": resolved_refs,
+        }
+        if metadata:
+            transition["metadata"] = dict(metadata)
+        history.append(transition)
+        checkpoint_count = (previous_lineage["checkpoint_count"] if previous_lineage is not None else 0) + (
+            1 if resolved_refs.get("checkpoint_id") and resolved_refs.get("checkpoint_id") != previous_refs.get("checkpoint_id") else 0
+        )
+        review_decision_count = (previous_lineage["review_decision_count"] if previous_lineage is not None else 0) + (
+            1 if metadata is not None and metadata.get("review_decision") is not None else 0
+        )
+        return self._state_ref_with_payload_updates(
+            state_ref,
+            {
+                **resolved_refs,
+                "durable_runtime": {
+                    "current_refs": resolved_refs,
+                    "history": history,
+                    "transition_count": len(history),
+                    "checkpoint_count": checkpoint_count,
+                    "review_decision_count": review_decision_count,
+                    "latest_reason": reason,
+                    "latest_transition_at": state_ref.updated_at.isoformat(),
+                },
+            },
+        )
 
     def _state_ref_with_payload_updates(
         self,
@@ -376,11 +516,22 @@ class OrchestratorService(
             "mcp_server_profiles": [profile.model_dump(mode="json") for profile in snapshot.mcp_server_profiles],
             "feature_flags": self._feature_flags(),
         }
+        durable_refs: dict[str, str] = {}
         if snapshot.execution_lane == ExecutionLaneType.durable_incremental:
-            payload_updates.update(
-                self.durable_runtime_pilot.start(state_ref.run_id, state_ref.runtime_task_id)
+            durable_refs = self.durable_runtime_pilot.start(state_ref.run_id, state_ref.runtime_task_id)
+            payload_updates.update(durable_refs)
+        updated_state = self._state_ref_with_payload_updates(state_ref, payload_updates)
+        if snapshot.execution_lane == ExecutionLaneType.durable_incremental:
+            updated_state = self._state_ref_with_durable_transition(
+                updated_state,
+                reason="start",
+                refs=durable_refs,
+                metadata={
+                    "execution_lane": str(snapshot.execution_lane),
+                    "phase": "compile",
+                },
             )
-        return self._state_ref_with_payload_updates(state_ref, payload_updates)
+        return updated_state
 
     def _export_trace(
         self,
@@ -549,6 +700,11 @@ class OrchestratorService(
         *,
         connection=None,
         owner: str = "local_orchestrator",
+        owner_kind: OwnershipActorKind | str = OwnershipActorKind.control_plane,
+        owner_id: str = "control_plane_local",
+        domain_kind: OwnershipDomainKind | str = OwnershipDomainKind.runtime_task,
+        domain_key: str | None = None,
+        attempt_id: str | None = None,
     ) -> RuntimeClaim:
         active_claim = self.runtime_claim_repo.get_active_for_task(runtime_task_id, connection=connection)
         if active_claim is not None:
@@ -557,10 +713,20 @@ class OrchestratorService(
                 active_claim.claim_id,
                 active_claim.lease_expires_at.isoformat(),
             )
+        resolved_domain_kind, resolved_domain_key = self._ownership_domain_for(
+            runtime_task_id,
+            domain_kind=domain_kind,
+            domain_key=domain_key,
+        )
         claim = RuntimeClaim(
             run_id=run_id,
             runtime_task_id=runtime_task_id,
             owner=owner,
+            owner_kind=OwnershipActorKind(owner_kind),
+            owner_id=owner_id,
+            domain_kind=OwnershipDomainKind(resolved_domain_kind),
+            domain_key=resolved_domain_key,
+            attempt_id=attempt_id,
             lease_expires_at=self._lease_expires_at(),
         )
         self.runtime_claim_repo.create(claim, connection=connection)
@@ -576,6 +742,11 @@ class OrchestratorService(
                     "runtime_task_id": runtime_task_id,
                     "claim_id": claim.claim_id,
                     "owner": claim.owner,
+                    "owner_kind": claim.owner_kind,
+                    "owner_id": claim.owner_id,
+                    "domain_kind": claim.domain_kind,
+                    "domain_key": claim.domain_key,
+                    "attempt_id": claim.attempt_id,
                     "lease_expires_at": claim.lease_expires_at.isoformat(),
                 },
             ),
@@ -647,11 +818,28 @@ class OrchestratorService(
         adapter_name: str,
         connection=None,
         worker_name: str = "local_worker",
+        worker_kind: OwnershipActorKind | str = OwnershipActorKind.worker,
+        worker_id: str = "worker_local",
+        domain_kind: OwnershipDomainKind | str = OwnershipDomainKind.runtime_task,
+        domain_key: str | None = None,
+        claim_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> WorkerLease:
+        resolved_domain_kind, resolved_domain_key = self._ownership_domain_for(
+            runtime_task_id,
+            domain_kind=domain_kind,
+            domain_key=domain_key,
+        )
         lease = WorkerLease(
             run_id=run_id,
             runtime_task_id=runtime_task_id,
             worker_name=worker_name,
+            worker_kind=OwnershipActorKind(worker_kind),
+            worker_id=worker_id,
+            domain_kind=OwnershipDomainKind(resolved_domain_kind),
+            domain_key=resolved_domain_key,
+            claim_id=claim_id,
+            attempt_id=attempt_id,
             adapter_name=adapter_name,
             heartbeat_at=self._utc_now(),
             lease_expires_at=self._worker_lease_expires_at(),
@@ -669,6 +857,12 @@ class OrchestratorService(
                     "runtime_task_id": runtime_task_id,
                     "lease_id": lease.lease_id,
                     "worker_name": lease.worker_name,
+                    "worker_kind": lease.worker_kind,
+                    "worker_id": lease.worker_id,
+                    "domain_kind": lease.domain_kind,
+                    "domain_key": lease.domain_key,
+                    "claim_id": lease.claim_id,
+                    "attempt_id": lease.attempt_id,
                     "adapter_name": lease.adapter_name,
                     "heartbeat_at": lease.heartbeat_at.isoformat(),
                     "lease_expires_at": lease.lease_expires_at.isoformat(),
@@ -677,6 +871,64 @@ class OrchestratorService(
             connection=connection,
         )
         return lease
+
+    def _ownership_topology_projection(
+        self,
+        latest_claim: RuntimeClaim | None,
+        latest_worker_lease: WorkerLease | None,
+        current_attempt: RuntimeAttempt | None,
+    ) -> dict[str, Any]:
+        claim_projection = (
+            {
+                "claim_id": latest_claim.claim_id,
+                "owner": latest_claim.owner,
+                "owner_kind": str(latest_claim.owner_kind),
+                "owner_id": latest_claim.owner_id,
+                "domain_kind": str(latest_claim.domain_kind),
+                "domain_key": latest_claim.domain_key,
+                "attempt_id": latest_claim.attempt_id,
+                "status": str(latest_claim.status),
+            }
+            if latest_claim is not None
+            else None
+        )
+        worker_projection = (
+            {
+                "lease_id": latest_worker_lease.lease_id,
+                "worker_name": latest_worker_lease.worker_name,
+                "worker_kind": str(latest_worker_lease.worker_kind),
+                "worker_id": latest_worker_lease.worker_id,
+                "adapter_name": latest_worker_lease.adapter_name,
+                "domain_kind": str(latest_worker_lease.domain_kind),
+                "domain_key": latest_worker_lease.domain_key,
+                "claim_id": latest_worker_lease.claim_id,
+                "attempt_id": latest_worker_lease.attempt_id,
+                "status": str(latest_worker_lease.status),
+            }
+            if latest_worker_lease is not None
+            else None
+        )
+        topology_aligned = (
+            latest_claim is not None
+            and latest_worker_lease is not None
+            and str(latest_claim.domain_kind) == str(latest_worker_lease.domain_kind)
+            and latest_claim.domain_key == latest_worker_lease.domain_key
+            and latest_worker_lease.claim_id == latest_claim.claim_id
+        )
+        attempt_aligned = (
+            current_attempt is not None
+            and latest_claim is not None
+            and latest_worker_lease is not None
+            and latest_claim.attempt_id == current_attempt.attempt_id
+            and latest_worker_lease.attempt_id == current_attempt.attempt_id
+        )
+        return {
+            "claim": claim_projection,
+            "worker_lease": worker_projection,
+            "current_attempt_id": current_attempt.attempt_id if current_attempt is not None else None,
+            "topology_aligned": topology_aligned,
+            "attempt_aligned": attempt_aligned,
+        }
 
     def _release_worker_lease(
         self,
@@ -912,6 +1164,7 @@ class OrchestratorService(
         non_terminal_states = self.runtime_state_repo.list_live_for_run(context.run.run_id)
         latest_attempt = self._last_attempt(context)
         current_attempt = self._current_attempt(context)
+        last_runtime_state = self._last_runtime_state(context)
         current_runtime_task_ids = {task.runtime_task_id for task in context.runtime_tasks}
         active_claims = self._active_claims_for(context)
         expired_active_claims = self._expired_active_claims(context)
@@ -1127,6 +1380,76 @@ class OrchestratorService(
                         details={"missing_components": missing_components},
                     )
                 )
+        if self._execution_lane_for_context(context) == str(ExecutionLaneType.durable_incremental):
+            durable_refs = self._durable_refs_for_state(last_runtime_state)
+            durable_lineage = self._durable_lineage_for_state(last_runtime_state)
+            if last_runtime_state is None:
+                problems.append(
+                    self._inspection_problem(
+                        "durable_runtime_state_missing",
+                        "durable lane is selected but no runtime state ref exists to anchor durable lineage",
+                        "recompile_run",
+                        repairable=True,
+                        repair_action="recompile_prepared_run",
+                    )
+                )
+            elif not durable_refs:
+                problems.append(
+                    self._inspection_problem(
+                        "durable_refs_missing",
+                        "durable lane runtime state does not expose thread/checkpoint/assistant refs",
+                        "inspect_durable_lineage",
+                        repairable=False,
+                        details={"state_ref_id": last_runtime_state.state_ref_id},
+                    )
+                )
+            elif durable_lineage is None:
+                problems.append(
+                    self._inspection_problem(
+                        "durable_lineage_missing",
+                        "durable lane runtime state exposes refs but does not persist structured durable lineage",
+                        "inspect_durable_lineage",
+                        repairable=False,
+                        details={
+                            "state_ref_id": last_runtime_state.state_ref_id,
+                            "durable_refs": durable_refs,
+                        },
+                    )
+                )
+            else:
+                top_level_refs = {
+                    key: value
+                    for key, value in {
+                        "thread_id": last_runtime_state.state_payload.get("thread_id"),
+                        "checkpoint_id": last_runtime_state.state_payload.get("checkpoint_id"),
+                        "assistant_id": last_runtime_state.state_payload.get("assistant_id"),
+                    }.items()
+                    if value
+                }
+                if durable_lineage["current_refs"] != top_level_refs:
+                    problems.append(
+                        self._inspection_problem(
+                            "durable_lineage_refs_mismatch",
+                            "durable lineage current refs diverge from the top-level runtime state durable refs",
+                            "inspect_durable_lineage",
+                            repairable=False,
+                            details={
+                                "state_ref_id": last_runtime_state.state_ref_id,
+                                "current_refs": durable_lineage["current_refs"],
+                                "top_level_refs": top_level_refs,
+                            },
+                        )
+                    )
+                if not durable_lineage["history"]:
+                    problems.append(
+                        self._inspection_problem(
+                            "durable_lineage_history_empty",
+                            "durable lane runtime state is missing transition history",
+                            "inspect_durable_lineage",
+                            repairable=False,
+                            details={"state_ref_id": last_runtime_state.state_ref_id},
+                        )
+                    )
         return problems
 
     def _recoverability_hint_for(
@@ -1267,6 +1590,7 @@ class OrchestratorService(
         current_attempt = self._current_attempt(context)
         last_claim = self._last_claim(context)
         last_worker_lease = self._last_worker_lease(context)
+        review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         snapshot = RunSnapshot(
             run_id=run_id,
             stage=RunSnapshotStage(stage),
@@ -1274,10 +1598,16 @@ class OrchestratorService(
             runtime_task_id=runtime_task_id or (context.runtime_tasks[0].runtime_task_id if context.runtime_tasks else None),
             summary=summary,
             snapshot_payload={
-                "effective_review_state": self._effective_review_state(context.run, context.latest_review_verdict),
+                "effective_review_state": self._effective_review_state(
+                    context.run,
+                    context.latest_review_verdict,
+                    review_policy,
+                ),
+                "review_policy": review_policy,
                 "runtime_task_ids": [task.runtime_task_id for task in context.runtime_tasks],
                 "latest_runtime_graph_step": str(last_runtime_state.graph_step) if last_runtime_state is not None else None,
                 "latest_runtime_state_ref_id": last_runtime_state.state_ref_id if last_runtime_state is not None else None,
+                "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
                 "latest_attempt_id": last_attempt.attempt_id if last_attempt is not None else None,
                 "current_attempt_id": current_attempt.attempt_id if current_attempt is not None else None,
                 "latest_review_verdict_id": (
@@ -1625,6 +1955,12 @@ class OrchestratorService(
         if state_ref is None:
             return None
         payload = state_ref.state_payload.get("context_budget")
+        return payload if isinstance(payload, dict) else None
+
+    def _parallel_batch_from_state_ref(self, state_ref: RuntimeStateRef | None) -> dict[str, Any] | None:
+        if state_ref is None:
+            return None
+        payload = state_ref.state_payload.get("parallel_batch")
         return payload if isinstance(payload, dict) else None
 
     def _trace_context_for_context(

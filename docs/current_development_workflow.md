@@ -25,7 +25,8 @@ Use the following documents in this order.
 ### A. Current-state and next-step truth
 
 - `README.md`
-- `docs/reviews/m8-freeze-review.md`
+- `docs/reviews/m10-freeze-review.md`
+- `docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md`
 - `docs/reviews/m7-freeze-review.md`
 - `docs/tech-debt-registry.md`
 
@@ -90,10 +91,13 @@ Do **not** use them as permission to import legacy architecture, naming, or phas
 
 Current confirmed status:
 
-- milestone baseline: through `M8`, complete
+- milestone baseline: through `M10`, complete
 - current cycle state: shipped local-first runtime baseline exists
-- `M8` integration cycle: **complete**
-- next approved work: **`M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`**
+- `M9` closeout cycle: **complete**
+- `M10 Phase 0` reassessment and scope freeze: **complete**
+- `M10 Phase 1` ownership-topology freeze: **complete**
+- `M10 Phase 2` local barrier and parallel batch execution: **complete**
+- next approved work: **`M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`**
 - integrated root-level `M8` plan:
   - `universal_agentic_workflow_os_M8_phase_plan_v1_0.md`
 - supporting `M8` planning inputs:
@@ -102,22 +106,32 @@ Current confirmed status:
   - `docs/reviews/m8-pre-entry-extra-optimization-assessment.md`
   - `docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md`
 
-The current controlling closeout record is:
+The current controlling closeout record for the shipped baseline is:
 
-- `docs/reviews/m8-freeze-review.md`
+- `docs/reviews/m10-freeze-review.md`
 
-That record says the repository has completed the `M8` integration cycle and must open a fresh post-`M8` rebaseline before new breadth is approved.
+The current historical `M10` phase records are:
+
+- `docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md`
+- `docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md`
+- `docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md`
+
+Together those records say the repository has completed the `M9` closeout cycle, completed the full `M10` local-first ownership/concurrency slice, and retired the `M10` debt set into the milestone freeze review.
 
 Current next approved phase:
 
-- **`M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`**
+- **`M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`**
 
 This means the repository is currently at:
 
 1. `M7` complete
 2. `Pre-M8` hardening complete
 3. `M8 Phase 0` through `M8 Phase 7` complete
-4. the next required step is a post-`M8` rebaseline for `M9`
+4. `M9 Phase 0` through `M9 Phase 5` complete
+5. `M10 Phase 0 - Post-M9 Rebaseline And Scope Freeze` complete
+6. `M10 Phase 1 - Ownership Topology And Claim Domain Freeze` complete
+7. `M10 Phase 2 - Local Barrier And Parallel Batch Execution` complete
+8. the next required step is `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`
 
 ---
 
@@ -162,6 +176,13 @@ The phase doc must define:
 
 Create or update the phase task-card index.
 
+Important timing rule:
+
+- generate task cards only for the **current active phase**
+- do not pre-generate future-phase task-card indexes
+- do not pre-generate future-phase detailed task cards
+- future phases may be named in the phase doc as frozen sequence or next reassessment, but their task-card pack is opened only when that phase actually becomes active
+
 The phase task-card index must define:
 
 - task order
@@ -184,6 +205,11 @@ If a task touches any of these, it should get its own task-card file:
 - state transitions
 - review gates
 - validation flow
+
+If the current phase is itself complex, then:
+
+- every task in that current phase should get its own detailed card
+- the phase index stays a navigation doc, not a substitute for those cards
 
 ### Step 5. Execute one task at a time
 
@@ -215,6 +241,7 @@ Before the next phase starts:
 - compare actual implementation with the phase doc
 - update scope if reality changed
 - confirm the next phase is still the right one
+- only then generate the next phase's task-card index and detailed task cards
 
 ---
 
@@ -304,15 +331,16 @@ Use this priority order:
 
 For the repository **right now**, the answer is:
 
-- do **not** jump straight into unconstrained `M9` feature breadth
-- treat `M8` as a completed integration cycle
-- begin with an explicit `M9 Phase 0` reassessment and scope freeze
+- treat `M10` as a completed local-first ownership and batch-concurrency milestone
+- do **not** auto-expand into external worker pools or multi-node scheduling breadth
+- begin the next cycle with a post-`M10` rebaseline and scope freeze
 
 That means the next concrete work should be:
 
-1. read `docs/reviews/m8-freeze-review.md`
-2. open `M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`
-3. reassess what breadth is actually approved before writing feature code
+1. read `docs/reviews/m10-freeze-review.md`
+2. open `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`
+3. generate only the `M11 Phase 0` task-card pack when that phase becomes active
+4. reassess whether external worker-pool or multi-node breadth should remain deferred again after the `M11` rebaseline
 
 ---
 
@@ -344,4 +372,4 @@ That means the next concrete work should be:
 
 If you need a single current instruction for the repository, use this:
 
-> Follow the task-card protocol, but do not begin open-ended `M9` feature expansion yet; start with `M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`.
+> Follow the task-card protocol, treat `M10` as complete, and begin the next cycle with `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`.

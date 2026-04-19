@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 from typing import Any
 
 from packages.contracts import (
@@ -23,6 +24,19 @@ from packages.core_domain.service_types import RunDiagnosticContext
 
 
 class ProjectionServiceMixin:
+    def _parse_iso_datetime(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _duration_ms_between(self, start: datetime | None, end: datetime | None) -> int | None:
+        if start is None or end is None:
+            return None
+        return max(int((end - start).total_seconds() * 1000), 0)
+
     def _worker_lease_projection(
         self,
         context: RunDiagnosticContext,
@@ -90,7 +104,10 @@ class ProjectionServiceMixin:
     ) -> str | None:
         if str(context.run.status) != RunStatus.failed:
             return None
+        review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         if context.latest_review_verdict is not None and str(context.latest_review_verdict.decision) == ReviewDecision.fail:
+            if review_policy == "optional" and last_runtime_state is not None and last_runtime_state.state_payload.get("return_code") not in (None, 0):
+                return "runtime_return_code_non_zero"
             if str(context.latest_review_verdict.reviewer_type) == ReviewerType.human:
                 return "human_review_rejected"
             return "auto_review_failed"
@@ -269,6 +286,113 @@ class ProjectionServiceMixin:
             "pending_human_review": detail["effective_review_state"] == "human_pending",
         }
 
+    def _run_metrics_for_context(
+        self,
+        context: RunDiagnosticContext,
+        timeline: list[RunEvent],
+        *,
+        budget_ledger,
+        last_runtime_state: RuntimeStateRef | None,
+        last_evidence: Evidence | None,
+        latest_snapshot,
+    ) -> dict[str, Any]:
+        run_id = context.run.run_id
+        review_history = self.review_repo.list_for_run(run_id)
+        simulation_records = self.simulation_record_repo.list_for_run(run_id)
+        memory_items = self.memory_item_repo.list_for_run(run_id)
+        durable_lineage = self._durable_lineage_for_state(last_runtime_state)
+        review_requested_events = [
+            event for event in timeline if str(event.event_type) == str(RunEventType.review_requested)
+        ]
+        review_submitted_events = [
+            event for event in timeline if str(event.event_type) == str(RunEventType.review_submitted)
+        ]
+        latest_runtime_completed_event = next(
+            (event for event in reversed(timeline) if str(event.event_type) == str(RunEventType.runtime_task_completed)),
+            None,
+        )
+        terminal_event = next(
+            (
+                event
+                for event in reversed(timeline)
+                if str(event.event_type) in {RunEventType.run_completed, RunEventType.run_failed, RunEventType.run_cancelled}
+            ),
+            None,
+        )
+        latest_execution_duration_ms = (
+            latest_runtime_completed_event.payload_json.get("duration_ms")
+            if latest_runtime_completed_event is not None
+            else (last_evidence.raw_execution.get("duration_ms") if last_evidence is not None else None)
+        )
+        terminal_at = terminal_event.created_at if terminal_event is not None else None
+        if terminal_at is None and latest_snapshot is not None and str(context.run.status) in {
+            RunStatus.completed,
+            RunStatus.failed,
+            RunStatus.cancelled,
+        }:
+            terminal_at = latest_snapshot.created_at
+        latest_review_requested_at = review_requested_events[-1].created_at if review_requested_events else None
+        latest_review_submitted_at = review_submitted_events[-1].created_at if review_submitted_events else None
+        return {
+            "counts": {
+                "events": len(timeline),
+                "snapshots": len(context.snapshots),
+                "runtime_tasks": len(context.runtime_tasks),
+                "runtime_attempts": len(context.runtime_attempts),
+                "claims": len(context.claims),
+                "active_claims": len(self._active_claims_for(context)),
+                "worker_leases": len(context.worker_leases),
+                "active_worker_leases": len(self._active_worker_leases_for(context)),
+                "evidence": sum(1 for evidence in context.evidence_by_task.values() if evidence is not None),
+                "review_verdicts": len(review_history),
+                "review_requested_events": len(review_requested_events),
+                "review_submitted_events": len(review_submitted_events),
+                "simulation_records": len(simulation_records),
+                "memory_items": len(memory_items),
+                "durable_transitions": durable_lineage["transition_count"] if durable_lineage is not None else 0,
+                "durable_checkpoints": durable_lineage["checkpoint_count"] if durable_lineage is not None else 0,
+            },
+            "timings_ms": {
+                "runtime_total": budget_ledger.total_runtime_ms if budget_ledger is not None else None,
+                "latest_execution": latest_execution_duration_ms,
+                "time_to_first_evidence": (
+                    self._duration_ms_between(context.run.created_at, last_evidence.created_at)
+                    if last_evidence is not None
+                    else None
+                ),
+                "time_to_latest_review": (
+                    self._duration_ms_between(context.run.created_at, review_history[-1].reviewed_at)
+                    if review_history
+                    else None
+                ),
+                "time_to_terminal": self._duration_ms_between(context.run.created_at, terminal_at),
+                "human_review_wait": (
+                    self._duration_ms_between(
+                        latest_review_requested_at,
+                        self._utc_now() if str(context.run.status) == RunStatus.awaiting_review else latest_review_submitted_at,
+                    )
+                    if latest_review_requested_at is not None
+                    else None
+                ),
+            },
+            "coverage": {
+                "has_external_trace_id": bool(
+                    last_runtime_state is not None and last_runtime_state.state_payload.get("external_trace_id")
+                ),
+                "has_durable_refs": bool(self._durable_refs_for_state(last_runtime_state)),
+                "has_durable_lineage": durable_lineage is not None,
+                "has_memory_items": bool(memory_items),
+                "has_simulation_records": bool(simulation_records),
+            },
+            "latest_ids": {
+                "state_ref_id": last_runtime_state.state_ref_id if last_runtime_state is not None else None,
+                "snapshot_id": latest_snapshot.snapshot_id if latest_snapshot is not None else None,
+                "evidence_id": last_evidence.evidence_id if last_evidence is not None else None,
+                "review_verdict_id": review_history[-1].verdict_id if review_history else None,
+                "terminal_event_id": terminal_event.event_id if terminal_event is not None else None,
+            },
+        }
+
     def _closure_expectation_for(self, run_status: str) -> dict[str, Any]:
         if run_status == RunStatus.prepared:
             return {
@@ -348,6 +472,8 @@ class ProjectionServiceMixin:
         if review_digest["effective_review_state"] in {
             "auto_passed",
             "auto_failed",
+            "advisory_passed",
+            "advisory_failed",
             "human_approved",
             "human_rejected",
         } and review_digest["review_submitted_count"] == 0:
@@ -444,6 +570,7 @@ class ProjectionServiceMixin:
                 timeline_summary,
                 simulation_report,
             ),
+            "run_metrics": detail["run_metrics"],
             "execution_profile": {
                 "review_policy": detail["review_policy"],
                 "execution_lane": detail["execution_lane"],
@@ -480,7 +607,9 @@ class ProjectionServiceMixin:
                 "runtime_attempt_projection": detail["runtime_attempt_projection"],
                 "latest_claim": detail["latest_claim"],
                 "worker_lease_projection": detail["worker_lease_projection"],
+                "ownership_topology": detail["ownership_topology"],
             },
+            "parallel_batch": detail["parallel_batch"],
             "context_budget": detail["context_budget"],
             "trace_context": detail["trace_context"],
             "next_action": detail["next_action"],
@@ -511,6 +640,7 @@ class ProjectionServiceMixin:
             "simulation_report": simulation_report.model_dump(mode="json"),
             "latest_simulation_record": detail["latest_simulation_record"],
             "context_budget": detail["context_budget"],
+            "run_metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
             "trace_exporter": detail["trace_exporter"],
             "review_packet": {
@@ -526,6 +656,61 @@ class ProjectionServiceMixin:
                 "latest_event_type": summary["timeline_summary"]["latest_event_type"],
                 "recent_event_types": summary["timeline_summary"]["recent_event_types"],
             },
+        }
+
+    def get_run_replay_packet(self, run_id: str) -> dict[str, Any]:
+        context = self._load_run_context(run_id)
+        detail = self.get_status_detail(run_id)
+        inspection = self.inspect_run_state(run_id)
+        summary = self.get_run_summary(run_id)
+        event_inspection = self.get_event_inspection(run_id)
+        simulation_report = self._simulation_report_for(detail, inspection)
+        timeline = self.get_timeline(run_id)
+        evidence = [item.model_dump(mode="json") for item in context.evidence_by_task.values() if item is not None]
+        review_history = [item.model_dump(mode="json") for item in self.review_repo.list_for_run(run_id)]
+        task_packets: list[dict[str, Any]] = []
+        for runtime_task in context.runtime_tasks:
+            task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+            if task_packet is not None:
+                task_packets.append(task_packet.model_dump(mode="json"))
+        return {
+            "packet_version": "m9_phase_1_v1",
+            "generated_at": self._utc_now().isoformat(),
+            "run": detail["run"],
+            "execution_profile": summary["execution_profile"],
+            "metrics": detail["run_metrics"],
+            "trace_context": detail["trace_context"],
+            "parallel_batch": detail["parallel_batch"],
+            "summary": {
+                "headline": summary["headline"],
+                "next_action": summary["next_action"],
+                "recoverability_hint": summary["recoverability_hint"],
+                "failure_taxonomy": summary["failure_taxonomy"],
+            },
+            "state_lineage": {
+                "runtime_state_refs": detail["runtime_state_refs"],
+                "latest_snapshot": detail["latest_snapshot"],
+                "snapshots": [snapshot.model_dump(mode="json") for snapshot in context.snapshots],
+                "durable_lineage": detail["durable_lineage"],
+            },
+            "ownership_lineage": {
+                "runtime_attempts": detail["runtime_attempts"],
+                "claims": detail["claims"],
+                "worker_leases": detail["worker_leases"],
+                "ownership_topology": detail["ownership_topology"],
+            },
+            "review_lineage": {
+                "review_policy": detail["review_policy"],
+                "effective_review_state": detail["effective_review_state"],
+                "evidence": evidence,
+                "review_history": review_history,
+                "latest_review_verdict": detail["latest_review_verdict"],
+            },
+            "task_packets": task_packets,
+            "timeline": [event.model_dump(mode="json") for event in timeline],
+            "event_inspection": event_inspection,
+            "state_inspection": inspection,
+            "simulation_report": simulation_report.model_dump(mode="json"),
         }
 
     def get_status_detail(self, run_id: str) -> dict[str, Any]:
@@ -552,11 +737,22 @@ class ProjectionServiceMixin:
         expired_active_worker_leases = self._expired_active_worker_leases(context)
         inspection_problems = self._inspect_context(context)
         context_budget = self._context_budget_from_state_ref(last_runtime_state)
+        parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
+        timeline = self.get_timeline(run_id)
+        review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         trace_context = self._trace_context_for_context(
             context,
             last_runtime_state=last_runtime_state,
             latest_attempt=latest_attempt,
             latest_evidence=last_evidence,
+        )
+        run_metrics = self._run_metrics_for_context(
+            context,
+            timeline,
+            budget_ledger=budget_ledger,
+            last_runtime_state=last_runtime_state,
+            last_evidence=last_evidence,
+            latest_snapshot=latest_snapshot,
         )
         return {
             "run": context.run.model_dump(mode="json"),
@@ -569,11 +765,14 @@ class ProjectionServiceMixin:
                 tool_projection_manifest.model_dump(mode="json") if tool_projection_manifest is not None else None
             ),
             "mcp_server_profiles": mcp_profiles,
-            "review_policy": str(context.preset.default_review_policy) if context.preset is not None else None,
+            "review_policy": review_policy,
             "domain_pack": domain_pack.model_dump(mode="json") if domain_pack is not None else None,
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
             "context_budget": context_budget,
+            "parallel_batch": parallel_batch,
             "trace_context": trace_context,
+            "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
+            "run_metrics": run_metrics,
             "simulation_policy": simulation_policy.model_dump(mode="json"),
             "capability_resolution": capability_route.model_dump(mode="json") if capability_route is not None else None,
             "runtime_tasks": [task.model_dump(mode="json") for task in context.runtime_tasks],
@@ -595,6 +794,11 @@ class ProjectionServiceMixin:
             "worker_leases": [lease.model_dump(mode="json") for lease in context.worker_leases],
             "active_worker_leases": [lease.model_dump(mode="json") for lease in active_worker_leases],
             "latest_worker_lease": self._serialize_worker_lease(latest_worker_lease),
+            "ownership_topology": self._ownership_topology_projection(
+                latest_claim,
+                latest_worker_lease,
+                current_attempt,
+            ),
             "worker_lease_projection": self._worker_lease_projection(
                 context,
                 latest_worker_lease,
@@ -603,7 +807,11 @@ class ProjectionServiceMixin:
             ),
             "latest_review_verdict": self._serialize_contract(context.latest_review_verdict),
             "last_review_verdict": self._serialize_contract(context.latest_review_verdict),
-            "effective_review_state": self._effective_review_state(context.run, context.latest_review_verdict),
+            "effective_review_state": self._effective_review_state(
+                context.run,
+                context.latest_review_verdict,
+                review_policy,
+            ),
             "next_action": self._next_action_for(str(context.run.status)),
             "failure_reason": self._failure_reason_for(context, last_runtime_state),
             "waiting_reason": self._waiting_reason_for(context, last_evidence),
@@ -627,6 +835,7 @@ class ProjectionServiceMixin:
         current_attempt = self._current_attempt(context)
         latest_snapshot = self._last_snapshot(context)
         latest_simulation_record = self.simulation_record_repo.latest_for_run(run_id)
+        latest_claim = self._last_claim(context)
         latest_worker_lease = self._last_worker_lease(context)
         budget_ledger = self.budget_repo.get_by_run(run_id)
         active_claims = self._active_claims_for(context)
@@ -634,10 +843,21 @@ class ProjectionServiceMixin:
         expired_active_worker_leases = self._expired_active_worker_leases(context)
         repairable_problem_count = sum(1 for problem in problems if problem["repairable"])
         context_budget = self._context_budget_from_state_ref(last_runtime_state)
+        parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
+        timeline = self.get_timeline(run_id)
+        review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         trace_context = self._trace_context_for_context(
             context,
             last_runtime_state=last_runtime_state,
             latest_attempt=latest_attempt,
+        )
+        run_metrics = self._run_metrics_for_context(
+            context,
+            timeline,
+            budget_ledger=budget_ledger,
+            last_runtime_state=last_runtime_state,
+            last_evidence=self._last_evidence(context),
+            latest_snapshot=latest_snapshot,
         )
         return {
             "run": context.run.model_dump(mode="json"),
@@ -650,14 +870,21 @@ class ProjectionServiceMixin:
                 tool_projection_manifest.model_dump(mode="json") if tool_projection_manifest is not None else None
             ),
             "mcp_server_profiles": mcp_profiles,
-            "review_policy": str(context.preset.default_review_policy) if context.preset is not None else None,
+            "review_policy": review_policy,
             "domain_pack": domain_pack.model_dump(mode="json") if domain_pack is not None else None,
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
             "context_budget": context_budget,
+            "parallel_batch": parallel_batch,
             "trace_context": trace_context,
+            "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
+            "run_metrics": run_metrics,
             "simulation_policy": simulation_policy.model_dump(mode="json"),
             "capability_resolution": capability_route.model_dump(mode="json") if capability_route is not None else None,
-            "effective_review_state": self._effective_review_state(context.run, context.latest_review_verdict),
+            "effective_review_state": self._effective_review_state(
+                context.run,
+                context.latest_review_verdict,
+                review_policy,
+            ),
             "last_runtime_state": self._serialize_contract(last_runtime_state),
             "latest_snapshot": self._serialize_snapshot(latest_snapshot),
             "latest_simulation_record": self._serialize_contract(latest_simulation_record),
@@ -668,7 +895,13 @@ class ProjectionServiceMixin:
             "budget_projection": self._budget_projection(budget_ledger),
             "active_claims": [claim.model_dump(mode="json") for claim in active_claims],
             "active_worker_leases": [lease.model_dump(mode="json") for lease in active_worker_leases],
+            "latest_claim": self._serialize_claim(latest_claim),
             "latest_worker_lease": self._serialize_worker_lease(latest_worker_lease),
+            "ownership_topology": self._ownership_topology_projection(
+                latest_claim,
+                latest_worker_lease,
+                current_attempt,
+            ),
             "worker_lease_projection": self._worker_lease_projection(
                 context,
                 latest_worker_lease,

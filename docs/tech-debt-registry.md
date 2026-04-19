@@ -35,6 +35,12 @@
 | TD-015 | governance reports parsed Markdown debt prose directly instead of consuming a structured canonical source | M3-M7 | Pre-M8 Phase D | Added canonical JSON governance sources with Markdown compatibility fallback and explicit source-contract reporting |
 | TD-017 | clean source-package/export flow was not productized, so review or handoff snapshots could include local state, DBs, artifacts, and repo noise | M5-M7 | Pre-M8 Phase E | Added source-package manifest/export tooling, minimal automation gates, and freeze-review provenance for handoff claims |
 | TD-018 | canonical repo docs mixed local absolute links and current/historical guidance without a portable source map | M1-M7 | Pre-M8 Phase E | Finished portable-link cleanup for living docs and formalized current-vs-historical doc governance in the active workflow guide |
+| TD-006 | review policy breadth stopped at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` was reference-only | M0 | M9 | Added executable `optional` advisory-review runtime behavior, seed coverage, and governance/readiness parity |
+| TD-007 | `run_events` and trace export lacked replay-grade linkage and first-class run metrics | M0 | M9 | Added replay-packet projection, end-to-end run metrics, and richer audit/status observability surfaces |
+| TD-008 | the durable pilot still lacked explicit interrupt/resume/checkpoint lineage and reconciliation semantics | M0 | M9 | Added structured durable lineage history, durable transition inspection, and terminal/review checkpoint reconciliation |
+| TD-010 | governance visibility remained document-centric and lacked quantitative automation and alerts | M0 | M9 | Added quantitative governance metrics, automated alert reports, and updated release-readiness integration |
+| TD-001 | claim and worker-lease semantics remained local-only and did not provide explicit repository-owned ownership topology | M0 | M10 | Added explicit claim/worker ownership topology, attempt-aware claim and lease linkage, coherent ownership projections, and local batch-domain semantics without turning the runtime into a multi-node scheduler |
+| TD-009 | execution semantics were still serial-first and did not implement claim/lease/barrier-aware local batch concurrency | M0 | M10 | Added local batch-barrier events, parallel batch resume semantics, projection surfaces, and CLI/API batch-resume entry points for the supported local control plane |
 
 ---
 
@@ -42,12 +48,7 @@
 
 | ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-001 | claim and worker-lease semantics remain local-only and do not provide true distributed resource ownership | M0 | M9 | partially_repaid | blocks external worker pools, distributed locking, and real multi-node scheduling |
-| TD-006 | review policy breadth still stops at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` remains reference-only | M0 | M9 | partially_repaid | blocks a fuller runtime policy family but does not block the current shipped baseline |
-| TD-007 | `run_events` and trace export are stronger after `M8`, but replay-grade linkage and first-class metrics are still incomplete | M0 | M9 | partially_repaid | blocks richer observability, replay analysis, and structured runtime diagnostics |
-| TD-008 | the `M8` durable pilot added runtime-ref mapping, but complex interrupt/resume/checkpoint merge semantics are still incomplete | M0 | M9 | partially_repaid | blocks richer recovery workflows and deeper runtime fault handling |
-| TD-009 | execution semantics are still serial-first and do not implement real claim/lease/barrier concurrency | M0 | M9 | partially_repaid | blocks safe parallel execution and higher-throughput scheduling |
-| TD-010 | governance visibility is stronger than before, but debt tracking is still document-centric and not yet quantitatively automated | M0 | M9 | partially_repaid | blocks deeper debt trend analysis, alerting, and richer dashboard/reporting automation |
+| TD-019 | true external worker pools and multi-node scheduling are still not productized beyond the local-first control plane | M10 | M11 | active | blocks remote worker pools, distributed lease renewal, and hosted scheduler expansion |
 
 ---
 

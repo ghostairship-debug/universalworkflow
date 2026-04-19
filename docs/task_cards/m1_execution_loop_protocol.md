@@ -95,6 +95,28 @@ M0 阶段的 task card 更偏向“阶段提醒”与“目标概述”，足以
 - 对高风险任务做代码级拆解
 - 作为实际编码时的唯一执行说明
 
+## 3.4 时序生成规则
+
+进入一个新 phase 时，只生成该 **当前 phase** 的执行文档：
+
+- 当前 phase 的 phase doc
+- 当前 phase 的 phase task 索引
+- 当前 phase 所需的独立 task cards
+
+明确禁止：
+
+- 在当前 phase 尚未开始前，预生成 future phase 的 task-card index
+- 在当前 phase 尚未开始前，预生成 future phase 的详细 task cards
+
+允许保留的内容：
+
+- 在当前 phase 文档中写明后续 phase 的名称、候选顺序、冻结里程碑拆分或 next reassessment
+- 已完成历史 phase 的完整 task cards，作为历史执行记录保留
+
+一句话规则：
+
+- **task cards 只为当前正在执行的 phase 生成；future phase 在成为当前 phase 之前，只能有 phase 级规划，不应有 task-card 包。**
+
 ---
 
 # 4. Task 分级规则
@@ -126,6 +148,26 @@ M1 的 task 分为两类：
 
 **默认规则：**  
 对复杂性判断拿不准时，按复杂 task 处理，不按标准 task 处理。
+
+## 4.3 复杂 Phase
+
+满足以下任一条件，phase 本身应按复杂 phase 管理：
+
+- 包含 2 张及以上 `complex` task
+- 该 phase 会同时改动 public API / CLI / service / runtime / governance 中的两层及以上
+- 该 phase 的 phase gate 依赖显式的串行执行顺序、中间态冻结或跨层联调
+- 该 phase 的主要输出不是单点修复，而是一整组可执行子任务的开发方案
+
+复杂 phase 的强制规则：
+
+- 只为当前正在执行的复杂 phase 生成全量 task cards，不预生成 future complex phase 的单卡
+- 每个 task 都必须有独立详细 md，不能只把部分 task 留在 phase index 中
+- task 的 `small / medium / standard / complex` 只是复杂度标记，不影响“是否需要独立卡”
+- phase task index 只负责导航、依赖、gate 和完成状态汇总，不替代单卡
+- 进入编码前，必须先具备：phase doc、phase task index、该 phase 的全量 task cards
+
+**默认规则：**  
+对 phase 是否复杂拿不准时，按复杂 phase 处理。
 
 ---
 
@@ -161,7 +203,9 @@ M1 的 task 分为两类：
 - 每张 task 的目标与受影响层
 - 每张 task 的预期输出
 - 每张 task 的测试方式
-- 若为 complex，必须给出独立 md 路径
+- 若 phase 为复杂 phase，则所有 task 都必须给出独立 md 路径
+- 若 phase 不是复杂 phase，则至少 complex task 必须给出独立 md 路径
+- 该索引只对应当前 phase，不替代 future phase 的预生成 task-card 包
 
 建议使用如下字段：
 

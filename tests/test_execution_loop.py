@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -42,7 +43,7 @@ from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
-from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
 from packages.worker_adapters.langchain_agent_adapter import AgentExecutionResponse, LangChainAgentAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
@@ -133,6 +134,35 @@ class _ExplodingTraceExporter(TraceExporter):
 
     def export(self, record: TraceRecord) -> str | None:
         raise RuntimeError(f"boom:{record.name}")
+
+
+class _DelayedShellAdapter(ShellAdapter):
+    def __init__(self, delay_seconds: float = 0.2):
+        super().__init__()
+        self.delay_seconds = delay_seconds
+        self.started_packets: list[tuple[str, datetime]] = []
+
+    def launch(self, packet: TaskPacket) -> ExecutionResult:
+        started_at = utc_now()
+        self.started_packets.append((packet.runtime_task_id, started_at))
+        time.sleep(self.delay_seconds)
+        artifact_paths = resolve_artifact_paths(
+            packet,
+            create_missing=True,
+            placeholder=f"parallel batch artifact for {packet.runtime_task_id}\n",
+        )
+        finished_at = utc_now()
+        return ExecutionResult(
+            runtime_task_id=packet.runtime_task_id,
+            return_code=0,
+            stdout="parallel batch ok",
+            stderr="",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+            artifact_paths=artifact_paths,
+            adapter_name=self.normalized_name(),
+        )
 
 
 def test_execute_run_success_path(tmp_path: Path) -> None:
@@ -292,6 +322,51 @@ def test_recommended_policy_passes_without_human_gate(tmp_path: Path) -> None:
     assert detail["review_policy"] == "recommended"
     assert detail["effective_review_state"] == "auto_passed"
     assert detail["latest_review_verdict"]["reviewer_type"] == "auto"
+
+
+def test_optional_policy_completes_with_advisory_review_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Optional delivery passes", "optional_delivery")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert bundle.review_verdict is not None
+    assert bundle.review_verdict.decision == "pass"
+    assert detail["review_policy"] == "optional"
+    assert detail["effective_review_state"] == "advisory_passed"
+    assert detail["failure_reason"] is None
+
+
+def test_optional_policy_failure_stays_runtime_terminal_and_advisory(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Optional delivery fails", "optional_delivery")
+    prepared = service.compile_run(run.run_id)
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
+            ('["python", "-c", "import sys; sys.exit(2)"]', prepared.task_packet.runtime_task_id),
+        )
+
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "failed"
+    assert bundle.review_verdict is not None
+    assert bundle.review_verdict.decision == "fail"
+    assert detail["review_policy"] == "optional"
+    assert detail["effective_review_state"] == "advisory_failed"
+    assert detail["failure_reason"] == "runtime_return_code_non_zero"
+    assert detail["latest_runtime_attempt"]["status"] == "failed"
 
 
 def test_resume_run_auto_terminal_records_simulation_hook(tmp_path: Path) -> None:
@@ -680,6 +755,11 @@ def test_service_validates_domain_pack_catalog(tmp_path: Path) -> None:
         },
         {
             "preset_id": "guarded_delivery",
+            "task_kind": "shell_exec",
+            "domain_pack_id": "software_delivery_pack",
+        },
+        {
+            "preset_id": "optional_delivery",
             "task_kind": "shell_exec",
             "domain_pack_id": "software_delivery_pack",
         },
@@ -1076,6 +1156,8 @@ def test_durable_pilot_refs_stay_in_diagnostics_and_can_resume_review(tmp_path: 
     assert "thread_id" not in awaiting_detail["run"]
     assert awaiting_detail["last_runtime_state"]["state_payload"]["thread_id"].startswith("thread_")
     assert awaiting_detail["trace_context"]["thread_id"].startswith("thread_")
+    assert awaiting_detail["durable_lineage"]["transition_count"] >= 2
+    assert [item["reason"] for item in awaiting_detail["durable_lineage"]["history"]] == ["start", "resume", "awaiting_review"]
 
     approved = service.approve_run_review(run.run_id)
     approved_detail = service.get_status_detail(run.run_id)
@@ -1085,6 +1167,7 @@ def test_durable_pilot_refs_stay_in_diagnostics_and_can_resume_review(tmp_path: 
     assert approved_detail["run"]["status"] == "completed"
     assert "thread_id" not in approved_detail["run"]
     assert approved_detail["last_runtime_state"]["state_payload"]["checkpoint_id"].startswith("checkpoint_")
+    assert approved_detail["durable_lineage"]["transition_count"] == 4
 
 
 def test_trace_export_failures_do_not_block_agent_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1350,6 +1433,26 @@ def test_run_audit_report_projects_human_review_wait_path(tmp_path: Path) -> Non
     assert report["review_packet"]["effective_review_state"] == "human_pending"
     assert report["review_packet"]["closure_summary"]["state"] == "awaiting_review"
     assert report["event_inspection"]["review_digest"]["pending_human_review"] is True
+
+
+def test_run_replay_packet_projects_metrics_and_lineage(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Replay packet auto", "feature_delivery")
+    service.compile_run(run.run_id)
+    service.resume_run(run.run_id)
+    packet = service.get_run_replay_packet(run.run_id)
+
+    assert packet["packet_version"] == "m9_phase_1_v1"
+    assert packet["metrics"]["counts"]["events"] >= 1
+    assert packet["metrics"]["counts"]["runtime_attempts"] >= 2
+    assert packet["state_lineage"]["runtime_state_refs"][0]["graph_step"] == "completed"
+    assert packet["review_lineage"]["effective_review_state"] == "auto_passed"
+    assert len(packet["task_packets"]) == 1
+    assert any(item["event_type"] == "run_completed" for item in packet["timeline"])
 
 
 def test_inspection_reports_completed_runtime_non_terminal(tmp_path: Path) -> None:
@@ -1652,6 +1755,7 @@ def test_resume_run_releases_worker_lease_after_auto_terminal(tmp_path: Path) ->
     service.compile_run(run.run_id)
     bundle = service.resume_run(run.run_id)
     detail = service.get_status_detail(run.run_id)
+    claims = service.list_claims(run.run_id)
     leases = service.list_worker_leases(run.run_id)
     timeline_types = [event.event_type for event in service.get_timeline(run.run_id)]
 
@@ -1660,12 +1764,65 @@ def test_resume_run_releases_worker_lease_after_auto_terminal(tmp_path: Path) ->
     assert leases[0].status == "released"
     assert leases[0].release_reason == "run_terminal"
     assert leases[0].adapter_name == "shell"
+    assert leases[0].worker_kind == "worker"
+    assert leases[0].worker_id == "worker_shell_local"
+    assert leases[0].claim_id == claims[0].claim_id
+    assert leases[0].attempt_id == detail["latest_runtime_attempt"]["attempt_id"]
     assert detail["active_worker_leases"] == []
     assert detail["latest_worker_lease"]["status"] == "released"
     assert detail["worker_lease_projection"]["active_lease_count"] == 0
     assert detail["worker_lease_projection"]["latest_adapter_name"] == "shell"
+    assert detail["ownership_topology"]["claim"]["owner_kind"] == "control_plane"
+    assert detail["ownership_topology"]["claim"]["domain_kind"] == "runtime_task"
+    assert detail["ownership_topology"]["worker_lease"]["worker_kind"] == "worker"
+    assert detail["ownership_topology"]["worker_lease"]["claim_id"] == claims[0].claim_id
+    assert detail["ownership_topology"]["topology_aligned"] is True
     assert "worker_lease_acquired" in timeline_types
     assert "worker_lease_released" in timeline_types
+
+
+def test_resume_runs_parallel_records_batch_barrier_and_starts_runs_together(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    delayed_adapter = _DelayedShellAdapter(delay_seconds=0.2)
+    service = OrchestratorService(
+        db_path,
+        worker_router=WorkerRouter([delayed_adapter]),
+    )
+
+    first_run = service.create_run("Parallel batch first", "feature_delivery")
+    second_run = service.create_run("Parallel batch second", "feature_delivery")
+    service.compile_run(first_run.run_id)
+    service.compile_run(second_run.run_id)
+
+    batch = service.resume_runs_parallel([first_run.run_id, second_run.run_id], max_workers=2)
+    first_detail = service.get_status_detail(first_run.run_id)
+    second_detail = service.get_status_detail(second_run.run_id)
+    first_timeline_types = [event.event_type for event in service.get_timeline(first_run.run_id)]
+
+    assert batch["status"] == "completed"
+    assert batch["member_count"] == 2
+    assert batch["errors"] == []
+    assert len(batch["results"]) == 2
+    assert first_detail["parallel_batch"]["barrier_id"] == batch["barrier_id"]
+    assert second_detail["parallel_batch"]["barrier_id"] == batch["barrier_id"]
+    assert first_detail["parallel_batch"]["state"] == "released"
+    assert second_detail["parallel_batch"]["state"] == "released"
+    assert len(delayed_adapter.started_packets) == 2
+    start_delta_ms = abs(
+        int(
+            (
+                delayed_adapter.started_packets[0][1] - delayed_adapter.started_packets[1][1]
+            ).total_seconds()
+            * 1000
+        )
+    )
+    assert start_delta_ms < 150
+    assert first_detail["ownership_topology"]["topology_aligned"] is True
+    assert second_detail["ownership_topology"]["topology_aligned"] is True
+    assert RunEventType.batch_barrier_waiting in first_timeline_types
+    assert RunEventType.batch_barrier_released in first_timeline_types
 
 
 def test_resume_run_releases_worker_lease_before_human_review_wait(tmp_path: Path) -> None:

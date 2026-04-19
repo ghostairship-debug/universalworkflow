@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Barrier, BrokenBarrierError
+from typing import Any
+
 from packages.contracts import (
     BudgetLedger,
     ReviewDecision,
@@ -22,13 +26,27 @@ from packages.contracts import (
     TaskStatus,
     WorkerLeaseStatus,
 )
+from packages.contracts.models import new_id
 from packages.core_domain.compile import CompileSnapshot, compile_run as build_compile_snapshot
 from packages.core_domain.db import unit_of_work
-from packages.core_domain.errors import BudgetExhaustedError, EntityNotFoundError, PresetNotFoundError
+from packages.core_domain.errors import (
+    BudgetExhaustedError,
+    EntityNotFoundError,
+    ParallelBarrierBrokenError,
+    PresetNotFoundError,
+    WorkflowError,
+)
 from packages.core_domain.service_types import ExecutedRunBundle, PreparedRunBundle, ReviewedRunBundle
 
 
 class LifecycleServiceMixin:
+    def _parallel_batch_payload(self, barrier_id: str, member_count: int, state: str) -> dict[str, Any]:
+        return {
+            "barrier_id": barrier_id,
+            "member_count": member_count,
+            "state": state,
+        }
+
     def _snapshot_for_run(
         self,
         run: Run,
@@ -467,6 +485,11 @@ class LifecycleServiceMixin:
                     is_terminal=True,
                     created_at=state_ref.created_at,
                 )
+                cancelled_state = self._state_ref_with_durable_transition(
+                    cancelled_state,
+                    reason="cancelled",
+                    metadata={"reason": "cancelled_by_operator"},
+                )
                 self.runtime_state_repo.upsert(cancelled_state, connection=connection)
             current_attempt = self.runtime_attempt_repo.current_for_run(run.run_id, connection=connection)
             if current_attempt is not None:
@@ -595,6 +618,16 @@ class LifecycleServiceMixin:
                         terminal_state,
                         {"external_trace_id": trace_id},
                     )
+                terminal_state = self._state_ref_with_durable_transition(
+                    terminal_state,
+                    reason="human_review_terminal",
+                    refs=updated_durable_refs or durable_refs or None,
+                    metadata={
+                        "review_decision": str(decision),
+                        "verdict_id": verdict.verdict_id,
+                        "reviewer_type": str(ReviewerType.human),
+                    },
+                )
                 self.runtime_state_repo.upsert(terminal_state, connection=connection)
             current_attempt = self.runtime_attempt_repo.current_for_run(run.run_id, connection=connection)
             if current_attempt is not None:
@@ -646,7 +679,14 @@ class LifecycleServiceMixin:
         )
         return ReviewedRunBundle(run=updated_run, evidence=evidence, review_verdict=verdict)
 
-    def resume_run(self, run_id: str) -> ExecutedRunBundle:
+    def resume_run(
+        self,
+        run_id: str,
+        *,
+        _parallel_barrier: Barrier | None = None,
+        _barrier_id: str | None = None,
+        _barrier_size: int | None = None,
+    ) -> ExecutedRunBundle:
         run = self.get_run(run_id)
         self._require_status(run, "resume", [RunStatus.prepared])
         preset = self.preset_repo.get(run.preset_id)
@@ -668,7 +708,7 @@ class LifecycleServiceMixin:
                 raise EntityNotFoundError("runtime_state_ref", runtime_task.runtime_task_id)
             lane_type = state_ref.state_payload.get("execution_lane", task_packet.env.get("WORKFLOW_EXECUTION_LANE"))
             budget_ledger = self._ensure_budget_ledger(run, preset, connection=connection, compile_count=1)
-            self._ensure_current_runtime_attempt(
+            current_attempt = self._ensure_current_runtime_attempt(
                 run.run_id,
                 runtime_task.runtime_task_id,
                 trigger=RuntimeAttemptTrigger.resume,
@@ -676,18 +716,27 @@ class LifecycleServiceMixin:
                 reason_if_superseded="resume",
                 force_new=True,
             )
-            self._acquire_runtime_claim(
+            owner_kind, owner_id, owner_name = self._control_plane_identity()
+            claim = self._acquire_runtime_claim(
                 run.run_id,
                 runtime_task.runtime_task_id,
                 connection=connection,
+                owner=owner_name,
+                owner_kind=owner_kind,
+                owner_id=owner_id,
+                attempt_id=current_attempt.attempt_id,
             )
             resumed_state = self.runtime_gateway.resume(state_ref)
             durable_refs = self._durable_refs_for_state(resumed_state)
             if durable_refs:
-                resumed_state = self._state_ref_with_payload_updates(
-                    resumed_state,
-                    self.durable_runtime_pilot.checkpoint(durable_refs, reason="resume"),
-                )
+                durable_refs = self.durable_runtime_pilot.checkpoint(durable_refs, reason="resume")
+                resumed_state = self._state_ref_with_payload_updates(resumed_state, durable_refs)
+            resumed_state = self._state_ref_with_durable_transition(
+                resumed_state,
+                reason="resume",
+                refs=durable_refs or None,
+                metadata={"phase": "resume"},
+            )
             self.runtime_state_repo.upsert(resumed_state, connection=connection)
             self._transition_run_status(run, "resume", RunStatus.running, connection=connection)
             self.task_repo.update_runtime_task_status(runtime_task.runtime_task_id, TaskStatus.running, connection=connection)
@@ -741,12 +790,68 @@ class LifecycleServiceMixin:
             )
 
             adapter = self.worker_router.route(execution_packet)
+            adapter_name = adapter.__class__.__name__.replace("Adapter", "").lower()
+            worker_kind, worker_id, worker_name = self._worker_identity(adapter_name)
             worker_lease = self._acquire_worker_lease(
                 run.run_id,
                 runtime_task.runtime_task_id,
-                adapter_name=adapter.__class__.__name__.replace("Adapter", "").lower(),
+                adapter_name=adapter_name,
                 connection=connection,
+                worker_name=worker_name,
+                worker_kind=worker_kind,
+                worker_id=worker_id,
+                claim_id=claim.claim_id,
+                attempt_id=current_attempt.attempt_id,
             )
+            if _parallel_barrier is not None and _barrier_id is not None and _barrier_size is not None:
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {"parallel_batch": self._parallel_batch_payload(_barrier_id, _barrier_size, "waiting")},
+                )
+                self.runtime_state_repo.upsert(resumed_state, connection=connection)
+                self.event_repo.append(
+                    RunEvent(
+                        run_id=run.run_id,
+                        event_type=RunEventType.batch_barrier_waiting,
+                        object_type="parallel_batch",
+                        object_id=_barrier_id,
+                        summary="Run is waiting on the batch barrier",
+                        payload_json={
+                            "run_id": run.run_id,
+                            "runtime_task_id": runtime_task.runtime_task_id,
+                            "barrier_id": _barrier_id,
+                            "member_count": _barrier_size,
+                        },
+                    ),
+                    connection=connection,
+                )
+                connection.commit()
+                try:
+                    _parallel_barrier.wait(timeout=30)
+                except BrokenBarrierError as exc:
+                    raise ParallelBarrierBrokenError(_barrier_id, run.run_id) from exc
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {"parallel_batch": self._parallel_batch_payload(_barrier_id, _barrier_size, "released")},
+                )
+                self.runtime_state_repo.upsert(resumed_state, connection=connection)
+                self.event_repo.append(
+                    RunEvent(
+                        run_id=run.run_id,
+                        event_type=RunEventType.batch_barrier_released,
+                        object_type="parallel_batch",
+                        object_id=_barrier_id,
+                        summary="Run crossed the batch barrier",
+                        payload_json={
+                            "run_id": run.run_id,
+                            "runtime_task_id": runtime_task.runtime_task_id,
+                            "barrier_id": _barrier_id,
+                            "member_count": _barrier_size,
+                        },
+                    ),
+                    connection=connection,
+                )
+                connection.commit()
             execution_result = adapter.launch(execution_packet)
             completed_status = TaskStatus.completed if execution_result.return_code == 0 else TaskStatus.failed
             self.task_repo.update_runtime_task_status(runtime_task.runtime_task_id, completed_status, connection=connection)
@@ -806,10 +911,10 @@ class LifecycleServiceMixin:
                     "review_policy": preset.default_review_policy,
                     "return_code": execution_result.return_code,
                 }
-                durable_refs = self._durable_refs_for_state(resumed_state)
-                if durable_refs:
+                checkpoint_refs = self._durable_refs_for_state(resumed_state)
+                if checkpoint_refs:
                     awaiting_payload.update(
-                        self.durable_runtime_pilot.checkpoint(durable_refs, reason="awaiting_review")
+                        self.durable_runtime_pilot.checkpoint(checkpoint_refs, reason="awaiting_review")
                     )
                 awaiting_state = RuntimeStateRef(
                     state_ref_id=resumed_state.state_ref_id,
@@ -835,6 +940,16 @@ class LifecycleServiceMixin:
                         awaiting_state,
                         {"external_trace_id": trace_id},
                     )
+                awaiting_state = self._state_ref_with_durable_transition(
+                    awaiting_state,
+                    reason="awaiting_review",
+                    refs=self._durable_refs_for_state(awaiting_state),
+                    metadata={
+                        "review_policy": str(preset.default_review_policy),
+                        "awaiting_review_reason": "human_required",
+                        "return_code": execution_result.return_code,
+                    },
+                )
                 self.runtime_state_repo.upsert(awaiting_state, connection=connection)
                 self._release_active_claims_for_run(
                     run.run_id,
@@ -917,10 +1032,10 @@ class LifecycleServiceMixin:
                         "awaiting_review_reason": awaiting_reason,
                         "latest_auto_review_decision": review_verdict.decision,
                     }
-                    durable_refs = self._durable_refs_for_state(resumed_state)
-                    if durable_refs:
+                    checkpoint_refs = self._durable_refs_for_state(resumed_state)
+                    if checkpoint_refs:
                         awaiting_payload.update(
-                            self.durable_runtime_pilot.checkpoint(durable_refs, reason="awaiting_review")
+                            self.durable_runtime_pilot.checkpoint(checkpoint_refs, reason="awaiting_review")
                         )
                     awaiting_state = RuntimeStateRef(
                         state_ref_id=resumed_state.state_ref_id,
@@ -947,6 +1062,18 @@ class LifecycleServiceMixin:
                             awaiting_state,
                             {"external_trace_id": trace_id},
                         )
+                    awaiting_state = self._state_ref_with_durable_transition(
+                        awaiting_state,
+                        reason="awaiting_review",
+                        refs=self._durable_refs_for_state(awaiting_state),
+                        metadata={
+                            "review_policy": str(preset.default_review_policy),
+                            "awaiting_review_reason": awaiting_reason,
+                            "return_code": execution_result.return_code,
+                            "review_decision": str(review_verdict.decision),
+                            "verdict_id": review_verdict.verdict_id,
+                        },
+                    )
                     self.runtime_state_repo.upsert(awaiting_state, connection=connection)
                     self._release_active_claims_for_run(
                         run.run_id,
@@ -995,7 +1122,33 @@ class LifecycleServiceMixin:
                         review_verdict=review_verdict,
                     )
                 else:
-                    if review_verdict.decision == ReviewDecision.pass_:
+                    if review_policy == ReviewPolicy.optional:
+                        final_status = RunStatus.completed if execution_result.return_code == 0 else RunStatus.failed
+                        if final_status == RunStatus.completed:
+                            terminal_event = RunEvent(
+                                run_id=run.run_id,
+                                event_type=RunEventType.run_completed,
+                                object_type="run",
+                                object_id=run.run_id,
+                                summary="Run completed",
+                                payload_json={"run_id": run.run_id, "status": RunStatus.completed},
+                            )
+                            terminal_graph_step = RuntimeGraphStep.completed
+                        else:
+                            terminal_event = RunEvent(
+                                run_id=run.run_id,
+                                event_type=RunEventType.run_failed,
+                                object_type="run",
+                                object_id=run.run_id,
+                                summary="Run failed during execution",
+                                payload_json={
+                                    "run_id": run.run_id,
+                                    "status": RunStatus.failed,
+                                    "reason": "runtime_return_code_non_zero",
+                                },
+                            )
+                            terminal_graph_step = RuntimeGraphStep.failed
+                    elif review_verdict.decision == ReviewDecision.pass_:
                         final_status = RunStatus.completed
                         terminal_event = RunEvent(
                             run_id=run.run_id,
@@ -1026,11 +1179,14 @@ class LifecycleServiceMixin:
                         **resumed_state.state_payload,
                         "review_policy": preset.default_review_policy,
                         "return_code": execution_result.return_code,
+                        "latest_auto_review_decision": str(review_verdict.decision),
                     }
-                    durable_refs = self._durable_refs_for_state(resumed_state)
-                    if durable_refs:
+                    if review_policy == ReviewPolicy.optional:
+                        terminal_payload["review_effect"] = "advisory_only"
+                    checkpoint_refs = self._durable_refs_for_state(resumed_state)
+                    if checkpoint_refs:
                         terminal_payload.update(
-                            self.durable_runtime_pilot.checkpoint(durable_refs, reason="terminal")
+                            self.durable_runtime_pilot.checkpoint(checkpoint_refs, reason="terminal")
                         )
                     terminal_state = RuntimeStateRef(
                         state_ref_id=resumed_state.state_ref_id,
@@ -1058,15 +1214,35 @@ class LifecycleServiceMixin:
                             terminal_state,
                             {"external_trace_id": trace_id},
                         )
+                    terminal_state = self._state_ref_with_durable_transition(
+                        terminal_state,
+                        reason="terminal",
+                        refs=self._durable_refs_for_state(terminal_state),
+                        metadata={
+                            "review_policy": str(preset.default_review_policy),
+                            "return_code": execution_result.return_code,
+                            "review_decision": str(review_verdict.decision),
+                            "verdict_id": review_verdict.verdict_id,
+                        },
+                    )
                     self.runtime_state_repo.upsert(terminal_state, connection=connection)
                     current_attempt = self.runtime_attempt_repo.current_for_run(run.run_id, connection=connection)
                     if current_attempt is not None:
+                        close_reason = (
+                            "optional_advisory_terminal"
+                            if review_policy == ReviewPolicy.optional and final_status == RunStatus.completed
+                            else "runtime_return_code_non_zero"
+                            if review_policy == ReviewPolicy.optional
+                            else "auto_review_passed"
+                            if final_status == RunStatus.completed
+                            else "auto_review_failed"
+                        )
                         self._close_runtime_attempt(
                             current_attempt,
                             status=RuntimeAttemptStatus.completed
                             if final_status == RunStatus.completed
                             else RuntimeAttemptStatus.failed,
-                            reason="auto_review_passed" if final_status == RunStatus.completed else "auto_review_failed",
+                            reason=close_reason,
                             connection=connection,
                         )
                     self._release_worker_lease(
@@ -1111,3 +1287,82 @@ class LifecycleServiceMixin:
 
     def execute_run(self, run_id: str) -> ExecutedRunBundle:
         return self.resume_run(run_id)
+
+    def resume_runs_parallel(self, run_ids: list[str], *, max_workers: int | None = None) -> dict[str, Any]:
+        normalized_run_ids: list[str] = []
+        seen: set[str] = set()
+        for run_id in run_ids:
+            if run_id not in seen:
+                normalized_run_ids.append(run_id)
+                seen.add(run_id)
+        barrier_id = new_id("barrier")
+        if not normalized_run_ids:
+            return {
+                "barrier_id": barrier_id,
+                "member_count": 0,
+                "max_workers": 0,
+                "status": "completed",
+                "results": [],
+                "errors": [],
+            }
+
+        worker_count = min(max_workers or len(normalized_run_ids), len(normalized_run_ids))
+        sync_barrier = Barrier(len(normalized_run_ids))
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        def _resume_one(target_run_id: str) -> dict[str, Any]:
+            try:
+                bundle = self.resume_run(
+                    target_run_id,
+                    _parallel_barrier=sync_barrier,
+                    _barrier_id=barrier_id,
+                    _barrier_size=len(normalized_run_ids),
+                )
+            except Exception:
+                try:
+                    sync_barrier.abort()
+                except Exception:
+                    pass
+                raise
+            return {
+                "run": bundle.run.model_dump(mode="json"),
+                "evidence_id": bundle.evidence.evidence_id,
+                "review_decision": bundle.review_verdict.decision if bundle.review_verdict is not None else None,
+            }
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_map = {executor.submit(_resume_one, run_id): run_id for run_id in normalized_run_ids}
+            for future in as_completed(future_map):
+                run_id = future_map[future]
+                try:
+                    results.append(future.result())
+                except WorkflowError as exc:
+                    errors.append(
+                        {
+                            "run_id": run_id,
+                            "code": exc.code,
+                            "message": exc.message,
+                            "details": exc.details,
+                        }
+                    )
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "run_id": run_id,
+                            "code": "unexpected_parallel_batch_error",
+                            "message": str(exc),
+                            "details": {},
+                        }
+                    )
+
+        results.sort(key=lambda item: item["run"]["run_id"])
+        errors.sort(key=lambda item: item["run_id"])
+        return {
+            "barrier_id": barrier_id,
+            "member_count": len(normalized_run_ids),
+            "max_workers": worker_count,
+            "status": "completed" if not errors else "failed",
+            "results": results,
+            "errors": errors,
+        }

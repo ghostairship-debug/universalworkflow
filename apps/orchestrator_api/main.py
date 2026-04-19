@@ -12,6 +12,8 @@ from packages.core_domain.db import DEFAULT_DB_PATH, migrate
 from packages.core_domain.errors import WorkflowError
 from packages.core_domain.governance import (
     build_domain_pack_platform_report,
+    build_governance_alert_report,
+    build_governance_metrics_report,
     build_release_readiness_report,
     build_review_policy_report,
     build_tech_debt_report,
@@ -28,6 +30,11 @@ class TaskKindOverrideRequest(BaseModel):
     task_kind: str | None = Field(default=None)
     adapter_name: str | None = Field(default=None)
     memory_item_ids: list[str] = Field(default_factory=list)
+
+
+class BatchResumeRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=1)
+    max_workers: int | None = Field(default=None, ge=1)
 
 
 class ReconcileRunRequest(BaseModel):
@@ -153,6 +160,32 @@ def create_app(
     def get_governance_review_policy() -> dict:
         return build_review_policy_report(db_path=resolved_db_path)
 
+    @app.get("/governance/metrics")
+    def get_governance_metrics(
+        validation_report_path: str | None = None,
+        decision_table_path: str | None = None,
+        registry_path: str | None = None,
+    ) -> dict:
+        return build_governance_metrics_report(
+            db_path=resolved_db_path,
+            validation_report_path=validation_report_path,
+            decision_table_path=decision_table_path,
+            registry_path=registry_path,
+        )
+
+    @app.get("/governance/alerts")
+    def get_governance_alerts(
+        validation_report_path: str | None = None,
+        decision_table_path: str | None = None,
+        registry_path: str | None = None,
+    ) -> dict:
+        return build_governance_alert_report(
+            db_path=resolved_db_path,
+            validation_report_path=validation_report_path,
+            decision_table_path=decision_table_path,
+            registry_path=registry_path,
+        )
+
     @app.get("/governance/release-readiness")
     def get_governance_release_readiness(
         validation_report_path: str | None = None,
@@ -238,6 +271,10 @@ def create_app(
             "review_decision": bundle.review_verdict.decision if bundle.review_verdict is not None else None,
         }
 
+    @app.post("/runs/batch-resume")
+    def batch_resume_runs(payload: BatchResumeRequest) -> dict:
+        return service.resume_runs_parallel(payload.run_ids, max_workers=payload.max_workers)
+
     @app.post("/runs/{run_id}/approve")
     def approve_run(run_id: str) -> dict:
         bundle = service.approve_run_review(run_id)
@@ -259,6 +296,10 @@ def create_app(
     @app.get("/runs/{run_id}/timeline")
     def get_run_timeline(run_id: str) -> list[dict]:
         return [event.model_dump(mode="json") for event in service.get_timeline(run_id)]
+
+    @app.get("/runs/{run_id}/replay-packet")
+    def get_run_replay_packet(run_id: str) -> dict:
+        return service.get_run_replay_packet(run_id)
 
     @app.get("/runs/{run_id}/status-detail")
     def get_run_status_detail(run_id: str) -> dict:

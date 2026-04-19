@@ -7,6 +7,7 @@
     "match": {
       "preset_ids": [
         "feature_delivery",
+        "optional_delivery",
         "advisory_delivery",
         "guarded_delivery"
       ],

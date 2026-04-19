@@ -84,56 +84,58 @@
       "introduced_in": "M1-M7",
       "repaid_in": "Pre-M8 Phase E",
       "result": "Finished portable-link cleanup for living docs and formalized current-vs-historical doc governance in the active workflow guide"
+    },
+    {
+      "debt_id": "TD-006",
+      "description": "review policy breadth stopped at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` was reference-only",
+      "introduced_in": "M0",
+      "repaid_in": "M9",
+      "result": "Added executable `optional` advisory-review runtime behavior, seed coverage, and governance/readiness parity"
+    },
+    {
+      "debt_id": "TD-007",
+      "description": "`run_events` and trace export lacked replay-grade linkage and first-class run metrics",
+      "introduced_in": "M0",
+      "repaid_in": "M9",
+      "result": "Added replay-packet projection, end-to-end run metrics, and richer audit/status observability surfaces"
+    },
+    {
+      "debt_id": "TD-008",
+      "description": "the durable pilot still lacked explicit interrupt/resume/checkpoint lineage and reconciliation semantics",
+      "introduced_in": "M0",
+      "repaid_in": "M9",
+      "result": "Added structured durable lineage history, durable transition inspection, and terminal/review checkpoint reconciliation"
+    },
+    {
+      "debt_id": "TD-010",
+      "description": "governance visibility remained document-centric and lacked quantitative automation and alerts",
+      "introduced_in": "M0",
+      "repaid_in": "M9",
+      "result": "Added quantitative governance metrics, automated alert reports, and updated release-readiness integration"
+    },
+    {
+      "debt_id": "TD-001",
+      "description": "claim and worker-lease semantics remained local-only and did not provide explicit repository-owned ownership topology",
+      "introduced_in": "M0",
+      "repaid_in": "M10",
+      "result": "Added explicit claim/worker ownership topology, attempt-aware claim and lease linkage, coherent ownership projections, and local batch-domain semantics without turning the runtime into a multi-node scheduler"
+    },
+    {
+      "debt_id": "TD-009",
+      "description": "execution semantics were still serial-first and did not implement claim/lease/barrier-aware local batch concurrency",
+      "introduced_in": "M0",
+      "repaid_in": "M10",
+      "result": "Added local batch-barrier events, parallel batch resume semantics, projection surfaces, and CLI/API batch-resume entry points for the supported local control plane"
     }
   ],
   "open_items": [
     {
-      "debt_id": "TD-001",
-      "description": "claim and worker-lease semantics remain local-only and do not provide true distributed resource ownership",
-      "introduced_in": "M0",
-      "planned_repayment_phase": "Next Cycle",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks external worker pools, distributed locking, and real multi-node scheduling"
-    },
-    {
-      "debt_id": "TD-006",
-      "description": "review policy breadth still stops at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` remains reference-only",
-      "introduced_in": "M0",
-      "planned_repayment_phase": "Next Cycle",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks a fuller runtime policy family but does not block the current shipped baseline"
-    },
-    {
-      "debt_id": "TD-007",
-      "description": "`run_events` still favor concise payloads and do not yet provide deep traces, replay-grade linkage, or first-class metrics",
-      "introduced_in": "M0",
-      "planned_repayment_phase": "Next Cycle",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks richer observability, replay analysis, and structured runtime diagnostics"
-    },
-    {
-      "debt_id": "TD-008",
-      "description": "runtime recovery still lacks complex interrupt/resume/checkpoint merge semantics beyond the current local resumable baseline",
-      "introduced_in": "M0",
-      "planned_repayment_phase": "Next Cycle",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks richer recovery workflows and deeper runtime fault handling"
-    },
-    {
-      "debt_id": "TD-009",
-      "description": "execution semantics are still serial-first and do not implement real claim/lease/barrier concurrency",
-      "introduced_in": "M0",
-      "planned_repayment_phase": "Next Cycle",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks safe parallel execution and higher-throughput scheduling"
-    },
-    {
-      "debt_id": "TD-010",
-      "description": "governance visibility is stronger than before, but debt tracking is still document-centric and not yet quantitatively automated",
-      "introduced_in": "M0",
-      "planned_repayment_phase": "Next Cycle",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks deeper debt trend analysis, alerting, and richer dashboard/reporting automation"
+      "debt_id": "TD-019",
+      "description": "true external worker pools and multi-node scheduling are still not productized beyond the local-first control plane",
+      "introduced_in": "M10",
+      "planned_repayment_phase": "M11",
+      "current_status": "active",
+      "blocking_impact": "blocks remote worker pools, distributed lease renewal, and hosted scheduler expansion"
     }
   ],
   "freeze_review_questions": [

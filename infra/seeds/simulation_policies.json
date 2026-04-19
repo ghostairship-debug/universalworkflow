@@ -5,6 +5,7 @@
     "description": "Run the deterministic local consistency simulation for delivery-oriented presets.",
     "preset_ids": [
       "feature_delivery",
+      "optional_delivery",
       "guarded_delivery"
     ],
     "trigger_policy": "always",

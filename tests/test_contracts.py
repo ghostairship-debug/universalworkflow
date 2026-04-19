@@ -308,6 +308,10 @@ def test_runtime_claim_requires_release_metadata_when_not_active() -> None:
         lease_expires_at=Run(goal="g", preset_id="feature_delivery").created_at,
     )
     assert active_claim.status == "active"
+    assert active_claim.owner_kind == "control_plane"
+    assert active_claim.owner_id == "control_plane_local"
+    assert active_claim.domain_kind == "runtime_task"
+    assert active_claim.domain_key == "task_123"
 
     with pytest.raises(ValidationError):
         RuntimeClaim(
@@ -358,6 +362,10 @@ def test_worker_lease_requires_release_metadata_when_not_active() -> None:
         lease_expires_at=Run(goal="g", preset_id="feature_delivery").created_at,
     )
     assert active_lease.status == "active"
+    assert active_lease.worker_kind == "worker"
+    assert active_lease.worker_id == "worker_local"
+    assert active_lease.domain_kind == "runtime_task"
+    assert active_lease.domain_key == "task_123"
 
     with pytest.raises(ValidationError):
         WorkerLease(
@@ -414,6 +422,7 @@ def test_preset_seed_file_parses() -> None:
     presets = load_seed_presets(Path("infra/seeds/presets.json"))
     assert {preset.preset_id for preset in presets} == {
         "feature_delivery",
+        "optional_delivery",
         "research_spike",
         "research_spike_reviewable",
         "advisory_delivery",
@@ -455,7 +464,12 @@ def test_domain_pack_seed_file_parses() -> None:
     domain_packs = load_seed_domain_packs(Path("infra/seeds/domain_packs.json"))
     assert [domain_pack.domain_pack_id for domain_pack in domain_packs] == ["software_delivery_pack"]
     assert domain_packs[0].enabled is True
-    assert domain_packs[0].match.preset_ids == ["feature_delivery", "advisory_delivery", "guarded_delivery"]
+    assert domain_packs[0].match.preset_ids == [
+        "feature_delivery",
+        "optional_delivery",
+        "advisory_delivery",
+        "guarded_delivery",
+    ]
     assert domain_packs[0].compile_projection.artifact_label == "software_delivery"
     assert domain_packs[0].capability_exposure.preferred_adapter_name == "shell"
     assert domain_packs[0].runtime_projection.operator_label == "software-delivery"
@@ -563,6 +577,7 @@ def test_preset_suggestions_are_deterministic_and_explained() -> None:
     fallback = resolver.suggest("General task")
     assert [item.preset_id for item in fallback] == [
         "feature_delivery",
+        "optional_delivery",
         "research_spike",
         "advisory_delivery",
         "guarded_delivery",

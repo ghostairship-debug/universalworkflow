@@ -757,15 +757,21 @@ class RuntimeClaimRepository(RepositoryBase):
             conn.execute(
                 """
                 INSERT INTO runtime_claims (
-                  claim_id, run_id, runtime_task_id, owner, status, lease_expires_at,
+                  claim_id, run_id, runtime_task_id, owner, owner_kind, owner_id,
+                  domain_kind, domain_key, attempt_id, status, lease_expires_at,
                   released_at, release_reason, schema_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     claim.claim_id,
                     claim.run_id,
                     claim.runtime_task_id,
                     claim.owner,
+                    claim.owner_kind,
+                    claim.owner_id,
+                    claim.domain_kind,
+                    claim.domain_key,
+                    claim.attempt_id,
                     claim.status,
                     claim.lease_expires_at.isoformat(),
                     claim.released_at.isoformat() if claim.released_at is not None else None,
@@ -1128,15 +1134,22 @@ class WorkerLeaseRepository(RepositoryBase):
             conn.execute(
                 """
                 INSERT INTO worker_leases (
-                  lease_id, run_id, runtime_task_id, worker_name, adapter_name, status,
+                  lease_id, run_id, runtime_task_id, worker_name, worker_kind, worker_id,
+                  domain_kind, domain_key, claim_id, attempt_id, adapter_name, status,
                   heartbeat_at, lease_expires_at, released_at, release_reason, schema_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lease.lease_id,
                     lease.run_id,
                     lease.runtime_task_id,
                     lease.worker_name,
+                    lease.worker_kind,
+                    lease.worker_id,
+                    lease.domain_kind,
+                    lease.domain_key,
+                    lease.claim_id,
+                    lease.attempt_id,
                     lease.adapter_name,
                     lease.status,
                     lease.heartbeat_at.isoformat(),

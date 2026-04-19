@@ -51,6 +51,8 @@ from packages.contracts.models import (
 )
 from packages.contracts.runtime import (
     NON_TERMINAL_RUNTIME_GRAPH_STEPS,
+    OwnershipActorKind,
+    OwnershipDomainKind,
     PresetSuggestion,
     RuntimeAttempt,
     RuntimeAttemptStatus,
@@ -131,6 +133,8 @@ __all__ = [
     "TrustTier",
     "TERMINAL_RUNTIME_GRAPH_STEPS",
     "NON_TERMINAL_RUNTIME_GRAPH_STEPS",
+    "OwnershipActorKind",
+    "OwnershipDomainKind",
     "allowed_run_status_transitions",
     "can_transition_run_status",
     "is_terminal_runtime_graph_step",

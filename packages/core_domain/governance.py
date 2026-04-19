@@ -4,10 +4,12 @@ import json
 import re
 import sqlite3
 from collections import Counter, defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from packages.contracts import PresetDefinition, ReviewPolicy
+from packages.core_domain.db import DEFAULT_DB_PATH
 from packages.core_domain.domain_packs import DomainPackRegistry
 from packages.core_domain.presets import load_seed_presets
 from packages.core_domain.repositories import PresetRepository
@@ -127,9 +129,14 @@ def _build_tech_debt_report_payload(
     planned_phase_counts = Counter(item["planned_repayment_phase"] for item in open_items)
     introduced_phase_counts = Counter(item["introduced_in"] for item in open_items)
     m3_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M3"]
+    m9_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M9"]
+    m10_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M10"]
+    m11_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M11"]
     pre_m8_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "Pre-M8"]
-    next_cycle_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "Next Cycle"]
-    active_gate_focus_items = pre_m8_focus_items or m3_focus_items
+    next_cycle_focus_items = [
+        item for item in open_items if item["planned_repayment_phase"] in {"Next Cycle", "M10", "M11"}
+    ]
+    active_gate_focus_items = pre_m8_focus_items or m3_focus_items or m9_focus_items or m10_focus_items or m11_focus_items or next_cycle_focus_items
     return {
         "source_path": source_path.as_posix(),
         "source_contract": source_contract,
@@ -143,6 +150,9 @@ def _build_tech_debt_report_payload(
         "planned_phase_counts": dict(planned_phase_counts),
         "introduced_phase_counts": dict(introduced_phase_counts),
         "m3_focus_items": m3_focus_items,
+        "m9_focus_items": m9_focus_items,
+        "m10_focus_items": m10_focus_items,
+        "m11_focus_items": m11_focus_items,
         "pre_m8_focus_items": pre_m8_focus_items,
         "next_cycle_focus_items": next_cycle_focus_items,
         "active_gate_focus_items": active_gate_focus_items,
@@ -265,6 +275,8 @@ def _parse_review_decision_table(decision_table_path: str | Path | None = None) 
 def _runtime_shape_for_policy(policy: str) -> str:
     if policy == str(ReviewPolicy.auto_only):
         return "execution_then_auto_review_terminal"
+    if policy == str(ReviewPolicy.optional):
+        return "execution_then_advisory_review_terminal"
     if policy == str(ReviewPolicy.recommended):
         return "execution_then_auto_review_or_human_escalation"
     if policy == str(ReviewPolicy.human_required):
@@ -275,14 +287,7 @@ def _runtime_shape_for_policy(policy: str) -> str:
 
 
 def _reference_only_policy_candidates() -> list[dict[str, str]]:
-    return [
-        {
-            "policy": "optional",
-            "status": "reference_only",
-            "adoption_mode": "decision_table_first",
-            "note": "legacy-inspired candidate; current runtime still lacks a clean advisory-only terminal shape",
-        }
-    ]
+    return []
 
 
 def _load_validation_report(validation_report_path: str | Path | None = None) -> dict[str, Any] | None:
@@ -298,6 +303,63 @@ def _load_capability_routes() -> list[dict[str, str]]:
 
 def _load_domain_pack_catalog() -> list[dict[str, Any]]:
     return [domain_pack.model_dump(mode="json") for domain_pack in DomainPackRegistry().list()]
+
+
+def _load_runtime_inventory(db_path: str | Path | None = None) -> dict[str, Any]:
+    resolved_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    if not resolved_path.exists():
+        return {
+            "db_path": resolved_path.as_posix(),
+            "db_present": False,
+            "counts": {},
+        }
+    table_map = {
+        "runs": "runs",
+        "events": "run_events",
+        "snapshots": "run_snapshots",
+        "evidence": "evidence",
+        "review_verdicts": "review_verdicts",
+        "runtime_attempts": "runtime_attempts",
+        "claims": "runtime_claims",
+        "worker_leases": "worker_leases",
+        "simulation_records": "simulation_records",
+        "memory_items": "memory_items",
+    }
+    counts: dict[str, int] = {}
+    run_status_counts: dict[str, int] = {}
+    try:
+        with sqlite3.connect(resolved_path) as connection:
+            connection.row_factory = sqlite3.Row
+            for key, table_name in table_map.items():
+                try:
+                    counts[key] = connection.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()["count"]
+                except sqlite3.OperationalError:
+                    counts[key] = 0
+            try:
+                rows = connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM runs GROUP BY status ORDER BY status"
+                ).fetchall()
+                run_status_counts = {row["status"]: row["count"] for row in rows}
+            except sqlite3.OperationalError:
+                run_status_counts = {}
+    except sqlite3.OperationalError:
+        return {
+            "db_path": resolved_path.as_posix(),
+            "db_present": False,
+            "counts": {},
+        }
+    return {
+        "db_path": resolved_path.as_posix(),
+        "db_present": True,
+        "counts": counts,
+        "run_status_counts": run_status_counts,
+        "awaiting_review_runs": run_status_counts.get("awaiting_review", 0),
+        "terminal_runs": (
+            run_status_counts.get("completed", 0)
+            + run_status_counts.get("failed", 0)
+            + run_status_counts.get("cancelled", 0)
+        ),
+    }
 
 
 def build_domain_pack_platform_report() -> dict[str, Any]:
@@ -350,6 +412,8 @@ def build_review_policy_report(
     decision_table = _parse_review_decision_table(decision_table_path)
     debt_report = build_tech_debt_report(registry_path)
     debt_item = next((item for item in debt_report["open_items"] if item["debt_id"] == "TD-006"), None)
+    if debt_item is None:
+        debt_item = next((item for item in debt_report["repaid_items"] if item["debt_id"] == "TD-006"), None)
 
     presets_by_policy: dict[str, list[PresetDefinition]] = defaultdict(list)
     for preset in presets:
@@ -419,12 +483,157 @@ def build_review_policy_report(
         "expansion_readiness": {
             "implemented_policies": [item["policy"] for item in supported_policies],
             "reference_only_candidates": [item["policy"] for item in reference_only_candidates],
+            "fully_executable": not reference_only_candidates,
             "manual_review_preset_ids": [
                 item["preset_id"] for item in preset_policy_map if item["requires_manual_approval"]
             ],
             "auto_review_preset_ids": [
                 item["preset_id"] for item in preset_policy_map if not item["requires_manual_approval"]
             ],
+        },
+    }
+
+
+def build_governance_metrics_report(
+    db_path: str | Path | None = None,
+    validation_report_path: str | Path | None = None,
+    decision_table_path: str | Path | None = None,
+    registry_path: str | Path | None = None,
+) -> dict[str, Any]:
+    tech_debt = build_tech_debt_report(registry_path)
+    review_policy = build_review_policy_report(
+        db_path=db_path,
+        decision_table_path=decision_table_path,
+        registry_path=registry_path,
+    )
+    validation_report = _load_validation_report(validation_report_path)
+    capability_routes = _load_capability_routes()
+    domain_packs = _load_domain_pack_catalog()
+    runtime_inventory = _load_runtime_inventory(db_path)
+    checks = (validation_report or {}).get("checks", {})
+    passed_check_count = sum(1 for item in checks.values() if item.get("passed") is True)
+    return {
+        "metrics_version": "m10_freeze_v1",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "source_paths": {
+            "tech_debt_registry": tech_debt["source_path"],
+            "decision_table": review_policy["source_paths"]["decision_table"],
+            "validation_report": (
+                Path(validation_report_path).as_posix()
+                if validation_report_path is not None
+                else DEFAULT_VALIDATION_REPORT_PATH.as_posix()
+            ),
+            "runtime_db": runtime_inventory["db_path"],
+        },
+        "tech_debt": {
+            "open_debt_count": tech_debt["open_debt_count"],
+            "repaid_debt_count": tech_debt["repaid_debt_count"],
+            "status_counts": tech_debt["status_counts"],
+            "planned_phase_counts": tech_debt["planned_phase_counts"],
+            "open_debt_ids": [item["debt_id"] for item in tech_debt["open_items"]],
+        },
+        "review_policy": {
+            "supported_policy_count": review_policy["supported_policy_count"],
+            "implemented_policy_ids": review_policy["expansion_readiness"]["implemented_policies"],
+            "reference_only_candidates": review_policy["expansion_readiness"]["reference_only_candidates"],
+            "operator_effective_state_count": len(review_policy["operator_effective_states"]),
+            "manual_review_preset_count": len(review_policy["expansion_readiness"]["manual_review_preset_ids"]),
+        },
+        "validation": {
+            "report_present": validation_report is not None,
+            "overall_passed": bool((validation_report or {}).get("overall_passed")),
+            "check_count": len(checks),
+            "passed_check_count": passed_check_count,
+            "failed_or_missing_check_count": len(checks) - passed_check_count,
+        },
+        "platform": {
+            "capability_route_count": len(capability_routes),
+            "domain_pack_count": len(domain_packs),
+            "enabled_domain_pack_count": sum(1 for item in domain_packs if item.get("enabled")),
+        },
+        "runtime_inventory": runtime_inventory,
+        "automation": {
+            "governance_metrics_available": True,
+            "governance_alerts_available": True,
+        },
+    }
+
+
+def build_governance_alert_report(
+    db_path: str | Path | None = None,
+    validation_report_path: str | Path | None = None,
+    decision_table_path: str | Path | None = None,
+    registry_path: str | Path | None = None,
+) -> dict[str, Any]:
+    metrics = build_governance_metrics_report(
+        db_path=db_path,
+        validation_report_path=validation_report_path,
+        decision_table_path=decision_table_path,
+        registry_path=registry_path,
+    )
+    alerts: list[dict[str, Any]] = []
+    if metrics["validation"]["report_present"] is False:
+        alerts.append(
+            {
+                "alert_id": "validation_report_missing",
+                "severity": "blocking",
+                "message": "offline validation report is missing",
+                "recommended_action": "run offline validation before freeze or release",
+            }
+        )
+    elif metrics["validation"]["overall_passed"] is False:
+        alerts.append(
+            {
+                "alert_id": "validation_report_failed",
+                "severity": "blocking",
+                "message": "offline validation report is present but not fully green",
+                "recommended_action": "resolve validation failures before freeze or release",
+            }
+        )
+    if metrics["review_policy"]["reference_only_candidates"]:
+        alerts.append(
+            {
+                "alert_id": "reference_only_review_policy_remaining",
+                "severity": "blocking",
+                "message": "at least one review policy remains reference-only",
+                "recommended_action": "complete runtime implementation or re-scope the policy debt explicitly",
+            }
+        )
+    if metrics["tech_debt"]["open_debt_count"] > 0:
+        alerts.append(
+            {
+                "alert_id": "open_tech_debt_remaining",
+                "severity": "degraded",
+                "message": f"{metrics['tech_debt']['open_debt_count']} tech-debt item(s) remain open",
+                "recommended_action": "carry the remaining items into the next planned milestone with explicit entry-gate notes",
+            }
+        )
+    awaiting_review_runs = metrics["runtime_inventory"].get("awaiting_review_runs", 0)
+    if awaiting_review_runs > 0:
+        alerts.append(
+            {
+                "alert_id": "awaiting_review_backlog",
+                "severity": "degraded",
+                "message": f"{awaiting_review_runs} run(s) are currently waiting for human review",
+                "recommended_action": "clear manual review backlog before claiming a clean operator baseline",
+            }
+        )
+    if any(alert["severity"] == "blocking" for alert in alerts):
+        overall_status = "blocking"
+    elif any(alert["severity"] == "degraded" for alert in alerts):
+        overall_status = "degraded"
+    else:
+        overall_status = "clear"
+    return {
+        "alerts_version": "m10_freeze_v1",
+        "overall_status": overall_status,
+        "alert_count": len(alerts),
+        "alerts": alerts,
+        "metrics_snapshot": {
+            "open_debt_count": metrics["tech_debt"]["open_debt_count"],
+            "supported_policy_count": metrics["review_policy"]["supported_policy_count"],
+            "validation_overall_passed": metrics["validation"]["overall_passed"],
+            "awaiting_review_runs": awaiting_review_runs,
         },
     }
 
@@ -441,6 +650,18 @@ def build_release_readiness_report(
         registry_path=registry_path,
     )
     tech_debt = build_tech_debt_report(registry_path)
+    governance_metrics = build_governance_metrics_report(
+        db_path=db_path,
+        validation_report_path=validation_report_path,
+        decision_table_path=decision_table_path,
+        registry_path=registry_path,
+    )
+    governance_alerts = build_governance_alert_report(
+        db_path=db_path,
+        validation_report_path=validation_report_path,
+        decision_table_path=decision_table_path,
+        registry_path=registry_path,
+    )
     validation_report = _load_validation_report(validation_report_path)
     capability_routes = _load_capability_routes()
     domain_packs = _load_domain_pack_catalog()
@@ -467,6 +688,9 @@ def build_release_readiness_report(
             "generated_at": validation_evidence["generated_at"],
         }
 
+    m10_open_debt_ids = {"TD-001", "TD-009"} & {
+        item["debt_id"] for item in tech_debt["open_items"]
+    }
     gates = [
         {
             "gate": "offline_validation",
@@ -475,8 +699,8 @@ def build_release_readiness_report(
         },
         {
             "gate": "review_policy_runtime",
-            "passed": review_policy["supported_policy_count"] == 4,
-            "detail": "four executable run-level review policies are available",
+            "passed": review_policy["supported_policy_count"] == 5,
+            "detail": "five executable run-level review policies are available, including optional advisory review",
         },
         {
             "gate": "capability_registry",
@@ -493,14 +717,28 @@ def build_release_readiness_report(
             "passed": any(item["domain_pack_id"] == "software_delivery_pack" and item["enabled"] for item in domain_packs),
             "detail": "one enabled platformized domain pack exists with reusable match/capability/compile/runtime sections",
         },
+        {
+            "gate": "governance_automation",
+            "passed": governance_alerts["overall_status"] != "blocking",
+            "detail": "quantitative governance metrics and automated alerting are available without blocking conditions",
+        },
+        {
+            "gate": "m10_scope_closure",
+            "passed": not m10_open_debt_ids,
+            "detail": "the ownership-topology and local barrier/concurrency debt set is retired from the open registry",
+        },
     ]
+    remaining_gap_map = {
+        "TD-019": "true external worker pools and multi-node scheduling are still deferred into M11",
+    }
     remaining_gaps = [
-        "optional review policy remains reference-only",
-        "Web/TUI operator surface remains intentionally deferred",
+        remaining_gap_map[item["debt_id"]]
+        for item in tech_debt["open_items"]
+        if item["debt_id"] in remaining_gap_map
     ]
 
     return {
-        "readiness_version": "m4_phase_2_v1",
+        "readiness_version": "m10_freeze_v1",
         "overall_ready": all(gate["passed"] for gate in gates),
         "gates": gates,
         "validation_summary": validation_summary,
@@ -514,7 +752,9 @@ def build_release_readiness_report(
         "domain_packs": domain_packs,
         "open_debt_ids": [item["debt_id"] for item in tech_debt["open_items"]],
         "remaining_gaps": remaining_gaps,
-        "recommended_next_step": "close current milestone or explicitly pull optional into a new phase",
+        "governance_metrics": governance_metrics,
+        "governance_alerts": governance_alerts,
+        "recommended_next_step": "start M11 with a post-M10 rebaseline before widening into external or multi-node scheduling breadth",
         "source_paths": {
             "validation_report": validation_evidence["source_path"],
             "tech_debt_registry": tech_debt["source_path"],

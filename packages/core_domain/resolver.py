@@ -20,6 +20,12 @@ class PresetResolver:
                 "artifact",
                 "fix",
             },
+            "optional_delivery": {
+                "optional",
+                "advisory",
+                "non_blocking",
+                "best_effort",
+            },
             "research_spike": {
                 "research",
                 "investigate",

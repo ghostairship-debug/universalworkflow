@@ -1,6 +1,6 @@
 # Universal Agentic Workflow OS
 
-This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, four executable run-level review policies (`auto_only`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, an opt-in OpenAI-backed `RuntimeGateway`, a read-mostly operator TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
+This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, an opt-in OpenAI-backed `RuntimeGateway`, a read-mostly operator TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
 
 ## Environment
 
@@ -41,7 +41,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 ## Current repository status
 
-- Milestone baseline: through `M8`, complete
+- Milestone baseline: through `M10`, complete
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
@@ -56,12 +56,19 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - Agent Skill-compatible domain-pack export
 - Current planning position:
   - `M8` is complete
+  - `M9` is complete
   - `M8 Phase 0` through `M8 Phase 7` are complete
-  - the next approved work is `M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`
+  - `M9 Phase 0` through `M9 Phase 5` are complete
+  - `M10 Phase 0 - Post-M9 Rebaseline And Scope Freeze` is complete
+  - `M10 Phase 1 - Ownership Topology And Claim Domain Freeze` is complete
+  - `M10 Phase 2 - Local Barrier And Parallel Batch Execution` is complete
+  - the next approved work is `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`
   - the integrated root-level `M8` development plan is [universal_agentic_workflow_os_M8_phase_plan_v1_0.md](universal_agentic_workflow_os_M8_phase_plan_v1_0.md)
   - the GPT-Pro-driven reassessment of the `M8` plan is [docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md](docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md)
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
-  - the controlling closeout record is [docs/reviews/m8-freeze-review.md](docs/reviews/m8-freeze-review.md)
+  - the controlling shipped-baseline closeout record is [docs/reviews/m10-freeze-review.md](docs/reviews/m10-freeze-review.md)
+  - the `M10` reassessment record is [docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md](docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md)
+  - the `M10` feature-phase reviews are [docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md](docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md) and [docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md](docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md)
   - the current `M8` ecosystem reuse assessment is [docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md](docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md)
   - the current external-integration vs continued-self-build strategy is [docs/reviews/m8-external-tool-integration-and-self-build-plan.md](docs/reviews/m8-external-tool-integration-and-self-build-plan.md)
   - the current "do we need another optimization round before M8?" assessment is [docs/reviews/m8-pre-entry-extra-optimization-assessment.md](docs/reviews/m8-pre-entry-extra-optimization-assessment.md)
@@ -104,20 +111,14 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 - API release-readiness surface passes
 - API reconcile / repair path passes
 
-The current green closeout baseline is:
+The latest validated `M10` closeout baseline is:
 
 - `pytest -q`
-  - `225 passed`
+  - `237 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
   - `overall_passed=true`
 - `python -m infra.scripts.check_doc_links`
   - `passed=true`
-- `python -m infra.scripts.manage --db-path state/cycle_validation.db demo`
-  - `status=completed`
-- `python -m apps.operator_cli.main --db-path state/cycle_validation.db tui --once`
-  - renders a single dashboard snapshot successfully
-- `python -m pip install -e . --no-deps`
-  - succeeds after the package-discovery fix
 
 ## Common commands
 
@@ -149,6 +150,7 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db run compile <run_id> --memory-item-id <memory_item_id>`
 - `workflowctl --db-path state/workflow.db run compile <run_id> --task-kind noop`
 - `workflowctl --db-path state/workflow.db run resume <run_id>`
+- `workflowctl --db-path state/workflow.db run batch-resume <run_id_1> <run_id_2> --max-workers 2`
 - `workflowctl --db-path state/workflow.db run approve <run_id>`
 - `workflowctl --db-path state/workflow.db run reject <run_id>`
 - `workflowctl --db-path state/workflow.db run status-detail <run_id>`
@@ -468,8 +470,11 @@ The current routes are:
 - `GET /memory/items`
 - `GET /governance/tech-debt`
 - `GET /governance/review-policy`
+- `GET /governance/metrics`
+- `GET /governance/alerts`
 - `GET /governance/release-readiness`
 - `GET /governance/domain-packs`
+- `GET /runs/{id}/replay-packet`
 - `GET /tasks/{id}/evidence`
 
 `POST /runs/{id}/compile` and `POST /runs/{id}/recompile` may optionally receive a JSON body such as `{"task_kind": "noop"}` when the selected preset allows that task kind, `{"adapter_name": "opencode"}` when a capability route should be pinned explicitly, or `{"memory_item_ids": ["memory_..."]}` for the explicit memory-aware compile bridge.
@@ -481,14 +486,15 @@ The current routes are:
 - `research_spike` can be compiled with `--task-kind noop`; `feature_delivery` rejects `noop` with the structured error code `task_kind_not_allowed`.
 - `feature_delivery` can be compiled through `shell` or `opencode`; compile/recompile pin the selected adapter into the run's capability resolution.
 - `feature_delivery` stays `auto_only`.
-- `feature_delivery`, `advisory_delivery`, and `guarded_delivery` now resolve the platformized `software_delivery_pack`; compile/status surfaces project the selected domain pack and adapter route.
+- `optional_delivery` uses `optional`: auto review always runs, but terminal status still follows execution success or failure.
+- `feature_delivery`, `optional_delivery`, `advisory_delivery`, and `guarded_delivery` now resolve the platformized `software_delivery_pack`; compile/status surfaces project the selected domain pack and adapter route.
 - `advisory_delivery` uses `recommended`: auto pass completes, auto fail escalates into `awaiting_review`.
 - `research_spike` uses `human_required`: execution completes, then it waits for human review without an auto-review gate.
 - `guarded_delivery` uses `mandatory`: auto review always runs, but the run still waits for human sign-off.
 - `status-detail` now includes operator-facing diagnostics such as `failure_reason`, `waiting_reason`, `last_runtime_state`, `recoverability_hint`, `active_claims`, `latest_claim`, and `latest_snapshot`.
 - `status` now also includes `latest_simulation_record`, so the most recent simulation lineage source is visible without switching to the full detail payload.
 - `status` / `status-detail` / `inspection` now also expose the active `runtime_gateway` projection so live LLM activation is visible without guessing from env vars.
-- `status-detail` and `inspection` now also include `runtime_attempts`, `current_runtime_attempt`, `latest_runtime_attempt`, and `runtime_attempt_projection`.
+- `status-detail` and `inspection` now also include `runtime_attempts`, `current_runtime_attempt`, `latest_runtime_attempt`, `runtime_attempt_projection`, `durable_lineage`, and first-class `run_metrics`.
 - when the OpenAI-backed gateway is enabled, the resumed runtime state can carry a short `runtime_brief`, and shell artifacts can persist that brief alongside `runtime_gateway` / `runtime_model`.
 - `run summary` and `GET /runs/{id}/summary` provide a concise operator view of failure taxonomy, review state, timeline digest, and ownership projections.
 - `run simulation` and `GET /runs/{id}/simulation` expose the first deterministic local simulation report, including whether policy triggered and which checks failed.
@@ -497,10 +503,13 @@ The current routes are:
 - selected lifecycle control points now auto-record simulation for triggered policies at `cancelled`, `awaiting_review`, and terminal completion/failure.
 - `run event-inspection` and `GET /runs/{id}/event-inspection` provide a richer event digest plus closure-audit framing for completed, awaiting-review, and terminal runs.
 - `run audit-report` and `GET /runs/{id}/audit-report` export a review-ready audit bundle that combines summary, event inspection, state inspection, and recent timeline context.
+- `run replay-packet` and `GET /runs/{id}/replay-packet` export replay-grade linkage across task packets, state refs, attempts, claims, leases, evidence, review history, metrics, and timeline artifacts.
 - `simulation policy list` and `GET /simulation/policies` expose the seed-backed simulation policy catalog that currently gates which presets receive the local simulation slice.
 - `governance tech-debt` and `GET /governance/tech-debt` expose the current technical-debt registry as a structured governance report.
-- `governance review-policy` and `GET /governance/review-policy` expose the current supported review-policy catalog, operator state matrix, and future reference-only expansion candidates.
-- `governance release-readiness` and `GET /governance/release-readiness` expose a release-shaped closeout view that combines validation, capability routes, platformized domain-pack baseline, and milestone gates.
+- `governance review-policy` and `GET /governance/review-policy` expose the current supported review-policy catalog, operator state matrix, and runtime-shape mapping for all executable policies.
+- `governance metrics` / `GET /governance/metrics` expose quantitative governance inventory over debt, policy coverage, validation, platform, and runtime DB state.
+- `governance alerts` / `GET /governance/alerts` expose blocking vs degraded governance conditions automatically.
+- `governance release-readiness` and `GET /governance/release-readiness` expose a release-shaped closeout view that combines validation, capability routes, platformized domain-pack baseline, governance automation, and current milestone gates.
 - `governance domain-pack` and `GET /governance/domain-packs` expose the current domain-pack platform report with match/capability/compile/runtime sections.
 - `domain-pack list` / `GET /domain-packs` expose the currently enabled domain-pack catalog with platform-shaped sections.
 - `domain-pack resolve` / `GET /domain-packs/resolve` preview the selected pack and adapter before compile.
@@ -517,13 +526,14 @@ The current routes are:
 - `run attempts` and `GET /runs/{id}/attempts` expose explicit compile/resume/recompile lineage for interrupted or superseded execution debugging.
 - `run claims` and `GET /runs/{id}/claims` expose persisted claim history for local debugging and audit.
 - `run leases` and `GET /runs/{id}/leases` expose persisted worker-lease history for heartbeat-aware ownership debugging.
+- `run batch-resume` and `POST /runs/batch-resume` expose the local batch barrier plus parallel resume surface for multiple prepared runs.
 - `run snapshots` and `GET /runs/{id}/snapshots` expose replay-friendly checkpoint history for recovery analysis.
 - `run budget` and `GET /runs/{id}/budget` expose persisted budget-ledger state plus remaining retry / timeout headroom.
 - `inspection` is a read-only dry-run surface that flags inconsistent states without mutating the database.
 - `resume` acquires a local runtime claim before execution; terminal and review-handoff paths release it explicitly.
 - `reconcile` reuses the same bad-state catalog, but only applies explicit safe repairs; manual-only problems still fail with structured errors.
-- Claim semantics are local-only lease guards. They improve correctness and auditability, but they are not distributed locking or full parallel scheduling.
-- Worker-lease semantics are local-only worker ownership projections. They improve heartbeat and interrupt-safety diagnostics, but they are not a distributed lease manager.
+- Claim semantics now carry explicit local ownership topology and batch-domain lineage. They improve correctness and auditability, but they are not distributed locking or multi-node scheduler consensus.
+- Worker-lease semantics are local-first worker ownership projections with explicit claim / attempt linkage. They improve heartbeat and interrupt-safety diagnostics, but they are not a distributed lease manager.
 - Snapshot semantics are recovery-oriented projections. They improve checkpoint visibility, but they are not a full replay engine.
 - Smoke clears known LLM API key variables before execution and restores them afterward.
 - See [docs/smoke/m1-smoke.md](docs/smoke/m1-smoke.md) for the M1 acceptance flow.

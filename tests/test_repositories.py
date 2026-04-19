@@ -56,6 +56,7 @@ def test_migrate_and_wal_mode(tmp_path: Path) -> None:
     assert "007_m2_runtime_attempts.sql" in applied
     assert "008_m6_memory_items.sql" in applied
     assert "009_m7_simulation_records.sql" in applied
+    assert "010_m10_ownership_topology.sql" in applied
     assert get_journal_mode(db_path) == "wal"
 
     second_apply = migrate(db_path)
@@ -149,11 +150,12 @@ def test_seed_presets_into_sqlite(tmp_path: Path) -> None:
     presets = PresetRepository(db_path).seed_defaults()
     stored = PresetRepository(db_path).list()
 
-    assert len(presets) == 5
+    assert len(presets) == 6
     assert [preset.preset_id for preset in stored] == [
         "advisory_delivery",
         "feature_delivery",
         "guarded_delivery",
+        "optional_delivery",
         "research_spike",
         "research_spike_reviewable",
     ]
@@ -381,6 +383,10 @@ def test_runtime_claim_repository_round_trip(tmp_path: Path) -> None:
     active_claim = claim_repo.get_active_for_task(runtime_task.runtime_task_id)
     assert active_claim is not None
     assert active_claim.claim_id == claim.claim_id
+    assert active_claim.owner_kind == "control_plane"
+    assert active_claim.owner_id == "control_plane_local"
+    assert active_claim.domain_kind == "runtime_task"
+    assert active_claim.domain_key == runtime_task.runtime_task_id
     assert {item.claim_id for item in claim_repo.list_active_for_run(run.run_id)} == {claim.claim_id}
 
     released = claim_repo.release(
@@ -516,6 +522,10 @@ def test_worker_lease_repository_round_trip(tmp_path: Path) -> None:
     active_lease = lease_repo.get_active_for_task(runtime_task.runtime_task_id)
     assert active_lease is not None
     assert active_lease.lease_id == lease.lease_id
+    assert active_lease.worker_kind == "worker"
+    assert active_lease.worker_id == "worker_local"
+    assert active_lease.domain_kind == "runtime_task"
+    assert active_lease.domain_key == runtime_task.runtime_task_id
     assert {item.lease_id for item in lease_repo.list_active_for_run(run.run_id)} == {lease.lease_id}
 
     released = lease_repo.release(

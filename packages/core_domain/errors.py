@@ -145,6 +145,17 @@ class RuntimeClaimConflictError(WorkflowError):
         )
 
 
+class ParallelBarrierBrokenError(WorkflowError):
+    code = "parallel_barrier_broken"
+    status_code = 409
+
+    def __init__(self, barrier_id: str, run_id: str):
+        super().__init__(
+            f"parallel barrier `{barrier_id}` broke before run `{run_id}` could start execution",
+            {"barrier_id": barrier_id, "run_id": run_id},
+        )
+
+
 class BudgetExhaustedError(WorkflowError):
     code = "budget_exhausted"
     status_code = 409

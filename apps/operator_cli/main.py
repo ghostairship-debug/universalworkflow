@@ -12,6 +12,8 @@ from packages.core_domain.db import DEFAULT_DB_PATH, migrate, reset_db
 from packages.core_domain.errors import WorkflowError
 from packages.core_domain.governance import (
     build_domain_pack_platform_report,
+    build_governance_alert_report,
+    build_governance_metrics_report,
     build_release_readiness_report,
     build_review_policy_report,
     build_tech_debt_report,
@@ -393,6 +395,15 @@ def run_resume(ctx: typer.Context, run_id: str) -> None:
     )
 
 
+@run_app.command("batch-resume")
+def run_batch_resume(
+    ctx: typer.Context,
+    run_id: list[str] = typer.Argument(..., help="Prepared run ids to resume behind one local batch barrier."),
+    max_workers: Optional[int] = typer.Option(None, "--max-workers", min=1),
+) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).resume_runs_parallel(run_id, max_workers=max_workers)))
+
+
 @run_app.command("approve")
 def run_approve(ctx: typer.Context, run_id: str) -> None:
     reviewed = _run_workflow_action(lambda: _service(ctx).approve_run_review(run_id))
@@ -438,6 +449,8 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
     payload["latest_claim"] = detail["latest_claim"]
     payload["active_worker_leases"] = detail["active_worker_leases"]
     payload["latest_worker_lease"] = detail["latest_worker_lease"]
+    payload["ownership_topology"] = detail["ownership_topology"]
+    payload["parallel_batch"] = detail["parallel_batch"]
     payload["worker_lease_projection"] = detail["worker_lease_projection"]
     payload["effective_review_state"] = detail["effective_review_state"]
     payload["domain_pack"] = detail["domain_pack"]
@@ -487,6 +500,11 @@ def run_event_inspection(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("audit-report")
 def run_audit_report(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_audit_report(run_id)))
+
+
+@run_app.command("replay-packet")
+def run_replay_packet(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_replay_packet(run_id)))
 
 
 @run_app.command("memory-candidates")
@@ -618,6 +636,48 @@ def governance_review_policy(
     _emit_json(
         build_review_policy_report(
             db_path=_db_path_from_context(ctx),
+            decision_table_path=decision_table_path,
+            registry_path=registry_path,
+        )
+    )
+
+
+@governance_app.command("metrics")
+def governance_metrics(
+    ctx: typer.Context,
+    validation_report_path: Optional[str] = typer.Option(
+        None,
+        "--validation-report-path",
+        help="Override offline validation report path.",
+    ),
+    decision_table_path: Optional[str] = typer.Option(None, "--decision-table-path", help="Override decision table path."),
+    registry_path: Optional[str] = typer.Option(None, "--registry-path", help="Override tech-debt registry path."),
+) -> None:
+    _emit_json(
+        build_governance_metrics_report(
+            db_path=_db_path_from_context(ctx),
+            validation_report_path=validation_report_path,
+            decision_table_path=decision_table_path,
+            registry_path=registry_path,
+        )
+    )
+
+
+@governance_app.command("alerts")
+def governance_alerts(
+    ctx: typer.Context,
+    validation_report_path: Optional[str] = typer.Option(
+        None,
+        "--validation-report-path",
+        help="Override offline validation report path.",
+    ),
+    decision_table_path: Optional[str] = typer.Option(None, "--decision-table-path", help="Override decision table path."),
+    registry_path: Optional[str] = typer.Option(None, "--registry-path", help="Override tech-debt registry path."),
+) -> None:
+    _emit_json(
+        build_governance_alert_report(
+            db_path=_db_path_from_context(ctx),
+            validation_report_path=validation_report_path,
             decision_table_path=decision_table_path,
             registry_path=registry_path,
         )

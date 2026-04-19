@@ -33,6 +33,10 @@ These documents govern work currently being executed.
 
 Rules:
 
+- there should be only one active phase task-card pack at a time
+- active phase docs means the current phase doc, current phase task-card index, and current phase task cards
+- future phases may be named in planning docs, but their task-card packs should not be generated until they become the active phase
+- completed historical phases may retain their full task-card sets as records
 - they may be updated during the phase
 - they should reflect actual implementation reality, not just original intent
 - they should state the next reassessment point explicitly

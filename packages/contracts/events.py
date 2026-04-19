@@ -33,6 +33,8 @@ class RunEventType(StrEnum):
     runtime_attempt_superseded = "runtime_attempt_superseded"
     runtime_attempt_closed = "runtime_attempt_closed"
     run_snapshot_created = "run_snapshot_created"
+    batch_barrier_waiting = "batch_barrier_waiting"
+    batch_barrier_released = "batch_barrier_released"
     memory_item_materialized = "memory_item_materialized"
     simulation_recorded = "simulation_recorded"
     repair_applied = "repair_applied"
@@ -142,6 +144,11 @@ class ClaimAcquiredPayload(EventPayloadModel):
     runtime_task_id: str
     claim_id: str
     owner: str
+    owner_kind: str
+    owner_id: str
+    domain_kind: str
+    domain_key: str
+    attempt_id: str | None = None
     lease_expires_at: str
 
 
@@ -158,6 +165,12 @@ class WorkerLeaseAcquiredPayload(EventPayloadModel):
     runtime_task_id: str
     lease_id: str
     worker_name: str
+    worker_kind: str
+    worker_id: str
+    domain_kind: str
+    domain_key: str
+    claim_id: str | None = None
+    attempt_id: str | None = None
     adapter_name: str
     heartbeat_at: str
     lease_expires_at: str
@@ -202,6 +215,13 @@ class RunSnapshotCreatedPayload(EventPayloadModel):
     stage: str
     run_status: str
     runtime_task_id: str | None = None
+
+
+class BatchBarrierPayload(EventPayloadModel):
+    run_id: str
+    runtime_task_id: str
+    barrier_id: str
+    member_count: int
 
 
 class MemoryItemMaterializedPayload(EventPayloadModel):
@@ -252,6 +272,8 @@ EVENT_PAYLOAD_MODELS = {
     RunEventType.runtime_attempt_superseded: RuntimeAttemptSupersededPayload,
     RunEventType.runtime_attempt_closed: RuntimeAttemptClosedPayload,
     RunEventType.run_snapshot_created: RunSnapshotCreatedPayload,
+    RunEventType.batch_barrier_waiting: BatchBarrierPayload,
+    RunEventType.batch_barrier_released: BatchBarrierPayload,
     RunEventType.memory_item_materialized: MemoryItemMaterializedPayload,
     RunEventType.simulation_recorded: SimulationRecordedPayload,
     RunEventType.repair_applied: RepairAppliedPayload,
