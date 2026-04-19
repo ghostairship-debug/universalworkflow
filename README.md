@@ -1,6 +1,6 @@
 # Universal Agentic Workflow OS
 
-This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, four executable run-level review policies (`auto_only`, `recommended`, `human_required`, `mandatory`), a minimal multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, an opt-in OpenAI-backed `RuntimeGateway`, a minimal operator TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
+This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, four executable run-level review policies (`auto_only`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, an opt-in OpenAI-backed `RuntimeGateway`, a read-mostly operator TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
 
 ## Environment
 
@@ -39,6 +39,36 @@ python -m infra.scripts.manage --db-path state/workflow.db smoke
 python -m infra.scripts.manage --db-path state/workflow.db demo
 ```
 
+## Current repository status
+
+- Milestone baseline: through `M7`, complete
+- Validated baseline note:
+  - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
+- Current shipped shape:
+  - local-first CLI/API runtime
+  - `shell`, `opencode`, and `noop` execution lanes
+  - one platformized `Domain Pack`
+  - persisted `Memory` baseline with retrieval preview and compile-time injection
+  - deterministic local `Simulation` baseline with persisted records and selected lifecycle hooks
+- Current planning position:
+  - the **pre-M8 hardening gate is complete**
+  - `PM8-A` through `PM8-E` are complete
+  - the next approved work is `M8 Phase 0 - Feature Rebaseline And Scope Freeze`
+  - `M8` feature breadth has not started yet
+  - the integrated root-level `M8` development plan is [universal_agentic_workflow_os_M8_phase_plan_v1_0.md](universal_agentic_workflow_os_M8_phase_plan_v1_0.md)
+  - the GPT-Pro-driven reassessment of the `M8` plan is [docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md](docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md)
+  - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
+  - the controlling closeout record is [docs/reviews/pre-m8-freeze-review.md](docs/reviews/pre-m8-freeze-review.md)
+  - the current `M8` ecosystem reuse assessment is [docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md](docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md)
+  - the current external-integration vs continued-self-build strategy is [docs/reviews/m8-external-tool-integration-and-self-build-plan.md](docs/reviews/m8-external-tool-integration-and-self-build-plan.md)
+  - the current "do we need another optimization round before M8?" assessment is [docs/reviews/m8-pre-entry-extra-optimization-assessment.md](docs/reviews/m8-pre-entry-extra-optimization-assessment.md)
+  - the completed hardening plan remains [docs/reviews/m7-gemini-opus-pre-m8-synthesis.md](docs/reviews/m7-gemini-opus-pre-m8-synthesis.md)
+  - documentation trust and source-package rules now live in [docs/documentation_governance.md](docs/documentation_governance.md) and [docs/source_package_export_policy.md](docs/source_package_export_policy.md)
+  - local subprocess trust assumptions now live in [docs/architecture/local_execution_trust_boundary.md](docs/architecture/local_execution_trust_boundary.md)
+  - service decomposition evidence now lives in [docs/reviews/pm8-phase-c-service-decomposition-review.md](docs/reviews/pm8-phase-c-service-decomposition-review.md)
+  - structured governance sources now live in [docs/governance/README.md](docs/governance/README.md)
+  - dependency/version policy now lives in [docs/dependency_locking_policy.md](docs/dependency_locking_policy.md)
+
 ## Offline validation
 
 If you want one-shot offline acceptance after disconnecting the machine from the network:
@@ -71,8 +101,10 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 The current green closeout baseline is:
 
 - `pytest -q`
-  - `208 passed`
+  - `216 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
+  - `overall_passed=true`
+- `python -m infra.scripts.pre_m8_gates`
   - `overall_passed=true`
 - `python -m infra.scripts.manage --db-path state/cycle_validation.db demo`
   - `status=completed`
@@ -101,6 +133,7 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db run create --goal "Research a design choice" --preset research_spike`
 - `workflowctl --db-path state/workflow.db run create --goal "Ship with mandatory sign-off" --preset guarded_delivery --prepare --execute`
 - `workflowctl --db-path state/workflow.db run compile <run_id>`
+- `workflowctl --db-path state/workflow.db run compile <run_id> --adapter opencode`
 - `workflowctl --db-path state/workflow.db run compile <run_id> --memory-item-id <memory_item_id>`
 - `workflowctl --db-path state/workflow.db run compile <run_id> --task-kind noop`
 - `workflowctl --db-path state/workflow.db run resume <run_id>`
@@ -116,6 +149,9 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db run memory-candidates <run_id>`
 - `workflowctl --db-path state/workflow.db run materialize-memory <run_id> --candidate-id <candidate_id>`
 - `workflowctl --db-path state/workflow.db run memory-items <run_id>`
+- `python -m infra.scripts.check_doc_links`
+- `python -m infra.scripts.export_source_package --dry-run`
+- `python -m infra.scripts.pre_m8_gates`
 - `workflowctl --db-path state/workflow.db memory item list --namespace policy`
 - `workflowctl --db-path state/workflow.db memory retrieve-preview --preset feature_delivery --namespace policy`
 - `workflowctl --db-path state/workflow.db run attempts <run_id>`
@@ -133,7 +169,7 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 
 ## Live LLM gateway
 
-The default runtime provider remains `null`, so smoke tests and offline validation still work without any model access.
+The default runtime provider remains `null`, so smoke tests and offline validation still work without any model access. This direct OpenAI path is an opt-in live provider lane, not the only model-backed execution route in the repository.
 
 To enable the live OpenAI-backed gateway:
 
@@ -161,6 +197,41 @@ When the live gateway is active:
 - shell-generated artifacts can include `runtime_gateway`, `runtime_model`, and `runtime_brief`
 
 If `WORKFLOW_RUNTIME_GATEWAY` is unset, empty, `null`, `none`, or `disabled`, the service falls back to `NullRuntimeGateway`.
+
+## CLI-backed GPT route
+
+The current CLI-first GPT-capable lane is `OpenCodeAdapter`.
+
+Requirements:
+
+- `opencode` available on `PATH`
+- local `opencode` authentication already configured on the machine
+
+Useful environment overrides:
+
+```powershell
+$env:WORKFLOW_OPENCODE_MODEL="openai/gpt-5.4-mini"
+$env:WORKFLOW_OPENCODE_VARIANT="<optional variant>"
+```
+
+Example flow:
+
+```powershell
+python -m apps.operator_cli.main --db-path state/workflow.db capability list
+python -m apps.operator_cli.main --db-path state/workflow.db run create --goal "Produce a GPT-backed artifact through opencode" --preset feature_delivery
+python -m apps.operator_cli.main --db-path state/workflow.db run compile <run_id> --adapter opencode
+python -m apps.operator_cli.main --db-path state/workflow.db run resume <run_id>
+python -m apps.operator_cli.main --db-path state/workflow.db run status-detail <run_id>
+```
+
+The adapter currently uses `opencode run --format json --dir ... --pure` and freezes the chosen adapter into compile-time capability resolution so later status/detail views remain stable.
+
+Local trust boundary notes:
+
+- subprocess-backed adapters now enforce declared timeout budgets
+- subprocess-backed adapters inherit an allowlisted subset of the parent environment plus explicit workflow packet values
+- compile-generated Python commands use the current interpreter via `sys.executable`
+- see [docs/architecture/local_execution_trust_boundary.md](docs/architecture/local_execution_trust_boundary.md)
 
 ## Operator TUI
 
@@ -309,7 +380,7 @@ Run the orchestrator API locally with:
 python -m infra.scripts.manage --db-path state/workflow.db dev
 ```
 
-The M1 routes are:
+The current routes are:
 
 - `POST /runs`
 - `GET /runs/{id}`
@@ -352,13 +423,14 @@ The M1 routes are:
 - `GET /governance/domain-packs`
 - `GET /tasks/{id}/evidence`
 
-`POST /runs/{id}/compile` and `POST /runs/{id}/recompile` may optionally receive a JSON body such as `{"task_kind": "noop"}` when the selected preset allows that task kind, or `{"memory_item_ids": ["memory_..."]}` for the explicit memory-aware compile bridge.
+`POST /runs/{id}/compile` and `POST /runs/{id}/recompile` may optionally receive a JSON body such as `{"task_kind": "noop"}` when the selected preset allows that task kind, `{"adapter_name": "opencode"}` when a capability route should be pinned explicitly, or `{"memory_item_ids": ["memory_..."]}` for the explicit memory-aware compile bridge.
 
 ## Notes
 
 - `POST /runs` only creates the run and records preset selection.
 - `compile`, `recompile`, `resume`, `approve`, and `reject` are explicit lifecycle steps in M1.
 - `research_spike` can be compiled with `--task-kind noop`; `feature_delivery` rejects `noop` with the structured error code `task_kind_not_allowed`.
+- `feature_delivery` can be compiled through `shell` or `opencode`; compile/recompile pin the selected adapter into the run's capability resolution.
 - `feature_delivery` stays `auto_only`.
 - `feature_delivery`, `advisory_delivery`, and `guarded_delivery` now resolve the platformized `software_delivery_pack`; compile/status surfaces project the selected domain pack and adapter route.
 - `advisory_delivery` uses `recommended`: auto pass completes, auto fail escalates into `awaiting_review`.
@@ -405,4 +477,4 @@ The M1 routes are:
 - Worker-lease semantics are local-only worker ownership projections. They improve heartbeat and interrupt-safety diagnostics, but they are not a distributed lease manager.
 - Snapshot semantics are recovery-oriented projections. They improve checkpoint visibility, but they are not a full replay engine.
 - Smoke clears known LLM API key variables before execution and restores them afterward.
-- See [docs/smoke/m1-smoke.md](/D:/Universal%20Agentic%20workflow/docs/smoke/m1-smoke.md:1) for the M1 acceptance flow.
+- See [docs/smoke/m1-smoke.md](docs/smoke/m1-smoke.md) for the M1 acceptance flow.

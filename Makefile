@@ -1,4 +1,4 @@
-.PHONY: dev migrate reset-db smoke logs-tail
+.PHONY: dev migrate reset-db smoke logs-tail offline-validation check-doc-links export-source pre-m8-gates
 
 PYTHON ?= python
 DB_PATH ?= state/workflow.db
@@ -17,3 +17,15 @@ smoke:
 
 logs-tail:
 	$(PYTHON) -m infra.scripts.manage --db-path $(DB_PATH) logs-tail
+
+offline-validation:
+	$(PYTHON) -m infra.scripts.offline_validation --skip-offline-probe
+
+check-doc-links:
+	$(PYTHON) -m infra.scripts.check_doc_links
+
+export-source:
+	$(PYTHON) -m infra.scripts.export_source_package --dry-run
+
+pre-m8-gates:
+	$(PYTHON) -m infra.scripts.pre_m8_gates

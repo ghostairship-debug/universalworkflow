@@ -1,0 +1,82 @@
+{
+  "schema_version": "v1",
+  "cases": [
+    {
+      "path": "`auto_only` run completed successfully",
+      "latest_verdict": "auto pass",
+      "effective_review_state": "auto_passed"
+    },
+    {
+      "path": "`auto_only` run completed with failing review",
+      "latest_verdict": "auto fail",
+      "effective_review_state": "auto_failed"
+    },
+    {
+      "path": "`recommended` run completed after auto pass",
+      "latest_verdict": "auto pass",
+      "effective_review_state": "auto_passed"
+    },
+    {
+      "path": "`recommended` run escalated after auto fail and is waiting for operator decision",
+      "latest_verdict": "auto fail",
+      "effective_review_state": "human_pending"
+    },
+    {
+      "path": "`recommended` run escalated after auto fail and is approved by operator",
+      "latest_verdict": "human pass",
+      "effective_review_state": "human_approved"
+    },
+    {
+      "path": "`recommended` run escalated after auto fail and is rejected by operator",
+      "latest_verdict": "human fail",
+      "effective_review_state": "human_rejected"
+    },
+    {
+      "path": "`human_required` run waiting for operator decision",
+      "latest_verdict": "none",
+      "effective_review_state": "human_pending"
+    },
+    {
+      "path": "`human_required` run approved by operator",
+      "latest_verdict": "human pass",
+      "effective_review_state": "human_approved"
+    },
+    {
+      "path": "`human_required` run rejected by operator",
+      "latest_verdict": "human fail",
+      "effective_review_state": "human_rejected"
+    },
+    {
+      "path": "`mandatory` run is waiting for operator decision after auto pass",
+      "latest_verdict": "auto pass",
+      "effective_review_state": "human_pending"
+    },
+    {
+      "path": "`mandatory` run is waiting for operator decision after auto fail",
+      "latest_verdict": "auto fail",
+      "effective_review_state": "human_pending"
+    },
+    {
+      "path": "`mandatory` run approved by operator",
+      "latest_verdict": "human pass",
+      "effective_review_state": "human_approved"
+    },
+    {
+      "path": "`mandatory` run rejected by operator",
+      "latest_verdict": "human fail",
+      "effective_review_state": "human_rejected"
+    },
+    {
+      "path": "no review has happened and no review is requested",
+      "latest_verdict": "none",
+      "effective_review_state": "not_requested"
+    }
+  ],
+  "notes": [
+    "The current table remains operator-facing and backward-compatible even after runtime policy growth.",
+    "`recommended` and `mandatory` are now executable run-level policies.",
+    "`optional` remains reference-only because the current run model does not yet expose a clean advisory-only terminal shape.",
+    "Any future expansion should preserve the current states as backward-compatible operator-facing values.",
+    "`M3 Phase 4` governance surfaces and `M4 Phase 0` runtime policy expansion consume this table as a canonical operator-facing baseline; expanding policy semantics should update this table first."
+  ]
+}

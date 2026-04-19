@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from packages.contracts import TaskKind, TaskPacket
@@ -10,6 +11,7 @@ from packages.core_domain.compile import build_artifact_content
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.cli_base import CliAdapterBase, CompletedProcessRunner
 from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.subprocess_support import build_subprocess_env, completed_process_from_timeout
 
 
 DEFAULT_OPENCODE_MODEL = "openai/gpt-5.4-mini"
@@ -128,16 +130,20 @@ class OpenCodeAdapter(CliAdapterBase):
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
-        env = os.environ.copy()
-        env.update(packet.env)
-        completed = self._runner(
-            self.build_command(packet),
-            cwd=packet.working_directory,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        command = self.build_command(packet)
+        env = build_subprocess_env(packet.env)
+        try:
+            completed = self._runner(
+                command,
+                cwd=packet.working_directory,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            completed = completed_process_from_timeout(exc, command=command, timeout_seconds=self.timeout_seconds)
         output_text = self._extract_output_text(completed.stdout)
         if completed.returncode == 0 and output_text:
             self._write_artifact(packet, output_text)

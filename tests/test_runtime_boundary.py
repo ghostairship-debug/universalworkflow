@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 from packages.contracts import RuntimeStateRef
+from packages.core_domain.errors import RuntimeGatewayExecutionError
 from packages.runtime_langgraph.gateway import NullRuntimeGateway, OpenAIRuntimeGateway
 
 
@@ -72,4 +73,34 @@ def test_openai_runtime_gateway_generates_execution_brief_with_fake_client() -> 
     assert resumed_state.state_payload["runtime_gateway_provider"] == "openai"
     assert resumed_state.state_payload["llm_model"] == "gpt-5.4-mini"
     assert resumed_state.state_payload["runtime_brief"].startswith("Outcome:")
+    assert resumed_state.state_payload["context_budget"]["status"] == "ok"
+    assert resumed_state.state_payload["context_budget"]["runtime_brief_prompt_chars"] > 0
     assert fake_client.responses.calls[0]["model"] == "gpt-5.4-mini"
+
+
+def test_openai_runtime_gateway_rejects_over_budget_runtime_brief_prompt() -> None:
+    fake_client = _FakeOpenAIClient()
+    gateway = OpenAIRuntimeGateway(
+        client=fake_client,
+        model="gpt-5.4-mini",
+        warn_input_chars=40,
+        max_input_chars=60,
+    )
+    compiled_state = RuntimeStateRef.model_validate(
+        {
+            **gateway.start("run_big", "task_big").model_dump(mode="json"),
+            "state_payload": {
+                "goal": "x" * 200,
+                "preset_id": "feature_delivery",
+                "task_kind": "shell_exec",
+                "expected_artifacts": ["state/artifacts/run_big.md"],
+            },
+        }
+    )
+
+    try:
+        gateway.resume(compiled_state)
+    except RuntimeGatewayExecutionError as exc:
+        assert exc.details["context_budget"]["over_budget"] is True
+    else:
+        raise AssertionError("expected runtime gateway to reject an over-budget prompt")

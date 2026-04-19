@@ -4,6 +4,11 @@ import os
 from typing import Any
 
 from packages.contracts.runtime import RuntimeGateway, RuntimeStateRef
+from packages.core_domain.context_budget import (
+    DEFAULT_CONTEXT_HARD_LIMIT_CHARS,
+    DEFAULT_CONTEXT_WARN_CHARS,
+    build_context_budget_report,
+)
 from packages.core_domain.errors import RuntimeGatewayConfigurationError, RuntimeGatewayExecutionError
 
 
@@ -58,10 +63,14 @@ class OpenAIRuntimeGateway(RuntimeGateway):
         model: str = DEFAULT_OPENAI_MODEL,
         reasoning_effort: str = DEFAULT_OPENAI_REASONING_EFFORT,
         max_output_tokens: int = 160,
+        warn_input_chars: int = DEFAULT_CONTEXT_WARN_CHARS,
+        max_input_chars: int = DEFAULT_CONTEXT_HARD_LIMIT_CHARS,
     ):
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.max_output_tokens = max_output_tokens
+        self.warn_input_chars = warn_input_chars
+        self.max_input_chars = max_input_chars
 
         if client is not None:
             self._client = client
@@ -89,6 +98,8 @@ class OpenAIRuntimeGateway(RuntimeGateway):
             "live": True,
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
+            "context_budget_warn_chars": self.warn_input_chars,
+            "context_budget_hard_limit_chars": self.max_input_chars,
         }
 
     def start(self, run_id: str, runtime_task_id: str) -> RuntimeStateRef:
@@ -107,6 +118,21 @@ class OpenAIRuntimeGateway(RuntimeGateway):
 
     def resume(self, state_ref: RuntimeStateRef) -> RuntimeStateRef:
         prompt = self._build_brief_prompt(state_ref)
+        context_budget = build_context_budget_report(
+            state_ref.state_payload,
+            prompt_text=prompt,
+            warn_limit_chars=self.warn_input_chars,
+            hard_limit_chars=self.max_input_chars,
+        )
+        if context_budget["over_budget"]:
+            raise RuntimeGatewayExecutionError(
+                "runtime brief prompt exceeds the configured context budget",
+                {
+                    "provider": "openai",
+                    "model": self.model,
+                    "context_budget": context_budget,
+                },
+            )
         try:
             response = self._client.responses.create(
                 model=self.model,
@@ -142,6 +168,7 @@ class OpenAIRuntimeGateway(RuntimeGateway):
                 "llm_reasoning_effort": self.reasoning_effort,
                 "runtime_brief": runtime_brief,
                 "llm_response_id": getattr(response, "id", None),
+                "context_budget": context_budget,
             },
             is_terminal=state_ref.is_terminal,
             created_at=state_ref.created_at,

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -63,16 +64,21 @@ class _FakeGatewayClient:
         self.responses = _FakeGatewayResponses()
 
 
-def _fake_opencode_runner(command, cwd, env, capture_output, text, check):
+def _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeout):
     prompt = command[2]
     content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", prompt, re.DOTALL)
     assert content_match is not None
+    assert timeout == 180
     return subprocess.CompletedProcess(
         command,
         0,
         stdout=json.dumps({"type": "text", "part": {"text": content_match.group(1)}}),
         stderr="",
     )
+
+
+def _fake_timeout_runner(command, cwd, env, capture_output, text, check, timeout):
+    raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
 
 
 def test_execute_run_success_path(tmp_path: Path) -> None:
@@ -109,13 +115,19 @@ def test_openai_runtime_gateway_projects_brief_into_artifact_and_status(tmp_path
     service.compile_run(run.run_id)
     bundle = service.resume_run(run.run_id)
     detail = service.get_status_detail(run.run_id)
+    timeline = service.get_timeline(run.run_id)
     artifact_text = Path(bundle.evidence.artifact_refs[0].path).read_text(encoding="utf-8")
 
     assert detail["runtime_gateway"]["provider"] == "openai"
     assert detail["last_runtime_state"]["state_payload"]["runtime_brief"].startswith("Outcome:")
+    assert detail["context_budget"]["status"] == "ok"
+    assert detail["trace_context"]["run_id"] == run.run_id
+    assert detail["trace_context"]["verdict_id"] == bundle.review_verdict.verdict_id
     assert "runtime_gateway: openai" in artifact_text
     assert "runtime_model: gpt-5.4-mini" in artifact_text
     assert "runtime_brief: Outcome:" in artifact_text
+    assert timeline[-1].payload_json["trace_context"]["run_id"] == run.run_id
+    assert timeline[-1].payload_json["trace_context"]["event_id"] == timeline[-1].event_id
     assert fake_client.responses.calls[0]["model"] == "gpt-5.4-mini"
 
 
@@ -351,6 +363,66 @@ def test_auto_review_fails_for_non_zero_return_code(tmp_path: Path) -> None:
     assert verdict.decision == "fail"
 
 
+def test_shell_adapter_enforces_timeout_and_returns_stable_failure_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(command, cwd, env, capture_output, text, check, timeout):
+        assert timeout == 120
+        raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    task_packet = TaskPacket(
+        runtime_task_id="task_timeout",
+        run_id="run_timeout",
+        task_kind=TaskKind.shell_exec,
+        command=["python", "-c", "print('slow')"],
+        working_directory=str(tmp_path),
+    )
+
+    result = ShellAdapter().launch(task_packet)
+
+    assert result.return_code == 124
+    assert "partial stdout" in result.stdout
+    assert "partial stderr" in result.stderr
+    assert "timed out after 120s" in result.stderr
+
+
+def test_shell_adapter_uses_allowlisted_environment_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_env: dict[str, str] = {}
+
+    def fake_run(command, cwd, env, capture_output, text, check, timeout):
+        captured_env.update(env)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setenv("SECRET_SHOULD_NOT_PASS", "nope")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    task_packet = TaskPacket(
+        runtime_task_id="task_env",
+        run_id="run_env",
+        task_kind=TaskKind.shell_exec,
+        command=["python", "-c", "print('env')"],
+        working_directory=str(tmp_path),
+        env={"WORKFLOW_EXPLICIT_VALUE": "yes"},
+    )
+
+    ShellAdapter().launch(task_packet)
+
+    assert captured_env["WORKFLOW_EXPLICIT_VALUE"] == "yes"
+    assert captured_env["OPENAI_API_KEY"] == "test-key"
+    assert "SECRET_SHOULD_NOT_PASS" not in captured_env
+
+
+def test_compile_run_uses_current_interpreter_for_generated_command(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Portable compile command", "feature_delivery")
+    prepared = service.compile_run(run.run_id)
+
+    assert prepared.task_packet.command[0] == sys.executable
+
+
 def test_worker_router_uses_noop_adapter_for_noop_task(tmp_path: Path) -> None:
     packet = TaskPacket(
         runtime_task_id="task_noop",
@@ -455,6 +527,24 @@ def test_compile_run_can_pin_opencode_adapter(tmp_path: Path) -> None:
     assert prepared.capability_route.adapter_name == "opencode"
     assert prepared.task_packet.env["WORKFLOW_CAPABILITY_ADAPTER"] == "opencode"
     assert detail["capability_resolution"]["adapter_name"] == "opencode"
+
+
+def test_opencode_adapter_enforces_timeout_budget(tmp_path: Path) -> None:
+    packet = TaskPacket(
+        runtime_task_id="task_opencode_timeout",
+        run_id="run_opencode_timeout",
+        task_kind=TaskKind.shell_exec,
+        command=[],
+        working_directory=str(tmp_path),
+        expected_artifacts=["state/artifacts/opencode.md"],
+        env={"WORKFLOW_PRESET_ID": "feature_delivery", "WORKFLOW_RUN_GOAL": "timeout"},
+    )
+
+    adapter = OpenCodeAdapter(runner=_fake_timeout_runner, executable="python")
+    result = adapter.launch(packet)
+
+    assert result.return_code == 124
+    assert "timed out after 180s" in result.stderr
 
 
 def test_domain_pack_artifact_is_used_in_auto_path(tmp_path: Path) -> None:

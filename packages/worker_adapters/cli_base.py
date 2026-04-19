@@ -6,6 +6,7 @@ from typing import Callable
 
 from packages.contracts import TaskPacket
 from packages.worker_adapters.base import ExecutionResult, WorkerAdapter, resolve_artifact_paths, utc_now
+from packages.worker_adapters.subprocess_support import build_subprocess_env, completed_process_from_timeout
 
 CompletedProcessRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -24,16 +25,20 @@ class CliAdapterBase(WorkerAdapter):
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
-        env = os.environ.copy()
-        env.update(packet.env)
-        completed = self._runner(
-            self.build_command(packet),
-            cwd=packet.working_directory,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        command = self.build_command(packet)
+        env = build_subprocess_env(packet.env)
+        try:
+            completed = self._runner(
+                command,
+                cwd=packet.working_directory,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            completed = completed_process_from_timeout(exc, command=command, timeout_seconds=self.timeout_seconds)
         finished_at = utc_now()
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,

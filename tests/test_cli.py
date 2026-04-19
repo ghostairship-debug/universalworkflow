@@ -106,7 +106,8 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["open_debt_count"] >= 1
     assert "TD-010" in [item["debt_id"] for item in payload["open_items"]]
-    assert payload["planned_phase_counts"]["M3"] >= 1
+    assert "Pre-M8" not in payload["planned_phase_counts"]
+    assert payload["planned_phase_counts"]["Next Cycle"] >= 1
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:

@@ -400,8 +400,30 @@ class ReviewRepository(RepositoryBase):
 
 
 class EventRepository(RepositoryBase):
+    def _payload_with_trace_context(self, event: RunEvent) -> dict[str, Any]:
+        payload = dict(event.payload_json)
+        trace_payload = dict(payload.get("trace_context") or {})
+        trace_payload.update(
+            {
+                "run_id": event.run_id,
+                "event_id": event.event_id,
+                "runtime_task_id": payload.get("runtime_task_id"),
+                "state_ref_id": payload.get("state_ref_id"),
+                "attempt_id": payload.get("attempt_id"),
+                "evidence_id": payload.get("evidence_id"),
+                "verdict_id": payload.get("verdict_id"),
+                "claim_id": payload.get("claim_id"),
+                "lease_id": payload.get("lease_id"),
+                "snapshot_id": payload.get("snapshot_id"),
+                "memory_item_id": payload.get("memory_item_id"),
+                "simulation_record_id": payload.get("record_id"),
+            }
+        )
+        payload["trace_context"] = {key: value for key, value in trace_payload.items() if value is not None}
+        return payload
+
     def append(self, event: RunEvent, connection: sqlite3.Connection | None = None) -> RunEvent:
-        payload = validate_event_payload(event.event_type, event.payload_json)
+        payload = validate_event_payload(event.event_type, self._payload_with_trace_context(event))
         with self._connection(connection, commit=True) as conn:
             conn.execute(
                 """

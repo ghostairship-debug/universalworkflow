@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field
 
-from packages.contracts.models import ContractModel, PersistedContractModel, new_id
+from packages.contracts.models import ContractModel, PersistedContractModel, TraceContext, new_id
 
 
 class RunEventType(StrEnum):
@@ -40,6 +40,7 @@ class RunEventType(StrEnum):
 
 class EventPayloadModel(ContractModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
+    trace_context: TraceContext | None = None
 
 
 class RunCreatedPayload(EventPayloadModel):

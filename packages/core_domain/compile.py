@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 from packages.contracts import (
     CapabilityRoute,
@@ -105,7 +106,7 @@ def _python_command_for(
         "path.write_text(content, encoding='utf-8')\n"
         "print(path.as_posix())\n"
     )
-    return ["python", "-c", body]
+    return [sys.executable, "-c", body]
 
 
 @dataclass(slots=True)

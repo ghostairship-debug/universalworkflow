@@ -1,0 +1,145 @@
+{
+  "schema_version": "v1",
+  "repaid_items": [
+    {
+      "debt_id": "TD-002",
+      "description": "`PresetResolver` only supported `manual_select` and had no deterministic suggestion path",
+      "introduced_in": "M0",
+      "repaid_in": "M1",
+      "result": "Added deterministic offline `suggest()` while keeping execution explicit"
+    },
+    {
+      "debt_id": "TD-003",
+      "description": "`HandoffLite` was frozen only as a contract and not persisted",
+      "introduced_in": "M0",
+      "repaid_in": "M1",
+      "result": "Added persistence plus `status-detail`, `handoffs`, smoke, and offline-validation coverage"
+    },
+    {
+      "debt_id": "TD-004",
+      "description": "thin compile existed only as an internal placeholder and not as a public lifecycle surface",
+      "introduced_in": "M0",
+      "repaid_in": "M1",
+      "result": "Added explicit public `compile / recompile / resume` lifecycle surfaces"
+    },
+    {
+      "debt_id": "TD-005",
+      "description": "execution initially relied on a shell-only lane with no stable GPT-capable CLI route",
+      "introduced_in": "M0",
+      "repaid_in": "M5 Phase 3",
+      "result": "`WorkerRouter`, multi-route capability selection, adapter pinning, `NoopAdapter`, and `OpenCodeAdapter` now provide a real multi-adapter execution baseline"
+    },
+    {
+      "debt_id": "TD-011",
+      "description": "`packages/core_domain/services.py` concentrated too much orchestration, projection, memory, simulation, and lifecycle logic in one file",
+      "introduced_in": "M2-M7",
+      "repaid_in": "Pre-M8 Phase C",
+      "result": "Extracted bounded service modules for projection/reporting, memory/simulation, and lifecycle/review while keeping `OrchestratorService` as the public facade"
+    },
+    {
+      "debt_id": "TD-016",
+      "description": "subprocess-backed adapters did not enforce declared timeout budgets and inherited too much parent environment state",
+      "introduced_in": "M5-M7",
+      "repaid_in": "Pre-M8 Phase B",
+      "result": "Added timeout enforcement, subprocess env allowlisting, interpreter-portable compile commands, and explicit local execution trust-boundary docs"
+    },
+    {
+      "debt_id": "TD-012",
+      "description": "`infra/scripts/offline_validation.py` had grown into an oversized validation script instead of a modular validation package",
+      "introduced_in": "M5-M7",
+      "repaid_in": "Pre-M8 Phase D",
+      "result": "Split validation flows into `infra/validation/` modules and reduced `offline_validation.py` to a thin entry wrapper"
+    },
+    {
+      "debt_id": "TD-013",
+      "description": "runtime-brief and memory-retrieval assembly lacked a hard context-budget preflight and explicit pruning guard path",
+      "introduced_in": "M5-M7",
+      "repaid_in": "Pre-M8 Phase D",
+      "result": "Added diagnostics-first `context_budget`, gateway preflight guarding, trace context, and ADR-006 for the next-step pruning strategy"
+    },
+    {
+      "debt_id": "TD-014",
+      "description": "key runtime dependencies were pinned with narrow upper bounds, making routine compatibility and security updates harder than necessary",
+      "introduced_in": "M5-M7",
+      "repaid_in": "Pre-M8 Phase E",
+      "result": "Widened core runtime upper bounds selectively and documented the repository's dependency/versioning policy before `M8`"
+    },
+    {
+      "debt_id": "TD-015",
+      "description": "governance reports parsed Markdown debt prose directly instead of consuming a structured canonical source",
+      "introduced_in": "M3-M7",
+      "repaid_in": "Pre-M8 Phase D",
+      "result": "Added canonical JSON governance sources with Markdown compatibility fallback and explicit source-contract reporting"
+    },
+    {
+      "debt_id": "TD-017",
+      "description": "clean source-package/export flow was not productized, so review or handoff snapshots could include local state, DBs, artifacts, and repo noise",
+      "introduced_in": "M5-M7",
+      "repaid_in": "Pre-M8 Phase E",
+      "result": "Added source-package manifest/export tooling, minimal automation gates, and freeze-review provenance for handoff claims"
+    },
+    {
+      "debt_id": "TD-018",
+      "description": "canonical repo docs mixed local absolute links and current/historical guidance without a portable source map",
+      "introduced_in": "M1-M7",
+      "repaid_in": "Pre-M8 Phase E",
+      "result": "Finished portable-link cleanup for living docs and formalized current-vs-historical doc governance in the active workflow guide"
+    }
+  ],
+  "open_items": [
+    {
+      "debt_id": "TD-001",
+      "description": "claim and worker-lease semantics remain local-only and do not provide true distributed resource ownership",
+      "introduced_in": "M0",
+      "planned_repayment_phase": "Next Cycle",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks external worker pools, distributed locking, and real multi-node scheduling"
+    },
+    {
+      "debt_id": "TD-006",
+      "description": "review policy breadth still stops at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` remains reference-only",
+      "introduced_in": "M0",
+      "planned_repayment_phase": "Next Cycle",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks a fuller runtime policy family but does not block the current shipped baseline"
+    },
+    {
+      "debt_id": "TD-007",
+      "description": "`run_events` still favor concise payloads and do not yet provide deep traces, replay-grade linkage, or first-class metrics",
+      "introduced_in": "M0",
+      "planned_repayment_phase": "Next Cycle",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks richer observability, replay analysis, and structured runtime diagnostics"
+    },
+    {
+      "debt_id": "TD-008",
+      "description": "runtime recovery still lacks complex interrupt/resume/checkpoint merge semantics beyond the current local resumable baseline",
+      "introduced_in": "M0",
+      "planned_repayment_phase": "Next Cycle",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks richer recovery workflows and deeper runtime fault handling"
+    },
+    {
+      "debt_id": "TD-009",
+      "description": "execution semantics are still serial-first and do not implement real claim/lease/barrier concurrency",
+      "introduced_in": "M0",
+      "planned_repayment_phase": "Next Cycle",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks safe parallel execution and higher-throughput scheduling"
+    },
+    {
+      "debt_id": "TD-010",
+      "description": "governance visibility is stronger than before, but debt tracking is still document-centric and not yet quantitatively automated",
+      "introduced_in": "M0",
+      "planned_repayment_phase": "Next Cycle",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks deeper debt trend analysis, alerting, and richer dashboard/reporting automation"
+    }
+  ],
+  "freeze_review_questions": [
+    "Are all accepted cross-milestone debts from `M0` through the current cycle recorded here?",
+    "Does any active debt item now block the next milestone entry gate?",
+    "Have all pre-entry hardening debts been repaid before feature breadth resumes?",
+    "Were any completed debts retired with explicit review evidence rather than silently dropped?"
+  ]
+}

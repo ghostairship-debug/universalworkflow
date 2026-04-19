@@ -17,6 +17,8 @@ from packages.worker_adapters.router import WorkerRouter
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TECH_DEBT_REGISTRY_PATH = REPO_ROOT / "docs" / "tech-debt-registry.md"
 DEFAULT_REVIEW_DECISION_TABLE_PATH = REPO_ROOT / "docs" / "reviews" / "m1_review_semantics_decision_table.md"
+DEFAULT_TECH_DEBT_CANONICAL_PATH = REPO_ROOT / "docs" / "governance" / "tech_debt_registry.json"
+DEFAULT_REVIEW_DECISION_CANONICAL_PATH = REPO_ROOT / "docs" / "governance" / "review_policy_cases.json"
 DEFAULT_VALIDATION_REPORT_PATH = REPO_ROOT / "state" / "offline_validation_report.json"
 
 
@@ -112,8 +114,63 @@ def _normalize_open_item(row: dict[str, str]) -> dict[str, str]:
     }
 
 
-def build_tech_debt_report(registry_path: str | Path | None = None) -> dict[str, Any]:
-    path = Path(registry_path) if registry_path is not None else DEFAULT_TECH_DEBT_REGISTRY_PATH
+def _build_tech_debt_report_payload(
+    *,
+    source_path: Path,
+    repaid_items: list[dict[str, str]],
+    open_items: list[dict[str, str]],
+    freeze_review_questions: list[str],
+    source_contract: str,
+    compatibility_source_path: Path | None = None,
+) -> dict[str, Any]:
+    status_counts = Counter(item["current_status"] for item in open_items)
+    planned_phase_counts = Counter(item["planned_repayment_phase"] for item in open_items)
+    introduced_phase_counts = Counter(item["introduced_in"] for item in open_items)
+    m3_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M3"]
+    pre_m8_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "Pre-M8"]
+    next_cycle_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "Next Cycle"]
+    active_gate_focus_items = pre_m8_focus_items or m3_focus_items
+    return {
+        "source_path": source_path.as_posix(),
+        "source_contract": source_contract,
+        "source_paths": {
+            "canonical": source_path.as_posix(),
+            "compatibility_markdown": compatibility_source_path.as_posix() if compatibility_source_path is not None else None,
+        },
+        "repaid_debt_count": len(repaid_items),
+        "open_debt_count": len(open_items),
+        "status_counts": dict(status_counts),
+        "planned_phase_counts": dict(planned_phase_counts),
+        "introduced_phase_counts": dict(introduced_phase_counts),
+        "m3_focus_items": m3_focus_items,
+        "pre_m8_focus_items": pre_m8_focus_items,
+        "next_cycle_focus_items": next_cycle_focus_items,
+        "active_gate_focus_items": active_gate_focus_items,
+        "open_items": open_items,
+        "repaid_items": repaid_items,
+        "freeze_review_questions": freeze_review_questions,
+    }
+
+
+def _load_structured_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _build_tech_debt_report_from_structured(path: Path) -> dict[str, Any]:
+    payload = _load_structured_json(path)
+    repaid_items = [dict(item) for item in payload.get("repaid_items", [])]
+    open_items = [dict(item) for item in payload.get("open_items", [])]
+    return _build_tech_debt_report_payload(
+        source_path=path,
+        repaid_items=repaid_items,
+        open_items=open_items,
+        freeze_review_questions=list(payload.get("freeze_review_questions", [])),
+        source_contract="structured_json",
+        compatibility_source_path=DEFAULT_TECH_DEBT_REGISTRY_PATH if DEFAULT_TECH_DEBT_REGISTRY_PATH.exists() else None,
+    )
+
+
+def _build_tech_debt_report_from_markdown(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
 
     repaid_section = _extract_numbered_section(text, 2)
@@ -122,22 +179,24 @@ def build_tech_debt_report(registry_path: str | Path | None = None) -> dict[str,
 
     repaid_items = [_normalize_repaid_item(row) for row in _parse_markdown_table(repaid_section)]
     open_items = [_normalize_open_item(row) for row in _parse_markdown_table(open_section)]
-    status_counts = Counter(item["current_status"] for item in open_items)
-    planned_phase_counts = Counter(item["planned_repayment_phase"] for item in open_items)
-    introduced_phase_counts = Counter(item["introduced_in"] for item in open_items)
+    return _build_tech_debt_report_payload(
+        source_path=path,
+        repaid_items=repaid_items,
+        open_items=open_items,
+        freeze_review_questions=_parse_numbered_lines(freeze_review_section),
+        source_contract="markdown_compatibility",
+    )
 
-    return {
-        "source_path": path.as_posix(),
-        "repaid_debt_count": len(repaid_items),
-        "open_debt_count": len(open_items),
-        "status_counts": dict(status_counts),
-        "planned_phase_counts": dict(planned_phase_counts),
-        "introduced_phase_counts": dict(introduced_phase_counts),
-        "m3_focus_items": [item for item in open_items if item["planned_repayment_phase"] == "M3"],
-        "open_items": open_items,
-        "repaid_items": repaid_items,
-        "freeze_review_questions": _parse_numbered_lines(freeze_review_section),
-    }
+
+def build_tech_debt_report(registry_path: str | Path | None = None) -> dict[str, Any]:
+    if registry_path is not None:
+        path = Path(registry_path)
+        if path.suffix.lower() == ".json":
+            return _build_tech_debt_report_from_structured(path)
+        return _build_tech_debt_report_from_markdown(path)
+    if DEFAULT_TECH_DEBT_CANONICAL_PATH.exists():
+        return _build_tech_debt_report_from_structured(DEFAULT_TECH_DEBT_CANONICAL_PATH)
+    return _build_tech_debt_report_from_markdown(DEFAULT_TECH_DEBT_REGISTRY_PATH)
 
 
 def _load_policy_presets(db_path: str | Path | None = None) -> list[PresetDefinition]:
@@ -151,14 +210,18 @@ def _load_policy_presets(db_path: str | Path | None = None) -> list[PresetDefini
     return load_seed_presets()
 
 
-def _parse_review_decision_table(decision_table_path: str | Path | None = None) -> dict[str, Any]:
-    path = Path(decision_table_path) if decision_table_path is not None else DEFAULT_REVIEW_DECISION_TABLE_PATH
+def _parse_review_decision_table_from_markdown(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     cases_section = _extract_subsection(text, "## Cases")
     notes_section = _extract_subsection(text, "## Notes")
     rows = _parse_markdown_table(cases_section)
     return {
         "source_path": path.as_posix(),
+        "source_contract": "markdown_compatibility",
+        "source_paths": {
+            "canonical": path.as_posix(),
+            "compatibility_markdown": None,
+        },
         "cases": [
             {
                 "path": _strip_code_ticks(list(row.values())[0]),
@@ -170,6 +233,33 @@ def _parse_review_decision_table(decision_table_path: str | Path | None = None) 
         ],
         "notes": _parse_bullets(notes_section),
     }
+
+
+def _parse_review_decision_table_from_structured(path: Path) -> dict[str, Any]:
+    payload = _load_structured_json(path)
+    return {
+        "source_path": path.as_posix(),
+        "source_contract": "structured_json",
+        "source_paths": {
+            "canonical": path.as_posix(),
+            "compatibility_markdown": (
+                DEFAULT_REVIEW_DECISION_TABLE_PATH.as_posix() if DEFAULT_REVIEW_DECISION_TABLE_PATH.exists() else None
+            ),
+        },
+        "cases": [dict(item) for item in payload.get("cases", [])],
+        "notes": list(payload.get("notes", [])),
+    }
+
+
+def _parse_review_decision_table(decision_table_path: str | Path | None = None) -> dict[str, Any]:
+    if decision_table_path is not None:
+        path = Path(decision_table_path)
+        if path.suffix.lower() == ".json":
+            return _parse_review_decision_table_from_structured(path)
+        return _parse_review_decision_table_from_markdown(path)
+    if DEFAULT_REVIEW_DECISION_CANONICAL_PATH.exists():
+        return _parse_review_decision_table_from_structured(DEFAULT_REVIEW_DECISION_CANONICAL_PATH)
+    return _parse_review_decision_table_from_markdown(DEFAULT_REVIEW_DECISION_TABLE_PATH)
 
 
 def _runtime_shape_for_policy(policy: str) -> str:
@@ -310,7 +400,13 @@ def build_review_policy_report(
     return {
         "source_paths": {
             "decision_table": decision_table["source_path"],
+            "decision_table_markdown_compatibility": decision_table["source_paths"]["compatibility_markdown"],
             "tech_debt_registry": debt_report["source_path"],
+            "tech_debt_markdown_compatibility": debt_report["source_paths"]["compatibility_markdown"],
+        },
+        "source_contracts": {
+            "decision_table": decision_table["source_contract"],
+            "tech_debt_registry": debt_report["source_contract"],
         },
         "supported_policy_count": len(supported_policies),
         "supported_policies": supported_policies,
@@ -349,6 +445,17 @@ def build_release_readiness_report(
     capability_routes = _load_capability_routes()
     domain_packs = _load_domain_pack_catalog()
     validation_summary = None
+    validation_evidence = {
+        "source_path": (
+            Path(validation_report_path).as_posix()
+            if validation_report_path is not None
+            else DEFAULT_VALIDATION_REPORT_PATH.as_posix()
+        ),
+        "source_mode": "explicit_arg" if validation_report_path is not None else "default_path",
+        "report_present": validation_report is not None,
+        "generated_at": validation_report.get("generated_at") if validation_report is not None else None,
+        "available_checks": sorted((validation_report or {}).get("checks", {}).keys()),
+    }
     if validation_report is not None:
         checks = validation_report.get("checks", {})
         validation_summary = {
@@ -356,11 +463,8 @@ def build_release_readiness_report(
             "cli_flow_passed": checks.get("cli_flow", {}).get("passed"),
             "smoke_flow_passed": checks.get("smoke_flow", {}).get("passed"),
             "api_flow_passed": checks.get("api_flow", {}).get("passed"),
-            "source_path": (
-                Path(validation_report_path).as_posix()
-                if validation_report_path is not None
-                else DEFAULT_VALIDATION_REPORT_PATH.as_posix()
-            ),
+            "source_path": validation_evidence["source_path"],
+            "generated_at": validation_evidence["generated_at"],
         }
 
     gates = [
@@ -400,9 +504,11 @@ def build_release_readiness_report(
         "overall_ready": all(gate["passed"] for gate in gates),
         "gates": gates,
         "validation_summary": validation_summary,
+        "validation_evidence": validation_evidence,
         "review_policy_summary": {
             "supported_policy_count": review_policy["supported_policy_count"],
             "reference_only_candidates": review_policy["expansion_readiness"]["reference_only_candidates"],
+            "source_contract": review_policy["source_contracts"]["decision_table"],
         },
         "capability_routes": capability_routes,
         "domain_packs": domain_packs,
@@ -410,8 +516,12 @@ def build_release_readiness_report(
         "remaining_gaps": remaining_gaps,
         "recommended_next_step": "close current milestone or explicitly pull optional into a new phase",
         "source_paths": {
-            "validation_report": validation_summary["source_path"] if validation_summary is not None else None,
+            "validation_report": validation_evidence["source_path"],
             "tech_debt_registry": tech_debt["source_path"],
             "decision_table": review_policy["source_paths"]["decision_table"],
+        },
+        "source_contracts": {
+            "tech_debt_registry": tech_debt["source_contract"],
+            "decision_table": review_policy["source_contracts"]["decision_table"],
         },
     }

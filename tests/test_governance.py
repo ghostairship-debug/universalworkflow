@@ -46,6 +46,47 @@ def test_build_tech_debt_report_parses_registry_sections(tmp_path: Path) -> None
         "Are all accepted deferrals recorded?",
         "Is any moved work still missing from the registry?",
     ]
+    assert report["source_contract"] == "markdown_compatibility"
+
+
+def test_build_tech_debt_report_prefers_structured_sources_when_json_is_provided(tmp_path: Path) -> None:
+    registry_path = tmp_path / "tech-debt-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1",
+                "repaid_items": [
+                    {
+                        "debt_id": "TD-001",
+                        "description": "resolved",
+                        "introduced_in": "M0",
+                        "repaid_in": "M1",
+                        "result": "fixed",
+                    }
+                ],
+                "open_items": [
+                    {
+                        "debt_id": "TD-010",
+                        "description": "still open",
+                        "introduced_in": "M1",
+                        "planned_repayment_phase": "Pre-M8",
+                        "current_status": "active",
+                        "blocking_impact": "blocks freeze gate",
+                    }
+                ],
+                "freeze_review_questions": ["Is the structured source readable?"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_tech_debt_report(registry_path)
+
+    assert report["source_contract"] == "structured_json"
+    assert report["repaid_debt_count"] == 1
+    assert report["open_debt_count"] == 1
+    assert report["active_gate_focus_items"][0]["debt_id"] == "TD-010"
 
 
 def test_build_review_policy_report_projects_current_and_future_policy_catalog(tmp_path: Path) -> None:
@@ -115,6 +156,7 @@ def test_build_review_policy_report_projects_current_and_future_policy_catalog(t
     guarded = next(item for item in report["preset_policy_map"] if item["preset_id"] == "guarded_delivery")
     assert advisory["runtime_shape"] == "execution_then_auto_review_or_human_escalation"
     assert guarded["requires_manual_approval"] is True
+    assert report["source_contracts"]["decision_table"] == "markdown_compatibility"
 
 
 def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path: Path) -> None:
@@ -153,6 +195,9 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in report["gates"][3]["detail"]
     assert "optional review policy remains reference-only" in report["remaining_gaps"]
+    assert report["validation_evidence"]["report_present"] is True
+    assert report["validation_evidence"]["source_mode"] == "explicit_arg"
+    assert report["validation_summary"]["generated_at"] is None
 
 
 def test_build_domain_pack_platform_report_projects_platform_sections() -> None:

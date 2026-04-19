@@ -85,6 +85,21 @@ class CapabilityRoute(ContractModel):
     adapter_class: str
 
 
+class TraceContext(ContractModel):
+    run_id: str
+    event_id: str | None = None
+    runtime_task_id: str | None = None
+    state_ref_id: str | None = None
+    attempt_id: str | None = None
+    evidence_id: str | None = None
+    verdict_id: str | None = None
+    claim_id: str | None = None
+    lease_id: str | None = None
+    snapshot_id: str | None = None
+    memory_item_id: str | None = None
+    simulation_record_id: str | None = None
+
+
 class ReviewPolicy(StrEnum):
     auto_only = "auto_only"
     recommended = "recommended"

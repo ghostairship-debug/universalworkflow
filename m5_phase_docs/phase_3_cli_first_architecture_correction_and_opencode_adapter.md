@@ -1,9 +1,11 @@
 # M5 Phase 3 - CLI-First Architecture Correction And OpenCode Adapter
 
-**Phase status:** In Progress  
+**Phase status:** Completed (exploratory implementation after the frozen `M5 Phase 0-2` scope)  
 **Phase position:** This phase starts after `M5 Phase 2` proves the current cycle can validate, attach a live direct-API gateway, and render a minimal TUI. It corrects the execution architecture back toward the original `CLI-first` design without rolling back the already-green fallback path.
 
 **Entry condition:** `OpenAIRuntimeGateway` exists as a live path, but worker execution is still effectively `shell/noop` only and the capability registry still models one adapter per capability.
+
+**Scope note:** This phase was originally outside the frozen `M5` baseline, but it later landed as a real implementation lane and now reflects current repository behavior.
 
 ---
 
@@ -89,9 +91,15 @@ The phase passes only if all of the following are true:
 
 ---
 
-## 7. Expected Outcome
+## 7. Realized Outcome
 
 - The repository regains its intended execution shape: `CLI-first` routing with explicit adapter selection.
 - `OpenCodeAdapter` becomes the first GPT-capable CLI route.
 - `OpenAIRuntimeGateway` remains useful, but is no longer the only live-model story.
 
+Concrete repository evidence:
+
+- `packages/worker_adapters/router.py` now wires `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`
+- compile/recompile surfaces accept explicit adapter pinning
+- CLI/API/operator projections expose the selected capability route
+- adapter-selection behavior is covered in execution, CLI, and API tests

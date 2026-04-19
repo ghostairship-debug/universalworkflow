@@ -1,56 +1,59 @@
-# M1 技术债登记簿
+# Technical Debt Registry
 
-**文档定位：** 记录在 M1 结束时仍然被显式接受、但延后到后续阶段偿还的技术债务，同时保留已在 M1 偿还的 M0 债务历史。  
-**使用方式：** 本文档应在 `M1 freeze review` 中作为必审材料，所有 `go / no-go` 结论都必须显式检查本表是否完整。
-
----
-
-# 1. 登记规则
-
-- 只登记已经被明确接受的延后项
-- 不登记“尚未分析清楚”的开放问题
-- 每条债务都必须标明引入阶段、计划偿还阶段和阻塞影响
-- 如偿还阶段变化，必须更新本表而不是只在会议中口头说明
+**Document role:** a living architecture debt register for the current repository, not a milestone-specific appendix.  
+**Usage rule:** this file should be reviewed in freeze reviews, governance reports, and any scope-rebaseline discussion before new breadth work is approved.
 
 ---
 
-# 2. M1 已偿还债务
+# 1. Registry Rules
 
-| ID | 债务描述 | 引入阶段 | 偿还阶段 | 结果 |
+- Record only debt that has been explicitly accepted or clearly observed in the repository.
+- Do not use this file as a generic backlog for untriaged ideas.
+- Every item must describe:
+  - where it was introduced
+  - where it is planned to be repaid
+  - whether it is still active, partially repaid, or fully retired
+  - what it blocks
+- Historical debt may be moved into the repaid section, but should not disappear without review evidence.
+- Cross-milestone structural debt belongs here even if it spans several cycles.
+
+---
+
+# 2. Repaid Debt
+
+| ID | Description | Introduced In | Repaid In | Result |
 | --- | --- | --- | --- | --- |
-| TD-002 | `PresetResolver` 仅支持 `manual_select`，不提供建议 | M0 | M1 | 已补齐确定性离线 `suggest()`，但仍不做自动代选 |
-| TD-003 | `HandoffLite` 仅冻结语义，不进入持久化范围 | M0 | M1 | 已持久化并进入 `status-detail`、`handoffs`、smoke 与 offline validation |
-| TD-004 | thin compile 仅是内部占位能力，不暴露公共 compile API | M0 | M1 | 已补齐 `compile / recompile / resume` 公共生命周期接口 |
+| TD-002 | `PresetResolver` only supported `manual_select` and had no deterministic suggestion path | M0 | M1 | Added deterministic offline `suggest()` while keeping execution explicit |
+| TD-003 | `HandoffLite` was frozen only as a contract and not persisted | M0 | M1 | Added persistence plus `status-detail`, `handoffs`, smoke, and offline-validation coverage |
+| TD-004 | thin compile existed only as an internal placeholder and not as a public lifecycle surface | M0 | M1 | Added explicit public `compile / recompile / resume` lifecycle surfaces |
+| TD-005 | execution initially relied on a shell-only lane with no stable GPT-capable CLI route | M0 | M5 Phase 3 | `WorkerRouter`, multi-route capability selection, adapter pinning, `NoopAdapter`, and `OpenCodeAdapter` now provide a real multi-adapter execution baseline |
+| TD-011 | `packages/core_domain/services.py` concentrated too much orchestration, projection, memory, simulation, and lifecycle logic in one file | M2-M7 | Pre-M8 Phase C | Extracted bounded service modules for projection/reporting, memory/simulation, and lifecycle/review while keeping `OrchestratorService` as the public facade |
+| TD-016 | subprocess-backed adapters did not enforce declared timeout budgets and inherited too much parent environment state | M5-M7 | Pre-M8 Phase B | Added timeout enforcement, subprocess env allowlisting, interpreter-portable compile commands, and explicit local execution trust-boundary docs |
+| TD-012 | `infra/scripts/offline_validation.py` had grown into an oversized validation script instead of a modular validation package | M5-M7 | Pre-M8 Phase D | Split validation flows into `infra/validation/` modules and reduced `offline_validation.py` to a thin entry wrapper |
+| TD-013 | runtime-brief and memory-retrieval assembly lacked a hard context-budget preflight and explicit pruning guard path | M5-M7 | Pre-M8 Phase D | Added diagnostics-first `context_budget`, gateway preflight guarding, trace context, and ADR-006 for the next-step pruning strategy |
+| TD-014 | key runtime dependencies were pinned with narrow upper bounds, making routine compatibility and security updates harder than necessary | M5-M7 | Pre-M8 Phase E | Widened core runtime upper bounds selectively and documented the repository's dependency/versioning policy before `M8` |
+| TD-015 | governance reports parsed Markdown debt prose directly instead of consuming a structured canonical source | M3-M7 | Pre-M8 Phase D | Added canonical JSON governance sources with Markdown compatibility fallback and explicit source-contract reporting |
+| TD-017 | clean source-package/export flow was not productized, so review or handoff snapshots could include local state, DBs, artifacts, and repo noise | M5-M7 | Pre-M8 Phase E | Added source-package manifest/export tooling, minimal automation gates, and freeze-review provenance for handoff claims |
+| TD-018 | canonical repo docs mixed local absolute links and current/historical guidance without a portable source map | M1-M7 | Pre-M8 Phase E | Finished portable-link cleanup for living docs and formalized current-vs-historical doc governance in the active workflow guide |
 
 ---
 
-# 3. M1 后仍然有效的技术债
+# 3. Open Debt
 
-| ID | 债务描述 | 引入阶段 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
+| ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-001 | 仅有本地 claim / worker-lease 基线，仍未执行真实分布式资源占用控制 | M0 | M2 | 部分偿还 | 已具备本地 ownership 守卫与诊断，但仍阻塞真正的并发安全与冲突调度 |
-| TD-005 | 仅接入 `ShellAdapter`，未接第二执行器与能力路由 | M0 | M1.5 | 已偿还 | 已补齐 `NoopAdapter`、`WorkerRouter` 与显式 task-kind 路由验证 |
-| TD-006 | review policy 仍然缺少完整 richer policy 体系 | M0 | Next Cycle | 部分偿还 | 已补齐结构化 review-policy governance report、decision-table 基线，以及 `recommended` / `mandatory` 的 run-level runtime 语义；`optional` 在当前周期 freeze 时明确保留为 next-cycle candidate |
-| TD-007 | `run_events` 仍然只承载最小摘要 payload，不承载完整 trace 与 metrics | M0 | M3 | 部分偿还 | 已补齐 summary / timeline digest、richer event inspection、closure-audit 与 run audit-report 基线，但仍阻塞深度 observability 与 replay 能力 |
-| TD-008 | 运行时只实现本地 resumable 主链，不实现复杂 interrupt / resume / checkpoint merge | M0 | M2 | 部分偿还 | 已补齐 reconcile、snapshot、claim、worker-lease 与 runtime-attempt 基线，但仍阻塞复杂运行时恢复 |
-| TD-009 | 系统仍采用串行执行语义，尚未进入 Claim / Lease / Barrier 的真实并发实现 | M0 | M2 | 部分偿还 | 已具备本地 claim / worker-lease 语义，但仍阻塞安全并发执行 |
-| TD-010 | 技术债只以本登记簿管理，尚未接入自动化校验或 dashboard | M0 | M3 | 部分偿还 | 已通过结构化 governance report、summary、event inspection、run audit-report、review materials、release-readiness report 与 offline validation 补强治理基线，但仍阻塞技术债量化跟踪与 dashboard 化 |
+| TD-001 | claim and worker-lease semantics remain local-only and do not provide true distributed resource ownership | M0 | Next Cycle | partially_repaid | blocks external worker pools, distributed locking, and real multi-node scheduling |
+| TD-006 | review policy breadth still stops at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` remains reference-only | M0 | Next Cycle | partially_repaid | blocks a fuller runtime policy family but does not block the current shipped baseline |
+| TD-007 | `run_events` still favor concise payloads and do not yet provide deep traces, replay-grade linkage, or first-class metrics | M0 | Next Cycle | partially_repaid | blocks richer observability, replay analysis, and structured runtime diagnostics |
+| TD-008 | runtime recovery still lacks complex interrupt/resume/checkpoint merge semantics beyond the current local resumable baseline | M0 | Next Cycle | partially_repaid | blocks richer recovery workflows and deeper runtime fault handling |
+| TD-009 | execution semantics are still serial-first and do not implement real claim/lease/barrier concurrency | M0 | Next Cycle | partially_repaid | blocks safe parallel execution and higher-throughput scheduling |
+| TD-010 | governance visibility is stronger than before, but debt tracking is still document-centric and not yet quantitatively automated | M0 | Next Cycle | partially_repaid | blocks deeper debt trend analysis, alerting, and richer dashboard/reporting automation |
 
 ---
 
-# 4. Freeze Review 必查问题
+# 4. Freeze Review Questions
 
-在 M1 Freeze Review 中，必须逐条回答：
-
-1. 当前延后项是否都已经登记
-2. 是否存在未登记但实际被后移的工作
-3. 每条债务的偿还阶段是否仍然合理
-4. 是否有任何债务已经从“可接受”升级为“阻塞进入 M2”
-
----
-
-# 5. 更新约束
-
-- 新增债务时必须补充 ID、阶段和影响
-- 偿还债务时不得直接删除，应先在 review 中确认，再从表中移除或转入历史记录
-- 如果 M1 结束时本表为空，通常说明文档登记不完整，而不是技术债真的不存在
+1. Are all accepted cross-milestone debts from `M0` through the current cycle recorded here?
+2. Does any active debt item now block the next milestone entry gate?
+3. Have all pre-entry hardening debts been repaid before feature breadth resumes?
+4. Were any completed debts retired with explicit review evidence rather than silently dropped?
