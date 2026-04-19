@@ -51,6 +51,7 @@ class EvidenceBuilder:
                 "finished_at": result.finished_at.isoformat(),
                 "duration_ms": result.duration_ms,
                 "artifact_paths": result.artifact_paths,
+                "metadata": result.metadata,
             },
         )
 

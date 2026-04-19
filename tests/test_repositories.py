@@ -149,12 +149,13 @@ def test_seed_presets_into_sqlite(tmp_path: Path) -> None:
     presets = PresetRepository(db_path).seed_defaults()
     stored = PresetRepository(db_path).list()
 
-    assert len(presets) == 4
+    assert len(presets) == 5
     assert [preset.preset_id for preset in stored] == [
         "advisory_delivery",
         "feature_delivery",
         "guarded_delivery",
         "research_spike",
+        "research_spike_reviewable",
     ]
 
 

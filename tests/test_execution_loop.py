@@ -25,6 +25,7 @@ from packages.contracts import (
     WorkerLeaseStatus,
 )
 from packages.core_domain.auto_review import AutoReviewV0
+from packages.core_domain.capability_plane import CapabilityPlane
 from packages.core_domain.db import migrate, unit_of_work
 from packages.core_domain.domain_packs import DomainPackRegistry, load_seed_domain_packs
 from packages.core_domain.errors import (
@@ -33,12 +34,16 @@ from packages.core_domain.errors import (
     InvalidStateTransitionError,
     RepairActionNotAvailableError,
     RuntimeClaimConflictError,
+    WorkflowError,
 )
 from packages.core_domain.evidence_builder import EvidenceBuilder
+from packages.core_domain.observability import InMemoryTraceExporter, TraceExporter, TraceRecord
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
+from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
 from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.langchain_agent_adapter import AgentExecutionResponse, LangChainAgentAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.router import WorkerRouter
@@ -79,6 +84,55 @@ def _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeou
 
 def _fake_timeout_runner(command, cwd, env, capture_output, text, check, timeout):
     raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
+
+
+def _fake_agent_runner(packet: TaskPacket, manifest) -> AgentExecutionResponse:
+    projected = [item.tool_name for item in manifest.tools] if manifest is not None else []
+    content = (
+        "# Research Spike\n\n"
+        f"goal: {packet.env.get('WORKFLOW_RUN_GOAL')}\n"
+        f"execution_lane: {packet.env.get('WORKFLOW_EXECUTION_LANE')}\n"
+        f"projected_tools: {', '.join(projected)}\n"
+    )
+    return AgentExecutionResponse(
+        content=content,
+        tool_call_ids=["toolcall_fake_agent"],
+        metadata={"agent_runner": "fake"},
+    )
+
+
+class _RecordingDurablePilot(DurableRuntimePilot):
+    def __init__(self) -> None:
+        self.start_calls: list[tuple[str, str]] = []
+        self.checkpoint_calls: list[tuple[dict[str, str], str]] = []
+        self.review_calls: list[tuple[dict[str, str], str]] = []
+
+    def describe(self) -> dict[str, object]:
+        return {"provider": "recording", "enabled": True, "mode": "test"}
+
+    def start(self, run_id: str, runtime_task_id: str) -> dict[str, str]:
+        self.start_calls.append((run_id, runtime_task_id))
+        return {
+            "thread_id": f"thread_{run_id[-6:]}",
+            "checkpoint_id": f"checkpoint_{runtime_task_id[-6:]}",
+            "assistant_id": f"assistant_{run_id[-6:]}",
+        }
+
+    def checkpoint(self, refs: dict[str, str], *, reason: str) -> dict[str, str]:
+        self.checkpoint_calls.append((dict(refs), reason))
+        return {**refs, "checkpoint_id": f"checkpoint_{reason}"}
+
+    def review_decision(self, refs: dict[str, str], *, decision: str) -> dict[str, str]:
+        self.review_calls.append((dict(refs), decision))
+        return {**refs, "checkpoint_id": f"checkpoint_review_{decision}"}
+
+
+class _ExplodingTraceExporter(TraceExporter):
+    def describe(self) -> dict[str, object]:
+        return {"provider": "exploding", "enabled": True}
+
+    def export(self, record: TraceRecord) -> str | None:
+        raise RuntimeError(f"boom:{record.name}")
 
 
 def test_execute_run_success_path(tmp_path: Path) -> None:
@@ -926,7 +980,159 @@ def test_service_can_execute_opencode_adapter_with_fake_runner(tmp_path: Path) -
     assert bundle.run.status == "completed"
     assert evidence.raw_execution["adapter_name"] == "opencode"
     assert "adapter: opencode" in content
-    assert "goal: [software-delivery]" in content
+
+
+def test_preview_tool_projection_includes_mcp_subset_for_reviewable_pilot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
+    monkeypatch.setenv("UAWO_ENABLE_MCP_SOURCE", "1")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path, capability_plane=CapabilityPlane())
+
+    sources = service.list_capability_sources()
+    preview = service.preview_tool_projection(preset_id="research_spike_reviewable")
+
+    assert any(item["source_type"] == "built_in" for item in sources)
+    assert any(item["source_type"] == "mcp_stdio" for item in sources)
+    assert preview["execution_lane"] == "standard_agent"
+    assert preview["capability_resolution"]["adapter_name"] == "agent"
+    tool_names = [item["tool_name"] for item in preview["tool_projection_manifest"]["tools"]]
+    assert "list_workspace_files" in tool_names
+    assert "mcp_list_workspace_files" in tool_names
+    assert preview["mcp_server_profiles"][0]["profile_id"] == "local_workspace_readonly"
+
+
+def test_research_spike_reviewable_runs_agent_lane_and_exports_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    trace_exporter = InMemoryTraceExporter()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            OpenCodeAdapter(runner=_fake_opencode_runner),
+            NoopAdapter(),
+            LangChainAgentAdapter(runner=_fake_agent_runner),
+        ]
+    )
+    service = OrchestratorService(
+        db_path,
+        worker_router=router,
+        trace_exporter=trace_exporter,
+    )
+
+    run = service.create_run("Research borrowed agent lane", "research_spike_reviewable")
+    prepared = service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    artifact_text = Path(bundle.evidence.artifact_refs[0].path).read_text(encoding="utf-8")
+
+    assert str(prepared.execution_lane) == "standard_agent"
+    assert prepared.capability_route is not None
+    assert prepared.capability_route.adapter_name == "agent"
+    assert bundle.run.status == "awaiting_review"
+    assert detail["execution_lane"] == "standard_agent"
+    assert detail["trace_exporter"]["provider"] == "memory"
+    assert detail["last_runtime_state"]["state_payload"]["execution_lane"] == "standard_agent"
+    assert len(trace_exporter.records) >= 2
+    assert trace_exporter.records[-1].lane_type == "standard_agent"
+    assert "execution_lane: standard_agent" in artifact_text
+    assert "projected_tools:" in artifact_text
+
+
+def test_durable_pilot_refs_stay_in_diagnostics_and_can_resume_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
+    monkeypatch.setenv("UAWO_ENABLE_DURABLE_PILOT", "1")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    durable = _RecordingDurablePilot()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            OpenCodeAdapter(runner=_fake_opencode_runner),
+            NoopAdapter(),
+            LangChainAgentAdapter(runner=_fake_agent_runner),
+        ]
+    )
+    service = OrchestratorService(
+        db_path,
+        worker_router=router,
+        durable_runtime_pilot=durable,
+        trace_exporter=InMemoryTraceExporter(),
+    )
+
+    run = service.create_run("Research durable pilot", "research_spike_reviewable")
+    prepared = service.compile_run(run.run_id)
+    service.resume_run(run.run_id)
+    awaiting_detail = service.get_status_detail(run.run_id)
+
+    assert str(prepared.execution_lane) == "durable_incremental"
+    assert durable.start_calls == [(run.run_id, prepared.task_packet.runtime_task_id)]
+    assert awaiting_detail["durable_runtime_pilot"]["provider"] == "recording"
+    assert awaiting_detail["execution_lane"] == "durable_incremental"
+    assert "thread_id" not in awaiting_detail["run"]
+    assert awaiting_detail["last_runtime_state"]["state_payload"]["thread_id"].startswith("thread_")
+    assert awaiting_detail["trace_context"]["thread_id"].startswith("thread_")
+
+    approved = service.approve_run_review(run.run_id)
+    approved_detail = service.get_status_detail(run.run_id)
+
+    assert approved.run.status == "completed"
+    assert durable.review_calls
+    assert approved_detail["run"]["status"] == "completed"
+    assert "thread_id" not in approved_detail["run"]
+    assert approved_detail["last_runtime_state"]["state_payload"]["checkpoint_id"].startswith("checkpoint_")
+
+
+def test_trace_export_failures_do_not_block_agent_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            OpenCodeAdapter(runner=_fake_opencode_runner),
+            NoopAdapter(),
+            LangChainAgentAdapter(runner=_fake_agent_runner),
+        ]
+    )
+    service = OrchestratorService(
+        db_path,
+        worker_router=router,
+        trace_exporter=_ExplodingTraceExporter(),
+    )
+
+    run = service.create_run("Research trace isolation", "research_spike_reviewable")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "awaiting_review"
+    assert detail["trace_exporter"]["provider"] == "exploding"
+    assert detail["trace_context"]["external_trace_id"] is None
+
+
+def test_domain_pack_skill_export_requires_flag_then_exports_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    with pytest.raises(WorkflowError):
+        service.export_domain_pack_skill("software_delivery_pack", output_root=tmp_path / "skills")
+
+    monkeypatch.setenv("UAWO_ENABLE_SKILL_EXPORT", "1")
+    enabled_service = OrchestratorService(db_path)
+    payload = enabled_service.export_domain_pack_skill("software_delivery_pack", output_root=tmp_path / "skills")
+
+    bundle_dir = Path(payload["bundle_path"])
+    assert payload["exported"] is True
+    assert (bundle_dir / "README.md").exists()
+    assert (bundle_dir / "skill.json").exists()
 
 
 def test_status_detail_projects_auto_review_state(tmp_path: Path) -> None:

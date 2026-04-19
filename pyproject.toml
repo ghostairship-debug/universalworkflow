@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
   "fastapi>=0.135.2,<1.0.0",
+  "mcp>=1.18.0,<2.0.0",
   "openai>=1.0.0,<2.0.0",
   "pydantic>=2.12.5,<3.0.0",
   "rich>=13.0.0,<15.0.0",
@@ -17,9 +18,22 @@ dependencies = [
 dev = [
   "pytest>=8.3.4,<9.0.0"
 ]
+m8 = [
+  "langchain>=1.0.0,<2.0.0",
+  "langchain-openai>=1.0.0,<2.0.0",
+  "langgraph>=1.0.0,<2.0.0"
+]
 
 [project.scripts]
 workflowctl = "apps.operator_cli.main:run"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["apps*", "packages*"]
+namespaces = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

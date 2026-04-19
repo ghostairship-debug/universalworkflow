@@ -446,8 +446,10 @@ class ProjectionServiceMixin:
             ),
             "execution_profile": {
                 "review_policy": detail["review_policy"],
+                "execution_lane": detail["execution_lane"],
                 "domain_pack": detail["domain_pack"],
                 "capability_resolution": detail["capability_resolution"],
+                "tool_projection_manifest": detail["tool_projection_manifest"],
                 "simulation_policy": detail["simulation_policy"],
             },
             "failure_taxonomy": failure_taxonomy,
@@ -510,6 +512,7 @@ class ProjectionServiceMixin:
             "latest_simulation_record": detail["latest_simulation_record"],
             "context_budget": detail["context_budget"],
             "trace_context": detail["trace_context"],
+            "trace_exporter": detail["trace_exporter"],
             "review_packet": {
                 "effective_review_state": summary["review_summary"]["effective_review_state"],
                 "latest_review_verdict": summary["review_summary"]["latest_review_verdict"],
@@ -532,6 +535,9 @@ class ProjectionServiceMixin:
         memory_preview = self._memory_preview_for_context(context)
         simulation_policy = self._simulation_policy_for_context(context)
         capability_route = self._capability_route_for_runtime_task(runtime_task)
+        tool_projection_manifest = self._tool_projection_manifest_for_context(context)
+        execution_lane = self._execution_lane_for_context(context)
+        mcp_profiles = self._mcp_profiles_for_context(context)
         last_runtime_state = self._last_runtime_state(context)
         last_evidence = self._last_evidence(context)
         latest_attempt = self._last_attempt(context)
@@ -555,6 +561,14 @@ class ProjectionServiceMixin:
         return {
             "run": context.run.model_dump(mode="json"),
             "runtime_gateway": self.runtime_gateway.describe(),
+            "trace_exporter": self.trace_exporter.describe(),
+            "durable_runtime_pilot": self.durable_runtime_pilot.describe(),
+            "feature_flags": self._feature_flags(),
+            "execution_lane": execution_lane,
+            "tool_projection_manifest": (
+                tool_projection_manifest.model_dump(mode="json") if tool_projection_manifest is not None else None
+            ),
+            "mcp_server_profiles": mcp_profiles,
             "review_policy": str(context.preset.default_review_policy) if context.preset is not None else None,
             "domain_pack": domain_pack.model_dump(mode="json") if domain_pack is not None else None,
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
@@ -604,6 +618,9 @@ class ProjectionServiceMixin:
         memory_preview = self._memory_preview_for_context(context)
         simulation_policy = self._simulation_policy_for_context(context)
         capability_route = self._capability_route_for_runtime_task(runtime_task)
+        tool_projection_manifest = self._tool_projection_manifest_for_context(context)
+        execution_lane = self._execution_lane_for_context(context)
+        mcp_profiles = self._mcp_profiles_for_context(context)
         problems = self._inspect_context(context)
         last_runtime_state = self._last_runtime_state(context)
         latest_attempt = self._last_attempt(context)
@@ -625,6 +642,14 @@ class ProjectionServiceMixin:
         return {
             "run": context.run.model_dump(mode="json"),
             "runtime_gateway": self.runtime_gateway.describe(),
+            "trace_exporter": self.trace_exporter.describe(),
+            "durable_runtime_pilot": self.durable_runtime_pilot.describe(),
+            "feature_flags": self._feature_flags(),
+            "execution_lane": execution_lane,
+            "tool_projection_manifest": (
+                tool_projection_manifest.model_dump(mode="json") if tool_projection_manifest is not None else None
+            ),
+            "mcp_server_profiles": mcp_profiles,
             "review_policy": str(context.preset.default_review_policy) if context.preset is not None else None,
             "domain_pack": domain_pack.model_dump(mode="json") if domain_pack is not None else None,
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
@@ -698,6 +723,9 @@ class ProjectionServiceMixin:
         )
         return {
             "runtime_gateway": self.runtime_gateway.describe(),
+            "trace_exporter": self.trace_exporter.describe(),
+            "durable_runtime_pilot": self.durable_runtime_pilot.describe(),
+            "feature_flags": self._feature_flags(),
             "run_count": len(run_rows),
             "selected_run_id": selected_run_id,
             "runs": run_rows,

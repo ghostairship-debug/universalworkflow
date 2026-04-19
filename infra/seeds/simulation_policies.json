@@ -35,7 +35,8 @@
     "name": "Research No Simulation",
     "description": "Keep research runs outside the first deterministic simulation slice.",
     "preset_ids": [
-      "research_spike"
+      "research_spike",
+      "research_spike_reviewable"
     ],
     "trigger_policy": "disabled",
     "simulator_name": "local_consistency_check",

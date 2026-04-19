@@ -415,6 +415,7 @@ def test_preset_seed_file_parses() -> None:
     assert {preset.preset_id for preset in presets} == {
         "feature_delivery",
         "research_spike",
+        "research_spike_reviewable",
         "advisory_delivery",
         "guarded_delivery",
     }
@@ -565,6 +566,7 @@ def test_preset_suggestions_are_deterministic_and_explained() -> None:
         "research_spike",
         "advisory_delivery",
         "guarded_delivery",
+        "research_spike_reviewable",
     ]
     assert all(item.reason for item in fallback)
 

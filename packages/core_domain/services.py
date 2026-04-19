@@ -7,10 +7,12 @@ from typing import Any
 from packages.contracts import (
     BudgetLedger,
     CapabilityRoute,
+    ExecutionLaneType,
     DomainPackDefinition,
     DomainPackResolution,
     Evidence,
     HandoffLite,
+    MCPServerProfile,
     MemoryCandidate,
     MemoryItem,
     MemoryNamespace,
@@ -41,6 +43,7 @@ from packages.contracts import (
     SimulationRecordSource,
     SimulationReport,
     SimulationTriggerPolicy,
+    ToolProjectionManifest,
     RuntimeTask,
     TaskCard,
     TaskKind,
@@ -53,6 +56,7 @@ from packages.contracts import (
     can_transition_run_status,
 )
 from packages.core_domain.auto_review import AutoReviewV0
+from packages.core_domain.capability_plane import CapabilityPlane, TOOL_PROJECTION_MANIFEST_ENV_KEY, load_tool_projection_manifest
 from packages.core_domain.compile import CompileSnapshot, compile_run as build_compile_snapshot
 from packages.core_domain.context_budget import build_context_budget_report
 from packages.core_domain.db import unit_of_work
@@ -65,6 +69,7 @@ from packages.core_domain.errors import (
     BudgetExhaustedError,
     CapabilityAdapterNotFoundError,
     EntityNotFoundError,
+    ExecutionLaneNotAllowedError,
     InvalidStateTransitionError,
     PresetNotFoundError,
     PresetRequiredError,
@@ -108,7 +113,22 @@ from packages.core_domain.service_types import (
     ReviewedRunBundle,
     RunDiagnosticContext,
 )
+from packages.core_domain.skills import export_domain_pack_skill_bundle
+from packages.core_domain.m8_flags import (
+    active_feature_flags,
+    is_agent_lane_enabled,
+    is_durable_pilot_enabled,
+    is_mcp_source_enabled,
+    is_skill_export_enabled,
+)
+from packages.core_domain.observability import NullTraceExporter, TraceExporter, TraceRecord, build_trace_exporter_from_env
+from packages.runtime_langgraph.durable_pilot import (
+    DurableRuntimePilot,
+    NullDurableRuntimePilot,
+    build_durable_runtime_pilot_from_env,
+)
 from packages.runtime_langgraph.gateway import build_runtime_gateway_from_env
+from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.router import WorkerRouter
@@ -141,11 +161,14 @@ class OrchestratorService(
         runtime_gateway: RuntimeGateway | None = None,
         shell_adapter: ShellAdapter | None = None,
         worker_router: WorkerRouter | None = None,
+        capability_plane: CapabilityPlane | None = None,
         domain_pack_registry: DomainPackRegistry | None = None,
         simulation_policy_registry: SimulationPolicyRegistry | None = None,
         evidence_builder: EvidenceBuilder | None = None,
         auto_review: AutoReviewV0 | None = None,
         simulation_runner: LocalDeterministicSimulationRunner | None = None,
+        trace_exporter: TraceExporter | None = None,
+        durable_runtime_pilot: DurableRuntimePilot | None = None,
     ):
         self.db_path = Path(db_path) if db_path is not None else None
         self.run_repo = RunRepository(self.db_path)
@@ -164,14 +187,22 @@ class OrchestratorService(
         self.memory_item_repo = MemoryItemRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
         self.runtime_gateway = runtime_gateway or build_runtime_gateway_from_env()
-        self.worker_router = worker_router or WorkerRouter(
-            [shell_adapter or ShellAdapter(), OpenCodeAdapter(), NoopAdapter()]
-        )
+        self.capability_plane = capability_plane or CapabilityPlane(workspace_root=self._workspace_root())
+        adapters = [shell_adapter or ShellAdapter(), OpenCodeAdapter(), NoopAdapter()]
+        if is_agent_lane_enabled():
+            adapters.append(
+                LangChainAgentAdapter(
+                    mcp_tool_caller=self.capability_plane.mcp_source.call_tool,
+                )
+            )
+        self.worker_router = worker_router or WorkerRouter(adapters)
         self.domain_pack_registry = domain_pack_registry or DomainPackRegistry()
         self.simulation_policy_registry = simulation_policy_registry or SimulationPolicyRegistry()
         self.evidence_builder = evidence_builder or EvidenceBuilder()
         self.auto_review = auto_review or AutoReviewV0()
         self.simulation_runner = simulation_runner or LocalDeterministicSimulationRunner()
+        self.trace_exporter = trace_exporter or build_trace_exporter_from_env()
+        self.durable_runtime_pilot = durable_runtime_pilot or build_durable_runtime_pilot_from_env()
 
     def _resolver(self) -> PresetResolver:
         return PresetResolver(self.preset_repo.list())
@@ -241,6 +272,137 @@ class OrchestratorService(
 
     def _utc_now(self) -> datetime:
         return datetime.now(UTC)
+
+    def _workspace_root(self) -> Path:
+        return Path.cwd().resolve()
+
+    def _feature_flags(self) -> dict[str, bool]:
+        return active_feature_flags()
+
+    def _default_adapter_for_preset(
+        self,
+        preset: PresetDefinition,
+        resolved_task_kind: TaskKind,
+        domain_pack: DomainPackResolution | None,
+    ) -> str | None:
+        if domain_pack is not None and domain_pack.capability_exposure.preferred_adapter_name is not None:
+            return domain_pack.capability_exposure.preferred_adapter_name
+        if (
+            preset.preset_id == "research_spike_reviewable"
+            and is_agent_lane_enabled()
+            and self.worker_router.describe(str(resolved_task_kind), adapter_name="agent") is not None
+        ):
+            return "agent"
+        return None
+
+    def _resolve_execution_lane(
+        self,
+        *,
+        preset: PresetDefinition,
+        task_kind: TaskKind,
+        selected_adapter: str | None,
+    ) -> ExecutionLaneType:
+        if preset.preset_id == "feature_delivery":
+            if selected_adapter == "agent":
+                raise ExecutionLaneNotAllowedError(
+                    preset.preset_id,
+                    ExecutionLaneType.standard_agent,
+                    [ExecutionLaneType.native_deterministic],
+                )
+            return ExecutionLaneType.native_deterministic
+        if selected_adapter == "agent":
+            if preset.preset_id == "research_spike_reviewable" and is_durable_pilot_enabled():
+                return ExecutionLaneType.durable_incremental
+            return ExecutionLaneType.standard_agent
+        return ExecutionLaneType.native_deterministic
+
+    def _build_tool_projection_manifest(
+        self,
+        *,
+        run: Run,
+        preset: PresetDefinition,
+        task_kind: TaskKind,
+        lane_type: ExecutionLaneType,
+        domain_pack: DomainPackResolution | None,
+    ) -> tuple[ToolProjectionManifest | None, list[MCPServerProfile]]:
+        manifest, profiles = self.capability_plane.build_projection_manifest(
+            run_id=run.run_id,
+            preset_id=preset.preset_id,
+            task_kind=task_kind,
+            review_policy=ReviewPolicy(preset.default_review_policy),
+            lane_type=lane_type,
+            domain_pack_id=domain_pack.domain_pack_id if domain_pack is not None else None,
+            include_mcp=is_mcp_source_enabled(),
+        )
+        return (manifest, profiles) if manifest.tools or lane_type != ExecutionLaneType.native_deterministic else (manifest, profiles)
+
+    def _durable_refs_for_state(self, state_ref: RuntimeStateRef | None) -> dict[str, str]:
+        if state_ref is None:
+            return {}
+        refs = {
+            "thread_id": state_ref.state_payload.get("thread_id"),
+            "checkpoint_id": state_ref.state_payload.get("checkpoint_id"),
+            "assistant_id": state_ref.state_payload.get("assistant_id"),
+        }
+        return {key: value for key, value in refs.items() if value}
+
+    def _state_ref_with_payload_updates(
+        self,
+        state_ref: RuntimeStateRef,
+        payload_updates: dict[str, Any],
+    ) -> RuntimeStateRef:
+        return RuntimeStateRef.model_validate(
+            {
+                **state_ref.model_dump(mode="json"),
+                "state_payload": {
+                    **state_ref.state_payload,
+                    **payload_updates,
+                },
+            }
+        )
+
+    def _state_ref_with_m8_context(
+        self,
+        state_ref: RuntimeStateRef,
+        snapshot: CompileSnapshot,
+    ) -> RuntimeStateRef:
+        payload_updates: dict[str, Any] = {
+            "execution_lane": str(snapshot.execution_lane),
+            "tool_projection_manifest": (
+                snapshot.tool_projection_manifest.model_dump(mode="json")
+                if snapshot.tool_projection_manifest is not None
+                else None
+            ),
+            "mcp_server_profiles": [profile.model_dump(mode="json") for profile in snapshot.mcp_server_profiles],
+            "feature_flags": self._feature_flags(),
+        }
+        if snapshot.execution_lane == ExecutionLaneType.durable_incremental:
+            payload_updates.update(
+                self.durable_runtime_pilot.start(state_ref.run_id, state_ref.runtime_task_id)
+            )
+        return self._state_ref_with_payload_updates(state_ref, payload_updates)
+
+    def _export_trace(
+        self,
+        *,
+        run_id: str,
+        name: str,
+        lane_type: ExecutionLaneType | str,
+        status: str,
+        attributes: dict[str, Any],
+    ) -> str | None:
+        try:
+            return self.trace_exporter.export(
+                TraceRecord(
+                    run_id=run_id,
+                    name=name,
+                    lane_type=str(lane_type),
+                    status=status,
+                    attributes=attributes,
+                )
+            )
+        except Exception:
+            return None
 
     def _remaining_retries(self, ledger: BudgetLedger | None) -> int | None:
         if ledger is None:
@@ -1486,6 +1648,7 @@ class OrchestratorService(
         latest_worker_lease = self._last_worker_lease(context)
         latest_snapshot = self._last_snapshot(context)
         latest_simulation_record = self.simulation_record_repo.latest_for_run(context.run.run_id)
+        durable_refs = self._durable_refs_for_state(last_runtime_state)
         return TraceContext(
             run_id=context.run.run_id,
             event_id=latest_event.event_id if latest_event is not None else None,
@@ -1497,6 +1660,15 @@ class OrchestratorService(
             claim_id=latest_claim.claim_id if latest_claim is not None else None,
             lease_id=latest_worker_lease.lease_id if latest_worker_lease is not None else None,
             snapshot_id=latest_snapshot.snapshot_id if latest_snapshot is not None else None,
+            projection_id=(
+                (last_runtime_state.state_payload.get("tool_projection_manifest") or {}).get("projection_id")
+                if last_runtime_state is not None
+                else None
+            ),
+            external_trace_id=last_runtime_state.state_payload.get("external_trace_id") if last_runtime_state is not None else None,
+            thread_id=durable_refs.get("thread_id"),
+            checkpoint_id=durable_refs.get("checkpoint_id"),
+            assistant_id=durable_refs.get("assistant_id"),
             simulation_record_id=latest_simulation_record.record_id if latest_simulation_record is not None else None,
         ).model_dump(mode="json")
 
@@ -1537,6 +1709,44 @@ class OrchestratorService(
         if payload is None:
             return None
         return MemoryRetrievalPreview.model_validate(payload)
+
+    def _tool_projection_manifest_for_context(
+        self,
+        context: RunDiagnosticContext,
+    ) -> ToolProjectionManifest | None:
+        runtime_task = self._runtime_task_for_context(context)
+        if runtime_task is not None:
+            task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+            if task_packet is not None:
+                manifest = load_tool_projection_manifest(task_packet.env.get(TOOL_PROJECTION_MANIFEST_ENV_KEY))
+                if manifest is not None:
+                    return manifest
+        state_ref = self._last_runtime_state(context)
+        if state_ref is None:
+            return None
+        payload = state_ref.state_payload.get("tool_projection_manifest")
+        if payload is None:
+            return None
+        return ToolProjectionManifest.model_validate(payload)
+
+    def _execution_lane_for_context(self, context: RunDiagnosticContext) -> str:
+        state_ref = self._last_runtime_state(context)
+        if state_ref is not None and state_ref.state_payload.get("execution_lane"):
+            return str(state_ref.state_payload["execution_lane"])
+        runtime_task = self._runtime_task_for_context(context)
+        if runtime_task is None:
+            return str(ExecutionLaneType.native_deterministic)
+        task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+        if task_packet is None:
+            return str(ExecutionLaneType.native_deterministic)
+        return task_packet.env.get("WORKFLOW_EXECUTION_LANE", str(ExecutionLaneType.native_deterministic))
+
+    def _mcp_profiles_for_context(self, context: RunDiagnosticContext) -> list[dict[str, Any]]:
+        state_ref = self._last_runtime_state(context)
+        if state_ref is None:
+            return []
+        profiles = state_ref.state_payload.get("mcp_server_profiles")
+        return profiles if isinstance(profiles, list) else []
 
     def _domain_pack_for_context(self, context: RunDiagnosticContext) -> DomainPackResolution | None:
         runtime_task = self._runtime_task_for_context(context)

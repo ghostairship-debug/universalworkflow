@@ -6,6 +6,12 @@ from infra.validation.common import *  # noqa: F401,F403
 
 def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str, Any]:
     result: dict[str, Any] = {"passed": False}
+    env = {
+        **env,
+        "UAWO_ENABLE_AGENT_LANE": "1",
+        "UAWO_ENABLE_MCP_SOURCE": "1",
+        "UAWO_ENABLE_SKILL_EXPORT": "1",
+    }
     release_validation_report_path = PROJECT_ROOT / "state" / "offline_validate_release_readiness_api.json"
     release_validation_report_path.write_text(
         json.dumps(
@@ -54,6 +60,11 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         )
         domain_pack_validation = http_get_json(f"{base_url}/domain-packs/validate")
         capability_routes = http_get_json(f"{base_url}/capability-routes")
+        capability_sources = http_get_json(f"{base_url}/capability-sources")
+        capability_mcp_profiles = http_get_json(f"{base_url}/capability-sources/mcp-profiles")
+        capability_projection = http_get_json(
+            f"{base_url}/capability-projections/preview?preset_id=research_spike_reviewable"
+        )
         simulation_policies = http_get_json(f"{base_url}/simulation/policies")
         memory_namespaces = http_get_json(f"{base_url}/memory/namespaces")
         governance = http_get_json(f"{base_url}/governance/tech-debt")
@@ -63,6 +74,12 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         governance_release_readiness = http_get_json(
             f"{base_url}/governance/release-readiness?validation_report_path="
             f"{encoded_validation_report_path}"
+        )
+        skill_export_root = PROJECT_ROOT / "state" / "offline_validate_skill_export_api"
+        skill_export_root.mkdir(parents=True, exist_ok=True)
+        encoded_skill_export_root = urllib.parse.quote(skill_export_root.as_posix(), safe="")
+        skill_export = http_post_json(
+            f"{base_url}/domain-packs/software_delivery_pack/skill-export?output_root={encoded_skill_export_root}"
         )
 
         auto_run = http_post_json(f"{base_url}/runs", {"goal": "Offline API validation", "preset_id": "feature_delivery"})
@@ -202,6 +219,17 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "domain_pack_validation_issue_count": domain_pack_validation.get("issue_count"),
                 "memory_namespace_ids": [item["namespace_id"] for item in memory_namespaces],
                 "capability_routes": capability_routes,
+                "m8_capability_source_types": [item["source_type"] for item in capability_sources],
+                "m8_mcp_profile_id": capability_mcp_profiles[0]["profile_id"] if capability_mcp_profiles else None,
+                "m8_projection_lane": capability_projection["execution_lane"],
+                "m8_projection_adapter": capability_projection["capability_resolution"]["adapter_name"],
+                "m8_projection_tool_names": [
+                    item["tool_name"] for item in capability_projection["tool_projection_manifest"]["tools"]
+                ],
+                "m8_projection_trust_tiers": capability_projection["tool_projection_manifest"]["trust_tiers"],
+                "m8_skill_export_domain_pack_id": skill_export["domain_pack_id"],
+                "m8_skill_export_bundle_has_readme": (Path(skill_export["bundle_path"]) / "README.md").exists(),
+                "m8_skill_export_bundle_has_manifest": (Path(skill_export["bundle_path"]) / "skill.json").exists(),
                 "simulation_policy_ids": [item["policy_id"] for item in simulation_policies],
                 "governance_open_debt_count": governance["open_debt_count"],
                 "governance_active_gate_focus_ids": [item["debt_id"] for item in governance["active_gate_focus_items"]],
@@ -321,7 +349,13 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         result["passed"] = all(
             [
                 set(result["preset_ids"])
-                == {"feature_delivery", "research_spike", "advisory_delivery", "guarded_delivery"},
+                == {
+                    "feature_delivery",
+                    "research_spike",
+                    "advisory_delivery",
+                    "guarded_delivery",
+                    "research_spike_reviewable",
+                },
                 result["domain_pack_ids"] == ["software_delivery_pack"],
                 result["domain_pack_preview_id"] == "software_delivery_pack",
                 result["domain_pack_preview_adapter"] == "shell",
@@ -332,8 +366,19 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 == [
                     {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
                     {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+                    {"capability": "shell_exec", "adapter_name": "agent", "adapter_class": "LangChainAgentAdapter"},
                     {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
                 ],
+                result["m8_capability_source_types"] == ["built_in", "mcp_stdio"],
+                result["m8_mcp_profile_id"] == "local_workspace_readonly",
+                result["m8_projection_lane"] == "standard_agent",
+                result["m8_projection_adapter"] == "agent",
+                "mcp_list_workspace_files" in result["m8_projection_tool_names"],
+                "mcp_read_workspace_text" in result["m8_projection_tool_names"],
+                result["m8_projection_trust_tiers"] == ["t0_builtin_local", "t1_local_stdio_mcp"],
+                result["m8_skill_export_domain_pack_id"] == "software_delivery_pack",
+                result["m8_skill_export_bundle_has_readme"] is True,
+                result["m8_skill_export_bundle_has_manifest"] is True,
                 result["simulation_policy_ids"]
                 == [
                     "advisory_failure_simulation",
@@ -341,8 +386,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     "research_no_simulation",
                 ],
                 result["governance_open_debt_count"] >= 1,
-                "TD-012" in result["governance_active_gate_focus_ids"],
-                "TD-011" not in result["governance_active_gate_focus_ids"],
+                result["governance_active_gate_focus_ids"] == [],
                 result["governance_supported_review_policies"]
                 == ["auto_only", "recommended", "human_required", "mandatory"],
                 result["governance_review_policy_debt_id"] == "TD-006",

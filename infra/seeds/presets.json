@@ -55,5 +55,20 @@
       "timeout_seconds": 150
     },
     "requires_manual_approval": true
+  },
+  {
+    "preset_id": "research_spike_reviewable",
+    "name": "Research Spike Reviewable",
+    "description": "Run a review-heavy research spike through the experimental borrowed agent and durable pilot lanes.",
+    "allowed_task_kinds": [
+      "shell_exec",
+      "noop"
+    ],
+    "default_review_policy": "human_required",
+    "default_budget_policy": {
+      "max_retries": 0,
+      "timeout_seconds": 120
+    },
+    "requires_manual_approval": true
   }
 ]

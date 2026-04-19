@@ -71,7 +71,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Offline validation runner for the M1 local-first runtime.")
+    parser = argparse.ArgumentParser(description="Offline validation runner for the local-first workflow runtime.")
     parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH), help="Where to write the JSON validation report.")
     parser.add_argument("--api-port", type=int, default=8011, help="Port used for the temporary API validation server.")
     parser.add_argument(

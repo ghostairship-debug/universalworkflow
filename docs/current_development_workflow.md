@@ -25,7 +25,7 @@ Use the following documents in this order.
 ### A. Current-state and next-step truth
 
 - `README.md`
-- `docs/reviews/pre-m8-freeze-review.md`
+- `docs/reviews/m8-freeze-review.md`
 - `docs/reviews/m7-freeze-review.md`
 - `docs/tech-debt-registry.md`
 
@@ -90,10 +90,10 @@ Do **not** use them as permission to import legacy architecture, naming, or phas
 
 Current confirmed status:
 
-- milestone baseline: through `M7`, complete
+- milestone baseline: through `M8`, complete
 - current cycle state: shipped local-first runtime baseline exists
-- pre-`M8` hardening gate: **complete**
-- next approved work: **`M8 Phase 0 - Feature Rebaseline And Scope Freeze`**
+- `M8` integration cycle: **complete**
+- next approved work: **`M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`**
 - integrated root-level `M8` plan:
   - `universal_agentic_workflow_os_M8_phase_plan_v1_0.md`
 - supporting `M8` planning inputs:
@@ -104,20 +104,20 @@ Current confirmed status:
 
 The current controlling closeout record is:
 
-- `docs/reviews/pre-m8-freeze-review.md`
+- `docs/reviews/m8-freeze-review.md`
 
-That record says the repository may re-enter milestone planning, but it should do so by opening an explicit `M8 Phase 0` rebaseline rather than jumping directly into new breadth.
+That record says the repository has completed the `M8` integration cycle and must open a fresh post-`M8` rebaseline before new breadth is approved.
 
 Current next approved phase:
 
-- **`M8 Phase 0 - Feature Rebaseline And Scope Freeze`**
+- **`M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`**
 
 This means the repository is currently at:
 
 1. `M7` complete
-2. `PM8-A` through `PM8-E` completed
-3. `M8` is not started yet
-4. the next required step is a rebaseline/scope-freeze entry phase for `M8`
+2. `Pre-M8` hardening complete
+3. `M8 Phase 0` through `M8 Phase 7` complete
+4. the next required step is a post-`M8` rebaseline for `M9`
 
 ---
 
@@ -304,14 +304,14 @@ Use this priority order:
 
 For the repository **right now**, the answer is:
 
-- do **not** jump straight into unconstrained `M8` feature breadth
-- treat pre-`M8` hardening as complete
-- begin with an explicit `M8 Phase 0` reassessment and scope freeze
+- do **not** jump straight into unconstrained `M9` feature breadth
+- treat `M8` as a completed integration cycle
+- begin with an explicit `M9 Phase 0` reassessment and scope freeze
 
 That means the next concrete work should be:
 
-1. read `docs/reviews/pre-m8-freeze-review.md`
-2. open `M8 Phase 0 - Feature Rebaseline And Scope Freeze`
+1. read `docs/reviews/m8-freeze-review.md`
+2. open `M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`
 3. reassess what breadth is actually approved before writing feature code
 
 ---
@@ -344,4 +344,4 @@ That means the next concrete work should be:
 
 If you need a single current instruction for the repository, use this:
 
-> Follow the task-card protocol, but do not begin open-ended `M8` feature expansion yet; start with `M8 Phase 0 - Feature Rebaseline And Scope Freeze`.
+> Follow the task-card protocol, but do not begin open-ended `M9` feature expansion yet; start with `M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`.

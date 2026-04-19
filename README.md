@@ -41,27 +41,31 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 ## Current repository status
 
-- Milestone baseline: through `M7`, complete
+- Milestone baseline: through `M8`, complete
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
   - local-first CLI/API runtime
-  - `shell`, `opencode`, and `noop` execution lanes
+  - native deterministic, borrowed agent, and durable-pilot execution lanes
+  - `shell`, `opencode`, `noop`, and feature-flagged `agent` adapter routing
+  - router-first capability plane with built-in capability projection and local stdio MCP pilot support
+  - OTel-first trace-export abstraction with an optional Langfuse sink
   - one platformized `Domain Pack`
   - persisted `Memory` baseline with retrieval preview and compile-time injection
   - deterministic local `Simulation` baseline with persisted records and selected lifecycle hooks
+  - Agent Skill-compatible domain-pack export
 - Current planning position:
-  - the **pre-M8 hardening gate is complete**
-  - `PM8-A` through `PM8-E` are complete
-  - the next approved work is `M8 Phase 0 - Feature Rebaseline And Scope Freeze`
-  - `M8` feature breadth has not started yet
+  - `M8` is complete
+  - `M8 Phase 0` through `M8 Phase 7` are complete
+  - the next approved work is `M9 Phase 0 - Post-M8 Rebaseline And Scope Freeze`
   - the integrated root-level `M8` development plan is [universal_agentic_workflow_os_M8_phase_plan_v1_0.md](universal_agentic_workflow_os_M8_phase_plan_v1_0.md)
   - the GPT-Pro-driven reassessment of the `M8` plan is [docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md](docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md)
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
-  - the controlling closeout record is [docs/reviews/pre-m8-freeze-review.md](docs/reviews/pre-m8-freeze-review.md)
+  - the controlling closeout record is [docs/reviews/m8-freeze-review.md](docs/reviews/m8-freeze-review.md)
   - the current `M8` ecosystem reuse assessment is [docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md](docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md)
   - the current external-integration vs continued-self-build strategy is [docs/reviews/m8-external-tool-integration-and-self-build-plan.md](docs/reviews/m8-external-tool-integration-and-self-build-plan.md)
   - the current "do we need another optimization round before M8?" assessment is [docs/reviews/m8-pre-entry-extra-optimization-assessment.md](docs/reviews/m8-pre-entry-extra-optimization-assessment.md)
+  - the M8 implementation records now live under `m8_phase_docs/`, `docs/task_cards/m8_phase_*`, and `docs/reviews/m8-phase-*`
   - the completed hardening plan remains [docs/reviews/m7-gemini-opus-pre-m8-synthesis.md](docs/reviews/m7-gemini-opus-pre-m8-synthesis.md)
   - documentation trust and source-package rules now live in [docs/documentation_governance.md](docs/documentation_governance.md) and [docs/source_package_export_policy.md](docs/source_package_export_policy.md)
   - local subprocess trust assumptions now live in [docs/architecture/local_execution_trust_boundary.md](docs/architecture/local_execution_trust_boundary.md)
@@ -84,6 +88,7 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 - CLI human-review path passes
 - CLI noop executor path passes
 - CLI capability/domain-pack visibility passes
+- CLI M8 capability-source / projection / skill-export surfaces pass
 - CLI simulation visibility passes
 - CLI simulation record persistence passes
 - CLI release-readiness surface passes
@@ -93,6 +98,7 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 - API human-review path passes
 - API noop executor path passes
 - API capability/domain-pack visibility passes
+- API M8 capability-source / projection / skill-export surfaces pass
 - API simulation visibility passes
 - API simulation record persistence passes
 - API release-readiness surface passes
@@ -101,15 +107,17 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 The current green closeout baseline is:
 
 - `pytest -q`
-  - `216 passed`
+  - `225 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
   - `overall_passed=true`
-- `python -m infra.scripts.pre_m8_gates`
-  - `overall_passed=true`
+- `python -m infra.scripts.check_doc_links`
+  - `passed=true`
 - `python -m infra.scripts.manage --db-path state/cycle_validation.db demo`
   - `status=completed`
 - `python -m apps.operator_cli.main --db-path state/cycle_validation.db tui --once`
   - renders a single dashboard snapshot successfully
+- `python -m pip install -e . --no-deps`
+  - succeeds after the package-discovery fix
 
 ## Common commands
 
@@ -120,8 +128,12 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db domain-pack resolve --preset feature_delivery --task-kind shell_exec`
 - `workflowctl --db-path state/workflow.db domain-pack validate`
 - `workflowctl --db-path state/workflow.db capability list`
+- `workflowctl --db-path state/workflow.db capability sources`
+- `workflowctl --db-path state/workflow.db capability mcp-profiles`
+- `workflowctl --db-path state/workflow.db capability projection --preset research_spike_reviewable`
 - `workflowctl --db-path state/workflow.db simulation policy list`
 - `workflowctl --db-path state/workflow.db memory namespace list`
+- `workflowctl --db-path state/workflow.db domain-pack export-skill --domain-pack-id software_delivery_pack`
 - `workflowctl --db-path state/workflow.db run suggest-presets --goal "Research runtime strategy"`
 - `workflowctl governance tech-debt`
 - `workflowctl governance review-policy`
@@ -197,6 +209,41 @@ When the live gateway is active:
 - shell-generated artifacts can include `runtime_gateway`, `runtime_model`, and `runtime_brief`
 
 If `WORKFLOW_RUNTIME_GATEWAY` is unset, empty, `null`, `none`, or `disabled`, the service falls back to `NullRuntimeGateway`.
+
+## M8 external lanes
+
+`M8` external lanes are opt-in and disabled by default.
+
+Feature flags:
+
+```powershell
+$env:UAWO_ENABLE_AGENT_LANE="1"
+$env:UAWO_ENABLE_MCP_SOURCE="1"
+$env:UAWO_ENABLE_EXTERNAL_TRACE_EXPORT="1"
+$env:UAWO_ENABLE_DURABLE_PILOT="1"
+$env:UAWO_ENABLE_SKILL_EXPORT="1"
+```
+
+Optional runtime dependencies for the borrowed agent and LangGraph-oriented durable pilot lanes:
+
+```powershell
+python -m pip install "langchain>=1.0.0,<2.0.0" "langchain-openai>=1.0.0,<2.0.0" "langgraph>=1.0.0,<2.0.0"
+```
+
+Borrowed-agent capability preview:
+
+```powershell
+$env:UAWO_ENABLE_AGENT_LANE="1"
+$env:UAWO_ENABLE_MCP_SOURCE="1"
+workflowctl --db-path state/workflow.db capability projection --preset research_spike_reviewable
+```
+
+Skill export:
+
+```powershell
+$env:UAWO_ENABLE_SKILL_EXPORT="1"
+workflowctl --db-path state/workflow.db domain-pack export-skill --domain-pack-id software_delivery_pack
+```
 
 ## CLI-backed GPT route
 

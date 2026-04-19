@@ -159,9 +159,53 @@ def domain_pack_validate(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).validate_domain_pack_catalog()))
 
 
+@domain_pack_app.command("export-skill")
+def domain_pack_export_skill(
+    ctx: typer.Context,
+    domain_pack_id: str = typer.Option(..., "--domain-pack-id"),
+    output_root: str = typer.Option("state/skills", "--output-root"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).export_domain_pack_skill(
+                domain_pack_id,
+                output_root=output_root,
+            )
+        )
+    )
+
+
 @capability_app.command("list")
 def capability_list(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_routes()))
+
+
+@capability_app.command("sources")
+def capability_sources(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_sources()))
+
+
+@capability_app.command("mcp-profiles")
+def capability_mcp_profiles(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_mcp_server_profiles()))
+
+
+@capability_app.command("projection")
+def capability_projection(
+    ctx: typer.Context,
+    preset: str = typer.Option(..., "--preset"),
+    task_kind: Optional[str] = typer.Option(None, "--task-kind"),
+    adapter: Optional[str] = typer.Option(None, "--adapter"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).preview_tool_projection(
+                preset_id=preset,
+                task_kind=task_kind,
+                adapter_name=adapter,
+            )
+        )
+    )
 
 
 @simulation_policy_app.command("list")
@@ -240,6 +284,13 @@ def run_create(
         payload["capability_adapter"] = (
             prepared.capability_route.adapter_name if prepared.capability_route is not None else None
         )
+        payload["execution_lane"] = str(prepared.execution_lane)
+        payload["tool_projection_manifest"] = (
+            prepared.tool_projection_manifest.model_dump(mode="json")
+            if prepared.tool_projection_manifest is not None
+            else None
+        )
+        payload["mcp_server_profiles"] = [profile.model_dump(mode="json") for profile in prepared.mcp_server_profiles]
         payload["memory_preview"] = (
             prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None
         )
@@ -282,6 +333,13 @@ def run_compile(
             "state_ref_id": prepared.state_ref.state_ref_id,
             "domain_pack_id": prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None,
             "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
+            "execution_lane": str(prepared.execution_lane),
+            "tool_projection_manifest": (
+                prepared.tool_projection_manifest.model_dump(mode="json")
+                if prepared.tool_projection_manifest is not None
+                else None
+            ),
+            "mcp_server_profiles": [profile.model_dump(mode="json") for profile in prepared.mcp_server_profiles],
             "memory_preview": prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None,
         }
     )
@@ -311,6 +369,13 @@ def run_recompile(
             "state_ref_id": prepared.state_ref.state_ref_id,
             "domain_pack_id": prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None,
             "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
+            "execution_lane": str(prepared.execution_lane),
+            "tool_projection_manifest": (
+                prepared.tool_projection_manifest.model_dump(mode="json")
+                if prepared.tool_projection_manifest is not None
+                else None
+            ),
+            "mcp_server_profiles": [profile.model_dump(mode="json") for profile in prepared.mcp_server_profiles],
             "memory_preview": prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None,
         }
     )

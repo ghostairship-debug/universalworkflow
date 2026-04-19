@@ -42,12 +42,12 @@
 
 | ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-001 | claim and worker-lease semantics remain local-only and do not provide true distributed resource ownership | M0 | Next Cycle | partially_repaid | blocks external worker pools, distributed locking, and real multi-node scheduling |
-| TD-006 | review policy breadth still stops at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` remains reference-only | M0 | Next Cycle | partially_repaid | blocks a fuller runtime policy family but does not block the current shipped baseline |
-| TD-007 | `run_events` still favor concise payloads and do not yet provide deep traces, replay-grade linkage, or first-class metrics | M0 | Next Cycle | partially_repaid | blocks richer observability, replay analysis, and structured runtime diagnostics |
-| TD-008 | runtime recovery still lacks complex interrupt/resume/checkpoint merge semantics beyond the current local resumable baseline | M0 | Next Cycle | partially_repaid | blocks richer recovery workflows and deeper runtime fault handling |
-| TD-009 | execution semantics are still serial-first and do not implement real claim/lease/barrier concurrency | M0 | Next Cycle | partially_repaid | blocks safe parallel execution and higher-throughput scheduling |
-| TD-010 | governance visibility is stronger than before, but debt tracking is still document-centric and not yet quantitatively automated | M0 | Next Cycle | partially_repaid | blocks deeper debt trend analysis, alerting, and richer dashboard/reporting automation |
+| TD-001 | claim and worker-lease semantics remain local-only and do not provide true distributed resource ownership | M0 | M9 | partially_repaid | blocks external worker pools, distributed locking, and real multi-node scheduling |
+| TD-006 | review policy breadth still stops at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` remains reference-only | M0 | M9 | partially_repaid | blocks a fuller runtime policy family but does not block the current shipped baseline |
+| TD-007 | `run_events` and trace export are stronger after `M8`, but replay-grade linkage and first-class metrics are still incomplete | M0 | M9 | partially_repaid | blocks richer observability, replay analysis, and structured runtime diagnostics |
+| TD-008 | the `M8` durable pilot added runtime-ref mapping, but complex interrupt/resume/checkpoint merge semantics are still incomplete | M0 | M9 | partially_repaid | blocks richer recovery workflows and deeper runtime fault handling |
+| TD-009 | execution semantics are still serial-first and do not implement real claim/lease/barrier concurrency | M0 | M9 | partially_repaid | blocks safe parallel execution and higher-throughput scheduling |
+| TD-010 | governance visibility is stronger than before, but debt tracking is still document-centric and not yet quantitatively automated | M0 | M9 | partially_repaid | blocks deeper debt trend analysis, alerting, and richer dashboard/reporting automation |
 
 ---
 

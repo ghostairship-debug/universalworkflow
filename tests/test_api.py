@@ -79,6 +79,7 @@ def test_api_lists_seeded_presets(tmp_path: Path) -> None:
     assert {item["preset_id"] for item in response.json()} == {
         "feature_delivery",
         "research_spike",
+        "research_spike_reviewable",
         "advisory_delivery",
         "guarded_delivery",
     }
@@ -134,6 +135,49 @@ def test_api_can_preview_and_validate_domain_pack_catalog(tmp_path: Path) -> Non
     validate_payload = validate_response.json()
     assert validate_payload["passed"] is True
     assert validate_payload["issue_count"] == 0
+
+
+def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
+    monkeypatch.setenv("UAWO_ENABLE_MCP_SOURCE", "1")
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    sources_response = client.get("/capability-sources")
+    profiles_response = client.get("/capability-sources/mcp-profiles")
+    projection_response = client.get(
+        "/capability-projections/preview",
+        params={"preset_id": "research_spike_reviewable"},
+    )
+
+    assert sources_response.status_code == 200
+    assert any(item["source_type"] == "built_in" for item in sources_response.json())
+    assert any(item["source_type"] == "mcp_stdio" for item in sources_response.json())
+    assert profiles_response.status_code == 200
+    assert profiles_response.json()[0]["profile_id"] == "local_workspace_readonly"
+    assert projection_response.status_code == 200
+    assert projection_response.json()["execution_lane"] == "standard_agent"
+    assert projection_response.json()["capability_resolution"]["adapter_name"] == "agent"
+    tool_names = [item["tool_name"] for item in projection_response.json()["tool_projection_manifest"]["tools"]]
+    assert "mcp_list_workspace_files" in tool_names
+
+
+def test_api_can_export_domain_pack_skill_when_flag_enabled(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_SKILL_EXPORT", "1")
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    output_root = tmp_path / "skills"
+
+    response = client.post(
+        "/domain-packs/software_delivery_pack/skill-export",
+        params={"output_root": str(output_root)},
+    )
+
+    assert response.status_code == 201
+    bundle_path = Path(response.json()["bundle_path"])
+    assert response.json()["domain_pack_id"] == "software_delivery_pack"
+    assert (bundle_path / "README.md").exists()
+    assert (bundle_path / "skill.json").exists()
 
 
 def test_api_exposes_memory_namespace_and_run_memory_candidates(tmp_path: Path) -> None:

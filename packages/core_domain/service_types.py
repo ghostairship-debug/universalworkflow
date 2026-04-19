@@ -4,10 +4,12 @@ from dataclasses import dataclass
 
 from packages.contracts import (
     CapabilityRoute,
+    ExecutionLaneType,
     DomainPackResolution,
     Evidence,
     HandoffLite,
     MemoryRetrievalPreview,
+    MCPServerProfile,
     Phase,
     PresetDefinition,
     ReviewVerdict,
@@ -19,6 +21,7 @@ from packages.contracts import (
     RuntimeTask,
     TaskCard,
     TaskPacket,
+    ToolProjectionManifest,
     WorkerLease,
 )
 from packages.worker_adapters.base import ExecutionResult
@@ -34,6 +37,9 @@ class PreparedRunBundle:
     domain_pack: DomainPackResolution | None
     capability_route: CapabilityRoute | None
     memory_preview: MemoryRetrievalPreview | None
+    execution_lane: ExecutionLaneType
+    tool_projection_manifest: ToolProjectionManifest | None
+    mcp_server_profiles: list[MCPServerProfile]
 
 
 @dataclass(slots=True)

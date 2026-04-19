@@ -93,6 +93,21 @@ class TaskKindNotAllowedError(WorkflowError):
         )
 
 
+class ExecutionLaneNotAllowedError(WorkflowError):
+    code = "execution_lane_not_allowed"
+    status_code = 409
+
+    def __init__(self, preset_id: str, lane_type: str, allowed_lane_types: list[str]):
+        super().__init__(
+            f"execution lane `{lane_type}` is not allowed for preset `{preset_id}`",
+            {
+                "preset_id": preset_id,
+                "lane_type": lane_type,
+                "allowed_lane_types": allowed_lane_types,
+            },
+        )
+
+
 class UnsupportedRepairActionError(WorkflowError):
     code = "unsupported_repair_action"
     status_code = 422

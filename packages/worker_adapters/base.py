@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from packages.contracts import TaskPacket
 
@@ -23,6 +24,7 @@ class ExecutionResult:
     duration_ms: int
     artifact_paths: list[str]
     adapter_name: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def resolve_artifact_paths(packet: TaskPacket, *, create_missing: bool = False, placeholder: str | None = None) -> list[str]:

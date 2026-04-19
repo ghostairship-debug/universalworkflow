@@ -86,9 +86,33 @@ def create_app(
     def validate_domain_packs() -> dict:
         return service.validate_domain_pack_catalog()
 
+    @app.post("/domain-packs/{domain_pack_id}/skill-export", status_code=status.HTTP_201_CREATED)
+    def export_domain_pack_skill(domain_pack_id: str, output_root: str = "state/skills") -> dict:
+        return service.export_domain_pack_skill(domain_pack_id, output_root=output_root)
+
     @app.get("/capability-routes")
     def list_capability_routes() -> list[dict]:
         return service.list_capability_routes()
+
+    @app.get("/capability-sources")
+    def list_capability_sources() -> list[dict]:
+        return service.list_capability_sources()
+
+    @app.get("/capability-sources/mcp-profiles")
+    def list_mcp_server_profiles() -> list[dict]:
+        return service.list_mcp_server_profiles()
+
+    @app.get("/capability-projections/preview")
+    def preview_tool_projection(
+        preset_id: str,
+        task_kind: str | None = None,
+        adapter_name: str | None = None,
+    ) -> dict:
+        return service.preview_tool_projection(
+            preset_id=preset_id,
+            task_kind=task_kind,
+            adapter_name=adapter_name,
+        )
 
     @app.get("/simulation/policies")
     def list_simulation_policies() -> list[dict]:
@@ -170,6 +194,13 @@ def create_app(
             "state_ref_id": bundle.state_ref.state_ref_id,
             "domain_pack_id": bundle.domain_pack.domain_pack_id if bundle.domain_pack is not None else None,
             "capability_adapter": bundle.capability_route.adapter_name if bundle.capability_route is not None else None,
+            "execution_lane": str(bundle.execution_lane),
+            "tool_projection_manifest": (
+                bundle.tool_projection_manifest.model_dump(mode="json")
+                if bundle.tool_projection_manifest is not None
+                else None
+            ),
+            "mcp_server_profiles": [profile.model_dump(mode="json") for profile in bundle.mcp_server_profiles],
             "memory_preview": bundle.memory_preview.model_dump(mode="json") if bundle.memory_preview is not None else None,
         }
 
@@ -188,6 +219,13 @@ def create_app(
             "state_ref_id": bundle.state_ref.state_ref_id,
             "domain_pack_id": bundle.domain_pack.domain_pack_id if bundle.domain_pack is not None else None,
             "capability_adapter": bundle.capability_route.adapter_name if bundle.capability_route is not None else None,
+            "execution_lane": str(bundle.execution_lane),
+            "tool_projection_manifest": (
+                bundle.tool_projection_manifest.model_dump(mode="json")
+                if bundle.tool_projection_manifest is not None
+                else None
+            ),
+            "mcp_server_profiles": [profile.model_dump(mode="json") for profile in bundle.mcp_server_profiles],
             "memory_preview": bundle.memory_preview.model_dump(mode="json") if bundle.memory_preview is not None else None,
         }
 

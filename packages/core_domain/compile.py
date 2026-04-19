@@ -7,15 +7,19 @@ import sys
 from packages.contracts import (
     CapabilityRoute,
     DomainPackResolution,
+    ExecutionLaneType,
     HandoffLite,
     MemoryRetrievalPreview,
+    MCPServerProfile,
     Phase,
     PresetDefinition,
     RuntimeTask,
     TaskCard,
     TaskKind,
     TaskPacket,
+    ToolProjectionManifest,
 )
+from packages.core_domain.capability_plane import TOOL_PROJECTION_MANIFEST_ENV_KEY, dump_tool_projection_manifest
 from packages.core_domain.domain_packs import DOMAIN_PACK_RESOLUTION_ENV_KEY, dump_domain_pack_resolution
 from packages.core_domain.memory import MEMORY_RETRIEVAL_PREVIEW_ENV_KEY, dump_memory_retrieval_preview
 
@@ -35,6 +39,8 @@ def build_artifact_content(
     runtime_gateway: str | None = None,
     runtime_model: str | None = None,
     runtime_brief: str | None = None,
+    execution_lane: str | None = None,
+    projected_tools: list[str] | None = None,
 ) -> str:
     lines = [f"preset: {preset_id}"]
     if domain_pack_id:
@@ -54,6 +60,10 @@ def build_artifact_content(
         lines.append(f"runtime_model: {runtime_model}")
     if runtime_brief:
         lines.append(f"runtime_brief: {runtime_brief}")
+    if execution_lane:
+        lines.append(f"execution_lane: {execution_lane}")
+    if projected_tools:
+        lines.append(f"projected_tools: {','.join(projected_tools)}")
     if memory_item_ids:
         lines.append(f"memory_item_ids: {','.join(memory_item_ids)}")
     if memory_brief_lines:
@@ -76,6 +86,8 @@ def _python_command_for(
     *,
     domain_pack: DomainPackResolution | None = None,
     capability_route: CapabilityRoute | None = None,
+    execution_lane: ExecutionLaneType | None = None,
+    tool_projection_manifest: ToolProjectionManifest | None = None,
 ) -> list[str]:
     effective_goal = (
         f"{domain_pack.compile_projection.goal_prefix} {goal}"
@@ -91,6 +103,8 @@ def _python_command_for(
         "path.parent.mkdir(parents=True, exist_ok=True)\n"
         "memory_preview = os.environ.get('WORKFLOW_MEMORY_RETRIEVAL_PREVIEW')\n"
         "memory_preview = json.loads(memory_preview) if memory_preview else None\n"
+        "tool_projection = json.loads(os.environ.get('WORKFLOW_TOOL_PROJECTION_MANIFEST', '{}') or '{}')\n"
+        "projected_tools = [item.get('tool_name') for item in (tool_projection.get('tools') or [])]\n"
         f"content = build_artifact_content(preset_id={preset_id!r}, goal={effective_goal!r}, "
         f"adapter_name={(capability_route.adapter_name if capability_route is not None else '')!r}, "
         f"domain_pack_id={(domain_pack.domain_pack_id if domain_pack is not None else None)!r}, "
@@ -102,7 +116,10 @@ def _python_command_for(
         "memory_brief_lines=(memory_preview.get('brief_lines') if memory_preview else None), "
         "runtime_gateway=os.environ.get('WORKFLOW_RUNTIME_GATEWAY_PROVIDER'), "
         "runtime_model=os.environ.get('WORKFLOW_LLM_MODEL'), "
-        "runtime_brief=os.environ.get('WORKFLOW_RUNTIME_BRIEF'))\n"
+        "runtime_brief=os.environ.get('WORKFLOW_RUNTIME_BRIEF'), "
+        f"execution_lane={(str(execution_lane) if execution_lane is not None else None)!r}, "
+        "projected_tools=projected_tools"
+        ")\n"
         "path.write_text(content, encoding='utf-8')\n"
         "print(path.as_posix())\n"
     )
@@ -120,6 +137,9 @@ class CompileSnapshot:
     domain_pack: DomainPackResolution | None
     capability_route: CapabilityRoute | None
     memory_preview: MemoryRetrievalPreview | None
+    execution_lane: ExecutionLaneType
+    tool_projection_manifest: ToolProjectionManifest | None
+    mcp_server_profiles: list[MCPServerProfile]
 
 
 def compile_run(
@@ -131,6 +151,9 @@ def compile_run(
     domain_pack: DomainPackResolution | None = None,
     capability_route: CapabilityRoute | None = None,
     memory_preview: MemoryRetrievalPreview | None = None,
+    execution_lane: ExecutionLaneType = ExecutionLaneType.native_deterministic,
+    tool_projection_manifest: ToolProjectionManifest | None = None,
+    mcp_server_profiles: list[MCPServerProfile] | None = None,
 ) -> CompileSnapshot:
     compile_phase = Phase(run_id=run_id, name="compile", order_index=0)
     execution_phase = Phase(run_id=run_id, name="execution", order_index=1)
@@ -171,6 +194,8 @@ def compile_run(
             artifact_path,
             domain_pack=domain_pack,
             capability_route=capability_route,
+            execution_lane=execution_lane,
+            tool_projection_manifest=tool_projection_manifest,
         )
     )
     task_packet = TaskPacket(
@@ -184,9 +209,11 @@ def compile_run(
                 "WORKFLOW_RUN_GOAL": effective_goal,
                 "WORKFLOW_PRESET_ID": preset.preset_id,
                 "WORKFLOW_TASK_KIND": str(resolved_task_kind),
+                "WORKFLOW_EXECUTION_LANE": str(execution_lane),
                 "WORKFLOW_DOMAIN_PACK_ID": domain_pack.domain_pack_id,
                 DOMAIN_PACK_RESOLUTION_ENV_KEY: dump_domain_pack_resolution(domain_pack),
                 "WORKFLOW_CAPABILITY_ADAPTER": capability_route.adapter_name if capability_route is not None else "",
+                TOOL_PROJECTION_MANIFEST_ENV_KEY: dump_tool_projection_manifest(tool_projection_manifest),
                 MEMORY_RETRIEVAL_PREVIEW_ENV_KEY: dump_memory_retrieval_preview(memory_preview),
             }
             if domain_pack is not None
@@ -194,7 +221,9 @@ def compile_run(
                 "WORKFLOW_RUN_GOAL": effective_goal,
                 "WORKFLOW_PRESET_ID": preset.preset_id,
                 "WORKFLOW_TASK_KIND": str(resolved_task_kind),
+                "WORKFLOW_EXECUTION_LANE": str(execution_lane),
                 "WORKFLOW_CAPABILITY_ADAPTER": capability_route.adapter_name if capability_route is not None else "",
+                TOOL_PROJECTION_MANIFEST_ENV_KEY: dump_tool_projection_manifest(tool_projection_manifest),
                 MEMORY_RETRIEVAL_PREVIEW_ENV_KEY: dump_memory_retrieval_preview(memory_preview),
             }
         ),
@@ -216,4 +245,7 @@ def compile_run(
         domain_pack=domain_pack,
         capability_route=capability_route,
         memory_preview=memory_preview,
+        execution_lane=execution_lane,
+        tool_projection_manifest=tool_projection_manifest,
+        mcp_server_profiles=list(mcp_server_profiles or []),
     )

@@ -222,4 +222,5 @@ def test_build_review_policy_report_falls_back_to_seed_presets_when_db_is_not_bo
         "research_spike",
         "advisory_delivery",
         "guarded_delivery",
+        "research_spike_reviewable",
     ]

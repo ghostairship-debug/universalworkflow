@@ -1,0 +1,26 @@
+[
+  {
+    "profile_id": "local_workspace_readonly",
+    "name": "Local Workspace Readonly",
+    "description": "Low-risk local stdio MCP profile for read-only workspace inspection during M8 pilots.",
+    "transport": "stdio",
+    "startup_command": [
+      "${PYTHON_EXECUTABLE}",
+      "infra/mcp/readonly_workspace_server.py",
+      "--workspace-root",
+      "${WORKSPACE_ROOT}"
+    ],
+    "auth_mode": "env",
+    "allowed_tools": [
+      "mcp_list_workspace_files",
+      "mcp_read_workspace_text"
+    ],
+    "max_tools": 2,
+    "max_schema_bytes": 8192,
+    "startup_timeout_ms": 4000,
+    "call_timeout_ms": 5000,
+    "retry_policy": "none",
+    "manifest_ttl_seconds": 300,
+    "enabled": true
+  }
+]

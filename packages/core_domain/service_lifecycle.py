@@ -39,10 +39,24 @@ class LifecycleServiceMixin:
     ) -> CompileSnapshot:
         resolved_task_kind = self._resolve_task_kind(preset, requested_task_kind)
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        selected_adapter = requested_adapter or (
-            domain_pack.capability_exposure.preferred_adapter_name if domain_pack is not None else None
+        selected_adapter = requested_adapter or self._default_adapter_for_preset(
+            preset,
+            resolved_task_kind,
+            domain_pack,
         )
         capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
+        execution_lane = self._resolve_execution_lane(
+            preset=preset,
+            task_kind=resolved_task_kind,
+            selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
+        )
+        tool_projection_manifest, mcp_server_profiles = self._build_tool_projection_manifest(
+            run=run,
+            preset=preset,
+            task_kind=resolved_task_kind,
+            lane_type=execution_lane,
+            domain_pack=domain_pack,
+        )
         memory_preview = (
             self.preview_memory_retrieval(preset_id=preset.preset_id, memory_item_ids=memory_item_ids)
             if memory_item_ids
@@ -56,6 +70,9 @@ class LifecycleServiceMixin:
             domain_pack=domain_pack,
             capability_route=capability_route,
             memory_preview=memory_preview,
+            execution_lane=execution_lane,
+            tool_projection_manifest=tool_projection_manifest,
+            mcp_server_profiles=mcp_server_profiles,
         )
 
     def compile_run(
@@ -98,6 +115,24 @@ class LifecycleServiceMixin:
                 preset,
                 snapshot,
             )
+            state_ref = self._state_ref_with_m8_context(state_ref, snapshot)
+            trace_id = self._export_trace(
+                run_id=run.run_id,
+                name="compile",
+                lane_type=snapshot.execution_lane,
+                status=RunStatus.prepared,
+                attributes={
+                    "runtime_task_id": snapshot.runtime_task.runtime_task_id,
+                    "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
+                    "projection_id": (
+                        snapshot.tool_projection_manifest.projection_id
+                        if snapshot.tool_projection_manifest is not None
+                        else None
+                    ),
+                },
+            )
+            if trace_id is not None:
+                state_ref = self._state_ref_with_payload_updates(state_ref, {"external_trace_id": trace_id})
             stored_state_ref = self.runtime_state_repo.upsert(state_ref, connection=connection)
             updated_run = self._transition_run_status(run, "compile", RunStatus.prepared, connection=connection)
             for phase in (snapshot.compile_phase, snapshot.execution_phase):
@@ -204,6 +239,9 @@ class LifecycleServiceMixin:
             domain_pack=snapshot.domain_pack,
             capability_route=snapshot.capability_route,
             memory_preview=snapshot.memory_preview,
+            execution_lane=snapshot.execution_lane,
+            tool_projection_manifest=snapshot.tool_projection_manifest,
+            mcp_server_profiles=snapshot.mcp_server_profiles,
         )
 
     def recompile_run(
@@ -269,6 +307,24 @@ class LifecycleServiceMixin:
                 preset,
                 snapshot,
             )
+            state_ref = self._state_ref_with_m8_context(state_ref, snapshot)
+            trace_id = self._export_trace(
+                run_id=run.run_id,
+                name="recompile",
+                lane_type=snapshot.execution_lane,
+                status=RunStatus.prepared,
+                attributes={
+                    "runtime_task_id": snapshot.runtime_task.runtime_task_id,
+                    "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
+                    "projection_id": (
+                        snapshot.tool_projection_manifest.projection_id
+                        if snapshot.tool_projection_manifest is not None
+                        else None
+                    ),
+                },
+            )
+            if trace_id is not None:
+                state_ref = self._state_ref_with_payload_updates(state_ref, {"external_trace_id": trace_id})
             stored_state_ref = self.runtime_state_repo.upsert(state_ref, connection=connection)
             updated_run = self._transition_run_status(run, "recompile", RunStatus.prepared, connection=connection)
             for phase in (snapshot.compile_phase, snapshot.execution_phase):
@@ -375,6 +431,9 @@ class LifecycleServiceMixin:
             domain_pack=snapshot.domain_pack,
             capability_route=snapshot.capability_route,
             memory_preview=snapshot.memory_preview,
+            execution_lane=snapshot.execution_lane,
+            tool_projection_manifest=snapshot.tool_projection_manifest,
+            mcp_server_profiles=snapshot.mcp_server_profiles,
         )
 
     def prepare_run(
@@ -500,16 +559,42 @@ class LifecycleServiceMixin:
 
             state_ref = self.runtime_state_repo.get_by_task(runtime_task.runtime_task_id, connection=connection)
             if state_ref is not None:
+                durable_refs = self._durable_refs_for_state(state_ref)
+                updated_durable_refs = (
+                    self.durable_runtime_pilot.review_decision(durable_refs, decision=str(decision))
+                    if durable_refs
+                    else {}
+                )
                 terminal_step = "completed" if decision == ReviewDecision.pass_ else "failed"
                 terminal_state = RuntimeStateRef(
                     state_ref_id=state_ref.state_ref_id,
                     run_id=state_ref.run_id,
                     runtime_task_id=state_ref.runtime_task_id,
                     graph_step=RuntimeGraphStep(terminal_step),
-                    state_payload={**state_ref.state_payload, "human_review_decision": decision},
+                    state_payload={
+                        **state_ref.state_payload,
+                        "human_review_decision": decision,
+                        **updated_durable_refs,
+                    },
                     is_terminal=True,
                     created_at=state_ref.created_at,
                 )
+                trace_id = self._export_trace(
+                    run_id=run.run_id,
+                    name="human_review_finalize",
+                    lane_type=state_ref.state_payload.get("execution_lane", "native_deterministic"),
+                    status=terminal_step,
+                    attributes={
+                        "runtime_task_id": runtime_task.runtime_task_id,
+                        "verdict_id": verdict.verdict_id,
+                        "decision": str(decision),
+                    },
+                )
+                if trace_id is not None:
+                    terminal_state = self._state_ref_with_payload_updates(
+                        terminal_state,
+                        {"external_trace_id": trace_id},
+                    )
                 self.runtime_state_repo.upsert(terminal_state, connection=connection)
             current_attempt = self.runtime_attempt_repo.current_for_run(run.run_id, connection=connection)
             if current_attempt is not None:
@@ -581,6 +666,7 @@ class LifecycleServiceMixin:
             state_ref = self.runtime_state_repo.get_by_task(runtime_task.runtime_task_id, connection=connection)
             if state_ref is None:
                 raise EntityNotFoundError("runtime_state_ref", runtime_task.runtime_task_id)
+            lane_type = state_ref.state_payload.get("execution_lane", task_packet.env.get("WORKFLOW_EXECUTION_LANE"))
             budget_ledger = self._ensure_budget_ledger(run, preset, connection=connection, compile_count=1)
             self._ensure_current_runtime_attempt(
                 run.run_id,
@@ -596,6 +682,12 @@ class LifecycleServiceMixin:
                 connection=connection,
             )
             resumed_state = self.runtime_gateway.resume(state_ref)
+            durable_refs = self._durable_refs_for_state(resumed_state)
+            if durable_refs:
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    self.durable_runtime_pilot.checkpoint(durable_refs, reason="resume"),
+                )
             self.runtime_state_repo.upsert(resumed_state, connection=connection)
             self._transition_run_status(run, "resume", RunStatus.running, connection=connection)
             self.task_repo.update_runtime_task_status(runtime_task.runtime_task_id, TaskStatus.running, connection=connection)
@@ -709,19 +801,40 @@ class LifecycleServiceMixin:
                     reason="awaiting_human_review",
                     connection=connection,
                 )
+                awaiting_payload = {
+                    **resumed_state.state_payload,
+                    "review_policy": preset.default_review_policy,
+                    "return_code": execution_result.return_code,
+                }
+                durable_refs = self._durable_refs_for_state(resumed_state)
+                if durable_refs:
+                    awaiting_payload.update(
+                        self.durable_runtime_pilot.checkpoint(durable_refs, reason="awaiting_review")
+                    )
                 awaiting_state = RuntimeStateRef(
                     state_ref_id=resumed_state.state_ref_id,
                     run_id=run.run_id,
                     runtime_task_id=runtime_task.runtime_task_id,
                     graph_step=RuntimeGraphStep.awaiting_review,
-                    state_payload={
-                        **resumed_state.state_payload,
-                        "review_policy": preset.default_review_policy,
-                        "return_code": execution_result.return_code,
-                    },
+                    state_payload=awaiting_payload,
                     is_terminal=False,
                     created_at=resumed_state.created_at,
                 )
+                trace_id = self._export_trace(
+                    run_id=run.run_id,
+                    name="awaiting_review",
+                    lane_type=lane_type,
+                    status=RunStatus.awaiting_review,
+                    attributes={
+                        "runtime_task_id": runtime_task.runtime_task_id,
+                        "evidence_id": evidence.evidence_id,
+                    },
+                )
+                if trace_id is not None:
+                    awaiting_state = self._state_ref_with_payload_updates(
+                        awaiting_state,
+                        {"external_trace_id": trace_id},
+                    )
                 self.runtime_state_repo.upsert(awaiting_state, connection=connection)
                 self._release_active_claims_for_run(
                     run.run_id,
@@ -797,21 +910,43 @@ class LifecycleServiceMixin:
                         reason="awaiting_human_review",
                         connection=connection,
                     )
+                    awaiting_payload = {
+                        **resumed_state.state_payload,
+                        "review_policy": preset.default_review_policy,
+                        "return_code": execution_result.return_code,
+                        "awaiting_review_reason": awaiting_reason,
+                        "latest_auto_review_decision": review_verdict.decision,
+                    }
+                    durable_refs = self._durable_refs_for_state(resumed_state)
+                    if durable_refs:
+                        awaiting_payload.update(
+                            self.durable_runtime_pilot.checkpoint(durable_refs, reason="awaiting_review")
+                        )
                     awaiting_state = RuntimeStateRef(
                         state_ref_id=resumed_state.state_ref_id,
                         run_id=run.run_id,
                         runtime_task_id=runtime_task.runtime_task_id,
                         graph_step=RuntimeGraphStep.awaiting_review,
-                        state_payload={
-                            **resumed_state.state_payload,
-                            "review_policy": preset.default_review_policy,
-                            "return_code": execution_result.return_code,
-                            "awaiting_review_reason": awaiting_reason,
-                            "latest_auto_review_decision": review_verdict.decision,
-                        },
+                        state_payload=awaiting_payload,
                         is_terminal=False,
                         created_at=resumed_state.created_at,
                     )
+                    trace_id = self._export_trace(
+                        run_id=run.run_id,
+                        name="awaiting_review",
+                        lane_type=lane_type,
+                        status=RunStatus.awaiting_review,
+                        attributes={
+                            "runtime_task_id": runtime_task.runtime_task_id,
+                            "evidence_id": evidence.evidence_id,
+                            "verdict_id": review_verdict.verdict_id,
+                        },
+                    )
+                    if trace_id is not None:
+                        awaiting_state = self._state_ref_with_payload_updates(
+                            awaiting_state,
+                            {"external_trace_id": trace_id},
+                        )
                     self.runtime_state_repo.upsert(awaiting_state, connection=connection)
                     self._release_active_claims_for_run(
                         run.run_id,
@@ -887,19 +1022,42 @@ class LifecycleServiceMixin:
                         )
                         terminal_graph_step = RuntimeGraphStep.failed
 
+                    terminal_payload = {
+                        **resumed_state.state_payload,
+                        "review_policy": preset.default_review_policy,
+                        "return_code": execution_result.return_code,
+                    }
+                    durable_refs = self._durable_refs_for_state(resumed_state)
+                    if durable_refs:
+                        terminal_payload.update(
+                            self.durable_runtime_pilot.checkpoint(durable_refs, reason="terminal")
+                        )
                     terminal_state = RuntimeStateRef(
                         state_ref_id=resumed_state.state_ref_id,
                         run_id=run.run_id,
                         runtime_task_id=runtime_task.runtime_task_id,
                         graph_step=terminal_graph_step,
-                        state_payload={
-                            **resumed_state.state_payload,
-                            "review_policy": preset.default_review_policy,
-                            "return_code": execution_result.return_code,
-                        },
+                        state_payload=terminal_payload,
                         is_terminal=True,
                         created_at=resumed_state.created_at,
                     )
+                    trace_id = self._export_trace(
+                        run_id=run.run_id,
+                        name="run_terminal",
+                        lane_type=lane_type,
+                        status=final_status,
+                        attributes={
+                            "runtime_task_id": runtime_task.runtime_task_id,
+                            "evidence_id": evidence.evidence_id,
+                            "verdict_id": review_verdict.verdict_id,
+                            "adapter_name": adapter.normalized_name(),
+                        },
+                    )
+                    if trace_id is not None:
+                        terminal_state = self._state_ref_with_payload_updates(
+                            terminal_state,
+                            {"external_trace_id": trace_id},
+                        )
                     self.runtime_state_repo.upsert(terminal_state, connection=connection)
                     current_attempt = self.runtime_attempt_repo.current_for_run(run.run_id, connection=connection)
                     if current_attempt is not None:

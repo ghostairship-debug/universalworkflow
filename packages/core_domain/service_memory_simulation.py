@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from packages.contracts import (
+    ExecutionLaneType,
     DomainPackDefinition,
     MemoryCandidate,
     MemoryItem,
     MemoryNamespace,
     MemoryRetrievalPreview,
+    ReviewPolicy,
     RunEvent,
     RunEventType,
     RunStatus,
@@ -18,8 +21,10 @@ from packages.contracts import (
     TaskKind,
 )
 from packages.core_domain.db import unit_of_work
-from packages.core_domain.errors import EntityNotFoundError, PresetNotFoundError
+from packages.core_domain.errors import EntityNotFoundError, PresetNotFoundError, WorkflowError
+from packages.core_domain.m8_flags import is_mcp_source_enabled, is_skill_export_enabled
 from packages.core_domain.memory import load_seed_memory_namespaces
+from packages.core_domain.skills import export_domain_pack_skill_bundle
 
 
 class MemorySimulationServiceMixin:
@@ -51,9 +56,7 @@ class MemorySimulationServiceMixin:
             raise PresetNotFoundError(f"preset not found: {preset_id}")
         resolved_task_kind = self._resolve_task_kind(preset, task_kind)
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        selected_adapter = adapter_name or (
-            domain_pack.capability_exposure.preferred_adapter_name if domain_pack is not None else None
-        )
+        selected_adapter = adapter_name or self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
         capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
         return {
             "preset": preset.model_dump(mode="json"),
@@ -68,6 +71,49 @@ class MemorySimulationServiceMixin:
 
     def list_capability_routes(self) -> list[dict[str, str]]:
         return self.worker_router.routes()
+
+    def list_capability_sources(self) -> list[dict[str, Any]]:
+        return self.capability_plane.list_capability_sources()
+
+    def list_mcp_server_profiles(self) -> list[dict[str, Any]]:
+        return [profile.model_dump(mode="json") for profile in self.capability_plane.list_mcp_profiles()]
+
+    def preview_tool_projection(
+        self,
+        *,
+        preset_id: str,
+        task_kind: TaskKind | str | None = None,
+        adapter_name: str | None = None,
+    ) -> dict[str, Any]:
+        preset = self.preset_repo.get(preset_id)
+        if preset is None:
+            raise PresetNotFoundError(f"preset not found: {preset_id}")
+        resolved_task_kind = self._resolve_task_kind(preset, task_kind)
+        domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
+        selected_adapter = adapter_name or self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
+        capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
+        lane_type = self._resolve_execution_lane(
+            preset=preset,
+            task_kind=resolved_task_kind,
+            selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
+        )
+        manifest, profiles = self.capability_plane.build_projection_manifest(
+            run_id=None,
+            preset_id=preset.preset_id,
+            task_kind=resolved_task_kind,
+            review_policy=ReviewPolicy(preset.default_review_policy),
+            lane_type=lane_type,
+            domain_pack_id=domain_pack.domain_pack_id if domain_pack is not None else None,
+            include_mcp=lane_type != ExecutionLaneType.native_deterministic and is_mcp_source_enabled(),
+        )
+        return {
+            "preset": preset.model_dump(mode="json"),
+            "task_kind": str(resolved_task_kind),
+            "execution_lane": str(lane_type),
+            "capability_resolution": capability_route.model_dump(mode="json") if capability_route is not None else None,
+            "tool_projection_manifest": manifest.model_dump(mode="json"),
+            "mcp_server_profiles": [profile.model_dump(mode="json") for profile in profiles],
+        }
 
     def runtime_gateway_status(self) -> dict[str, Any]:
         return self.runtime_gateway.describe()
@@ -334,3 +380,24 @@ class MemorySimulationServiceMixin:
     def list_simulation_records(self, run_id: str) -> list[SimulationRecord]:
         self.get_run(run_id)
         return self.simulation_record_repo.list_for_run(run_id)
+
+    def export_domain_pack_skill(
+        self,
+        domain_pack_id: str,
+        *,
+        output_root: str | Path = "state/skills",
+    ) -> dict[str, Any]:
+        if not is_skill_export_enabled():
+            raise WorkflowError(
+                "skill export is disabled; enable UAWO_ENABLE_SKILL_EXPORT to use this path",
+                {"domain_pack_id": domain_pack_id},
+            )
+        domain_pack = self.domain_pack_registry.get(domain_pack_id)
+        if domain_pack is None:
+            raise EntityNotFoundError("domain_pack", domain_pack_id)
+        bundle_path = export_domain_pack_skill_bundle(domain_pack, output_root=output_root)
+        return {
+            "domain_pack_id": domain_pack_id,
+            "bundle_path": bundle_path.as_posix(),
+            "exported": True,
+        }

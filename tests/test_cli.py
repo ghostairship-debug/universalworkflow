@@ -15,8 +15,8 @@ from packages.core_domain.services import OrchestratorService
 runner = CliRunner()
 
 
-def _invoke(tmp_path: Path, *args: str):
-    return runner.invoke(app, ["--db-path", str(tmp_path / "workflow.db"), *args])
+def _invoke(tmp_path: Path, *args: str, env: dict[str, str] | None = None):
+    return runner.invoke(app, ["--db-path", str(tmp_path / "workflow.db"), *args], env=env)
 
 
 def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
@@ -28,6 +28,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
         "research_spike",
         "advisory_delivery",
         "guarded_delivery",
+        "research_spike_reviewable",
     ]
 
     preset_result = _invoke(tmp_path, "preset", "list", "--json")
@@ -36,6 +37,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
     assert {preset["preset_id"] for preset in presets} == {
         "feature_delivery",
         "research_spike",
+        "research_spike_reviewable",
         "advisory_delivery",
         "guarded_delivery",
     }
@@ -98,6 +100,60 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
     memory_item_result = _invoke(tmp_path, "memory", "item", "list")
     assert memory_item_result.exit_code == 0
     assert json.loads(memory_item_result.stdout) == []
+
+
+def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    env = {
+        "UAWO_ENABLE_AGENT_LANE": "1",
+        "UAWO_ENABLE_MCP_SOURCE": "1",
+    }
+
+    sources_result = _invoke(tmp_path, "capability", "sources", env=env)
+    profiles_result = _invoke(tmp_path, "capability", "mcp-profiles", env=env)
+    projection_result = _invoke(
+        tmp_path,
+        "capability",
+        "projection",
+        "--preset",
+        "research_spike_reviewable",
+        env=env,
+    )
+
+    assert sources_result.exit_code == 0
+    assert any(item["source_type"] == "built_in" for item in json.loads(sources_result.stdout))
+    assert any(item["source_type"] == "mcp_stdio" for item in json.loads(sources_result.stdout))
+    assert profiles_result.exit_code == 0
+    assert json.loads(profiles_result.stdout)[0]["profile_id"] == "local_workspace_readonly"
+    assert projection_result.exit_code == 0
+    projection_payload = json.loads(projection_result.stdout)
+    assert projection_payload["execution_lane"] == "standard_agent"
+    assert projection_payload["capability_resolution"]["adapter_name"] == "agent"
+    assert "mcp_list_workspace_files" in [
+        item["tool_name"] for item in projection_payload["tool_projection_manifest"]["tools"]
+    ]
+
+
+def test_cli_can_export_domain_pack_skill_when_flag_enabled(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    output_root = tmp_path / "skills"
+    result = _invoke(
+        tmp_path,
+        "domain-pack",
+        "export-skill",
+        "--domain-pack-id",
+        "software_delivery_pack",
+        "--output-root",
+        str(output_root),
+        env={"UAWO_ENABLE_SKILL_EXPORT": "1"},
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    bundle_path = Path(payload["bundle_path"])
+    assert payload["domain_pack_id"] == "software_delivery_pack"
+    assert (bundle_path / "README.md").exists()
+    assert (bundle_path / "skill.json").exists()
 
 
 def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:

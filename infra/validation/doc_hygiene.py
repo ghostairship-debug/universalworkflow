@@ -9,12 +9,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIVING_DOCS = [
     Path("README.md"),
     Path("docs/current_development_workflow.md"),
+    Path("universal_agentic_workflow_os_M8_phase_plan_v1_0.md"),
     Path("docs/dependency_locking_policy.md"),
     Path("docs/documentation_governance.md"),
     Path("docs/source_package_export_policy.md"),
     Path("docs/governance/README.md"),
-    Path("docs/reviews/pre-m8-freeze-review.md"),
-    Path("docs/reviews/m7-gemini-opus-pre-m8-synthesis.md"),
+    Path("docs/reviews/m8-freeze-review.md"),
+    Path("docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md"),
 ]
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 

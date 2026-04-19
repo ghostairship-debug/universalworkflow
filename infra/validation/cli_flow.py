@@ -6,6 +6,12 @@ from infra.validation.common import *  # noqa: F401,F403
 
 def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {"passed": False}
+    env = {
+        **env,
+        "UAWO_ENABLE_AGENT_LANE": "1",
+        "UAWO_ENABLE_MCP_SOURCE": "1",
+        "UAWO_ENABLE_SKILL_EXPORT": "1",
+    }
     release_validation_report_path = PROJECT_ROOT / "state" / "offline_validate_release_readiness.json"
     release_validation_report_path.write_text(
         json.dumps(
@@ -60,6 +66,46 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
     )
     capability_payload, _ = run_json_command(
         [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "capability", "list"],
+        env,
+    )
+    capability_sources_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "capability", "sources"],
+        env,
+    )
+    capability_mcp_profiles_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "capability", "mcp-profiles"],
+        env,
+    )
+    capability_projection_payload, _ = run_json_command(
+        [
+            sys.executable,
+            "-m",
+            "apps.operator_cli.main",
+            "--db-path",
+            db_path.as_posix(),
+            "capability",
+            "projection",
+            "--preset",
+            "research_spike_reviewable",
+        ],
+        env,
+    )
+    skill_export_root = PROJECT_ROOT / "state" / "offline_validate_skill_export"
+    skill_export_root.mkdir(parents=True, exist_ok=True)
+    skill_export_payload, _ = run_json_command(
+        [
+            sys.executable,
+            "-m",
+            "apps.operator_cli.main",
+            "--db-path",
+            db_path.as_posix(),
+            "domain-pack",
+            "export-skill",
+            "--domain-pack-id",
+            "software_delivery_pack",
+            "--output-root",
+            skill_export_root.as_posix(),
+        ],
         env,
     )
     simulation_policy_payload, _ = run_json_command(
@@ -710,6 +756,19 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "domain_pack_validation_issue_count": domain_pack_validate_payload.get("issue_count"),
             "memory_namespace_ids": [item["namespace_id"] for item in memory_namespace_payload],
             "capability_routes": capability_payload,
+            "m8_capability_source_types": [item["source_type"] for item in capability_sources_payload],
+            "m8_mcp_profile_id": (
+                capability_mcp_profiles_payload[0]["profile_id"] if capability_mcp_profiles_payload else None
+            ),
+            "m8_projection_lane": capability_projection_payload["execution_lane"],
+            "m8_projection_adapter": capability_projection_payload["capability_resolution"]["adapter_name"],
+            "m8_projection_tool_names": [
+                item["tool_name"] for item in capability_projection_payload["tool_projection_manifest"]["tools"]
+            ],
+            "m8_projection_trust_tiers": capability_projection_payload["tool_projection_manifest"]["trust_tiers"],
+            "m8_skill_export_domain_pack_id": skill_export_payload["domain_pack_id"],
+            "m8_skill_export_bundle_has_readme": (Path(skill_export_payload["bundle_path"]) / "README.md").exists(),
+            "m8_skill_export_bundle_has_manifest": (Path(skill_export_payload["bundle_path"]) / "skill.json").exists(),
             "simulation_policy_ids": [item["policy_id"] for item in simulation_policy_payload],
             "governance_open_debt_count": governance_payload["open_debt_count"],
             "governance_active_gate_focus_ids": [item["debt_id"] for item in governance_payload["active_gate_focus_items"]],
@@ -841,9 +900,21 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
     result["passed"] = all(
         [
             result["db_reset_seeded"]
-            == ["feature_delivery", "research_spike", "advisory_delivery", "guarded_delivery"],
+            == [
+                "feature_delivery",
+                "research_spike",
+                "advisory_delivery",
+                "guarded_delivery",
+                "research_spike_reviewable",
+            ],
             set(result["preset_ids"])
-            == {"feature_delivery", "research_spike", "advisory_delivery", "guarded_delivery"},
+            == {
+                "feature_delivery",
+                "research_spike",
+                "advisory_delivery",
+                "guarded_delivery",
+                "research_spike_reviewable",
+            },
             result["domain_pack_ids"] == ["software_delivery_pack"],
             result["domain_pack_preview_id"] == "software_delivery_pack",
             result["domain_pack_preview_adapter"] == "shell",
@@ -854,8 +925,19 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             == [
                 {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
                 {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+                {"capability": "shell_exec", "adapter_name": "agent", "adapter_class": "LangChainAgentAdapter"},
                 {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
             ],
+            result["m8_capability_source_types"] == ["built_in", "mcp_stdio"],
+            result["m8_mcp_profile_id"] == "local_workspace_readonly",
+            result["m8_projection_lane"] == "standard_agent",
+            result["m8_projection_adapter"] == "agent",
+            "mcp_list_workspace_files" in result["m8_projection_tool_names"],
+            "mcp_read_workspace_text" in result["m8_projection_tool_names"],
+            result["m8_projection_trust_tiers"] == ["t0_builtin_local", "t1_local_stdio_mcp"],
+            result["m8_skill_export_domain_pack_id"] == "software_delivery_pack",
+            result["m8_skill_export_bundle_has_readme"] is True,
+            result["m8_skill_export_bundle_has_manifest"] is True,
             result["simulation_policy_ids"]
             == [
                 "advisory_failure_simulation",
@@ -863,8 +945,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                 "research_no_simulation",
             ],
             result["governance_open_debt_count"] >= 1,
-            "TD-012" in result["governance_active_gate_focus_ids"],
-            "TD-011" not in result["governance_active_gate_focus_ids"],
+            result["governance_active_gate_focus_ids"] == [],
             result["governance_supported_review_policies"]
             == ["auto_only", "recommended", "human_required", "mandatory"],
             result["governance_review_policy_debt_id"] == "TD-006",
