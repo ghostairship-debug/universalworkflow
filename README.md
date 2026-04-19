@@ -230,6 +230,8 @@ Optional runtime dependencies for the borrowed agent and LangGraph-oriented dura
 python -m pip install "langchain>=1.0.0,<2.0.0" "langchain-openai>=1.0.0,<2.0.0" "langgraph>=1.0.0,<2.0.0"
 ```
 
+The base package metadata is validated against `openai>=2.26.0,<3.0.0`, which matches the current live gateway and `langchain-openai` runtime baseline.
+
 Borrowed-agent capability preview:
 
 ```powershell
