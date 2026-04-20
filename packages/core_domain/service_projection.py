@@ -26,6 +26,11 @@ from packages.core_domain.service_types import RunDiagnosticContext
 
 
 class ProjectionServiceMixin:
+    def _result_envelope_for(self, last_evidence: Evidence | None) -> dict[str, Any] | None:
+        if last_evidence is None or last_evidence.result_envelope is None:
+            return None
+        return last_evidence.result_envelope.model_dump(mode="json")
+
     def _execution_target_for(
         self,
         last_runtime_state: RuntimeStateRef | None,
@@ -758,7 +763,9 @@ class ProjectionServiceMixin:
             "context_budget": detail["context_budget"],
             "run_metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
+            "result_envelope": detail["result_envelope"],
             "trace_exporter": detail["trace_exporter"],
+            "orchestration_plan_graph": detail["orchestration_plan_graph"],
             "mutation_packet": {
                 "contract": detail["mutation_contract"],
                 "result": detail["mutation_result"],
@@ -807,6 +814,7 @@ class ProjectionServiceMixin:
             "mutation_result": detail["mutation_result"],
             "scheduler_authority": detail["scheduler_authority"],
             "orchestration": detail["orchestration"],
+            "orchestration_plan_graph": detail["orchestration_plan_graph"],
             "parallel_batch": detail["parallel_batch"],
             "summary": {
                 "headline": summary["headline"],
@@ -871,6 +879,7 @@ class ProjectionServiceMixin:
         mutation_result = self._mutation_result_for(last_runtime_state, last_evidence)
         scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
+        orchestration_plan_graph = self._orchestration_plan_graph_from_context(context)
         timeline = self.get_timeline(run_id)
         review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         trace_context = self._trace_context_for_context(
@@ -879,6 +888,7 @@ class ProjectionServiceMixin:
             latest_attempt=latest_attempt,
             latest_evidence=last_evidence,
         )
+        result_envelope = self._result_envelope_for(last_evidence)
         run_metrics = self._run_metrics_for_context(
             context,
             timeline,
@@ -909,7 +919,9 @@ class ProjectionServiceMixin:
             "mutation_result": mutation_result,
             "scheduler_authority": scheduler_authority,
             "orchestration": orchestration,
+            "orchestration_plan_graph": orchestration_plan_graph,
             "trace_context": trace_context,
+            "result_envelope": result_envelope,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
             "run_metrics": run_metrics,
             "simulation_policy": simulation_policy.model_dump(mode="json"),
@@ -989,6 +1001,7 @@ class ProjectionServiceMixin:
         mutation_result = self._mutation_result_for(last_runtime_state, self._last_evidence(context))
         scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
+        orchestration_plan_graph = self._orchestration_plan_graph_from_context(context)
         timeline = self.get_timeline(run_id)
         review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         trace_context = self._trace_context_for_context(
@@ -1026,6 +1039,7 @@ class ProjectionServiceMixin:
             "mutation_result": mutation_result,
             "scheduler_authority": scheduler_authority,
             "orchestration": orchestration,
+            "orchestration_plan_graph": orchestration_plan_graph,
             "trace_context": trace_context,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
             "run_metrics": run_metrics,
@@ -1172,6 +1186,7 @@ class ProjectionServiceMixin:
             "execution_lane": detail["execution_lane"],
             "mutation_contract": detail["mutation_contract"],
             "mutation_result": detail["mutation_result"],
+            "result_envelope": detail["result_envelope"],
             "inspection_problem_count": inspection["problem_count"],
             "recommended_action": inspection["recommended_action"],
         }

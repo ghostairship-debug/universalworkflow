@@ -228,6 +228,14 @@ def build_effective_config(
                 default=False,
                 coerce=_coerce_bool,
             ),
+            "sessionful_external_agents": _resolve_value(
+                env=environment,
+                env_key="UAWO_ENABLE_SESSIONFUL_EXTERNAL_AGENTS",
+                config=raw_config,
+                config_key="feature_flags.sessionful_external_agents",
+                default=False,
+                coerce=_coerce_bool,
+            ),
         },
         "agent": {
             "model": _resolve_value(

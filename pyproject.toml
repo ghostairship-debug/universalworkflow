@@ -41,6 +41,7 @@ namespaces = true
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
+addopts = "--basetemp=state/.pytest-tmp"
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]

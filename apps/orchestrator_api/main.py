@@ -37,6 +37,17 @@ class CreateRunRequest(BaseModel):
     preset_id: str = Field(min_length=1)
 
 
+class GoalPlanRequest(BaseModel):
+    goal: str = Field(min_length=1)
+    preset_id: str | None = None
+
+
+class LaunchGoalRequest(BaseModel):
+    goal: str = Field(min_length=1)
+    preset_id: str | None = None
+    execute: bool = False
+
+
 class TaskKindOverrideRequest(BaseModel):
     task_kind: str | None = Field(default=None)
     adapter_name: str | None = Field(default=None)
@@ -174,6 +185,14 @@ def create_app(
     def list_capability_sources() -> list[dict]:
         return service.list_capability_sources()
 
+    @app.get("/capability-descriptors")
+    def list_capability_descriptors() -> list[dict]:
+        return service.list_capability_descriptors()
+
+    @app.get("/capability-health")
+    def list_capability_health() -> list[dict]:
+        return service.list_capability_health()
+
     @app.get("/capability-sources/mcp-profiles")
     def list_mcp_server_profiles() -> list[dict]:
         return service.list_mcp_server_profiles()
@@ -293,6 +312,14 @@ def create_app(
         run = service.create_run(goal=payload.goal, preset_id=payload.preset_id)
         return run.model_dump(mode="json")
 
+    @app.post("/runs/plan-graph")
+    def preview_goal_plan_graph(payload: GoalPlanRequest) -> dict:
+        return service.preview_orchestration_plan_graph(goal=payload.goal, preset_id=payload.preset_id)
+
+    @app.post("/runs/launch")
+    def launch_goal(payload: LaunchGoalRequest) -> dict:
+        return service.launch_goal(goal=payload.goal, preset_id=payload.preset_id, execute=payload.execute)
+
     @app.get("/runs/{run_id}")
     def get_run(run_id: str) -> dict:
         return service.get_run(run_id).model_dump(mode="json")
@@ -405,6 +432,10 @@ def create_app(
     @app.get("/runs/{run_id}/orchestration")
     def get_run_orchestration(run_id: str) -> dict:
         return service.get_run_orchestration(run_id)
+
+    @app.get("/runs/{run_id}/plan-graph")
+    def get_run_plan_graph(run_id: str) -> dict:
+        return service.get_run_orchestration_plan_graph(run_id)
 
     @app.get("/runs/{run_id}/status-detail")
     def get_run_status_detail(run_id: str) -> dict:

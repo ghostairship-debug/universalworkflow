@@ -138,6 +138,30 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
     assert json.loads(memory_item_result.stdout) == []
 
 
+def test_cli_db_migrate_and_migration_status(tmp_path: Path) -> None:
+    status_before = _invoke(tmp_path, "db", "migration-status")
+    assert status_before.exit_code == 0
+    before_payload = json.loads(status_before.stdout)
+    assert before_payload["available_count"] >= 1
+    assert before_payload["applied_count"] == 0
+    assert before_payload["pending_count"] == before_payload["available_count"]
+    assert before_payload["up_to_date"] is False
+
+    migrate_result = _invoke(tmp_path, "db", "migrate")
+    assert migrate_result.exit_code == 0
+    migrate_payload = json.loads(migrate_result.stdout)
+    assert migrate_payload["applied_count"] == migrate_payload["available_count"]
+    assert migrate_payload["pending_count"] == 0
+    assert migrate_payload["up_to_date"] is True
+
+    status_after = _invoke(tmp_path, "db", "migration-status")
+    assert status_after.exit_code == 0
+    after_payload = json.loads(status_after.stdout)
+    assert after_payload["applied_count"] == after_payload["available_count"]
+    assert after_payload["pending_count"] == 0
+    assert after_payload["up_to_date"] is True
+
+
 def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     _invoke(tmp_path, "db", "reset")
     env = {
@@ -168,6 +192,60 @@ def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     assert "mcp_list_workspace_files" in [
         item["tool_name"] for item in projection_payload["tool_projection_manifest"]["tools"]
     ]
+
+
+def test_cli_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+
+    descriptors_result = _invoke(tmp_path, "capability", "descriptors")
+    health_result = _invoke(tmp_path, "capability", "health")
+
+    assert descriptors_result.exit_code == 0
+    descriptors_payload = json.loads(descriptors_result.stdout)
+    assert any(item["provider_kind"] == "built_in" for item in descriptors_payload)
+    assert any(item["provider_kind"] == "adapter_route" and item["adapter_name"] == "shell" for item in descriptors_payload)
+
+    assert health_result.exit_code == 0
+    health_payload = json.loads(health_result.stdout)
+    assert any(item["descriptor"]["provider_kind"] == "runtime_gateway" for item in health_payload)
+    assert all("recent_call_summary" in item for item in health_payload)
+
+
+def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+
+    plan_result = _invoke(
+        tmp_path,
+        "run",
+        "plan-graph",
+        "--goal",
+        "Coordinate a multi-role delivery slice",
+        "--preset",
+        "project_delivery",
+    )
+    assert plan_result.exit_code == 0
+    plan_payload = json.loads(plan_result.stdout)
+    assert plan_payload["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
+
+    launch_result = _invoke(
+        tmp_path,
+        "run",
+        "launch",
+        "--goal",
+        "Coordinate a multi-role delivery slice",
+        "--preset",
+        "project_delivery",
+        "--execute",
+    )
+    assert launch_result.exit_code == 0
+    launch_payload = json.loads(launch_result.stdout)
+    assert launch_payload["selected_preset_id"] == "project_delivery"
+
+    plan_status_result = _invoke(tmp_path, "run", "plan-graph-status", launch_payload["run"]["run_id"])
+    assert plan_status_result.exit_code == 0
+    plan_status_payload = json.loads(plan_status_result.stdout)
+    assert plan_status_payload["enabled"] is True
+    assert len(plan_status_payload["plan_graph"]["nodes"]) == 4
 
 
 def test_cli_config_show_reads_workflow_toml_and_worker_pools(tmp_path: Path, monkeypatch) -> None:
@@ -692,6 +770,7 @@ def test_cli_compile_and_mutation_report_support_repo_mutation_contract(
     mutation_report_result = _invoke(tmp_path, "run", "mutation-report", run_id)
     mutation_payload = json.loads(mutation_report_result.stdout)
     assert mutation_payload["mutation_result"]["final_test_status"] == "passed"
+    assert mutation_payload["result_envelope"]["mutations"]["final_test_status"] == "passed"
     assert target_file.read_text(encoding="utf-8") == "after\n"
 
 
@@ -810,6 +889,8 @@ def test_cli_compile_with_noop_task_kind_for_research_spike(tmp_path: Path) -> N
     evidence_result = _invoke(tmp_path, "task", "evidence", runtime_task_id)
     evidence_payload = json.loads(evidence_result.stdout)
     assert evidence_payload["raw_execution"]["adapter_name"] == "noop"
+    assert evidence_payload["result_envelope"]["summary"] == evidence_payload["summary"]
+    assert evidence_payload["result_envelope"]["verification"]["return_code"] == 0
     assert evidence_payload["artifact_refs"]
 
 
@@ -1076,6 +1157,7 @@ def test_cli_audit_report_projects_closed_and_review_wait_states(tmp_path: Path)
     assert human_report.exit_code == 0
     assert json.loads(auto_report.stdout)["review_packet"]["closure_summary"]["state"] == "closed"
     assert json.loads(auto_report.stdout)["summary"]["failure_taxonomy"]["category"] == "success"
+    assert json.loads(auto_report.stdout)["result_envelope"]["verification"]["return_code"] == 0
     assert json.loads(human_report.stdout)["review_packet"]["closure_summary"]["state"] == "awaiting_review"
     assert json.loads(human_report.stdout)["review_packet"]["effective_review_state"] == "human_pending"
 

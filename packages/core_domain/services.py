@@ -168,6 +168,7 @@ from packages.core_domain.m8_flags import (
     is_durable_pilot_enabled,
     is_external_worker_pools_enabled,
     is_mcp_source_enabled,
+    is_sessionful_external_agents_enabled,
     is_skill_export_enabled,
 )
 from packages.core_domain.observability import NullTraceExporter, TraceExporter, TraceRecord, build_trace_exporter_from_env
@@ -181,6 +182,7 @@ from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapt
 from packages.worker_adapters.base import ExecutionResult
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
+from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
 from packages.worker_adapters.router import WorkerRouter
 from packages.worker_adapters.shell_adapter import ShellAdapter
 
@@ -246,6 +248,8 @@ class OrchestratorService(
         self.runtime_gateway = runtime_gateway or build_runtime_gateway_from_env()
         self.capability_plane = capability_plane or CapabilityPlane(workspace_root=self._workspace_root())
         adapters = [shell_adapter or ShellAdapter(), OpenCodeAdapter(), NoopAdapter()]
+        if is_sessionful_external_agents_enabled():
+            adapters.append(OpenCodeSessionAdapter())
         if is_agent_lane_enabled():
             adapters.append(
                 LangChainAgentAdapter(
@@ -812,12 +816,36 @@ class OrchestratorService(
                 return orchestration
         return None
 
+    def _orchestration_plan_graph_from_context(self, context: RunDiagnosticContext) -> dict[str, Any] | None:
+        last_runtime_state = self._last_runtime_state(context)
+        if last_runtime_state is not None:
+            graph = last_runtime_state.state_payload.get("orchestration_plan_graph")
+            if isinstance(graph, dict):
+                return graph
+        runtime_task = self._runtime_task_for_context(context)
+        if runtime_task is None:
+            return None
+        task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+        if task_packet is None:
+            return None
+        payload = task_packet.env.get("WORKFLOW_ORCHESTRATION_PLAN_GRAPH")
+        if not payload:
+            return None
+        return json.loads(payload)
+
     def get_run_orchestration(self, run_id: str) -> dict[str, Any]:
         context = self._load_run_context(run_id)
         orchestration = self._orchestration_from_context(context)
         if orchestration is None:
             return {"run_id": run_id, "enabled": False, "orchestration": None}
         return {"run_id": run_id, "enabled": True, "orchestration": orchestration}
+
+    def get_run_orchestration_plan_graph(self, run_id: str) -> dict[str, Any]:
+        context = self._load_run_context(run_id)
+        plan_graph = self._orchestration_plan_graph_from_context(context)
+        if plan_graph is None:
+            return {"run_id": run_id, "enabled": False, "plan_graph": None}
+        return {"run_id": run_id, "enabled": True, "plan_graph": plan_graph}
 
     def _compile_child_run_with_fallback(
         self,
@@ -1316,6 +1344,14 @@ class OrchestratorService(
     ) -> ExecutionLaneType:
         if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply:
             return ExecutionLaneType.repo_change_controlled
+        if selected_adapter == "opencode_session":
+            if preset.preset_id == "feature_delivery":
+                raise ExecutionLaneNotAllowedError(
+                    preset.preset_id,
+                    ExecutionLaneType.sessionful_external_agent,
+                    [ExecutionLaneType.native_deterministic, ExecutionLaneType.repo_change_controlled],
+                )
+            return ExecutionLaneType.sessionful_external_agent
         if preset.preset_id == "feature_delivery":
             if selected_adapter == "agent":
                 raise ExecutionLaneNotAllowedError(
@@ -2993,6 +3029,11 @@ class OrchestratorService(
                 if snapshot.task_packet.mutation_contract is not None
                 else None
             ),
+            "orchestration_plan_graph": (
+                json.loads(snapshot.task_packet.env["WORKFLOW_ORCHESTRATION_PLAN_GRAPH"])
+                if snapshot.task_packet.env.get("WORKFLOW_ORCHESTRATION_PLAN_GRAPH")
+                else None
+            ),
         }
         payload["context_budget"] = build_context_budget_report(payload)
         return RuntimeStateRef.model_validate(
@@ -3053,6 +3094,9 @@ class OrchestratorService(
                 else None
             ),
             external_trace_id=last_runtime_state.state_payload.get("external_trace_id") if last_runtime_state is not None else None,
+            external_session_id=last_runtime_state.state_payload.get("external_session_id") if last_runtime_state is not None else None,
+            external_session_url=last_runtime_state.state_payload.get("external_session_url") if last_runtime_state is not None else None,
+            session_export_ref=last_runtime_state.state_payload.get("session_export_ref") if last_runtime_state is not None else None,
             thread_id=durable_refs.get("thread_id"),
             checkpoint_id=durable_refs.get("checkpoint_id"),
             assistant_id=durable_refs.get("assistant_id"),

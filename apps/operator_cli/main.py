@@ -9,7 +9,7 @@ import typer
 
 from apps.operator_tui.dashboard import run_dashboard
 from packages.core_domain.config import build_effective_config
-from packages.core_domain.db import DEFAULT_DB_PATH, migrate, reset_db, workspace_scoped_db_path
+from packages.core_domain.db import DEFAULT_DB_PATH, get_migration_status, migrate, reset_db, workspace_scoped_db_path
 from packages.core_domain.errors import WorkflowError
 from packages.core_domain.governance import (
     build_domain_pack_platform_report,
@@ -189,6 +189,16 @@ def capability_sources(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_sources()))
 
 
+@capability_app.command("descriptors")
+def capability_descriptors(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_descriptors()))
+
+
+@capability_app.command("health")
+def capability_health(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_health()))
+
+
 @capability_app.command("mcp-profiles")
 def capability_mcp_profiles(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).list_mcp_server_profiles()))
@@ -335,6 +345,40 @@ def run_create(
 def run_suggest_presets(ctx: typer.Context, goal: str = typer.Option(..., "--goal")) -> None:
     suggestions = _run_workflow_action(lambda: _service(ctx).suggest_presets(goal))
     _emit_json([item.model_dump(mode="json") for item in suggestions])
+
+
+@run_app.command("plan-graph")
+def run_plan_graph(
+    ctx: typer.Context,
+    goal: str = typer.Option(..., "--goal"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).preview_orchestration_plan_graph(
+                goal=goal,
+                preset_id=preset,
+            )
+        )
+    )
+
+
+@run_app.command("launch")
+def run_launch(
+    ctx: typer.Context,
+    goal: str = typer.Option(..., "--goal"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    execute: bool = typer.Option(False, "--execute", help="Execute after compile."),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).launch_goal(
+                goal=goal,
+                preset_id=preset,
+                execute=execute,
+            )
+        )
+    )
 
 
 @run_app.command("compile")
@@ -521,6 +565,7 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
     payload["mutation_contract"] = detail["mutation_contract"]
     payload["mutation_result"] = detail["mutation_result"]
     payload["orchestration"] = detail["orchestration"]
+    payload["orchestration_plan_graph"] = detail["orchestration_plan_graph"]
     payload["effective_review_state"] = detail["effective_review_state"]
     payload["domain_pack"] = detail["domain_pack"]
     payload["capability_resolution"] = detail["capability_resolution"]
@@ -584,6 +629,11 @@ def run_mutation_report(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("orchestration")
 def run_orchestration(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_orchestration(run_id)))
+
+
+@run_app.command("plan-graph-status")
+def run_plan_graph_status(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_orchestration_plan_graph(run_id)))
 
 
 @run_app.command("memory-candidates")
@@ -707,6 +757,28 @@ def db_reset(
     if seed_presets:
         seeded = [preset.preset_id for preset in PresetRepository(db_path).seed_defaults()]
     _emit_json({"db_path": db_path.as_posix(), "seeded_presets": seeded})
+
+
+@db_app.command("migrate")
+def db_migrate(ctx: typer.Context) -> None:
+    db_path = _db_path_from_context(ctx)
+    applied = migrate(db_path)
+    status = get_migration_status(db_path)
+    _emit_json(
+        {
+            "db_path": db_path.as_posix(),
+            "applied": applied,
+            "applied_count": len(applied),
+            "available_count": status["available_count"],
+            "pending_count": status["pending_count"],
+            "up_to_date": status["up_to_date"],
+        }
+    )
+
+
+@db_app.command("migration-status")
+def db_migration_status(ctx: typer.Context) -> None:
+    _emit_json(get_migration_status(_db_path_from_context(ctx)))
 
 
 @db_app.command("workspace-path")

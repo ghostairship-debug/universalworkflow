@@ -15,6 +15,7 @@ from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
 from packages.worker_adapters.base import ExecutionResult, utc_now
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
+from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
 
 
 class _FakeApiGatewayResponse:
@@ -64,6 +65,37 @@ def _fake_api_patch_launch(self, packet):  # type: ignore[override]
         artifact_paths=[artifact_path.resolve().as_posix()],
         adapter_name=self.normalized_name(),
         metadata={"mutation_mode": "patch_apply"},
+    )
+
+
+def _fake_api_session_launch(self, packet):  # type: ignore[override]
+    started_at = utc_now()
+    artifact_path = Path(packet.expected_artifacts[0])
+    if not artifact_path.is_absolute():
+        artifact_path = Path(packet.working_directory) / artifact_path
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("# Sessionful external lane\n", encoding="utf-8")
+    export_path = Path(packet.working_directory) / "state" / "sessions" / f"{packet.runtime_task_id}_sess_api_123.json"
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    export_path.write_text('{"session_id":"sess_api_123"}', encoding="utf-8")
+    finished_at = utc_now()
+    return ExecutionResult(
+        runtime_task_id=packet.runtime_task_id,
+        return_code=0,
+        stdout="sessionful api output",
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+        artifact_paths=[artifact_path.resolve().as_posix(), export_path.resolve().as_posix()],
+        adapter_name=self.normalized_name(),
+        metadata={
+            "mutation_mode": "artifact_only",
+            "external_session_id": "sess_api_123",
+            "external_session_url": "https://example.com/sessions/api-123",
+            "session_export_ref": export_path.resolve().as_posix(),
+            "external_trace_id": "trace_api_session_123",
+        },
     )
 
 
@@ -193,6 +225,74 @@ def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path
     assert projection_response.json()["capability_resolution"]["adapter_name"] == "agent"
     tool_names = [item["tool_name"] for item in projection_response.json()["tool_projection_manifest"]["tools"]]
     assert "mcp_list_workspace_files" in tool_names
+
+
+def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    descriptors_response = client.get("/capability-descriptors")
+    health_response = client.get("/capability-health")
+
+    assert descriptors_response.status_code == 200
+    assert any(item["provider_kind"] == "built_in" for item in descriptors_response.json())
+    assert any(item["provider_kind"] == "adapter_route" and item["adapter_name"] == "shell" for item in descriptors_response.json())
+    assert health_response.status_code == 200
+    assert any(item["descriptor"]["provider_kind"] == "runtime_gateway" for item in health_response.json())
+    assert all("recent_call_summary" in item for item in health_response.json())
+
+
+def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    plan_response = client.post(
+        "/runs/plan-graph",
+        json={"goal": "Coordinate a multi-role delivery slice", "preset_id": "project_delivery"},
+    )
+    assert plan_response.status_code == 200
+    assert plan_response.json()["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
+
+    launch_response = client.post(
+        "/runs/launch",
+        json={"goal": "Coordinate a multi-role delivery slice", "preset_id": "project_delivery", "execute": True},
+    )
+    assert launch_response.status_code == 200
+    launch_payload = launch_response.json()
+    assert launch_payload["selected_preset_id"] == "project_delivery"
+    assert launch_payload["plan_graph"]["preset_id"] == "project_delivery"
+
+    plan_status_response = client.get(f"/runs/{launch_payload['run']['run_id']}/plan-graph")
+    assert plan_status_response.status_code == 200
+    assert plan_status_response.json()["enabled"] is True
+    assert len(plan_status_response.json()["plan_graph"]["nodes"]) == 4
+
+
+def test_api_sessionful_external_agent_lane_projects_session_refs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_SESSIONFUL_EXTERNAL_AGENTS", "1")
+    monkeypatch.setattr(OpenCodeSessionAdapter, "launch", _fake_api_session_launch)
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    run = client.post("/runs", json={"goal": "Sessionful research via API", "preset_id": "research_spike_reviewable"}).json()
+    compile_response = client.post(
+        f"/runs/{run['run_id']}/compile",
+        json={"adapter_name": "opencode_session"},
+    )
+    assert compile_response.status_code == 200
+    assert compile_response.json()["execution_lane"] == "sessionful_external_agent"
+
+    resume_response = client.post(f"/runs/{run['run_id']}/resume")
+    assert resume_response.status_code == 200
+    detail = client.get(f"/runs/{run['run_id']}/status-detail").json()
+    if detail["run"]["status"] == "awaiting_review":
+        client.post(f"/runs/{run['run_id']}/approve")
+        detail = client.get(f"/runs/{run['run_id']}/status-detail").json()
+
+    assert detail["trace_context"]["external_session_id"] == "sess_api_123"
+    assert detail["trace_context"]["external_session_url"] == "https://example.com/sessions/api-123"
+    assert detail["trace_context"]["session_export_ref"].endswith(".json")
+    assert detail["result_envelope"]["session_ref"]["external_session_id"] == "sess_api_123"
 
 
 def test_api_exposes_effective_config_and_worker_pools(tmp_path: Path, monkeypatch) -> None:
@@ -590,6 +690,7 @@ def test_api_compile_and_mutation_report_support_repo_mutation_contract(
     assert resume_response.status_code == 200
     assert mutation_report_response.status_code == 200
     assert mutation_report_response.json()["mutation_result"]["final_test_status"] == "passed"
+    assert mutation_report_response.json()["result_envelope"]["mutations"]["final_test_status"] == "passed"
     assert target_file.read_text(encoding="utf-8") == "after\n"
 
 
@@ -940,6 +1041,7 @@ def test_api_audit_report_projects_closed_and_review_wait_states(tmp_path: Path)
     assert human_report.status_code == 200
     assert auto_report.json()["review_packet"]["closure_summary"]["state"] == "closed"
     assert auto_report.json()["summary"]["failure_taxonomy"]["category"] == "success"
+    assert auto_report.json()["result_envelope"]["verification"]["return_code"] == 0
     assert human_report.json()["review_packet"]["closure_summary"]["state"] == "awaiting_review"
     assert human_report.json()["review_packet"]["effective_review_state"] == "human_pending"
 

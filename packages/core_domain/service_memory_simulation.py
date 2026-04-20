@@ -4,12 +4,15 @@ from pathlib import Path
 from typing import Any
 
 from packages.contracts import (
+    AgentRoleType,
     ExecutionLaneType,
     DomainPackDefinition,
     MemoryCandidate,
     MemoryItem,
     MemoryNamespace,
     MemoryRetrievalPreview,
+    OrchestrationGraphNode,
+    OrchestrationPlanGraph,
     ReviewPolicy,
     RunEvent,
     RunEventType,
@@ -75,6 +78,28 @@ class MemorySimulationServiceMixin:
     def list_capability_sources(self) -> list[dict[str, Any]]:
         return self.capability_plane.list_capability_sources()
 
+    def list_capability_descriptors(self) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in self.capability_plane.list_capability_descriptors(
+                worker_pool_profiles=self.worker_pool_profiles,
+                runtime_gateway_description=self.runtime_gateway.describe(),
+                capability_routes=self.list_capability_routes(),
+                default_worker_pool_id=self.effective_config["worker_pools"]["default_pool_id"],
+            )
+        ]
+
+    def list_capability_health(self) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in self.capability_plane.list_capability_health(
+                worker_pool_profiles=self.worker_pool_profiles,
+                runtime_gateway_description=self.runtime_gateway.describe(),
+                capability_routes=self.list_capability_routes(),
+                default_worker_pool_id=self.effective_config["worker_pools"]["default_pool_id"],
+            )
+        ]
+
     def list_mcp_server_profiles(self) -> list[dict[str, Any]]:
         return [profile.model_dump(mode="json") for profile in self.capability_plane.list_mcp_profiles()]
 
@@ -114,6 +139,191 @@ class MemorySimulationServiceMixin:
             "tool_projection_manifest": manifest.model_dump(mode="json"),
             "mcp_server_profiles": [profile.model_dump(mode="json") for profile in profiles],
         }
+
+    def _primary_role_for_preset(self, preset_id: str) -> AgentRoleType:
+        mapping = {
+            "feature_delivery": AgentRoleType.coder,
+            "research_spike": AgentRoleType.researcher,
+            "research_spike_reviewable": AgentRoleType.researcher,
+            "optional_delivery": AgentRoleType.planner,
+            "advisory_delivery": AgentRoleType.reviewer,
+            "guarded_delivery": AgentRoleType.operator,
+            "project_delivery": AgentRoleType.operator,
+        }
+        return mapping.get(preset_id, AgentRoleType.operator)
+
+    def _review_gate_for_policy(self, review_policy: ReviewPolicy | str) -> str:
+        normalized = str(review_policy)
+        if normalized == str(ReviewPolicy.mandatory):
+            return "mandatory_human_review"
+        if normalized == str(ReviewPolicy.human_required):
+            return "human_review_required"
+        if normalized == str(ReviewPolicy.recommended):
+            return "recommended_review"
+        if normalized == str(ReviewPolicy.optional):
+            return "advisory_review"
+        return "none"
+
+    def _side_effect_level_for_adapter(self, adapter_name: str | None) -> str:
+        if adapter_name == "opencode":
+            return "repo_mutation_controlled"
+        if adapter_name in {"agent", "opencode_session"}:
+            return "session_read_write"
+        return "artifact_only"
+
+    def _build_orchestration_plan_graph(
+        self,
+        *,
+        goal: str,
+        preset_id: str,
+        run_id: str | None = None,
+        recommended_preset_id: str | None = None,
+    ) -> OrchestrationPlanGraph:
+        if preset_id == "project_delivery":
+            plan = self._default_project_delivery_plan(run_id or "preview_run")
+            planner_node_id: str | None = None
+            coder_node_id: str | None = None
+            researcher_node_id: str | None = None
+            nodes: list[OrchestrationGraphNode] = []
+            for step in sorted(plan.steps, key=lambda item: (item.sequence_no, str(item.role), item.step_id)):
+                dependencies: list[str] = []
+                if step.role in {AgentRoleType.coder, AgentRoleType.researcher} and planner_node_id is not None:
+                    dependencies.append(planner_node_id)
+                if step.role == AgentRoleType.reviewer:
+                    dependencies.extend([item for item in (coder_node_id, researcher_node_id) if item is not None])
+                node = OrchestrationGraphNode(
+                    role=step.role,
+                    goal=self._role_goal_for(goal, step.role),
+                    required_capabilities=[step.preset_id, *( [step.preferred_adapter] if step.preferred_adapter else [] )],
+                    dependencies=dependencies,
+                    review_gate="advisory_review" if step.role == AgentRoleType.reviewer else "none",
+                    side_effect_level=self._side_effect_level_for_adapter(step.preferred_adapter),
+                    fallback_path=[
+                        adapter
+                        for adapter in (step.preferred_adapter, step.fallback_adapter)
+                        if adapter is not None
+                    ],
+                    preset_id=step.preset_id,
+                    preferred_adapter=step.preferred_adapter,
+                )
+                nodes.append(node)
+                if step.role == AgentRoleType.planner:
+                    planner_node_id = node.node_id
+                elif step.role == AgentRoleType.coder:
+                    coder_node_id = node.node_id
+                elif step.role == AgentRoleType.researcher:
+                    researcher_node_id = node.node_id
+            return OrchestrationPlanGraph(
+                run_id=run_id,
+                preset_id=preset_id,
+                goal=goal,
+                execution_mode="planner_generated_graph_with_parallel_children",
+                summary="Planner decomposes the goal, coder and researcher run in parallel, reviewer closes the loop.",
+                risk_summary=[
+                    "parallel child runs require barrier release before review",
+                    "repo mutation stays isolated to the coder lane",
+                    "human intervention may still be required when review policy escalates",
+                ],
+                nodes=nodes,
+                recommended_preset_id=recommended_preset_id or preset_id,
+            )
+
+        preset = self.preset_repo.get(preset_id)
+        if preset is None:
+            raise PresetNotFoundError(f"preset not found: {preset_id}")
+        resolved_task_kind = self._resolve_task_kind(preset, None)
+        domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
+        selected_adapter = self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
+        capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
+        lane_type = self._resolve_execution_lane(
+            preset=preset,
+            task_kind=resolved_task_kind,
+            selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
+        )
+        adapter_name = capability_route.adapter_name if capability_route is not None else None
+        node = OrchestrationGraphNode(
+            role=self._primary_role_for_preset(preset_id),
+            goal=goal,
+            required_capabilities=[
+                str(resolved_task_kind),
+                str(lane_type),
+                *( [adapter_name] if adapter_name is not None else [] ),
+            ],
+            review_gate=self._review_gate_for_policy(preset.default_review_policy),
+            side_effect_level=self._side_effect_level_for_adapter(adapter_name),
+            fallback_path=[item for item in [adapter_name] if item is not None],
+            preset_id=preset_id,
+            preferred_adapter=adapter_name,
+        )
+        risk_summary: list[str] = []
+        if str(preset.default_review_policy) != str(ReviewPolicy.auto_only):
+            risk_summary.append(f"review policy `{preset.default_review_policy}` may insert a human approval step")
+        if lane_type == ExecutionLaneType.sessionful_external_agent:
+            risk_summary.append("sessionful external lane must stay outside default repo mutation flow")
+        return OrchestrationPlanGraph(
+            run_id=run_id,
+            preset_id=preset_id,
+            goal=goal,
+            execution_mode="single_path",
+            summary=f"Single-path execution through `{preset_id}` with `{resolved_task_kind}`.",
+            risk_summary=risk_summary,
+            nodes=[node],
+            recommended_preset_id=recommended_preset_id or preset_id,
+        )
+
+    def preview_orchestration_plan_graph(
+        self,
+        *,
+        goal: str,
+        preset_id: str | None = None,
+    ) -> dict[str, Any]:
+        suggestions = [item.model_dump(mode="json") for item in self.suggest_presets(goal)]
+        selected_preset_id = preset_id or (suggestions[0]["preset_id"] if suggestions else "feature_delivery")
+        graph = self._build_orchestration_plan_graph(
+            goal=goal,
+            preset_id=selected_preset_id,
+            recommended_preset_id=suggestions[0]["preset_id"] if suggestions else selected_preset_id,
+        )
+        return {
+            "goal": goal,
+            "selected_preset_id": selected_preset_id,
+            "suggestions": suggestions,
+            "plan_graph": graph.model_dump(mode="json"),
+        }
+
+    def launch_goal(
+        self,
+        *,
+        goal: str,
+        preset_id: str | None = None,
+        execute: bool = False,
+    ) -> dict[str, Any]:
+        preview = self.preview_orchestration_plan_graph(goal=goal, preset_id=preset_id)
+        selected_preset_id = str(preview["selected_preset_id"])
+        run = self.create_run(goal=goal, preset_id=selected_preset_id)
+        prepared = self.compile_run(run.run_id)
+        payload = {
+            "goal": goal,
+            "selected_preset_id": selected_preset_id,
+            "plan_graph": preview["plan_graph"],
+            "suggestions": preview["suggestions"],
+            "run": prepared.run.model_dump(mode="json"),
+            "runtime_task_id": prepared.task_packet.runtime_task_id,
+            "handoff_id": prepared.handoff.handoff_id,
+            "state_ref_id": prepared.state_ref.state_ref_id,
+            "execution_lane": str(prepared.execution_lane),
+            "capability_adapter": (
+                prepared.capability_route.adapter_name if prepared.capability_route is not None else None
+            ),
+        }
+        if execute:
+            executed = self.resume_run(run.run_id)
+            payload["run"] = executed.run.model_dump(mode="json")
+            payload["evidence_id"] = executed.evidence.evidence_id
+            payload["review_decision"] = (
+                executed.review_verdict.decision if executed.review_verdict is not None else None
+            )
+        return payload
 
     def runtime_gateway_status(self) -> dict[str, Any]:
         return self.runtime_gateway.describe()

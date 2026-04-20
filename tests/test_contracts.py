@@ -23,6 +23,10 @@ from packages.contracts import (
     Phase,
     PresetSuggestion,
     PresetDefinition,
+    ResultEnvelope,
+    ResultProvenance,
+    ResultRawRef,
+    ResultVerification,
     ReviewDecision,
     ReviewVerdict,
     Run,
@@ -91,6 +95,19 @@ def test_wave1_contracts_round_trip() -> None:
         summary="Command completed successfully.",
         return_code=0,
         raw_execution={"stdout": "ok", "stderr": ""},
+        result_envelope=ResultEnvelope(
+            summary="Command completed successfully.",
+            raw_ref=ResultRawRef(runtime_task_id=runtime_task.runtime_task_id),
+            artifacts=[],
+            verification=ResultVerification(return_code=0, checks=[], known_gaps=[]),
+            provenance=ResultProvenance(
+                adapter_name="shell",
+                started_at=run.created_at,
+                finished_at=run.created_at,
+                duration_ms=0,
+            ),
+            confidence=1.0,
+        ),
     )
     verdict = ReviewVerdict(
         run_id=run.run_id,
@@ -216,7 +233,7 @@ def test_wave1_contracts_round_trip() -> None:
     )
     mutation_contract = MutationContract(
         task_card_ref="M16-1A",
-        task_card_path="docs/task_cards/m16_phase_1/M16-1A.md",
+        task_card_path="docs/current_development_workflow.md",
         write_set=["packages/core_domain/services.py"],
         read_set=["packages/contracts/models.py"],
         test_commands=["python -m pytest tests/test_execution_loop.py -q"],

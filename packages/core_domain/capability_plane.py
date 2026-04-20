@@ -12,6 +12,8 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from packages.contracts import (
+    CapabilityDescriptor,
+    CapabilityHealth,
     CapabilitySourceType,
     ExecutionLaneType,
     MCPServerProfile,
@@ -21,6 +23,7 @@ from packages.contracts import (
     ToolProjectionEntry,
     ToolProjectionManifest,
     TrustTier,
+    WorkerPoolProfile,
 )
 from packages.core_domain.agent_tools import built_in_tool_specs
 
@@ -273,6 +276,184 @@ class CapabilityPlane:
             )
         return sources
 
+    def list_capability_descriptors(
+        self,
+        *,
+        worker_pool_profiles: list[WorkerPoolProfile] | None = None,
+        runtime_gateway_description: dict[str, Any] | None = None,
+        capability_routes: list[dict[str, Any]] | None = None,
+        default_worker_pool_id: str | None = None,
+    ) -> list[CapabilityDescriptor]:
+        descriptors: list[CapabilityDescriptor] = [
+            CapabilityDescriptor(
+                capability_id="built_in:local",
+                provider_kind="built_in",
+                transport="local",
+                auth_mode="none",
+                scopes=[spec["tool_name"] for spec in built_in_tool_specs()],
+                allowed_task_kinds=[TaskKind.shell_exec],
+                cost_class="local_low",
+                latency_class="local_low",
+                side_effect_level="read_only",
+                evidence_schema={
+                    "result_envelope": "v1",
+                    "tool_projection_manifest": "v1",
+                },
+                display_name="Built-in Local Tools",
+                source_type=CapabilitySourceType.built_in,
+            )
+        ]
+        for profile in self.mcp_source.list_profiles():
+            source_type = (
+                CapabilitySourceType.mcp_stdio if profile.transport == MCPTransport.stdio else CapabilitySourceType.mcp_http
+            )
+            descriptors.append(
+                CapabilityDescriptor(
+                    capability_id=f"mcp_profile:{profile.profile_id}",
+                    provider_kind="mcp_profile",
+                    transport=str(profile.transport),
+                    auth_mode=profile.auth_mode,
+                    scopes=list(profile.allowed_tools),
+                    allowed_task_kinds=[TaskKind.shell_exec],
+                    cost_class="local_low" if profile.transport == MCPTransport.stdio else "remote_variable",
+                    latency_class="local_low" if profile.transport == MCPTransport.stdio else "remote_medium",
+                    side_effect_level="read_only",
+                    evidence_schema={
+                        "result_envelope": "v1",
+                        "tool_projection_manifest": "v1",
+                        "server_profile_id": profile.profile_id,
+                    },
+                    display_name=profile.name,
+                    source_type=source_type,
+                    profile_id=profile.profile_id,
+                    enabled=profile.enabled,
+                )
+            )
+        for route in capability_routes or []:
+            capability = str(route.get("capability") or "")
+            adapter_name = str(route.get("adapter_name") or "")
+            if not capability or not adapter_name:
+                continue
+            side_effect_level = "repo_mutation_controlled" if adapter_name == "opencode" else "artifact_only"
+            if adapter_name in {"agent", "opencode_session"}:
+                side_effect_level = "session_read_write"
+            descriptors.append(
+                CapabilityDescriptor(
+                    capability_id=f"adapter_route:{capability}:{adapter_name}",
+                    provider_kind="adapter_route",
+                    transport="local_cli",
+                    auth_mode="local_process",
+                    scopes=[str(route.get("adapter_class") or adapter_name)],
+                    allowed_task_kinds=[TaskKind(capability)],
+                    cost_class="local_low" if adapter_name in {"shell", "noop"} else "provider_variable",
+                    latency_class="local_low" if adapter_name in {"shell", "noop"} else "provider_variable",
+                    side_effect_level=side_effect_level,
+                    evidence_schema={
+                        "result_envelope": "v1",
+                        "task_evidence": "v1",
+                    },
+                    display_name=f"{adapter_name} route for {capability}",
+                    adapter_name=adapter_name,
+                    enabled=True,
+                    default_selected=adapter_name in {"shell", "noop"},
+                )
+            )
+        for profile in worker_pool_profiles or []:
+            descriptors.append(
+                CapabilityDescriptor(
+                    capability_id=f"worker_pool:{profile.worker_pool_id}",
+                    provider_kind="worker_pool",
+                    transport=str(profile.transport),
+                    auth_mode=profile.auth_mode,
+                    scopes=[profile.adapter_name, profile.dispatch_mode],
+                    allowed_task_kinds=[TaskKind.shell_exec],
+                    cost_class="local_low" if str(profile.transport) == "local" else "remote_variable",
+                    latency_class="local_low" if str(profile.transport) == "local" else "remote_medium",
+                    side_effect_level="artifact_only" if str(profile.transport) == "local" else "remote_dispatch",
+                    evidence_schema={
+                        "result_envelope": "v1",
+                        "execution_target": "v1",
+                        "lease_renewals": "v1",
+                    },
+                    display_name=profile.name,
+                    profile_id=profile.worker_pool_id,
+                    adapter_name=profile.adapter_name,
+                    enabled=profile.enabled,
+                    default_selected=profile.worker_pool_id == default_worker_pool_id,
+                )
+            )
+        if runtime_gateway_description is not None:
+            provider = str(runtime_gateway_description.get("provider") or "null")
+            model = runtime_gateway_description.get("model")
+            scopes = [provider]
+            if model:
+                scopes.append(str(model))
+            descriptors.append(
+                CapabilityDescriptor(
+                    capability_id=f"runtime_gateway:{provider}",
+                    provider_kind="runtime_gateway",
+                    transport="hosted" if provider != "null" else "local",
+                    auth_mode="env" if provider != "null" else "none",
+                    scopes=scopes,
+                    allowed_task_kinds=[TaskKind.shell_exec],
+                    cost_class="provider_variable" if provider != "null" else "none",
+                    latency_class="provider_variable" if provider != "null" else "local_low",
+                    side_effect_level="read_only",
+                    evidence_schema={
+                        "result_envelope": "v1",
+                        "runtime_gateway": "v1",
+                    },
+                    display_name=f"Runtime gateway ({provider})",
+                    enabled=provider != "null",
+                )
+            )
+        return sorted(descriptors, key=lambda item: (item.provider_kind, item.capability_id))
+
+    def list_capability_health(
+        self,
+        *,
+        worker_pool_profiles: list[WorkerPoolProfile] | None = None,
+        runtime_gateway_description: dict[str, Any] | None = None,
+        capability_routes: list[dict[str, Any]] | None = None,
+        default_worker_pool_id: str | None = None,
+    ) -> list[CapabilityHealth]:
+        descriptors = self.list_capability_descriptors(
+            worker_pool_profiles=worker_pool_profiles,
+            runtime_gateway_description=runtime_gateway_description,
+            capability_routes=capability_routes,
+            default_worker_pool_id=default_worker_pool_id,
+        )
+        health: list[CapabilityHealth] = []
+        for descriptor in descriptors:
+            failure_classes = self._failure_classes_for_descriptor(descriptor)
+            status = "ready" if descriptor.enabled else "disabled"
+            reason = None if descriptor.enabled else "descriptor_disabled"
+            health.append(
+                CapabilityHealth(
+                    descriptor=descriptor,
+                    status=status,
+                    reason=reason,
+                    tool_count=len(descriptor.scopes),
+                    failure_classes=failure_classes,
+                    recent_call_summary={
+                        "recent_success_count": 0,
+                        "recent_failure_count": 0,
+                    },
+                )
+            )
+        return health
+
+    def _failure_classes_for_descriptor(self, descriptor: CapabilityDescriptor) -> list[str]:
+        if descriptor.provider_kind == "mcp_profile":
+            return ["profile_disabled", "tool_unavailable", "startup_failed", "call_timeout"]
+        if descriptor.provider_kind == "worker_pool":
+            return ["pool_disabled", "dispatch_failed", "callback_timeout"]
+        if descriptor.provider_kind == "runtime_gateway":
+            return ["provider_not_configured", "provider_call_failed", "provider_timeout"]
+        if descriptor.provider_kind == "adapter_route":
+            return ["adapter_unavailable", "execution_failed", "artifact_missing"]
+        return ["schema_mismatch"]
+
     def build_projection_manifest(
         self,
         *,
@@ -286,7 +467,12 @@ class CapabilityPlane:
     ) -> tuple[ToolProjectionManifest, list[MCPServerProfile]]:
         entries: list[ToolProjectionEntry] = []
         profiles: list[MCPServerProfile] = []
-        if lane_type in {ExecutionLaneType.standard_agent, ExecutionLaneType.durable_incremental, ExecutionLaneType.graph_native_complex}:
+        if lane_type in {
+            ExecutionLaneType.standard_agent,
+            ExecutionLaneType.durable_incremental,
+            ExecutionLaneType.graph_native_complex,
+            ExecutionLaneType.sessionful_external_agent,
+        }:
             entries.extend(
                 self.built_in_source.list_tool_entries(
                     preset_id=preset_id,

@@ -90,6 +90,7 @@ class ExecutionLaneType(StrEnum):
     standard_agent = "standard_agent"
     durable_incremental = "durable_incremental"
     graph_native_complex = "graph_native_complex"
+    sessionful_external_agent = "sessionful_external_agent"
 
 
 class CapabilitySourceType(StrEnum):
@@ -322,6 +323,35 @@ class ToolProjectionManifest(PersistedContractModel):
     trust_tiers: list[TrustTier] = Field(default_factory=list)
 
 
+class CapabilityDescriptor(ContractModel):
+    capability_id: str
+    provider_kind: str
+    transport: str
+    auth_mode: str = "none"
+    scopes: list[str] = Field(default_factory=list)
+    allowed_task_kinds: list[TaskKind] = Field(default_factory=list)
+    cost_class: str = "local_low"
+    latency_class: str = "local_low"
+    side_effect_level: str = "read_only"
+    evidence_schema: dict[str, Any] = Field(default_factory=dict)
+    display_name: str | None = None
+    source_type: CapabilitySourceType | None = None
+    profile_id: str | None = None
+    adapter_name: str | None = None
+    enabled: bool = True
+    default_selected: bool = False
+
+
+class CapabilityHealth(ContractModel):
+    descriptor: CapabilityDescriptor
+    status: str = "ready"
+    reason: str | None = None
+    tool_count: int = Field(default=0, ge=0)
+    failure_classes: list[str] = Field(default_factory=list)
+    recent_call_summary: dict[str, Any] = Field(default_factory=dict)
+    checked_at: datetime = Field(default_factory=utc_now)
+
+
 class WorkerPoolProfile(PersistedContractModel):
     worker_pool_id: str
     name: str
@@ -395,6 +425,8 @@ class TraceContext(ContractModel):
     checkpoint_id: str | None = None
     assistant_id: str | None = None
     external_session_id: str | None = None
+    external_session_url: str | None = None
+    session_export_ref: str | None = None
     memory_item_id: str | None = None
     simulation_record_id: str | None = None
 
@@ -482,6 +514,45 @@ class CheckResult(ContractModel):
     detail: str | None = None
 
 
+class ExternalSessionRef(ContractModel):
+    external_session_id: str | None = None
+    external_session_url: str | None = None
+    session_export_ref: str | None = None
+
+
+class ResultRawRef(ContractModel):
+    storage_kind: str = "evidence.raw_execution"
+    runtime_task_id: str
+    payload_path: str = "raw_execution"
+    artifact_paths: list[str] = Field(default_factory=list)
+
+
+class ResultVerification(ContractModel):
+    return_code: int
+    checks: list[CheckResult] = Field(default_factory=list)
+    known_gaps: list[str] = Field(default_factory=list)
+
+
+class ResultProvenance(ContractModel):
+    adapter_name: str
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: int = Field(default=0, ge=0)
+
+
+class ResultEnvelope(ContractModel):
+    summary: str
+    raw_ref: ResultRawRef
+    artifacts: list[ArtifactRef] = Field(default_factory=list)
+    verification: ResultVerification
+    provenance: ResultProvenance
+    mutations: dict[str, Any] | None = None
+    usage: dict[str, Any] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    external_trace_id: str | None = None
+    session_ref: ExternalSessionRef | None = None
+
+
 class Evidence(PersistedContractModel):
     evidence_id: str = Field(default_factory=lambda: new_id("evidence"))
     run_id: str
@@ -493,6 +564,16 @@ class Evidence(PersistedContractModel):
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     return_code: int
     raw_execution: dict[str, Any] = Field(default_factory=dict)
+    result_envelope: ResultEnvelope | None = None
+
+    @model_validator(mode="after")
+    def sync_result_envelope(self) -> "Evidence":
+        payload = self.raw_execution.get("result_envelope")
+        if self.result_envelope is None and isinstance(payload, dict):
+            self.result_envelope = ResultEnvelope.model_validate(payload)
+        elif self.result_envelope is not None:
+            self.raw_execution["result_envelope"] = self.result_envelope.model_dump(mode="json")
+        return self
 
 
 class ReviewVerdict(PersistedContractModel):
@@ -718,6 +799,31 @@ class OrchestrationPlan(PersistedContractModel):
     steps: list[OrchestrationStep] = Field(default_factory=list)
     barriers: list[OrchestrationBarrier] = Field(default_factory=list)
     execution_mode: str = "planner_parallel_reviewer"
+
+
+class OrchestrationGraphNode(ContractModel):
+    node_id: str = Field(default_factory=lambda: new_id("graphnode"))
+    role: AgentRoleType
+    goal: str
+    required_capabilities: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    review_gate: str = "none"
+    side_effect_level: str = "read_only"
+    fallback_path: list[str] = Field(default_factory=list)
+    preset_id: str | None = None
+    preferred_adapter: str | None = None
+
+
+class OrchestrationPlanGraph(PersistedContractModel):
+    plan_graph_id: str = Field(default_factory=lambda: new_id("plangraph"))
+    run_id: str | None = None
+    preset_id: str
+    goal: str
+    execution_mode: str = "single_path"
+    summary: str | None = None
+    risk_summary: list[str] = Field(default_factory=list)
+    nodes: list[OrchestrationGraphNode] = Field(default_factory=list)
+    recommended_preset_id: str | None = None
 
 
 class SimulationPolicyDefinition(PersistedContractModel):

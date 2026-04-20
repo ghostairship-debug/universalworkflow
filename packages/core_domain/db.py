@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from packages.core_domain.config import build_effective_config
 from packages.core_domain.errors import DatabaseBusyError
@@ -110,19 +111,55 @@ def reset_db(db_path: str | Path | None = None) -> Path:
     return path
 
 
+def _ensure_migrations_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS _migrations (
+          migration_id TEXT PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def get_migration_status(db_path: str | Path | None = None, migrations_dir: str | Path | None = None) -> dict[str, Any]:
+    path = resolve_db_path(db_path)
+    migration_dir = Path(migrations_dir) if migrations_dir is not None else MIGRATIONS_DIR
+    migration_files = sorted(migration_dir.glob("*.sql"))
+    available_ids = [migration_file.name for migration_file in migration_files]
+    with get_connection(path) as connection:
+        _ensure_migrations_table(connection)
+        applied_rows = connection.execute(
+            "SELECT migration_id, applied_at FROM _migrations ORDER BY migration_id"
+        ).fetchall()
+    applied = [
+        {"migration_id": str(row["migration_id"]), "applied_at": str(row["applied_at"])}
+        for row in applied_rows
+    ]
+    applied_ids = {item["migration_id"] for item in applied}
+    available_id_set = set(available_ids)
+    pending = [migration_id for migration_id in available_ids if migration_id not in applied_ids]
+    unknown_applied = [migration_id for migration_id in applied_ids if migration_id not in available_id_set]
+    return {
+        "db_path": path.resolve().as_posix(),
+        "migrations_dir": migration_dir.resolve().as_posix(),
+        "available_count": len(available_ids),
+        "applied_count": len(applied),
+        "pending_count": len(pending),
+        "up_to_date": not pending,
+        "available": available_ids,
+        "applied": applied,
+        "pending": pending,
+        "unknown_applied": sorted(unknown_applied),
+    }
+
+
 def migrate(db_path: str | Path | None = None, migrations_dir: str | Path | None = None) -> list[str]:
     path = resolve_db_path(db_path)
     migration_dir = Path(migrations_dir) if migrations_dir is not None else MIGRATIONS_DIR
     applied: list[str] = []
     with get_connection(path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS _migrations (
-              migration_id TEXT PRIMARY KEY,
-              applied_at TEXT NOT NULL
-            )
-            """
-        )
+        _ensure_migrations_table(connection)
         existing = {
             row["migration_id"]
             for row in connection.execute("SELECT migration_id FROM _migrations").fetchall()

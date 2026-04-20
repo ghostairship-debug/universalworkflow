@@ -138,6 +138,20 @@ class LifecycleServiceMixin:
             mcp_server_profiles=mcp_server_profiles,
             mutation_contract=mutation_contract,
         )
+        plan_graph = self._build_orchestration_plan_graph(
+            goal=run.goal,
+            preset_id=preset.preset_id,
+            run_id=run.run_id,
+        )
+        snapshot.task_packet = TaskPacket.model_validate(
+            {
+                **snapshot.task_packet.model_dump(mode="json"),
+                "env": {
+                    **snapshot.task_packet.env,
+                    "WORKFLOW_ORCHESTRATION_PLAN_GRAPH": json.dumps(plan_graph.model_dump(mode="json"), ensure_ascii=False),
+                },
+            }
+        )
         worker_pool_profile = self._selected_worker_pool_profile()
         if worker_pool_profile is not None:
             snapshot.task_packet = TaskPacket.model_validate(
@@ -162,6 +176,170 @@ class LifecycleServiceMixin:
                 }
             )
         return snapshot
+
+    def _prepared_run_bundle(
+        self,
+        *,
+        run: Run,
+        preset: PresetDefinition,
+        snapshot: CompileSnapshot,
+        state_ref: RuntimeStateRef,
+    ) -> PreparedRunBundle:
+        return PreparedRunBundle(
+            run=run,
+            preset=preset,
+            task_packet=snapshot.task_packet,
+            state_ref=state_ref,
+            handoff=snapshot.handoff,
+            domain_pack=snapshot.domain_pack,
+            capability_route=snapshot.capability_route,
+            memory_preview=snapshot.memory_preview,
+            execution_lane=snapshot.execution_lane,
+            tool_projection_manifest=snapshot.tool_projection_manifest,
+            mcp_server_profiles=snapshot.mcp_server_profiles,
+        )
+
+    def _prepared_snapshot_payload_extra(self, snapshot: CompileSnapshot) -> dict[str, Any]:
+        return {
+            "domain_pack_id": snapshot.domain_pack.domain_pack_id if snapshot.domain_pack is not None else None,
+            "domain_pack_resolution": (
+                snapshot.domain_pack.model_dump(mode="json") if snapshot.domain_pack is not None else None
+            ),
+            "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
+            "memory_retrieval_preview": (
+                snapshot.memory_preview.model_dump(mode="json") if snapshot.memory_preview is not None else None
+            ),
+        }
+
+    def _persist_prepared_run(
+        self,
+        *,
+        run: Run,
+        preset: PresetDefinition,
+        snapshot: CompileSnapshot,
+        connection: Any,
+        lifecycle_action: str,
+        run_event_summary: str,
+        snapshot_summary: str,
+    ) -> PreparedRunBundle:
+        state_ref = self._state_ref_with_compile_context(
+            self.runtime_gateway.start(run.run_id, snapshot.runtime_task.runtime_task_id),
+            run,
+            preset,
+            snapshot,
+        )
+        state_ref = self._state_ref_with_m8_context(state_ref, snapshot)
+        trace_id = self._export_trace(
+            run_id=run.run_id,
+            name=lifecycle_action,
+            lane_type=snapshot.execution_lane,
+            status=RunStatus.prepared,
+            attributes={
+                "runtime_task_id": snapshot.runtime_task.runtime_task_id,
+                "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
+                "projection_id": (
+                    snapshot.tool_projection_manifest.projection_id
+                    if snapshot.tool_projection_manifest is not None
+                    else None
+                ),
+            },
+        )
+        if trace_id is not None:
+            state_ref = self._state_ref_with_payload_updates(state_ref, {"external_trace_id": trace_id})
+        stored_state_ref = self.runtime_state_repo.upsert(state_ref, connection=connection)
+        updated_run = self._transition_run_status(run, lifecycle_action, RunStatus.prepared, connection=connection)
+        for phase in (snapshot.compile_phase, snapshot.execution_phase):
+            self.event_repo.append(
+                RunEvent(
+                    run_id=run.run_id,
+                    event_type=RunEventType.phase_created,
+                    object_type="phase",
+                    object_id=phase.phase_id,
+                    summary="Phase created",
+                    payload_json={"phase_id": phase.phase_id, "phase_name": phase.name},
+                ),
+                connection=connection,
+            )
+        self.event_repo.append(
+            RunEvent(
+                run_id=run.run_id,
+                event_type=RunEventType.handoff_created,
+                object_type="handoff",
+                object_id=snapshot.handoff.handoff_id,
+                summary="Handoff created",
+                payload_json={
+                    "handoff_id": snapshot.handoff.handoff_id,
+                    "from_phase_id": snapshot.handoff.from_phase_id,
+                    "to_phase_id": snapshot.handoff.to_phase_id,
+                },
+            ),
+            connection=connection,
+        )
+        self.event_repo.append(
+            RunEvent(
+                run_id=run.run_id,
+                event_type=RunEventType.runtime_task_created,
+                object_type="runtime_task",
+                object_id=snapshot.runtime_task.runtime_task_id,
+                summary="Runtime task created",
+                payload_json={
+                    "runtime_task_id": snapshot.runtime_task.runtime_task_id,
+                    "task_kind": snapshot.runtime_task.task_kind,
+                    "summary": snapshot.runtime_task.summary,
+                },
+            ),
+            connection=connection,
+        )
+        if snapshot.domain_pack is not None and snapshot.capability_route is not None:
+            self.event_repo.append(
+                RunEvent(
+                    run_id=run.run_id,
+                    event_type=RunEventType.domain_pack_selected,
+                    object_type="domain_pack",
+                    object_id=snapshot.domain_pack.domain_pack_id,
+                    summary="Domain pack selected",
+                    payload_json={
+                        "domain_pack_id": snapshot.domain_pack.domain_pack_id,
+                        "domain_pack_name": snapshot.domain_pack.name,
+                        "matched_preset_id": snapshot.domain_pack.matched_preset_id,
+                        "task_kind": snapshot.runtime_task.task_kind,
+                        "adapter_name": snapshot.capability_route.adapter_name,
+                        "operator_label": snapshot.domain_pack.runtime_projection.operator_label,
+                        "capability_tags": snapshot.domain_pack.capability_exposure.capability_tags,
+                        "evidence_expectations": snapshot.domain_pack.runtime_projection.evidence_expectations,
+                    },
+                ),
+                connection=connection,
+            )
+        self.event_repo.append(
+            RunEvent(
+                run_id=run.run_id,
+                event_type=RunEventType.run_compiled,
+                object_type="run",
+                object_id=run.run_id,
+                summary=run_event_summary,
+                payload_json={
+                    "run_id": run.run_id,
+                    "status": RunStatus.prepared,
+                    "runtime_task_id": snapshot.runtime_task.runtime_task_id,
+                },
+            ),
+            connection=connection,
+        )
+        self._capture_run_snapshot(
+            run.run_id,
+            RunSnapshotStage.compiled,
+            snapshot_summary,
+            runtime_task_id=snapshot.runtime_task.runtime_task_id,
+            connection=connection,
+            payload_extra=self._prepared_snapshot_payload_extra(snapshot),
+        )
+        return self._prepared_run_bundle(
+            run=updated_run,
+            preset=preset,
+            snapshot=snapshot,
+            state_ref=stored_state_ref,
+        )
 
     def compile_run(
         self,
@@ -211,140 +389,15 @@ class LifecycleServiceMixin:
                 trigger=RuntimeAttemptTrigger.compile,
                 connection=connection,
             )
-            state_ref = self._state_ref_with_compile_context(
-                self.runtime_gateway.start(run.run_id, snapshot.runtime_task.runtime_task_id),
-                run,
-                preset,
-                snapshot,
-            )
-            state_ref = self._state_ref_with_m8_context(state_ref, snapshot)
-            trace_id = self._export_trace(
-                run_id=run.run_id,
-                name="compile",
-                lane_type=snapshot.execution_lane,
-                status=RunStatus.prepared,
-                attributes={
-                    "runtime_task_id": snapshot.runtime_task.runtime_task_id,
-                    "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
-                    "projection_id": (
-                        snapshot.tool_projection_manifest.projection_id
-                        if snapshot.tool_projection_manifest is not None
-                        else None
-                    ),
-                },
-            )
-            if trace_id is not None:
-                state_ref = self._state_ref_with_payload_updates(state_ref, {"external_trace_id": trace_id})
-            stored_state_ref = self.runtime_state_repo.upsert(state_ref, connection=connection)
-            updated_run = self._transition_run_status(run, "compile", RunStatus.prepared, connection=connection)
-            for phase in (snapshot.compile_phase, snapshot.execution_phase):
-                self.event_repo.append(
-                    RunEvent(
-                        run_id=run.run_id,
-                        event_type=RunEventType.phase_created,
-                        object_type="phase",
-                        object_id=phase.phase_id,
-                        summary="Phase created",
-                        payload_json={"phase_id": phase.phase_id, "phase_name": phase.name},
-                    ),
-                    connection=connection,
-                )
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run.run_id,
-                    event_type=RunEventType.handoff_created,
-                    object_type="handoff",
-                    object_id=snapshot.handoff.handoff_id,
-                    summary="Handoff created",
-                    payload_json={
-                        "handoff_id": snapshot.handoff.handoff_id,
-                        "from_phase_id": snapshot.handoff.from_phase_id,
-                        "to_phase_id": snapshot.handoff.to_phase_id,
-                    },
-                ),
+            return self._persist_prepared_run(
+                run=run,
+                preset=preset,
+                snapshot=snapshot,
                 connection=connection,
+                lifecycle_action="compile",
+                run_event_summary="Run compiled",
+                snapshot_summary="Compile snapshot captured",
             )
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run.run_id,
-                    event_type=RunEventType.runtime_task_created,
-                    object_type="runtime_task",
-                    object_id=snapshot.runtime_task.runtime_task_id,
-                    summary="Runtime task created",
-                    payload_json={
-                        "runtime_task_id": snapshot.runtime_task.runtime_task_id,
-                        "task_kind": snapshot.runtime_task.task_kind,
-                        "summary": snapshot.runtime_task.summary,
-                    },
-                ),
-                connection=connection,
-            )
-            if snapshot.domain_pack is not None and snapshot.capability_route is not None:
-                self.event_repo.append(
-                    RunEvent(
-                        run_id=run.run_id,
-                        event_type=RunEventType.domain_pack_selected,
-                        object_type="domain_pack",
-                        object_id=snapshot.domain_pack.domain_pack_id,
-                        summary="Domain pack selected",
-                        payload_json={
-                            "domain_pack_id": snapshot.domain_pack.domain_pack_id,
-                            "domain_pack_name": snapshot.domain_pack.name,
-                            "matched_preset_id": snapshot.domain_pack.matched_preset_id,
-                            "task_kind": snapshot.runtime_task.task_kind,
-                            "adapter_name": snapshot.capability_route.adapter_name,
-                            "operator_label": snapshot.domain_pack.runtime_projection.operator_label,
-                            "capability_tags": snapshot.domain_pack.capability_exposure.capability_tags,
-                            "evidence_expectations": snapshot.domain_pack.runtime_projection.evidence_expectations,
-                        },
-                    ),
-                    connection=connection,
-                )
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run.run_id,
-                    event_type=RunEventType.run_compiled,
-                    object_type="run",
-                    object_id=run.run_id,
-                    summary="Run compiled",
-                    payload_json={
-                        "run_id": run.run_id,
-                        "status": RunStatus.prepared,
-                        "runtime_task_id": snapshot.runtime_task.runtime_task_id,
-                    },
-                ),
-                connection=connection,
-            )
-            self._capture_run_snapshot(
-                run.run_id,
-                RunSnapshotStage.compiled,
-                "Compile snapshot captured",
-                runtime_task_id=snapshot.runtime_task.runtime_task_id,
-                connection=connection,
-                payload_extra={
-                    "domain_pack_id": snapshot.domain_pack.domain_pack_id if snapshot.domain_pack is not None else None,
-                    "domain_pack_resolution": (
-                        snapshot.domain_pack.model_dump(mode="json") if snapshot.domain_pack is not None else None
-                    ),
-                    "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
-                    "memory_retrieval_preview": (
-                        snapshot.memory_preview.model_dump(mode="json") if snapshot.memory_preview is not None else None
-                    ),
-                },
-            )
-        return PreparedRunBundle(
-            run=updated_run,
-            preset=preset,
-            task_packet=snapshot.task_packet,
-            state_ref=stored_state_ref,
-            handoff=snapshot.handoff,
-            domain_pack=snapshot.domain_pack,
-            capability_route=snapshot.capability_route,
-            memory_preview=snapshot.memory_preview,
-            execution_lane=snapshot.execution_lane,
-            tool_projection_manifest=snapshot.tool_projection_manifest,
-            mcp_server_profiles=snapshot.mcp_server_profiles,
-        )
 
     def recompile_run(
         self,
@@ -417,140 +470,15 @@ class LifecycleServiceMixin:
                 connection=connection,
                 reason_if_superseded="recompile",
             )
-            state_ref = self._state_ref_with_compile_context(
-                self.runtime_gateway.start(run.run_id, snapshot.runtime_task.runtime_task_id),
-                run,
-                preset,
-                snapshot,
-            )
-            state_ref = self._state_ref_with_m8_context(state_ref, snapshot)
-            trace_id = self._export_trace(
-                run_id=run.run_id,
-                name="recompile",
-                lane_type=snapshot.execution_lane,
-                status=RunStatus.prepared,
-                attributes={
-                    "runtime_task_id": snapshot.runtime_task.runtime_task_id,
-                    "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
-                    "projection_id": (
-                        snapshot.tool_projection_manifest.projection_id
-                        if snapshot.tool_projection_manifest is not None
-                        else None
-                    ),
-                },
-            )
-            if trace_id is not None:
-                state_ref = self._state_ref_with_payload_updates(state_ref, {"external_trace_id": trace_id})
-            stored_state_ref = self.runtime_state_repo.upsert(state_ref, connection=connection)
-            updated_run = self._transition_run_status(run, "recompile", RunStatus.prepared, connection=connection)
-            for phase in (snapshot.compile_phase, snapshot.execution_phase):
-                self.event_repo.append(
-                    RunEvent(
-                        run_id=run.run_id,
-                        event_type=RunEventType.phase_created,
-                        object_type="phase",
-                        object_id=phase.phase_id,
-                        summary="Phase created",
-                        payload_json={"phase_id": phase.phase_id, "phase_name": phase.name},
-                    ),
-                    connection=connection,
-                )
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run.run_id,
-                    event_type=RunEventType.handoff_created,
-                    object_type="handoff",
-                    object_id=snapshot.handoff.handoff_id,
-                    summary="Handoff created",
-                    payload_json={
-                        "handoff_id": snapshot.handoff.handoff_id,
-                        "from_phase_id": snapshot.handoff.from_phase_id,
-                        "to_phase_id": snapshot.handoff.to_phase_id,
-                    },
-                ),
+            return self._persist_prepared_run(
+                run=run,
+                preset=preset,
+                snapshot=snapshot,
                 connection=connection,
+                lifecycle_action="recompile",
+                run_event_summary="Run recompiled",
+                snapshot_summary="Recompile snapshot captured",
             )
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run.run_id,
-                    event_type=RunEventType.runtime_task_created,
-                    object_type="runtime_task",
-                    object_id=snapshot.runtime_task.runtime_task_id,
-                    summary="Runtime task created",
-                    payload_json={
-                        "runtime_task_id": snapshot.runtime_task.runtime_task_id,
-                        "task_kind": snapshot.runtime_task.task_kind,
-                        "summary": snapshot.runtime_task.summary,
-                    },
-                ),
-                connection=connection,
-            )
-            if snapshot.domain_pack is not None and snapshot.capability_route is not None:
-                self.event_repo.append(
-                    RunEvent(
-                        run_id=run.run_id,
-                        event_type=RunEventType.domain_pack_selected,
-                        object_type="domain_pack",
-                        object_id=snapshot.domain_pack.domain_pack_id,
-                        summary="Domain pack selected",
-                        payload_json={
-                            "domain_pack_id": snapshot.domain_pack.domain_pack_id,
-                            "domain_pack_name": snapshot.domain_pack.name,
-                            "matched_preset_id": snapshot.domain_pack.matched_preset_id,
-                            "task_kind": snapshot.runtime_task.task_kind,
-                            "adapter_name": snapshot.capability_route.adapter_name,
-                            "operator_label": snapshot.domain_pack.runtime_projection.operator_label,
-                            "capability_tags": snapshot.domain_pack.capability_exposure.capability_tags,
-                            "evidence_expectations": snapshot.domain_pack.runtime_projection.evidence_expectations,
-                        },
-                    ),
-                    connection=connection,
-                )
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run.run_id,
-                    event_type=RunEventType.run_compiled,
-                    object_type="run",
-                    object_id=run.run_id,
-                    summary="Run recompiled",
-                    payload_json={
-                        "run_id": run.run_id,
-                        "status": RunStatus.prepared,
-                        "runtime_task_id": snapshot.runtime_task.runtime_task_id,
-                    },
-                ),
-                connection=connection,
-            )
-            self._capture_run_snapshot(
-                run.run_id,
-                RunSnapshotStage.compiled,
-                "Recompile snapshot captured",
-                runtime_task_id=snapshot.runtime_task.runtime_task_id,
-                connection=connection,
-                payload_extra={
-                    "domain_pack_id": snapshot.domain_pack.domain_pack_id if snapshot.domain_pack is not None else None,
-                    "domain_pack_resolution": (
-                        snapshot.domain_pack.model_dump(mode="json") if snapshot.domain_pack is not None else None
-                    ),
-                    "adapter_name": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
-                    "memory_retrieval_preview": (
-                        snapshot.memory_preview.model_dump(mode="json") if snapshot.memory_preview is not None else None
-                    ),
-                },
-            )
-        return PreparedRunBundle(
-            run=updated_run,
-            preset=preset,
-            task_packet=snapshot.task_packet,
-            state_ref=stored_state_ref,
-            handoff=snapshot.handoff,
-            domain_pack=snapshot.domain_pack,
-            capability_route=snapshot.capability_route,
-            memory_preview=snapshot.memory_preview,
-            execution_lane=snapshot.execution_lane,
-            tool_projection_manifest=snapshot.tool_projection_manifest,
-            mcp_server_profiles=snapshot.mcp_server_profiles,
-        )
 
     def prepare_run(
         self,
@@ -1043,6 +971,21 @@ class LifecycleServiceMixin:
                         "mutation_contract": execution_result.metadata.get("mutation_contract"),
                         "mutation_result": execution_result.metadata["mutation_result"],
                     },
+                )
+            session_payload = {
+                key: execution_result.metadata[key]
+                for key in (
+                    "external_trace_id",
+                    "external_session_id",
+                    "external_session_url",
+                    "session_export_ref",
+                )
+                if isinstance(execution_result.metadata.get(key), str) and execution_result.metadata.get(key)
+            }
+            if session_payload:
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    session_payload,
                 )
             completed_status = TaskStatus.completed if execution_result.return_code == 0 else TaskStatus.failed
             self.task_repo.update_runtime_task_status(runtime_task.runtime_task_id, completed_status, connection=connection)

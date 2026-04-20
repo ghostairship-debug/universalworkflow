@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
-from packages.contracts import ArtifactRef, CheckResult, Evidence
+from packages.contracts import (
+    ArtifactRef,
+    CheckResult,
+    Evidence,
+    ExternalSessionRef,
+    ResultEnvelope,
+    ResultProvenance,
+    ResultRawRef,
+    ResultVerification,
+)
 from packages.worker_adapters.base import ExecutionResult
 
 
@@ -47,6 +57,15 @@ class EvidenceBuilder:
             if result.return_code == 0
             else "Execution completed with failures."
         )
+        result_envelope = self._build_result_envelope(
+            runtime_task_id=runtime_task_id,
+            result=result,
+            summary=summary,
+            artifact_refs=artifact_refs,
+            checks=checks,
+            known_gaps=known_gaps,
+            mutation_result=mutation_result if isinstance(mutation_result, dict) else None,
+        )
         return Evidence(
             run_id=run_id,
             runtime_task_id=runtime_task_id,
@@ -69,7 +88,9 @@ class EvidenceBuilder:
                 "duration_ms": result.duration_ms,
                 "artifact_paths": result.artifact_paths,
                 "metadata": result.metadata,
+                "result_envelope": result_envelope.model_dump(mode="json"),
             },
+            result_envelope=result_envelope,
         )
 
     def _artifact_ref_for(self, artifact_path: str) -> ArtifactRef:
@@ -79,4 +100,54 @@ class EvidenceBuilder:
             sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
             mtime=path.stat().st_mtime,
             size_bytes=path.stat().st_size,
+        )
+
+    def _build_result_envelope(
+        self,
+        *,
+        runtime_task_id: str,
+        result: ExecutionResult,
+        summary: str,
+        artifact_refs: list[ArtifactRef],
+        checks: list[CheckResult],
+        known_gaps: list[str],
+        mutation_result: dict[str, Any] | None,
+    ) -> ResultEnvelope:
+        usage = result.metadata.get("usage")
+        confidence = result.metadata.get("confidence")
+        session_ref = None
+        if any(
+            isinstance(result.metadata.get(key), str) and result.metadata.get(key)
+            for key in ("external_session_id", "external_session_url", "session_export_ref")
+        ):
+            session_ref = ExternalSessionRef(
+                external_session_id=result.metadata.get("external_session_id"),
+                external_session_url=result.metadata.get("external_session_url"),
+                session_export_ref=result.metadata.get("session_export_ref"),
+            )
+        return ResultEnvelope(
+            summary=summary,
+            raw_ref=ResultRawRef(
+                runtime_task_id=runtime_task_id,
+                artifact_paths=list(result.artifact_paths),
+            ),
+            artifacts=artifact_refs,
+            verification=ResultVerification(
+                return_code=result.return_code,
+                checks=checks,
+                known_gaps=known_gaps,
+            ),
+            provenance=ResultProvenance(
+                adapter_name=result.adapter_name,
+                started_at=result.started_at,
+                finished_at=result.finished_at,
+                duration_ms=result.duration_ms,
+            ),
+            mutations=mutation_result,
+            usage=usage if isinstance(usage, dict) else None,
+            confidence=confidence if isinstance(confidence, (int, float)) else None,
+            external_trace_id=(
+                result.metadata.get("external_trace_id") if isinstance(result.metadata.get("external_trace_id"), str) else None
+            ),
+            session_ref=session_ref,
         )

@@ -8,15 +8,13 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIVING_DOCS = [
     Path("README.md"),
+    Path("README.zh-CN.md"),
     Path("docs/current_development_workflow.md"),
-    Path("docs/reviews/post-m20-integrated-technical-roadmap.md"),
-    Path("universal_agentic_workflow_os_M8_phase_plan_v1_0.md"),
-    Path("docs/dependency_locking_policy.md"),
-    Path("docs/documentation_governance.md"),
-    Path("docs/source_package_export_policy.md"),
-    Path("docs/governance/README.md"),
+    Path("docs/tech-debt-registry.md"),
     Path("docs/reviews/m20-freeze-review.md"),
-    Path("docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md"),
+    Path("docs/reviews/m25-beta-freeze-review.md"),
+    Path("m26_phase_docs/phase_0_post_m25_policy_control_and_operator_convergence_freeze.md"),
+    Path("docs/task_cards/m26_phase_0_task_cards.md"),
 ]
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 

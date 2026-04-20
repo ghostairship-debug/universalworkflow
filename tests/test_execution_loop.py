@@ -49,6 +49,7 @@ from packages.worker_adapters.base import ExecutionResult, resolve_artifact_path
 from packages.worker_adapters.langchain_agent_adapter import AgentExecutionResponse, LangChainAgentAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
+from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
 from packages.worker_adapters.router import WorkerRouter
 from packages.worker_adapters.shell_adapter import ShellAdapter
 
@@ -106,6 +107,20 @@ def _fake_patch_runner(command, cwd, env, capture_output, text, check, timeout):
 
 def _fake_timeout_runner(command, cwd, env, capture_output, text, check, timeout):
     raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
+
+
+def _fake_session_runner(command, cwd, env, capture_output, text, check, timeout):
+    if len(command) >= 2 and command[1] == "export":
+        return subprocess.CompletedProcess(command, 0, stdout='{"session_id":"sess_exec_123"}', stderr="")
+    content = "# Sessionful external lane\n\nshared session artifact\n"
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "session", "session_id": "sess_exec_123", "share_url": "https://example.com/session/exec-123"}),
+            json.dumps({"type": "trace", "trace_id": "trace_exec_123"}),
+            json.dumps({"type": "text", "part": {"text": content}}),
+        ]
+    )
+    return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
 
 def _fake_agent_runner(packet: TaskPacket, manifest) -> AgentExecutionResponse:
@@ -510,6 +525,8 @@ def test_auto_review_fails_for_non_zero_return_code(tmp_path: Path) -> None:
     verdict = AutoReviewV0().review(evidence)
 
     assert result.return_code == 2
+    assert evidence.result_envelope is not None
+    assert evidence.result_envelope.verification.return_code == 2
     assert verdict.decision == "fail"
 
 
@@ -1252,6 +1269,38 @@ def test_trace_export_failures_do_not_block_agent_lane(tmp_path: Path, monkeypat
     assert bundle.run.status == "awaiting_review"
     assert detail["trace_exporter"]["provider"] == "exploding"
     assert detail["trace_context"]["external_trace_id"] is None
+
+
+def test_research_spike_reviewable_can_run_through_sessionful_external_agent_lane(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            OpenCodeAdapter(runner=_fake_opencode_runner),
+            OpenCodeSessionAdapter(runner=_fake_session_runner),
+            NoopAdapter(),
+        ]
+    )
+    service = OrchestratorService(db_path, worker_router=router)
+
+    run = service.create_run("Collaborative sessionful research", "research_spike_reviewable")
+    prepared = service.compile_run(run.run_id, adapter_name="opencode_session")
+    assert prepared.execution_lane == "sessionful_external_agent"
+
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    if detail["run"]["status"] == "awaiting_review":
+        service.approve_run_review(run.run_id)
+        detail = service.get_status_detail(run.run_id)
+
+    assert bundle.evidence.result_envelope is not None
+    assert bundle.evidence.result_envelope.session_ref is not None
+    assert bundle.evidence.result_envelope.session_ref.external_session_id == "sess_exec_123"
+    assert detail["trace_context"]["external_session_id"] == "sess_exec_123"
+    assert detail["trace_context"]["external_session_url"] == "https://example.com/session/exec-123"
+    assert detail["trace_context"]["session_export_ref"].endswith(".json")
 
 
 def test_project_delivery_runs_multi_role_orchestration(tmp_path: Path) -> None:
