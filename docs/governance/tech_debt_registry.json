@@ -131,11 +131,19 @@
   "open_items": [
     {
       "debt_id": "TD-019",
-      "description": "true external worker pools and multi-node scheduling are still not productized beyond the local-first control plane",
+      "description": "hosted remote worker pools and multi-node scheduling are still not productized beyond the shipped local-first / loopback external-worker baseline",
       "introduced_in": "M10",
-      "planned_repayment_phase": "M11",
+      "planned_repayment_phase": "M15",
       "current_status": "active",
-      "blocking_impact": "blocks remote worker pools, distributed lease renewal, and hosted scheduler expansion"
+      "blocking_impact": "blocks hosted worker pools, distributed lease renewal, and multi-node scheduler consensus"
+    },
+    {
+      "debt_id": "TD-020",
+      "description": "the full operator web UI and human control surface are still missing beyond CLI/API and the read-mostly TUI",
+      "introduced_in": "M5-M13",
+      "planned_repayment_phase": "M14",
+      "current_status": "active",
+      "blocking_impact": "blocks rich orchestration visibility, review-console UX, and human intervention workflows"
     }
   ],
   "freeze_review_questions": [

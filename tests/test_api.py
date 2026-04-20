@@ -83,6 +83,7 @@ def test_api_lists_seeded_presets(tmp_path: Path) -> None:
         "research_spike_reviewable",
         "advisory_delivery",
         "guarded_delivery",
+        "project_delivery",
     }
 
 
@@ -161,6 +162,34 @@ def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path
     assert projection_response.json()["capability_resolution"]["adapter_name"] == "agent"
     tool_names = [item["tool_name"] for item in projection_response.json()["tool_projection_manifest"]["tools"]]
     assert "mcp_list_workspace_files" in tool_names
+
+
+def test_api_exposes_effective_config_and_worker_pools(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "workflow.toml").write_text(
+        """
+[feature_flags]
+external_worker_pools = true
+
+[worker_pools]
+default_pool_id = "mock_remote_shell"
+""".strip(),
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    config_response = client.get("/config/effective")
+    worker_pools_response = client.get("/worker-pools")
+
+    assert config_response.status_code == 200
+    assert config_response.json()["feature_flags"]["external_worker_pools"]["enabled"] is True
+    assert config_response.json()["worker_pools"]["default_pool_id"] == "mock_remote_shell"
+    assert worker_pools_response.status_code == 200
+    assert {item["worker_pool_id"] for item in worker_pools_response.json()} >= {
+        "local_loopback",
+        "mock_remote_shell",
+    }
 
 
 def test_api_can_export_domain_pack_skill_when_flag_enabled(tmp_path: Path, monkeypatch) -> None:
@@ -268,6 +297,23 @@ def test_api_exposes_run_simulation_report(tmp_path: Path) -> None:
     assert audit_response.json()["simulation_report"]["status"] == "passed"
 
 
+def test_api_exposes_project_delivery_orchestration(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    run = client.post("/runs", json={"goal": "Project delivery API path", "preset_id": "project_delivery"}).json()
+    client.post(f"/runs/{run['run_id']}/compile")
+    resume_response = client.post(f"/runs/{run['run_id']}/resume")
+    orchestration_response = client.get(f"/runs/{run['run_id']}/orchestration")
+    detail_response = client.get(f"/runs/{run['run_id']}/status-detail")
+
+    assert resume_response.status_code == 200
+    assert orchestration_response.status_code == 200
+    assert orchestration_response.json()["enabled"] is True
+    assert orchestration_response.json()["orchestration"]["role_progress"]["planner"]["status"] == "completed"
+    assert detail_response.json()["orchestration"]["parallel_batch"]["member_count"] == 2
+
+
 def test_api_can_record_and_list_simulation_records(tmp_path: Path) -> None:
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
@@ -303,9 +349,10 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["open_debt_count"] >= 1
-    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019"]
+    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019", "TD-020"]
     assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"]["M11"] == 1
+    assert payload["planned_phase_counts"]["M14"] == 1
+    assert payload["planned_phase_counts"]["M15"] == 1
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
@@ -353,8 +400,12 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     assert payload["validation_summary"]["overall_passed"] is True
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in payload["gates"][3]["detail"]
-    assert payload["gates"][5]["gate"] == "m10_scope_closure"
-    assert payload["remaining_gaps"] == ["true external worker pools and multi-node scheduling are still deferred into M11"]
+    assert payload["gates"][5]["gate"] == "local_foundation_closure"
+    assert payload["gates"][6]["gate"] == "orchestration_baseline"
+    assert payload["remaining_gaps"] == [
+        "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline",
+        "the full operator web UI and human control surface are still deferred into M14",
+    ]
 
 
 def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:

@@ -48,7 +48,8 @@
 
 | ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-019 | true external worker pools and multi-node scheduling are still not productized beyond the local-first control plane | M10 | M11 | active | blocks remote worker pools, distributed lease renewal, and hosted scheduler expansion |
+| TD-019 | hosted remote worker pools and multi-node scheduling are still not productized beyond the shipped local-first / loopback external-worker baseline | M10 | M15 | active | blocks hosted worker pools, distributed lease renewal, and multi-node scheduler consensus |
+| TD-020 | the full operator web UI and human control surface are still missing beyond CLI/API and the read-mostly TUI | M5-M13 | M14 | active | blocks rich orchestration visibility, review-console UX, and human intervention workflows |
 
 ---
 

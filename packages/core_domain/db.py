@@ -1,28 +1,50 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from packages.core_domain.config import build_effective_config
+from packages.core_domain.errors import DatabaseBusyError
+
 
 DEFAULT_DB_PATH = Path("state/workflow.db")
-MIGRATIONS_DIR = Path("infra/migrations")
+MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "infra" / "migrations"
+SQLITE_BUSY_TIMEOUT_MS = 5_000
 
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def configured_default_db_path(*, cwd: str | Path | None = None) -> Path:
+    effective = build_effective_config(cwd=cwd)
+    return Path(effective["db"]["path"])
+
+
+def workspace_scoped_db_path(
+    *,
+    workspace_root: str | Path | None = None,
+    label: str = "workflow",
+    db_root: str | Path = "state/workspaces",
+) -> Path:
+    root = Path(workspace_root or Path.cwd()).resolve()
+    digest = hashlib.sha1(root.as_posix().encode("utf-8")).hexdigest()[:10]
+    safe_label = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in label.strip()) or "workflow"
+    return Path(db_root) / digest / f"{safe_label}.db"
+
+
 def resolve_db_path(db_path: str | Path | None = None) -> Path:
-    return Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    return Path(db_path) if db_path is not None else configured_default_db_path()
 
 
 @contextmanager
 def get_connection(db_path: str | Path | None = None):
     path = resolve_db_path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
     connection.row_factory = sqlite3.Row
     apply_sqlite_pragmas(connection)
     try:
@@ -46,6 +68,7 @@ def apply_sqlite_pragmas(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON;")
     connection.execute("PRAGMA journal_mode = WAL;")
     connection.execute("PRAGMA synchronous = NORMAL;")
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
 
 
 def get_journal_mode(db_path: str | Path | None = None) -> str:
@@ -55,13 +78,35 @@ def get_journal_mode(db_path: str | Path | None = None) -> str:
 
 def reset_db(db_path: str | Path | None = None) -> Path:
     path = resolve_db_path(db_path)
-    if path.exists():
-        path.unlink()
-    wal_path = path.with_suffix(path.suffix + "-wal")
-    shm_path = path.with_suffix(path.suffix + "-shm")
-    for extra_path in (wal_path, shm_path):
-        if extra_path.exists():
-            extra_path.unlink()
+    try:
+        if path.exists():
+            path.unlink()
+        wal_path = path.with_suffix(path.suffix + "-wal")
+        shm_path = path.with_suffix(path.suffix + "-shm")
+        for extra_path in (wal_path, shm_path):
+            if extra_path.exists():
+                extra_path.unlink()
+    except PermissionError as exc:
+        raise DatabaseBusyError(
+            path.as_posix(),
+            "reset_db",
+            {
+                "hint": "close other processes or use a workspace-scoped DB path before retrying reset",
+                "wal_path": path.with_suffix(path.suffix + "-wal").as_posix(),
+                "shm_path": path.with_suffix(path.suffix + "-shm").as_posix(),
+            },
+        ) from exc
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 32:
+            raise DatabaseBusyError(
+                path.as_posix(),
+                "reset_db",
+                {
+                    "hint": "the SQLite database is locked by another process; use an isolated DB path for parallel work",
+                    "winerror": 32,
+                },
+            ) from exc
+        raise
     return path
 
 

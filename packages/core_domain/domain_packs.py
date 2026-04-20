@@ -7,11 +7,14 @@ from packages.contracts import DomainPackDefinition, DomainPackResolution, Prese
 
 
 DEFAULT_DOMAIN_PACK_SEED_PATH = Path("infra/seeds/domain_packs.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOMAIN_PACK_RESOLUTION_ENV_KEY = "WORKFLOW_DOMAIN_PACK_RESOLUTION"
 
 
 def load_seed_domain_packs(seed_path: Path | str = DEFAULT_DOMAIN_PACK_SEED_PATH) -> list[DomainPackDefinition]:
     path = Path(seed_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
     data = json.loads(path.read_text(encoding="utf-8"))
     return [DomainPackDefinition.model_validate(item) for item in data]
 

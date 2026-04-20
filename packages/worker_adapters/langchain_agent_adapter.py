@@ -13,6 +13,7 @@ from packages.core_domain.agent_tools import (
 )
 from packages.core_domain.capability_plane import TOOL_PROJECTION_MANIFEST_ENV_KEY, load_tool_projection_manifest
 from packages.core_domain.compile import build_artifact_content
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.base import ExecutionResult, WorkerAdapter, resolve_artifact_paths, utc_now
 
@@ -42,7 +43,8 @@ class LangChainAgentAdapter(WorkerAdapter):
         runner: AgentRunner | None = None,
         mcp_tool_caller: MCPToolCaller | None = None,
     ):
-        self.model = model or os.getenv("WORKFLOW_AGENT_MODEL", DEFAULT_AGENT_MODEL)
+        configured_model = build_effective_config()["agent"]["model"]
+        self.model = model or str(configured_model or os.getenv("WORKFLOW_AGENT_MODEL", DEFAULT_AGENT_MODEL))
         self._runner = runner
         self._mcp_tool_caller = mcp_tool_caller
 

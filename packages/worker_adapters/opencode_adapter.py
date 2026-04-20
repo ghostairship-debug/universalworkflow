@@ -8,6 +8,7 @@ from pathlib import Path
 
 from packages.contracts import TaskKind, TaskPacket
 from packages.core_domain.compile import build_artifact_content
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.cli_base import CliAdapterBase, CompletedProcessRunner
 from packages.worker_adapters.base import ExecutionResult, utc_now
@@ -33,8 +34,9 @@ class OpenCodeAdapter(CliAdapterBase):
         executable: str | None = None,
     ):
         super().__init__(runner=runner)
-        self.model = model or os.getenv("WORKFLOW_OPENCODE_MODEL", DEFAULT_OPENCODE_MODEL)
-        self.variant = variant or os.getenv("WORKFLOW_OPENCODE_VARIANT")
+        effective = build_effective_config()
+        self.model = model or str(effective["opencode"]["model"] or os.getenv("WORKFLOW_OPENCODE_MODEL", DEFAULT_OPENCODE_MODEL))
+        self.variant = variant or effective["opencode"]["variant"] or os.getenv("WORKFLOW_OPENCODE_VARIANT")
         self.pure = pure
         self.auto_approve = auto_approve
         self.executable = executable or self.executable_name

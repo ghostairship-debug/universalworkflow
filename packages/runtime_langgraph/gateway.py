@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from packages.contracts.runtime import RuntimeGateway, RuntimeStateRef
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.context_budget import (
     DEFAULT_CONTEXT_HARD_LIMIT_CHARS,
     DEFAULT_CONTEXT_WARN_CHARS,
@@ -213,15 +214,15 @@ class OpenAIRuntimeGateway(RuntimeGateway):
 
 
 def build_runtime_gateway_from_env() -> RuntimeGateway:
-    provider = os.getenv("WORKFLOW_RUNTIME_GATEWAY", "null").strip().lower()
+    effective = build_effective_config()
+    provider = str(effective["runtime_gateway"]["provider"]).strip().lower()
     if provider in {"", "null", "none", "disabled"}:
         return NullRuntimeGateway()
     if provider == "openai":
         return OpenAIRuntimeGateway(
-            model=os.getenv("WORKFLOW_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
-            reasoning_effort=os.getenv(
-                "WORKFLOW_OPENAI_REASONING_EFFORT",
-                DEFAULT_OPENAI_REASONING_EFFORT,
+            model=str(effective["runtime_gateway"]["openai_model"] or DEFAULT_OPENAI_MODEL),
+            reasoning_effort=str(
+                effective["runtime_gateway"]["openai_reasoning_effort"] or DEFAULT_OPENAI_REASONING_EFFORT
             ),
         )
     raise RuntimeGatewayConfigurationError(

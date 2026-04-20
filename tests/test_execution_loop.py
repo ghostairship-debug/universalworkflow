@@ -41,7 +41,7 @@ from packages.core_domain.evidence_builder import EvidenceBuilder
 from packages.core_domain.observability import InMemoryTraceExporter, TraceExporter, TraceRecord
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
-from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot
+from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot, LangGraphDurableRuntimePilot
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
 from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
 from packages.worker_adapters.langchain_agent_adapter import AgentExecutionResponse, LangChainAgentAdapter
@@ -1122,6 +1122,25 @@ def test_research_spike_reviewable_runs_agent_lane_and_exports_trace(tmp_path: P
     assert "projected_tools:" in artifact_text
 
 
+def test_feature_delivery_can_dispatch_through_external_worker_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_EXTERNAL_WORKER_POOLS", "1")
+    monkeypatch.setenv("WORKFLOW_WORKER_POOL_ID", "mock_remote_shell")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("External worker pool dispatch", "feature_delivery")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert detail["execution_target"]["worker_pool_id"] == "mock_remote_shell"
+    assert detail["execution_target"]["target_kind"] == "external_worker_pool"
+    assert detail["lease_renewals"][0]["status"] == "renewed"
+
+
 def test_durable_pilot_refs_stay_in_diagnostics_and_can_resume_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
     monkeypatch.setenv("UAWO_ENABLE_DURABLE_PILOT", "1")
@@ -1170,6 +1189,21 @@ def test_durable_pilot_refs_stay_in_diagnostics_and_can_resume_review(tmp_path: 
     assert approved_detail["durable_lineage"]["transition_count"] == 4
 
 
+def test_langgraph_durable_pilot_writes_checkpoint_snapshots(tmp_path: Path) -> None:
+    state_dir = tmp_path / "durable"
+    pilot = LangGraphDurableRuntimePilot(state_dir=state_dir)
+
+    refs = pilot.start("run_alpha", "task_alpha")
+    updated = pilot.checkpoint(refs, reason="resume")
+
+    snapshot_path = state_dir / f"{refs['thread_id']}.json"
+    assert snapshot_path.exists()
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert payload["latest_checkpoint_id"] == updated["checkpoint_id"]
+    assert len(payload["checkpoints"]) == 2
+    assert pilot.describe()["state_dir"] == state_dir.resolve().as_posix()
+
+
 def test_trace_export_failures_do_not_block_agent_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
     db_path = tmp_path / "workflow.db"
@@ -1197,6 +1231,25 @@ def test_trace_export_failures_do_not_block_agent_lane(tmp_path: Path, monkeypat
     assert bundle.run.status == "awaiting_review"
     assert detail["trace_exporter"]["provider"] == "exploding"
     assert detail["trace_context"]["external_trace_id"] is None
+
+
+def test_project_delivery_runs_multi_role_orchestration(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Ship a coordinated project slice", "project_delivery")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    replay = service.get_run_replay_packet(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert detail["orchestration"]["role_progress"]["planner"]["status"] == "completed"
+    assert detail["orchestration"]["role_progress"]["reviewer"]["status"] == "completed"
+    assert detail["orchestration"]["parallel_batch"]["member_count"] == 2
+    assert replay["orchestration"]["parallel_batch"]["status"] == "released"
 
 
 def test_domain_pack_skill_export_requires_flag_then_exports_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

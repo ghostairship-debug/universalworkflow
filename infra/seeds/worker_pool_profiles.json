@@ -1,0 +1,20 @@
+[
+  {
+    "worker_pool_id": "local_loopback",
+    "name": "Local Loopback Pool",
+    "description": "A local loopback execution target that keeps runtime truth in the repository while exercising the external worker boundary.",
+    "enabled": true,
+    "transport": "local",
+    "adapter_name": "shell",
+    "dispatch_mode": "loopback"
+  },
+  {
+    "worker_pool_id": "mock_remote_shell",
+    "name": "Mock Remote Shell Pool",
+    "description": "A mock external worker pool that dispatches through the external gateway contract and falls back to the local shell adapter.",
+    "enabled": true,
+    "transport": "http",
+    "adapter_name": "shell",
+    "dispatch_mode": "loopback"
+  }
+]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Barrier, BrokenBarrierError
 from typing import Any
@@ -80,7 +81,7 @@ class LifecycleServiceMixin:
             if memory_item_ids
             else None
         )
-        return build_compile_snapshot(
+        snapshot = build_compile_snapshot(
             run.goal,
             preset,
             run.run_id,
@@ -92,6 +93,30 @@ class LifecycleServiceMixin:
             tool_projection_manifest=tool_projection_manifest,
             mcp_server_profiles=mcp_server_profiles,
         )
+        worker_pool_profile = self._selected_worker_pool_profile()
+        if worker_pool_profile is not None:
+            snapshot.task_packet = TaskPacket.model_validate(
+                {
+                    **snapshot.task_packet.model_dump(mode="json"),
+                    "env": {
+                        **snapshot.task_packet.env,
+                        "WORKFLOW_EXECUTION_TARGET": "external_worker_pool",
+                        "WORKFLOW_WORKER_POOL_ID": worker_pool_profile.worker_pool_id,
+                    },
+                }
+            )
+        if preset.preset_id == "project_delivery":
+            orchestration_plan = self._default_project_delivery_plan(run.run_id)
+            snapshot.task_packet = TaskPacket.model_validate(
+                {
+                    **snapshot.task_packet.model_dump(mode="json"),
+                    "env": {
+                        **snapshot.task_packet.env,
+                        "WORKFLOW_ORCHESTRATION_PLAN": json.dumps(orchestration_plan.model_dump(mode="json"), ensure_ascii=False),
+                    },
+                }
+            )
+        return snapshot
 
     def compile_run(
         self,
@@ -791,7 +816,10 @@ class LifecycleServiceMixin:
 
             adapter = self.worker_router.route(execution_packet)
             adapter_name = adapter.__class__.__name__.replace("Adapter", "").lower()
-            worker_kind, worker_id, worker_name = self._worker_identity(adapter_name)
+            worker_pool_profile = self._selected_worker_pool_profile()
+            worker_name_override = worker_pool_profile.name if worker_pool_profile is not None else None
+            worker_id_override = f"pool_{worker_pool_profile.worker_pool_id}" if worker_pool_profile is not None else None
+            worker_kind, worker_id, worker_name = self._worker_identity(adapter_name, worker_name=worker_name_override)
             worker_lease = self._acquire_worker_lease(
                 run.run_id,
                 runtime_task.runtime_task_id,
@@ -799,7 +827,7 @@ class LifecycleServiceMixin:
                 connection=connection,
                 worker_name=worker_name,
                 worker_kind=worker_kind,
-                worker_id=worker_id,
+                worker_id=worker_id_override or worker_id,
                 claim_id=claim.claim_id,
                 attempt_id=current_attempt.attempt_id,
             )
@@ -852,7 +880,18 @@ class LifecycleServiceMixin:
                     connection=connection,
                 )
                 connection.commit()
-            execution_result = adapter.launch(execution_packet)
+            if preset.preset_id == "project_delivery":
+                connection.commit()
+                execution_result = self._execute_project_delivery_orchestration(execution_packet)
+            elif worker_pool_profile is not None:
+                execution_result = self.external_worker_gateway.dispatch(
+                    packet=execution_packet,
+                    profile=worker_pool_profile,
+                    lease_id=worker_lease.lease_id,
+                    launch_local=adapter.launch,
+                ).execution_result
+            else:
+                execution_result = adapter.launch(execution_packet)
             completed_status = TaskStatus.completed if execution_result.return_code == 0 else TaskStatus.failed
             self.task_repo.update_runtime_task_status(runtime_task.runtime_task_id, completed_status, connection=connection)
             self.event_repo.append(

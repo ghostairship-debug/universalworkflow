@@ -179,3 +179,14 @@ class RuntimeGatewayConfigurationError(WorkflowError):
 class RuntimeGatewayExecutionError(WorkflowError):
     code = "runtime_gateway_execution_error"
     status_code = 502
+
+
+class DatabaseBusyError(WorkflowError):
+    code = "database_busy"
+    status_code = 423
+
+    def __init__(self, db_path: str, operation: str, details: dict | None = None):
+        super().__init__(
+            f"database is busy during `{operation}`: {db_path}",
+            {"db_path": db_path, "operation": operation, **(details or {})},
+        )

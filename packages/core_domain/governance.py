@@ -132,11 +132,28 @@ def _build_tech_debt_report_payload(
     m9_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M9"]
     m10_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M10"]
     m11_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M11"]
+    m12_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M12"]
+    m13_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M13"]
+    m14_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M14"]
+    m15_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "M15"]
     pre_m8_focus_items = [item for item in open_items if item["planned_repayment_phase"] == "Pre-M8"]
     next_cycle_focus_items = [
-        item for item in open_items if item["planned_repayment_phase"] in {"Next Cycle", "M10", "M11"}
+        item
+        for item in open_items
+        if item["planned_repayment_phase"] in {"Next Cycle", "M10", "M11", "M12", "M13", "M14", "M15"}
     ]
-    active_gate_focus_items = pre_m8_focus_items or m3_focus_items or m9_focus_items or m10_focus_items or m11_focus_items or next_cycle_focus_items
+    active_gate_focus_items = (
+        pre_m8_focus_items
+        or m3_focus_items
+        or m9_focus_items
+        or m10_focus_items
+        or m11_focus_items
+        or m12_focus_items
+        or m13_focus_items
+        or m14_focus_items
+        or m15_focus_items
+        or next_cycle_focus_items
+    )
     return {
         "source_path": source_path.as_posix(),
         "source_contract": source_contract,
@@ -153,6 +170,10 @@ def _build_tech_debt_report_payload(
         "m9_focus_items": m9_focus_items,
         "m10_focus_items": m10_focus_items,
         "m11_focus_items": m11_focus_items,
+        "m12_focus_items": m12_focus_items,
+        "m13_focus_items": m13_focus_items,
+        "m14_focus_items": m14_focus_items,
+        "m15_focus_items": m15_focus_items,
         "pre_m8_focus_items": pre_m8_focus_items,
         "next_cycle_focus_items": next_cycle_focus_items,
         "active_gate_focus_items": active_gate_focus_items,
@@ -513,7 +534,7 @@ def build_governance_metrics_report(
     checks = (validation_report or {}).get("checks", {})
     passed_check_count = sum(1 for item in checks.values() if item.get("passed") is True)
     return {
-        "metrics_version": "m10_freeze_v1",
+        "metrics_version": "m13_freeze_v1",
         "generated_at": datetime.now(UTC).isoformat(),
         "source_paths": {
             "tech_debt_registry": tech_debt["source_path"],
@@ -625,7 +646,7 @@ def build_governance_alert_report(
     else:
         overall_status = "clear"
     return {
-        "alerts_version": "m10_freeze_v1",
+        "alerts_version": "m13_freeze_v1",
         "overall_status": overall_status,
         "alert_count": len(alerts),
         "alerts": alerts,
@@ -688,7 +709,10 @@ def build_release_readiness_report(
             "generated_at": validation_evidence["generated_at"],
         }
 
-    m10_open_debt_ids = {"TD-001", "TD-009"} & {
+    presets = _load_policy_presets(db_path)
+    preset_ids = [item.preset_id for item in presets]
+
+    foundation_open_debt_ids = {"TD-001", "TD-009"} & {
         item["debt_id"] for item in tech_debt["open_items"]
     }
     gates = [
@@ -723,13 +747,19 @@ def build_release_readiness_report(
             "detail": "quantitative governance metrics and automated alerting are available without blocking conditions",
         },
         {
-            "gate": "m10_scope_closure",
-            "passed": not m10_open_debt_ids,
-            "detail": "the ownership-topology and local barrier/concurrency debt set is retired from the open registry",
+            "gate": "local_foundation_closure",
+            "passed": not foundation_open_debt_ids,
+            "detail": "the ownership-topology and local barrier/concurrency debt set remains retired from the open registry",
+        },
+        {
+            "gate": "orchestration_baseline",
+            "passed": "project_delivery" in preset_ids,
+            "detail": "the shipped preset catalog includes the formal project_delivery orchestration baseline",
         },
     ]
     remaining_gap_map = {
-        "TD-019": "true external worker pools and multi-node scheduling are still deferred into M11",
+        "TD-019": "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline",
+        "TD-020": "the full operator web UI and human control surface are still deferred into M14",
     }
     remaining_gaps = [
         remaining_gap_map[item["debt_id"]]
@@ -738,7 +768,7 @@ def build_release_readiness_report(
     ]
 
     return {
-        "readiness_version": "m10_freeze_v1",
+        "readiness_version": "m13_freeze_v1",
         "overall_ready": all(gate["passed"] for gate in gates),
         "gates": gates,
         "validation_summary": validation_summary,
@@ -754,7 +784,7 @@ def build_release_readiness_report(
         "remaining_gaps": remaining_gaps,
         "governance_metrics": governance_metrics,
         "governance_alerts": governance_alerts,
-        "recommended_next_step": "start M11 with a post-M10 rebaseline before widening into external or multi-node scheduling breadth",
+        "recommended_next_step": "start M14 with a post-M13 rebaseline before widening the operator web UI and human control surface",
         "source_paths": {
             "validation_report": validation_evidence["source_path"],
             "tech_debt_registry": tech_debt["source_path"],

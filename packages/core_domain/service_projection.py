@@ -6,6 +6,8 @@ from typing import Any
 
 from packages.contracts import (
     Evidence,
+    ExecutionTargetRef,
+    LeaseRenewalRecord,
     ReviewDecision,
     ReviewerType,
     RunEvent,
@@ -24,6 +26,32 @@ from packages.core_domain.service_types import RunDiagnosticContext
 
 
 class ProjectionServiceMixin:
+    def _execution_target_for(
+        self,
+        last_runtime_state: RuntimeStateRef | None,
+        last_evidence: Evidence | None,
+    ) -> dict[str, Any] | None:
+        if last_runtime_state is not None and isinstance(last_runtime_state.state_payload.get("execution_target"), dict):
+            return dict(last_runtime_state.state_payload["execution_target"])
+        if last_evidence is not None:
+            target = last_evidence.raw_execution.get("metadata", {}).get("execution_target")
+            if isinstance(target, dict):
+                return dict(target)
+        return None
+
+    def _lease_renewals_for(
+        self,
+        last_runtime_state: RuntimeStateRef | None,
+        last_evidence: Evidence | None,
+    ) -> list[dict[str, Any]]:
+        if last_runtime_state is not None and isinstance(last_runtime_state.state_payload.get("lease_renewals"), list):
+            return [dict(item) for item in last_runtime_state.state_payload["lease_renewals"] if isinstance(item, dict)]
+        if last_evidence is not None:
+            renewals = last_evidence.raw_execution.get("metadata", {}).get("lease_renewals")
+            if isinstance(renewals, list):
+                return [dict(item) for item in renewals if isinstance(item, dict)]
+        return []
+
     def _parse_iso_datetime(self, value: str | None) -> datetime | None:
         if not value:
             return None
@@ -244,6 +272,11 @@ class ProjectionServiceMixin:
                 f"simulation={simulation_report.status} "
                 f"triggered={simulation_report.triggered} "
                 f"policy={simulation_report.trigger_policy}"
+            ),
+            (
+                f"execution_target={detail['execution_target']['target_kind'] if detail.get('execution_target') else 'local'} "
+                f"orchestration={'enabled' if detail.get('orchestration') else 'disabled'} "
+                f"lease_renewals={len(detail.get('lease_renewals', []))}"
             ),
         ]
 
@@ -609,6 +642,9 @@ class ProjectionServiceMixin:
                 "worker_lease_projection": detail["worker_lease_projection"],
                 "ownership_topology": detail["ownership_topology"],
             },
+            "execution_target": detail["execution_target"],
+            "lease_renewals": detail["lease_renewals"],
+            "orchestration": detail["orchestration"],
             "parallel_batch": detail["parallel_batch"],
             "context_budget": detail["context_budget"],
             "trace_context": detail["trace_context"],
@@ -680,6 +716,9 @@ class ProjectionServiceMixin:
             "execution_profile": summary["execution_profile"],
             "metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
+            "execution_target": detail["execution_target"],
+            "lease_renewals": detail["lease_renewals"],
+            "orchestration": detail["orchestration"],
             "parallel_batch": detail["parallel_batch"],
             "summary": {
                 "headline": summary["headline"],
@@ -738,6 +777,9 @@ class ProjectionServiceMixin:
         inspection_problems = self._inspect_context(context)
         context_budget = self._context_budget_from_state_ref(last_runtime_state)
         parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
+        execution_target = self._execution_target_for(last_runtime_state, last_evidence)
+        lease_renewals = self._lease_renewals_for(last_runtime_state, last_evidence)
+        orchestration = self._orchestration_from_context(context)
         timeline = self.get_timeline(run_id)
         review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         trace_context = self._trace_context_for_context(
@@ -770,6 +812,9 @@ class ProjectionServiceMixin:
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
             "context_budget": context_budget,
             "parallel_batch": parallel_batch,
+            "execution_target": execution_target,
+            "lease_renewals": lease_renewals,
+            "orchestration": orchestration,
             "trace_context": trace_context,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
             "run_metrics": run_metrics,
@@ -844,6 +889,9 @@ class ProjectionServiceMixin:
         repairable_problem_count = sum(1 for problem in problems if problem["repairable"])
         context_budget = self._context_budget_from_state_ref(last_runtime_state)
         parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
+        execution_target = self._execution_target_for(last_runtime_state, self._last_evidence(context))
+        lease_renewals = self._lease_renewals_for(last_runtime_state, self._last_evidence(context))
+        orchestration = self._orchestration_from_context(context)
         timeline = self.get_timeline(run_id)
         review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
         trace_context = self._trace_context_for_context(
@@ -875,6 +923,9 @@ class ProjectionServiceMixin:
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
             "context_budget": context_budget,
             "parallel_batch": parallel_batch,
+            "execution_target": execution_target,
+            "lease_renewals": lease_renewals,
+            "orchestration": orchestration,
             "trace_context": trace_context,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
             "run_metrics": run_metrics,

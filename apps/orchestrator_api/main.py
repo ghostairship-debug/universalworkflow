@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from packages.contracts import RuntimeGateway
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.db import DEFAULT_DB_PATH, migrate
 from packages.core_domain.errors import WorkflowError
 from packages.core_domain.governance import (
@@ -54,7 +55,8 @@ def create_app(
     db_path: str | Path | None = None,
     runtime_gateway: RuntimeGateway | None = None,
 ) -> FastAPI:
-    resolved_db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    effective_config = build_effective_config(explicit_db_path=db_path)
+    resolved_db_path = Path(effective_config["db"]["path"]) if db_path is not None or effective_config["db"]["path"] else DEFAULT_DB_PATH
     migrate(resolved_db_path)
     service = OrchestratorService(resolved_db_path, runtime_gateway=runtime_gateway)
     app = FastAPI(title="Universal Agentic Workflow Orchestrator API", version="0.1.0")
@@ -108,6 +110,10 @@ def create_app(
     @app.get("/capability-sources/mcp-profiles")
     def list_mcp_server_profiles() -> list[dict]:
         return service.list_mcp_server_profiles()
+
+    @app.get("/worker-pools")
+    def list_worker_pools() -> list[dict]:
+        return service.list_worker_pool_profiles()
 
     @app.get("/capability-projections/preview")
     def preview_tool_projection(
@@ -301,6 +307,10 @@ def create_app(
     def get_run_replay_packet(run_id: str) -> dict:
         return service.get_run_replay_packet(run_id)
 
+    @app.get("/runs/{run_id}/orchestration")
+    def get_run_orchestration(run_id: str) -> dict:
+        return service.get_run_orchestration(run_id)
+
     @app.get("/runs/{run_id}/status-detail")
     def get_run_status_detail(run_id: str) -> dict:
         return service.get_status_detail(run_id)
@@ -344,6 +354,10 @@ def create_app(
     @app.get("/runs/{run_id}/inspection")
     def inspect_run_state(run_id: str) -> dict:
         return service.inspect_run_state(run_id)
+
+    @app.get("/config/effective")
+    def get_effective_config() -> dict:
+        return effective_config
 
     @app.get("/runs/{run_id}/claims")
     def get_run_claims(run_id: str) -> list[dict]:

@@ -25,9 +25,10 @@ Use the following documents in this order.
 ### A. Current-state and next-step truth
 
 - `README.md`
-- `docs/reviews/m10-freeze-review.md`
-- `docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md`
-- `docs/reviews/m7-freeze-review.md`
+- `docs/reviews/post-m13-integrated-technical-roadmap.md`
+- `docs/reviews/m13-freeze-review.md`
+- `docs/reviews/m12-freeze-review.md`
+- `docs/reviews/m11-freeze-review.md`
 - `docs/tech-debt-registry.md`
 
 These documents answer:
@@ -35,6 +36,7 @@ These documents answer:
 - what the repository already ships
 - what the latest completed milestone is
 - what the next approved work is
+- what the integrated near-term and medium-term route is
 - which debts block the next milestone gate
 
 ### B. Execution protocol
@@ -91,13 +93,16 @@ Do **not** use them as permission to import legacy architecture, naming, or phas
 
 Current confirmed status:
 
-- milestone baseline: through `M10`, complete
+- milestone baseline: through `M13`, complete
 - current cycle state: shipped local-first runtime baseline exists
 - `M9` closeout cycle: **complete**
 - `M10 Phase 0` reassessment and scope freeze: **complete**
 - `M10 Phase 1` ownership-topology freeze: **complete**
 - `M10 Phase 2` local barrier and parallel batch execution: **complete**
-- next approved work: **`M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`**
+- `M11`: **complete**
+- `M12`: **complete**
+- `M13`: **complete**
+- next approved work: **`M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`**
 - integrated root-level `M8` plan:
   - `universal_agentic_workflow_os_M8_phase_plan_v1_0.md`
 - supporting `M8` planning inputs:
@@ -108,19 +113,23 @@ Current confirmed status:
 
 The current controlling closeout record for the shipped baseline is:
 
-- `docs/reviews/m10-freeze-review.md`
+- `docs/reviews/m13-freeze-review.md`
 
-The current historical `M10` phase records are:
+The current integrated route synthesis is:
 
-- `docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md`
-- `docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md`
-- `docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md`
+- `docs/reviews/post-m13-integrated-technical-roadmap.md`
 
-Together those records say the repository has completed the `M9` closeout cycle, completed the full `M10` local-first ownership/concurrency slice, and retired the `M10` debt set into the milestone freeze review.
+The current historical milestone closeout records for the latest cycle are:
+
+- `docs/reviews/m11-freeze-review.md`
+- `docs/reviews/m12-freeze-review.md`
+- `docs/reviews/m13-freeze-review.md`
+
+Together those records say the repository has completed the `M9` closeout cycle, completed the full `M10` local-first ownership/concurrency slice, and then completed the `M11-M13` self-hosted workflow, config/durable, and orchestration baseline cycle.
 
 Current next approved phase:
 
-- **`M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`**
+- **`M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`**
 
 This means the repository is currently at:
 
@@ -131,7 +140,10 @@ This means the repository is currently at:
 5. `M10 Phase 0 - Post-M9 Rebaseline And Scope Freeze` complete
 6. `M10 Phase 1 - Ownership Topology And Claim Domain Freeze` complete
 7. `M10 Phase 2 - Local Barrier And Parallel Batch Execution` complete
-8. the next required step is `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`
+8. `M11` complete
+9. `M12` complete
+10. `M13` complete
+11. the next required step is `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`
 
 ---
 
@@ -331,16 +343,17 @@ Use this priority order:
 
 For the repository **right now**, the answer is:
 
-- treat `M10` as a completed local-first ownership and batch-concurrency milestone
-- do **not** auto-expand into external worker pools or multi-node scheduling breadth
-- begin the next cycle with a post-`M10` rebaseline and scope freeze
+- use `docs/reviews/post-m13-integrated-technical-roadmap.md` as the current route synthesis
+- treat `M13` as a completed orchestration-baseline milestone on top of the earlier `M10-M12` local-first/runtime/config foundation
+- do **not** auto-claim hosted/distributed completion from the shipped loopback external-worker boundary
+- begin the next cycle with a post-`M13` rebaseline and scope freeze
 
 That means the next concrete work should be:
 
-1. read `docs/reviews/m10-freeze-review.md`
-2. open `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`
-3. generate only the `M11 Phase 0` task-card pack when that phase becomes active
-4. reassess whether external worker-pool or multi-node breadth should remain deferred again after the `M11` rebaseline
+1. read `docs/reviews/m13-freeze-review.md`
+2. open `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`
+3. generate only the `M14 Phase 0` task-card pack when that phase becomes active
+4. reassess how the post-`M13` operator web UI and human-control surface should stage against the remaining hosted/distributed debt
 
 ---
 
@@ -372,4 +385,4 @@ That means the next concrete work should be:
 
 If you need a single current instruction for the repository, use this:
 
-> Follow the task-card protocol, treat `M10` as complete, and begin the next cycle with `M11 Phase 0 - Post-M10 Rebaseline And Scope Freeze`.
+> Follow the task-card protocol, treat `M13` as complete, and begin the next cycle with `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`.

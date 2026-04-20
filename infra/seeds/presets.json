@@ -84,5 +84,19 @@
       "timeout_seconds": 120
     },
     "requires_manual_approval": true
+  },
+  {
+    "preset_id": "project_delivery",
+    "name": "Project Delivery",
+    "description": "Drive a planner to parallel coder and researcher workers, then collect reviewer evidence for a complex project slice.",
+    "allowed_task_kinds": [
+      "shell_exec"
+    ],
+    "default_review_policy": "recommended",
+    "default_budget_policy": {
+      "max_retries": 1,
+      "timeout_seconds": 240
+    },
+    "requires_manual_approval": false
   }
 ]

@@ -30,6 +30,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
         "advisory_delivery",
         "guarded_delivery",
         "research_spike_reviewable",
+        "project_delivery",
     ]
 
     preset_result = _invoke(tmp_path, "preset", "list", "--json")
@@ -42,6 +43,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
         "research_spike_reviewable",
         "advisory_delivery",
         "guarded_delivery",
+        "project_delivery",
     }
 
     domain_pack_result = _invoke(tmp_path, "domain-pack", "list", "--json")
@@ -136,6 +138,37 @@ def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     ]
 
 
+def test_cli_config_show_reads_workflow_toml_and_worker_pools(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "workflow.toml").write_text(
+        """
+[feature_flags]
+external_worker_pools = true
+
+[worker_pools]
+default_pool_id = "mock_remote_shell"
+""".strip(),
+        encoding="utf-8",
+    )
+    _invoke(tmp_path, "db", "reset")
+
+    config_result = _invoke(tmp_path, "config", "show")
+    worker_pool_result = _invoke(tmp_path, "capability", "worker-pools")
+
+    assert config_result.exit_code == 0
+    config_payload = json.loads(config_result.stdout)
+    assert config_payload["config_path"].endswith("workflow.toml")
+    assert config_payload["feature_flags"]["external_worker_pools"]["enabled"] is True
+    assert config_payload["worker_pools"]["default_pool_id"] == "mock_remote_shell"
+
+    assert worker_pool_result.exit_code == 0
+    worker_pools = json.loads(worker_pool_result.stdout)
+    assert {item["worker_pool_id"] for item in worker_pools} >= {"local_loopback", "mock_remote_shell"}
+    assert any(
+        item["default_selected"] is True for item in worker_pools if item["worker_pool_id"] == "mock_remote_shell"
+    )
+
+
 def test_cli_can_export_domain_pack_skill_when_flag_enabled(tmp_path: Path) -> None:
     _invoke(tmp_path, "db", "reset")
     output_root = tmp_path / "skills"
@@ -163,9 +196,10 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["open_debt_count"] >= 1
-    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019"]
+    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019", "TD-020"]
     assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"]["M11"] == 1
+    assert payload["planned_phase_counts"]["M14"] == 1
+    assert payload["planned_phase_counts"]["M15"] == 1
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
@@ -216,8 +250,12 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     assert payload["validation_summary"]["overall_passed"] is True
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in payload["gates"][3]["detail"]
-    assert payload["gates"][5]["gate"] == "m10_scope_closure"
-    assert payload["remaining_gaps"] == ["true external worker pools and multi-node scheduling are still deferred into M11"]
+    assert payload["gates"][5]["gate"] == "local_foundation_closure"
+    assert payload["gates"][6]["gate"] == "orchestration_baseline"
+    assert payload["remaining_gaps"] == [
+        "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline",
+        "the full operator web UI and human control surface are still deferred into M14",
+    ]
 
 
 def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -451,6 +489,35 @@ def test_cli_run_replay_packet_projects_metrics(tmp_path: Path) -> None:
     assert [item["recorded_from"] for item in simulations_payload] == ["lifecycle_terminal", "manual_request"]
     assert simulations_payload[-1]["record_id"] == record_simulation_payload["record_id"]
     assert retrieval_preview["namespace_ids"] == ["policy"]
+
+
+def test_cli_run_orchestration_projects_project_delivery(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    create_result = _invoke(
+        tmp_path,
+        "run",
+        "create",
+        "--goal",
+        "Ship a complex project slice",
+        "--preset",
+        "project_delivery",
+        "--prepare",
+        "--execute",
+    )
+    create_payload = json.loads(create_result.stdout)
+    run_id = create_payload["run"]["run_id"]
+
+    orchestration_result = _invoke(tmp_path, "run", "orchestration", run_id)
+    status_result = _invoke(tmp_path, "run", "status-detail", run_id)
+
+    assert orchestration_result.exit_code == 0
+    orchestration_payload = json.loads(orchestration_result.stdout)
+    assert orchestration_payload["enabled"] is True
+    assert orchestration_payload["orchestration"]["role_progress"]["planner"]["status"] == "completed"
+
+    status_payload = json.loads(status_result.stdout)
+    assert status_payload["orchestration"]["parallel_batch"]["member_count"] == 2
+    assert status_payload["orchestration"]["role_progress"]["reviewer"]["status"] == "completed"
 
 
 def test_cli_run_create_with_human_required_returns_awaiting_review(tmp_path: Path) -> None:

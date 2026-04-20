@@ -7,6 +7,7 @@ from packages.contracts import MemoryNamespace, MemoryRetrievalPreview
 
 
 DEFAULT_MEMORY_NAMESPACE_SEED_PATH = Path("infra/seeds/memory_namespaces.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MEMORY_RETRIEVAL_PREVIEW_ENV_KEY = "WORKFLOW_MEMORY_RETRIEVAL_PREVIEW"
 
 
@@ -14,6 +15,8 @@ def load_seed_memory_namespaces(
     seed_path: Path | str = DEFAULT_MEMORY_NAMESPACE_SEED_PATH,
 ) -> list[MemoryNamespace]:
     path = Path(seed_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
     data = json.loads(path.read_text(encoding="utf-8"))
     return [MemoryNamespace.model_validate(item) for item in data]
 

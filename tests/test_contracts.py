@@ -427,6 +427,7 @@ def test_preset_seed_file_parses() -> None:
         "research_spike_reviewable",
         "advisory_delivery",
         "guarded_delivery",
+        "project_delivery",
     }
     for preset in presets:
         assert isinstance(preset, PresetDefinition)
@@ -582,6 +583,7 @@ def test_preset_suggestions_are_deterministic_and_explained() -> None:
         "advisory_delivery",
         "guarded_delivery",
         "research_spike_reviewable",
+        "project_delivery",
     ]
     assert all(item.reason for item in fallback)
 

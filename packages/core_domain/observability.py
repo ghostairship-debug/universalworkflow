@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, Callable
 from uuid import uuid4
 
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.m8_flags import is_external_trace_export_enabled
 
 
@@ -70,13 +71,29 @@ class LangfuseTraceExporter(TraceExporter):
         self.api_key = api_key or os.getenv("LANGFUSE_API_KEY")
         self.public_key = public_key or os.getenv("LANGFUSE_PUBLIC_KEY")
         self._sender = sender or self._send
+        self.success_count = 0
+        self.failure_count = 0
+        self.last_trace_id: str | None = None
+        self.last_error: str | None = None
         if not self.endpoint:
             raise ValueError("langfuse trace exporter requires LANGFUSE_OTEL_ENDPOINT or LANGFUSE_ENDPOINT")
 
     def describe(self) -> dict[str, Any]:
-        return {"provider": "langfuse", "enabled": True, "endpoint": self.endpoint}
+        return {
+            "provider": "langfuse",
+            "enabled": True,
+            "endpoint": self.endpoint,
+            "success_count": self.success_count,
+            "failure_count": self.failure_count,
+            "last_trace_id": self.last_trace_id,
+            "last_error": self.last_error,
+        }
 
     def export(self, record: TraceRecord) -> str | None:
+        redacted_attributes = {
+            key: ("[redacted]" if any(token in key.lower() for token in ("api_key", "authorization", "secret")) else value)
+            for key, value in record.attributes.items()
+        }
         payload = {
             "resourceSpans": [
                 {
@@ -102,7 +119,7 @@ class LangfuseTraceExporter(TraceExporter):
                                         {"key": "uawo.status", "value": {"stringValue": record.status}},
                                         {
                                             "key": "uawo.attributes_json",
-                                            "value": {"stringValue": json.dumps(record.attributes, ensure_ascii=False)},
+                                            "value": {"stringValue": json.dumps(redacted_attributes, ensure_ascii=False)},
                                         },
                                     ],
                                 }
@@ -117,7 +134,15 @@ class LangfuseTraceExporter(TraceExporter):
             headers["Authorization"] = f"Bearer {self.api_key}"
         if self.public_key:
             headers["X-Langfuse-Public-Key"] = self.public_key
-        self._sender(self.endpoint, headers, json.dumps(payload).encode("utf-8"))
+        try:
+            self._sender(self.endpoint, headers, json.dumps(payload).encode("utf-8"))
+        except Exception as exc:
+            self.failure_count += 1
+            self.last_error = str(exc)
+            raise
+        self.success_count += 1
+        self.last_trace_id = record.trace_id
+        self.last_error = None
         return record.trace_id
 
     def _send(self, url: str, headers: dict[str, str], body: bytes) -> None:
@@ -129,9 +154,14 @@ class LangfuseTraceExporter(TraceExporter):
 def build_trace_exporter_from_env() -> TraceExporter:
     if not is_external_trace_export_enabled():
         return NullTraceExporter()
-    provider = os.getenv("UAWO_TRACE_EXPORTER", "langfuse").strip().lower()
+    effective = build_effective_config()
+    provider = str(effective["trace_exporter"]["provider"]).strip().lower()
     if provider in {"", "null", "none"}:
         return NullTraceExporter()
     if provider == "langfuse":
-        return LangfuseTraceExporter()
+        return LangfuseTraceExporter(
+            endpoint=effective["trace_exporter"]["langfuse_endpoint"],
+            api_key=os.getenv("LANGFUSE_API_KEY"),
+            public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+        )
     return NullTraceExporter()

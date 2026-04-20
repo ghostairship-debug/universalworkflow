@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from packages.contracts import (
     BudgetLedger,
     HandoffLite,
@@ -27,6 +29,7 @@ from packages.contracts import (
     WorkerLease,
 )
 from packages.core_domain.db import get_journal_mode, migrate, reset_db
+from packages.core_domain.errors import DatabaseBusyError
 from packages.core_domain.repositories import (
     BudgetLedgerRepository,
     EventRepository,
@@ -61,6 +64,22 @@ def test_migrate_and_wal_mode(tmp_path: Path) -> None:
 
     second_apply = migrate(db_path)
     assert second_apply == []
+
+
+def test_reset_db_reports_busy_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = tmp_path / "workflow.db"
+    db_path.write_text("busy", encoding="utf-8")
+
+    def _busy_unlink(self, missing_ok: bool = False):  # type: ignore[override]
+        raise PermissionError("db is locked")
+
+    monkeypatch.setattr(Path, "unlink", _busy_unlink)
+
+    with pytest.raises(DatabaseBusyError) as exc_info:
+        reset_db(db_path)
+
+    assert exc_info.value.code == "database_busy"
+    assert exc_info.value.details["operation"] == "reset_db"
 
 
 def test_memory_item_repository_round_trip(tmp_path: Path) -> None:
@@ -150,12 +169,13 @@ def test_seed_presets_into_sqlite(tmp_path: Path) -> None:
     presets = PresetRepository(db_path).seed_defaults()
     stored = PresetRepository(db_path).list()
 
-    assert len(presets) == 6
+    assert len(presets) == 7
     assert [preset.preset_id for preset in stored] == [
         "advisory_delivery",
         "feature_delivery",
         "guarded_delivery",
         "optional_delivery",
+        "project_delivery",
         "research_spike",
         "research_spike_reviewable",
     ]

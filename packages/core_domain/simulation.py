@@ -8,12 +8,15 @@ from packages.contracts import CheckResult, SimulationPolicyDefinition, Simulati
 
 
 DEFAULT_SIMULATION_POLICY_SEED_PATH = Path("infra/seeds/simulation_policies.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_seed_simulation_policies(
     seed_path: Path | str = DEFAULT_SIMULATION_POLICY_SEED_PATH,
 ) -> list[SimulationPolicyDefinition]:
     path = Path(seed_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
     data = json.loads(path.read_text(encoding="utf-8"))
     return [SimulationPolicyDefinition.model_validate(item) for item in data]
 

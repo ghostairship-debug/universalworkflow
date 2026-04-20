@@ -1,22 +1,29 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from packages.contracts import (
+    AgentRoleType,
     BudgetLedger,
     CapabilityRoute,
     ExecutionLaneType,
     DomainPackDefinition,
     DomainPackResolution,
     Evidence,
+    ExecutionTargetRef,
     HandoffLite,
+    LeaseRenewalRecord,
     MCPServerProfile,
     MemoryCandidate,
     MemoryItem,
     MemoryNamespace,
     MemoryRetrievalPreview,
+    OrchestrationBarrier,
+    OrchestrationPlan,
+    OrchestrationStep,
     Phase,
     PresetDefinition,
     PresetSuggestion,
@@ -60,6 +67,7 @@ from packages.contracts import (
 from packages.core_domain.auto_review import AutoReviewV0
 from packages.core_domain.capability_plane import CapabilityPlane, TOOL_PROJECTION_MANIFEST_ENV_KEY, load_tool_projection_manifest
 from packages.core_domain.compile import CompileSnapshot, compile_run as build_compile_snapshot
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.context_budget import build_context_budget_report
 from packages.core_domain.db import unit_of_work
 from packages.core_domain.domain_packs import (
@@ -70,6 +78,7 @@ from packages.core_domain.domain_packs import (
 from packages.core_domain.errors import (
     BudgetExhaustedError,
     CapabilityAdapterNotFoundError,
+    DatabaseBusyError,
     EntityNotFoundError,
     ExecutionLaneNotAllowedError,
     InvalidStateTransitionError,
@@ -80,6 +89,7 @@ from packages.core_domain.errors import (
     TaskKindNotAllowedError,
     UnsupportedRepairActionError,
     UnsupportedTaskKindError,
+    WorkflowError,
 )
 from packages.core_domain.memory import (
     MEMORY_RETRIEVAL_PREVIEW_ENV_KEY,
@@ -115,11 +125,17 @@ from packages.core_domain.service_types import (
     ReviewedRunBundle,
     RunDiagnosticContext,
 )
+from packages.core_domain.external_workers import (
+    ExternalWorkerGateway,
+    load_worker_pool_profiles,
+    resolve_worker_pool_profile,
+)
 from packages.core_domain.skills import export_domain_pack_skill_bundle
 from packages.core_domain.m8_flags import (
     active_feature_flags,
     is_agent_lane_enabled,
     is_durable_pilot_enabled,
+    is_external_worker_pools_enabled,
     is_mcp_source_enabled,
     is_skill_export_enabled,
 )
@@ -131,6 +147,7 @@ from packages.runtime_langgraph.durable_pilot import (
 )
 from packages.runtime_langgraph.gateway import build_runtime_gateway_from_env
 from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
+from packages.worker_adapters.base import ExecutionResult
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.router import WorkerRouter
@@ -171,8 +188,12 @@ class OrchestratorService(
         simulation_runner: LocalDeterministicSimulationRunner | None = None,
         trace_exporter: TraceExporter | None = None,
         durable_runtime_pilot: DurableRuntimePilot | None = None,
+        external_worker_gateway: ExternalWorkerGateway | None = None,
     ):
         self.db_path = Path(db_path) if db_path is not None else None
+        self.effective_config = build_effective_config(
+            explicit_db_path=self.db_path.as_posix() if self.db_path is not None else None
+        )
         self.run_repo = RunRepository(self.db_path)
         self.preset_repo = PresetRepository(self.db_path)
         self.budget_repo = BudgetLedgerRepository(self.db_path)
@@ -205,6 +226,8 @@ class OrchestratorService(
         self.simulation_runner = simulation_runner or LocalDeterministicSimulationRunner()
         self.trace_exporter = trace_exporter or build_trace_exporter_from_env()
         self.durable_runtime_pilot = durable_runtime_pilot or build_durable_runtime_pilot_from_env()
+        self.external_worker_gateway = external_worker_gateway or ExternalWorkerGateway()
+        self.worker_pool_profiles = load_worker_pool_profiles(self.effective_config["worker_pools"]["seed_path"])
 
     def _resolver(self) -> PresetResolver:
         return PresetResolver(self.preset_repo.list())
@@ -326,6 +349,328 @@ class OrchestratorService(
 
     def _feature_flags(self) -> dict[str, bool]:
         return active_feature_flags()
+
+    def get_effective_config(self) -> dict[str, Any]:
+        return self.effective_config
+
+    def list_worker_pool_profiles(self) -> list[dict[str, Any]]:
+        return [
+            {
+                **profile.model_dump(mode="json"),
+                "feature_flag_enabled": is_external_worker_pools_enabled(),
+                "default_selected": profile.worker_pool_id == self.effective_config["worker_pools"]["default_pool_id"],
+            }
+            for profile in self.worker_pool_profiles
+        ]
+
+    def _selected_worker_pool_profile(self) -> Any | None:
+        if not is_external_worker_pools_enabled():
+            return None
+        return resolve_worker_pool_profile(
+            self.worker_pool_profiles,
+            self.effective_config["worker_pools"]["default_pool_id"],
+        )
+
+    def _default_project_delivery_plan(self, run_id: str) -> OrchestrationPlan:
+        barrier = OrchestrationBarrier(
+            label="coder_researcher_parallel",
+            role_ids=[AgentRoleType.coder, AgentRoleType.researcher],
+            status="pending",
+            member_count=2,
+        )
+        return OrchestrationPlan(
+            run_id=run_id,
+            preset_id="project_delivery",
+            review_policy=ReviewPolicy.recommended,
+            roles=[
+                {"role": AgentRoleType.planner, "preset_id": "optional_delivery", "preferred_adapter": "agent", "fallback_adapter": "shell"},
+                {"role": AgentRoleType.coder, "preset_id": "feature_delivery", "preferred_adapter": "opencode", "fallback_adapter": "shell"},
+                {"role": AgentRoleType.researcher, "preset_id": "optional_delivery", "preferred_adapter": "agent", "fallback_adapter": "shell"},
+                {"role": AgentRoleType.reviewer, "preset_id": "advisory_delivery", "preferred_adapter": "agent", "fallback_adapter": "shell"},
+                {"role": AgentRoleType.operator, "preset_id": "guarded_delivery", "preferred_adapter": None, "fallback_adapter": None},
+            ],
+            steps=[
+                OrchestrationStep(
+                    role=AgentRoleType.planner,
+                    title="Generate work breakdown",
+                    preset_id="optional_delivery",
+                    preferred_adapter="agent",
+                    fallback_adapter="shell",
+                    sequence_no=1,
+                    status="pending",
+                ),
+                OrchestrationStep(
+                    role=AgentRoleType.coder,
+                    title="Implement primary delivery slice",
+                    preset_id="feature_delivery",
+                    preferred_adapter="opencode",
+                    fallback_adapter="shell",
+                    barrier_id=barrier.barrier_id,
+                    sequence_no=2,
+                    status="pending",
+                ),
+                OrchestrationStep(
+                    role=AgentRoleType.researcher,
+                    title="Research risks and supporting evidence",
+                    preset_id="optional_delivery",
+                    preferred_adapter="agent",
+                    fallback_adapter="shell",
+                    barrier_id=barrier.barrier_id,
+                    sequence_no=2,
+                    status="pending",
+                ),
+                OrchestrationStep(
+                    role=AgentRoleType.reviewer,
+                    title="Review implementation and research evidence",
+                    preset_id="advisory_delivery",
+                    preferred_adapter="agent",
+                    fallback_adapter="shell",
+                    sequence_no=3,
+                    status="pending",
+                ),
+            ],
+            barriers=[barrier],
+        )
+
+    def _orchestration_from_context(self, context: RunDiagnosticContext) -> dict[str, Any] | None:
+        last_evidence = self._last_evidence(context)
+        if last_evidence is not None:
+            orchestration = last_evidence.raw_execution.get("metadata", {}).get("orchestration")
+            if isinstance(orchestration, dict):
+                return orchestration
+        last_runtime_state = self._last_runtime_state(context)
+        if last_runtime_state is not None:
+            orchestration = last_runtime_state.state_payload.get("orchestration")
+            if isinstance(orchestration, dict):
+                return orchestration
+        return None
+
+    def get_run_orchestration(self, run_id: str) -> dict[str, Any]:
+        context = self._load_run_context(run_id)
+        orchestration = self._orchestration_from_context(context)
+        if orchestration is None:
+            return {"run_id": run_id, "enabled": False, "orchestration": None}
+        return {"run_id": run_id, "enabled": True, "orchestration": orchestration}
+
+    def _compile_child_run_with_fallback(
+        self,
+        run_id: str,
+        *,
+        preferred_adapter: str | None,
+        fallback_adapter: str | None,
+    ) -> PreparedRunBundle:
+        adapter_candidates = [preferred_adapter, fallback_adapter, None]
+        seen: set[str | None] = set()
+        for adapter_name in adapter_candidates:
+            if adapter_name in seen:
+                continue
+            seen.add(adapter_name)
+            try:
+                return self.compile_run(run_id, adapter_name=adapter_name)
+            except (
+                CapabilityAdapterNotFoundError,
+                ExecutionLaneNotAllowedError,
+                TaskKindNotAllowedError,
+                UnsupportedTaskKindError,
+            ):
+                continue
+        return self.compile_run(run_id)
+
+    def _finalize_child_run_if_waiting(self, run_id: str) -> Run:
+        run = self.get_run(run_id)
+        if str(run.status) != RunStatus.awaiting_review:
+            return run
+        return self.approve_run_review(run_id).run
+
+    def _role_goal_for(self, parent_goal: str, role: AgentRoleType, *, parallel_run_ids: list[str] | None = None) -> str:
+        if role == AgentRoleType.planner:
+            return f"Plan a structured work breakdown for this project goal: {parent_goal}"
+        if role == AgentRoleType.coder:
+            return f"Implement the primary delivery slice for this project goal: {parent_goal}"
+        if role == AgentRoleType.researcher:
+            return f"Research risks, references, and open questions for this project goal: {parent_goal}"
+        if role == AgentRoleType.reviewer:
+            child_line = ", ".join(parallel_run_ids or [])
+            return f"Review orchestration evidence for this project goal: {parent_goal}. Parallel child runs: {child_line}"
+        return parent_goal
+
+    def _write_orchestration_artifact(self, packet: TaskPacket, content: str) -> list[str]:
+        artifact = packet.expected_artifacts[0] if packet.expected_artifacts else "state/artifacts/project_delivery.md"
+        path = Path(artifact)
+        if not path.is_absolute():
+            path = Path(packet.working_directory) / path
+        resolved = path.resolve()
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        return [resolved.as_posix()]
+
+    def _execute_project_delivery_orchestration(self, packet: TaskPacket) -> ExecutionResult:
+        from packages.worker_adapters.base import utc_now
+
+        started_at = utc_now()
+        orchestration_payload = packet.env.get("WORKFLOW_ORCHESTRATION_PLAN")
+        orchestration = (
+            OrchestrationPlan.model_validate(json.loads(orchestration_payload))
+            if orchestration_payload
+            else self._default_project_delivery_plan(packet.run_id)
+        )
+        parent_goal = packet.env.get("WORKFLOW_RUN_GOAL", "")
+        child_runs: list[dict[str, Any]] = []
+        role_progress: dict[str, dict[str, Any]] = {}
+
+        planner_step = next(step for step in orchestration.steps if step.role == AgentRoleType.planner)
+        planner_run = self.create_run(self._role_goal_for(parent_goal, AgentRoleType.planner), planner_step.preset_id)
+        planner_bundle = self._compile_child_run_with_fallback(
+            planner_run.run_id,
+            preferred_adapter=planner_step.preferred_adapter,
+            fallback_adapter=planner_step.fallback_adapter,
+        )
+        self.resume_run(planner_run.run_id)
+        planner_final = self._finalize_child_run_if_waiting(planner_run.run_id)
+        if str(planner_final.status) != "completed" and planner_step.fallback_adapter and planner_step.fallback_adapter != planner_step.preferred_adapter:
+            planner_run = self.create_run(self._role_goal_for(parent_goal, AgentRoleType.planner), planner_step.preset_id)
+            planner_bundle = self._compile_child_run_with_fallback(
+                planner_run.run_id,
+                preferred_adapter=planner_step.fallback_adapter,
+                fallback_adapter=None,
+            )
+            self.resume_run(planner_run.run_id)
+            planner_final = self._finalize_child_run_if_waiting(planner_run.run_id)
+        planner_step.run_id = planner_run.run_id
+        planner_step.status = str(planner_final.status)
+        child_runs.append(
+            {
+                "role": str(AgentRoleType.planner),
+                "run_id": planner_run.run_id,
+                "status": str(planner_final.status),
+                "runtime_task_id": planner_bundle.task_packet.runtime_task_id,
+            }
+        )
+        role_progress[str(AgentRoleType.planner)] = {"status": str(planner_final.status), "run_id": planner_run.run_id}
+
+        parallel_steps = [step for step in orchestration.steps if step.role in {AgentRoleType.coder, AgentRoleType.researcher}]
+        parallel_run_ids: list[str] = []
+        for step in parallel_steps:
+            child_run = self.create_run(self._role_goal_for(parent_goal, step.role), step.preset_id)
+            prepared = self._compile_child_run_with_fallback(
+                child_run.run_id,
+                preferred_adapter=step.preferred_adapter,
+                fallback_adapter=step.fallback_adapter,
+            )
+            step.run_id = child_run.run_id
+            step.status = "prepared"
+            parallel_run_ids.append(child_run.run_id)
+            child_runs.append(
+                {
+                    "role": str(step.role),
+                    "run_id": child_run.run_id,
+                    "status": "prepared",
+                    "runtime_task_id": prepared.task_packet.runtime_task_id,
+                    "barrier_id": step.barrier_id,
+                }
+            )
+        parallel_result = self.resume_runs_parallel(parallel_run_ids, max_workers=2) if parallel_run_ids else {"results": []}
+        for step in parallel_steps:
+            finalized = self._finalize_child_run_if_waiting(step.run_id or "")
+            if str(finalized.status) != "completed" and step.fallback_adapter and step.fallback_adapter != step.preferred_adapter:
+                recovered_run = self.create_run(self._role_goal_for(parent_goal, step.role), step.preset_id)
+                recovered_bundle = self._compile_child_run_with_fallback(
+                    recovered_run.run_id,
+                    preferred_adapter=step.fallback_adapter,
+                    fallback_adapter=None,
+                )
+                self.resume_run(recovered_run.run_id)
+                finalized = self._finalize_child_run_if_waiting(recovered_run.run_id)
+                step.run_id = recovered_run.run_id
+                for child in child_runs:
+                    if child["role"] == str(step.role):
+                        child["run_id"] = recovered_run.run_id
+                        child["runtime_task_id"] = recovered_bundle.task_packet.runtime_task_id
+            step.status = str(finalized.status)
+            role_progress[str(step.role)] = {
+                "status": str(finalized.status),
+                "run_id": step.run_id,
+                "barrier_id": step.barrier_id,
+            }
+            for child in child_runs:
+                if child["run_id"] == step.run_id:
+                    child["status"] = str(finalized.status)
+        for barrier in orchestration.barriers:
+            barrier.status = "released" if parallel_run_ids else "skipped"
+
+        reviewer_step = next(step for step in orchestration.steps if step.role == AgentRoleType.reviewer)
+        reviewer_run = self.create_run(
+            self._role_goal_for(parent_goal, AgentRoleType.reviewer, parallel_run_ids=parallel_run_ids),
+            reviewer_step.preset_id,
+        )
+        reviewer_bundle = self._compile_child_run_with_fallback(
+            reviewer_run.run_id,
+            preferred_adapter=reviewer_step.preferred_adapter,
+            fallback_adapter=reviewer_step.fallback_adapter,
+        )
+        self.resume_run(reviewer_run.run_id)
+        reviewer_final = self._finalize_child_run_if_waiting(reviewer_run.run_id)
+        if str(reviewer_final.status) != "completed" and reviewer_step.fallback_adapter and reviewer_step.fallback_adapter != reviewer_step.preferred_adapter:
+            reviewer_run = self.create_run(
+                self._role_goal_for(parent_goal, AgentRoleType.reviewer, parallel_run_ids=parallel_run_ids),
+                reviewer_step.preset_id,
+            )
+            reviewer_bundle = self._compile_child_run_with_fallback(
+                reviewer_run.run_id,
+                preferred_adapter=reviewer_step.fallback_adapter,
+                fallback_adapter=None,
+            )
+            self.resume_run(reviewer_run.run_id)
+            reviewer_final = self._finalize_child_run_if_waiting(reviewer_run.run_id)
+        reviewer_step.run_id = reviewer_run.run_id
+        reviewer_step.status = str(reviewer_final.status)
+        child_runs.append(
+            {
+                "role": str(AgentRoleType.reviewer),
+                "run_id": reviewer_run.run_id,
+                "status": str(reviewer_final.status),
+                "runtime_task_id": reviewer_bundle.task_packet.runtime_task_id,
+            }
+        )
+        role_progress[str(AgentRoleType.reviewer)] = {"status": str(reviewer_final.status), "run_id": reviewer_run.run_id}
+
+        orchestration_summary = {
+            "orchestration_id": orchestration.orchestration_id,
+            "execution_mode": orchestration.execution_mode,
+            "plan": orchestration.model_dump(mode="json"),
+            "child_runs": child_runs,
+            "parallel_batch": {
+                "barrier_id": orchestration.barriers[0].barrier_id if orchestration.barriers else None,
+                "member_count": len(parallel_run_ids),
+                "status": orchestration.barriers[0].status if orchestration.barriers else "skipped",
+                "results": parallel_result.get("results", []),
+            },
+            "role_progress": role_progress,
+        }
+        content_lines = [
+            "# Project Delivery Orchestration",
+            "",
+            f"goal: {parent_goal}",
+            f"orchestration_id: {orchestration.orchestration_id}",
+            "roles:",
+        ]
+        for item in child_runs:
+            content_lines.append(f"- {item['role']}: {item['run_id']} status={item['status']}")
+        artifact_paths = self._write_orchestration_artifact(packet, "\n".join(content_lines) + "\n")
+        finished_at = utc_now()
+        return_code = 0 if all(item["status"] == "completed" for item in child_runs) else 1
+        return ExecutionResult(
+            runtime_task_id=packet.runtime_task_id,
+            return_code=return_code,
+            stdout=json.dumps(orchestration_summary, ensure_ascii=False),
+            stderr="" if return_code == 0 else "one or more orchestration child runs did not complete successfully",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+            artifact_paths=artifact_paths,
+            adapter_name="shell",
+            metadata={"orchestration": orchestration_summary},
+        )
 
     def _default_adapter_for_preset(
         self,
@@ -516,6 +861,17 @@ class OrchestratorService(
             "mcp_server_profiles": [profile.model_dump(mode="json") for profile in snapshot.mcp_server_profiles],
             "feature_flags": self._feature_flags(),
         }
+        worker_pool_id = snapshot.task_packet.env.get("WORKFLOW_WORKER_POOL_ID")
+        if worker_pool_id:
+            payload_updates["execution_target"] = {
+                "target_kind": "external_worker_pool",
+                "worker_pool_id": worker_pool_id,
+                "dispatch_mode": "loopback",
+                "adapter_name": snapshot.task_packet.env.get("WORKFLOW_CAPABILITY_ADAPTER") or None,
+            }
+        orchestration_payload = snapshot.task_packet.env.get("WORKFLOW_ORCHESTRATION_PLAN")
+        if orchestration_payload:
+            payload_updates["orchestration"] = json.loads(orchestration_payload)
         durable_refs: dict[str, str] = {}
         if snapshot.execution_lane == ExecutionLaneType.durable_incremental:
             durable_refs = self.durable_runtime_pilot.start(state_ref.run_id, state_ref.runtime_task_id)

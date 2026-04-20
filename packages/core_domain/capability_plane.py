@@ -26,11 +26,14 @@ from packages.core_domain.agent_tools import built_in_tool_specs
 
 
 DEFAULT_MCP_PROFILE_SEED_PATH = Path("infra/seeds/mcp_server_profiles.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOL_PROJECTION_MANIFEST_ENV_KEY = "WORKFLOW_TOOL_PROJECTION_MANIFEST"
 
 
 def load_seed_mcp_server_profiles(seed_path: Path | str = DEFAULT_MCP_PROFILE_SEED_PATH) -> list[MCPServerProfile]:
     path = Path(seed_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))

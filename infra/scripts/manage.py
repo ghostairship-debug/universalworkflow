@@ -9,6 +9,7 @@ from pathlib import Path
 import uvicorn
 
 from apps.orchestrator_api.main import create_app
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.db import DEFAULT_DB_PATH, migrate, reset_db
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
@@ -311,7 +312,7 @@ def logs_tail(log_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Development commands for the M1 local-first runtime.")
-    parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
+    parser.add_argument("--db-path", default=None)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("migrate")
@@ -325,7 +326,8 @@ def main() -> None:
     dev_parser.add_argument("--port", type=int, default=8000)
 
     args = parser.parse_args()
-    db_path = Path(args.db_path)
+    effective = build_effective_config(explicit_db_path=args.db_path)
+    db_path = Path(effective["db"]["path"])
 
     if args.command == "migrate":
         applied = migrate(db_path)

@@ -8,7 +8,8 @@ from typing import Callable, Optional, TypeVar
 import typer
 
 from apps.operator_tui.dashboard import run_dashboard
-from packages.core_domain.db import DEFAULT_DB_PATH, migrate, reset_db
+from packages.core_domain.config import build_effective_config
+from packages.core_domain.db import DEFAULT_DB_PATH, migrate, reset_db, workspace_scoped_db_path
 from packages.core_domain.errors import WorkflowError
 from packages.core_domain.governance import (
     build_domain_pack_platform_report,
@@ -34,6 +35,7 @@ memory_namespace_app = typer.Typer(help="Memory namespace inspection commands.")
 memory_item_app = typer.Typer(help="Persistent memory item commands.")
 db_app = typer.Typer(help="Development database commands.")
 governance_app = typer.Typer(help="Governance and debt visibility commands.")
+config_app = typer.Typer(help="Unified configuration inspection commands.")
 
 app.add_typer(run_app, name="run")
 app.add_typer(task_app, name="task")
@@ -44,6 +46,7 @@ app.add_typer(simulation_app, name="simulation")
 app.add_typer(memory_app, name="memory")
 app.add_typer(db_app, name="db")
 app.add_typer(governance_app, name="governance")
+app.add_typer(config_app, name="config")
 memory_app.add_typer(memory_namespace_app, name="namespace")
 memory_app.add_typer(memory_item_app, name="item")
 simulation_app.add_typer(simulation_policy_app, name="policy")
@@ -80,13 +83,10 @@ def _run_workflow_action(action: Callable[[], T]) -> T:
 @app.callback()
 def main(
     ctx: typer.Context,
-    db_path: str = typer.Option(
-        os.getenv("WORKFLOW_DB_PATH", str(DEFAULT_DB_PATH)),
-        "--db-path",
-        help="SQLite database path.",
-    ),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="SQLite database path."),
 ) -> None:
-    ctx.obj = {"db_path": db_path}
+    effective = build_effective_config(explicit_db_path=db_path)
+    ctx.obj = {"db_path": effective["db"]["path"], "effective_config": effective}
 
 
 @app.command("tui")
@@ -190,6 +190,11 @@ def capability_sources(ctx: typer.Context) -> None:
 @capability_app.command("mcp-profiles")
 def capability_mcp_profiles(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).list_mcp_server_profiles()))
+
+
+@capability_app.command("worker-pools")
+def capability_worker_pools(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_worker_pool_profiles()))
 
 
 @capability_app.command("projection")
@@ -452,6 +457,9 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
     payload["ownership_topology"] = detail["ownership_topology"]
     payload["parallel_batch"] = detail["parallel_batch"]
     payload["worker_lease_projection"] = detail["worker_lease_projection"]
+    payload["execution_target"] = detail["execution_target"]
+    payload["lease_renewals"] = detail["lease_renewals"]
+    payload["orchestration"] = detail["orchestration"]
     payload["effective_review_state"] = detail["effective_review_state"]
     payload["domain_pack"] = detail["domain_pack"]
     payload["capability_resolution"] = detail["capability_resolution"]
@@ -505,6 +513,11 @@ def run_audit_report(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("replay-packet")
 def run_replay_packet(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_replay_packet(run_id)))
+
+
+@run_app.command("orchestration")
+def run_orchestration(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_orchestration(run_id)))
 
 
 @run_app.command("memory-candidates")
@@ -612,12 +625,19 @@ def db_reset(
     seed_presets: bool = typer.Option(True, "--seed-presets/--no-seed-presets", help="Seed bootstrap presets."),
 ) -> None:
     db_path = _db_path_from_context(ctx)
-    reset_db(db_path)
+    _run_workflow_action(lambda: reset_db(db_path))
     migrate(db_path)
     seeded = []
     if seed_presets:
         seeded = [preset.preset_id for preset in PresetRepository(db_path).seed_defaults()]
     _emit_json({"db_path": db_path.as_posix(), "seeded_presets": seeded})
+
+
+@db_app.command("workspace-path")
+def db_workspace_path(
+    label: str = typer.Option("workflow", "--label", help="Stable label for the workspace-scoped DB."),
+) -> None:
+    _emit_json({"db_path": workspace_scoped_db_path(label=label).resolve().as_posix(), "label": label})
 
 
 @governance_app.command("tech-debt")
@@ -708,6 +728,11 @@ def governance_release_readiness(
 @governance_app.command("domain-pack")
 def governance_domain_pack() -> None:
     _emit_json(build_domain_pack_platform_report())
+
+
+@config_app.command("show")
+def config_show(ctx: typer.Context) -> None:
+    _emit_json(ctx.obj["effective_config"])
 
 
 def run() -> None:

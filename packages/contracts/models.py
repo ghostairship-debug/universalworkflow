@@ -104,6 +104,24 @@ class MCPTransport(StrEnum):
     http = "http"
 
 
+class WorkerPoolTransport(StrEnum):
+    local = "local"
+    http = "http"
+
+
+class ExecutionTargetKind(StrEnum):
+    local = "local"
+    external_worker_pool = "external_worker_pool"
+
+
+class AgentRoleType(StrEnum):
+    planner = "planner"
+    coder = "coder"
+    researcher = "researcher"
+    reviewer = "reviewer"
+    operator = "operator"
+
+
 class CapabilityRoute(ContractModel):
     capability: str
     adapter_name: str
@@ -154,6 +172,38 @@ class ToolProjectionManifest(PersistedContractModel):
     tools: list[ToolProjectionEntry] = Field(default_factory=list)
     max_schema_bytes: int = Field(default=0, ge=0)
     trust_tiers: list[TrustTier] = Field(default_factory=list)
+
+
+class WorkerPoolProfile(PersistedContractModel):
+    worker_pool_id: str
+    name: str
+    description: str
+    enabled: bool = True
+    transport: WorkerPoolTransport = WorkerPoolTransport.local
+    adapter_name: str = "shell"
+    dispatch_mode: str = "loopback"
+    base_url: str | None = None
+
+
+class ExecutionTargetRef(ContractModel):
+    target_kind: ExecutionTargetKind = ExecutionTargetKind.local
+    worker_pool_id: str | None = None
+    adapter_name: str | None = None
+    dispatch_mode: str | None = None
+    worker_name: str | None = None
+    worker_id: str | None = None
+    dispatched_at: str | None = None
+
+
+class LeaseRenewalRecord(ContractModel):
+    renewal_id: str = Field(default_factory=lambda: new_id("renewal"))
+    run_id: str
+    runtime_task_id: str
+    worker_pool_id: str
+    lease_id: str
+    status: str
+    renewed_at: datetime = Field(default_factory=utc_now)
+    lease_expires_at: datetime
 
 
 class TraceContext(ContractModel):
@@ -456,6 +506,46 @@ class MemoryRetrievalPreview(ContractModel):
     item_count: int = Field(ge=0)
     brief_lines: list[str] = Field(default_factory=list)
     items: list[MemoryItem] = Field(default_factory=list)
+
+
+class RoleAssignment(ContractModel):
+    role: AgentRoleType
+    preset_id: str
+    preferred_adapter: str | None = None
+    fallback_adapter: str | None = None
+    review_policy: ReviewPolicy | None = None
+
+
+class OrchestrationStep(ContractModel):
+    step_id: str = Field(default_factory=lambda: new_id("orchestration_step"))
+    role: AgentRoleType
+    title: str
+    run_id: str | None = None
+    preset_id: str
+    preferred_adapter: str | None = None
+    fallback_adapter: str | None = None
+    barrier_id: str | None = None
+    sequence_no: int = Field(default=1, ge=1)
+    status: str = "pending"
+
+
+class OrchestrationBarrier(ContractModel):
+    barrier_id: str = Field(default_factory=lambda: new_id("orchestration_barrier"))
+    label: str
+    role_ids: list[AgentRoleType] = Field(default_factory=list)
+    status: str = "pending"
+    member_count: int = Field(default=0, ge=0)
+
+
+class OrchestrationPlan(PersistedContractModel):
+    orchestration_id: str = Field(default_factory=lambda: new_id("orchestration"))
+    run_id: str | None = None
+    preset_id: str
+    review_policy: ReviewPolicy
+    roles: list[RoleAssignment] = Field(default_factory=list)
+    steps: list[OrchestrationStep] = Field(default_factory=list)
+    barriers: list[OrchestrationBarrier] = Field(default_factory=list)
+    execution_mode: str = "planner_parallel_reviewer"
 
 
 class SimulationPolicyDefinition(PersistedContractModel):

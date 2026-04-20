@@ -194,7 +194,8 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
         "capability_registry",
         "domain_pack_baseline",
         "governance_automation",
-        "m10_scope_closure",
+        "local_foundation_closure",
+        "orchestration_baseline",
     ]
     assert report["validation_summary"]["overall_passed"] is True
     assert report["review_policy_summary"]["supported_policy_count"] == 5
@@ -205,7 +206,11 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     ]
     assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in report["gates"][3]["detail"]
-    assert "true external worker pools and multi-node scheduling are still deferred into M11" in report["remaining_gaps"]
+    assert (
+        "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline"
+        in report["remaining_gaps"]
+    )
+    assert "the full operator web UI and human control surface are still deferred into M14" in report["remaining_gaps"]
     assert report["governance_alerts"]["overall_status"] == "degraded"
     assert report["governance_metrics"]["review_policy"]["supported_policy_count"] == 5
     assert report["validation_evidence"]["report_present"] is True
@@ -237,6 +242,7 @@ def test_build_review_policy_report_falls_back_to_seed_presets_when_db_is_not_bo
         "advisory_delivery",
         "guarded_delivery",
         "research_spike_reviewable",
+        "project_delivery",
     ]
 
 
@@ -262,8 +268,8 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
         validation_report_path=validation_report_path,
     )
 
-    assert report["metrics_version"] == "m10_freeze_v1"
-    assert report["tech_debt"]["open_debt_ids"] == ["TD-019"]
+    assert report["metrics_version"] == "m13_freeze_v1"
+    assert report["tech_debt"]["open_debt_ids"] == ["TD-019", "TD-020"]
     assert report["review_policy"]["supported_policy_count"] == 5
     assert report["review_policy"]["reference_only_candidates"] == []
     assert report["validation"]["overall_passed"] is True
