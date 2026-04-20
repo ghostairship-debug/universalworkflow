@@ -26,6 +26,8 @@ m8 = [
 
 [project.scripts]
 workflowctl = "apps.operator_cli.main:run"
+workflow-remote-worker = "apps.remote_worker_api.main:run"
+workflow-scheduler-authority = "apps.scheduler_authority_api.main:run"
 
 [tool.setuptools]
 include-package-data = true

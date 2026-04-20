@@ -21,6 +21,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -138,6 +139,15 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         human_simulation = http_get_json(f"{base_url}/runs/{human_run_id}/simulation")
         human_event_inspection = http_get_json(f"{base_url}/runs/{human_run_id}/event-inspection")
         human_audit_report = http_get_json(f"{base_url}/runs/{human_run_id}/audit-report")
+        runs_catalog = http_get_json(f"{base_url}/runs?limit=20")
+        pending_reviews = http_get_json(f"{base_url}/reviews/pending")
+        operator_view = http_get_json(f"{base_url}/runs/{human_run_id}/operator-view")
+        scheduler_cluster = http_get_json(f"{base_url}/scheduler/cluster")
+        dashboard_html = http_get_text(f"{base_url}/ui")
+        runs_html = http_get_text(f"{base_url}/ui/runs")
+        reviews_html = http_get_text(f"{base_url}/ui/reviews")
+        governance_html = http_get_text(f"{base_url}/ui/governance")
+        config_html = http_get_text(f"{base_url}/ui/config")
         human_approve = http_post_json(f"{base_url}/runs/{human_run_id}/approve")
         human_claims = http_get_json(f"{base_url}/runs/{human_run_id}/claims")
         human_leases = http_get_json(f"{base_url}/runs/{human_run_id}/leases")
@@ -246,6 +256,9 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     item["domain_pack_id"] for item in governance_release_readiness["domain_packs"]
                 ],
                 "governance_domain_pack_platformized": governance_domain_packs["overall_platformized"],
+                "scheduler_cluster_mode": scheduler_cluster["mode"],
+                "scheduler_cluster_leader": scheduler_cluster["leader_node_id"],
+                "scheduler_cluster_quorum_size": scheduler_cluster["quorum_size"],
                 "auto_run_status": auto_resume["run"]["status"],
                 "auto_compile_status": auto_compile["run"]["status"],
                 "auto_domain_pack_id": auto_detail["domain_pack"]["domain_pack_id"],
@@ -301,6 +314,16 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "human_event_inspection_passed": human_event_inspection["closure_audit"]["passed"],
                 "human_event_closure_state": human_event_inspection["closure_audit"]["state"],
                 "human_audit_closure_state": human_audit_report["review_packet"]["closure_summary"]["state"],
+                "operator_runs_count": len(runs_catalog),
+                "pending_review_run_ids": [item["run"]["run_id"] for item in pending_reviews],
+                "operator_view_run_id": operator_view["run"]["run_id"],
+                "dashboard_html_ok": "Operator Dashboard" in dashboard_html,
+                "runs_html_ok": "Run Explorer" in runs_html,
+                "reviews_html_ok": "Pending Review Console" in reviews_html,
+                "governance_html_ok": "Governance" in governance_html,
+                "dashboard_html_contains_cluster": "Cluster Topology" in dashboard_html,
+                "governance_html_contains_cluster": "Cluster Topology" in governance_html,
+                "config_html_ok": "Effective Configuration" in config_html,
                 "human_recoverability_hint": human_detail["recoverability_hint"],
                 "human_inspection_passed": human_inspection["passed"],
                 "human_inspection_problem_count": human_inspection["problem_count"],
@@ -387,8 +410,8 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     "delivery_consistency_simulation",
                     "research_no_simulation",
                 ],
-                result["governance_open_debt_count"] >= 1,
-                result["governance_active_gate_focus_ids"] == ["TD-020"],
+                result["governance_open_debt_count"] == 0,
+                result["governance_active_gate_focus_ids"] == [],
                 result["governance_supported_review_policies"]
                 == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
                 result["governance_review_policy_debt_id"] == "TD-006",
@@ -449,6 +472,19 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 result["human_event_inspection_passed"] is True,
                 result["human_event_closure_state"] == "awaiting_review",
                 result["human_audit_closure_state"] == "awaiting_review",
+                result["operator_runs_count"] >= 2,
+                human_run_id in result["pending_review_run_ids"],
+                result["operator_view_run_id"] == human_run_id,
+                result["scheduler_cluster_mode"] == "quorum",
+                result["scheduler_cluster_leader"] is not None,
+                result["scheduler_cluster_quorum_size"] >= 1,
+                result["dashboard_html_ok"] is True,
+                result["runs_html_ok"] is True,
+                result["reviews_html_ok"] is True,
+                result["governance_html_ok"] is True,
+                result["dashboard_html_contains_cluster"] is True,
+                result["governance_html_contains_cluster"] is True,
+                result["config_html_ok"] is True,
                 result["human_recoverability_hint"] == "resume_run",
                 result["human_inspection_passed"] is True,
                 result["human_inspection_problem_count"] == 0,

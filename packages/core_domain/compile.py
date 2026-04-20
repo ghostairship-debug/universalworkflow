@@ -11,6 +11,8 @@ from packages.contracts import (
     HandoffLite,
     MemoryRetrievalPreview,
     MCPServerProfile,
+    MutationContract,
+    MutationMode,
     Phase,
     PresetDefinition,
     RuntimeTask,
@@ -77,6 +79,10 @@ def build_artifact_content(
 def _artifact_path_for(run_id: str, preset_id: str, domain_pack: DomainPackResolution | None = None) -> Path:
     suffix = f"_{domain_pack.compile_projection.artifact_label}" if domain_pack is not None else ""
     return Path("state") / "artifacts" / f"{run_id}_{preset_id}{suffix}.md"
+
+
+def _mutation_artifact_path_for(run_id: str, preset_id: str) -> Path:
+    return Path("state") / "artifacts" / f"{run_id}_{preset_id}_mutation.patch"
 
 
 def _python_command_for(
@@ -154,6 +160,7 @@ def compile_run(
     execution_lane: ExecutionLaneType = ExecutionLaneType.native_deterministic,
     tool_projection_manifest: ToolProjectionManifest | None = None,
     mcp_server_profiles: list[MCPServerProfile] | None = None,
+    mutation_contract: MutationContract | None = None,
 ) -> CompileSnapshot:
     compile_phase = Phase(run_id=run_id, name="compile", order_index=0)
     execution_phase = Phase(run_id=run_id, name="execution", order_index=1)
@@ -184,10 +191,16 @@ def compile_run(
         summary=f"Execute `{preset.preset_id}` for run `{run_id}` with `{resolved_task_kind}`{domain_pack_note}.",
     )
 
-    artifact_path = _artifact_path_for(run_id, preset.preset_id, domain_pack=domain_pack)
+    artifact_path = (
+        _mutation_artifact_path_for(run_id, preset.preset_id)
+        if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply
+        else _artifact_path_for(run_id, preset.preset_id, domain_pack=domain_pack)
+    )
     command = (
         []
-        if resolved_task_kind == TaskKind.noop
+        if resolved_task_kind == TaskKind.noop or (
+            mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply
+        )
         else _python_command_for(
             goal,
             preset.preset_id,
@@ -210,6 +223,9 @@ def compile_run(
                 "WORKFLOW_PRESET_ID": preset.preset_id,
                 "WORKFLOW_TASK_KIND": str(resolved_task_kind),
                 "WORKFLOW_EXECUTION_LANE": str(execution_lane),
+                "WORKFLOW_MUTATION_MODE": (
+                    str(mutation_contract.mutation_mode) if mutation_contract is not None else str(MutationMode.artifact_only)
+                ),
                 "WORKFLOW_DOMAIN_PACK_ID": domain_pack.domain_pack_id,
                 DOMAIN_PACK_RESOLUTION_ENV_KEY: dump_domain_pack_resolution(domain_pack),
                 "WORKFLOW_CAPABILITY_ADAPTER": capability_route.adapter_name if capability_route is not None else "",
@@ -222,12 +238,16 @@ def compile_run(
                 "WORKFLOW_PRESET_ID": preset.preset_id,
                 "WORKFLOW_TASK_KIND": str(resolved_task_kind),
                 "WORKFLOW_EXECUTION_LANE": str(execution_lane),
+                "WORKFLOW_MUTATION_MODE": (
+                    str(mutation_contract.mutation_mode) if mutation_contract is not None else str(MutationMode.artifact_only)
+                ),
                 "WORKFLOW_CAPABILITY_ADAPTER": capability_route.adapter_name if capability_route is not None else "",
                 TOOL_PROJECTION_MANIFEST_ENV_KEY: dump_tool_projection_manifest(tool_projection_manifest),
                 MEMORY_RETRIEVAL_PREVIEW_ENV_KEY: dump_memory_retrieval_preview(memory_preview),
             }
         ),
         expected_artifacts=[artifact_path.as_posix()],
+        mutation_contract=mutation_contract,
     )
     handoff = HandoffLite(
         run_id=run_id,

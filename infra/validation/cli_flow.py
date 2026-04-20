@@ -21,6 +21,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -132,6 +133,10 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "--validation-report-path",
             release_validation_report_path.as_posix(),
         ],
+        env,
+    )
+    scheduler_cluster_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "scheduler", "cluster"],
         env,
     )
     governance_domain_pack_payload, _ = run_json_command(
@@ -785,6 +790,9 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                 item["domain_pack_id"] for item in governance_release_readiness_payload["domain_packs"]
             ],
             "governance_domain_pack_platformized": governance_domain_pack_payload["overall_platformized"],
+            "scheduler_cluster_mode": scheduler_cluster_payload["mode"],
+            "scheduler_cluster_leader": scheduler_cluster_payload["leader_node_id"],
+            "scheduler_cluster_quorum_size": scheduler_cluster_payload["quorum_size"],
             "suggest_top_preset": suggest_payload[0]["preset_id"] if suggest_payload else None,
             "auto_run_status": auto_status_payload.get("status"),
             "auto_review_decision": auto_create_payload.get("review_decision"),
@@ -948,14 +956,17 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                 "delivery_consistency_simulation",
                 "research_no_simulation",
             ],
-            result["governance_open_debt_count"] >= 1,
-            result["governance_active_gate_focus_ids"] == ["TD-020"],
+            result["governance_open_debt_count"] == 0,
+            result["governance_active_gate_focus_ids"] == [],
             result["governance_supported_review_policies"]
             == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
             result["governance_review_policy_debt_id"] == "TD-006",
             result["governance_release_ready"] is True,
             result["governance_release_domain_pack_ids"] == ["software_delivery_pack"],
             result["governance_domain_pack_platformized"] is True,
+            result["scheduler_cluster_mode"] == "quorum",
+            result["scheduler_cluster_leader"] is not None,
+            result["scheduler_cluster_quorum_size"] >= 1,
             result["suggest_top_preset"] == "research_spike",
             result["auto_run_status"] == "completed",
             result["auto_review_decision"] == "pass",

@@ -1,388 +1,94 @@
-# Current Development Workflow Guide
+# Current Development Workflow
 
-## Purpose
+This document is the canonical living guide for what the repository should do next and how work should be executed.
 
-This is the canonical operator-facing guide for the **current** repository development flow.
+## 1. Authoritative Current-State Sources
 
-Use this document when answering any of these questions:
+Use these in priority order when deciding what is current:
 
-- What phase are we currently in?
-- What should be done next?
-- How should a new phase be started?
-- How are task cards written and executed?
-- What tests and reviews are required before moving on?
-- Which documents must be updated during implementation?
+1. [docs/reviews/post-m20-integrated-technical-roadmap.md](reviews/post-m20-integrated-technical-roadmap.md)
+2. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
+3. [docs/tech-debt-registry.md](tech-debt-registry.md)
+4. [README.md](../README.md)
 
-This guide does **not** replace historical phase reviews.
-It tells contributors how to move the repository forward **from the current state**.
-
----
-
-## 1. Canonical Documents
-
-Use the following documents in this order.
-
-### A. Current-state and next-step truth
-
-- `README.md`
-- `docs/reviews/post-m13-integrated-technical-roadmap.md`
-- `docs/reviews/m13-freeze-review.md`
-- `docs/reviews/m12-freeze-review.md`
-- `docs/reviews/m11-freeze-review.md`
-- `docs/tech-debt-registry.md`
-
-These documents answer:
-
-- what the repository already ships
-- what the latest completed milestone is
-- what the next approved work is
-- what the integrated near-term and medium-term route is
-- which debts block the next milestone gate
-
-### B. Execution protocol
-
-- `docs/task_cards/m1_execution_loop_protocol.md`
-
-This is the repository's detailed execution protocol for:
-
-- phase reassessment
-- phase-doc creation
-- task-card splitting
-- complex-task write-set / read-set discipline
-- test-before-advance discipline
-- phase-gate review
-
-Even though the filename says `M1`, it is the repository's reusable execution standard for later cycles too.
-
-### C. Historical implementation records
-
-- `m*_phase_docs/`
-- `docs/task_cards/m*_phase_*`
-- `docs/reviews/*`
-
-These are historical milestone and phase records.
-They are useful as evidence and implementation references, but they are **not** the first source for current next-step decisions.
-
-### D. Legacy reference policy
-
-- `docs/legacy_ai_agent_reference_plan.md`
-- `docs/legacy_project_reference_uplift_plan.md`
-- `docs/m1_legacy_reference_uplift_plan.md`
-
-These documents do **not** define the current roadmap.
-They define how the legacy project should be consulted as a:
-
-- semantics reference
-- edge-case and test-case source
-- anti-pattern catalog
-- quality/governance reference for later cycles
-
-Use them selectively and only when the current phase touches areas such as:
-
-- runtime semantics
-- review policy and review gates
-- reconcile/repair behavior
-- operator diagnostics
-- regression coverage or governance hardening
-
-Do **not** use them as permission to import legacy architecture, naming, or phase/task-card assumptions into the current repository.
-
----
+Historical phase reviews, older freeze reviews, and old task-card packs remain historical evidence. Do not rewrite them as if they were current-state guides.
 
 ## 2. Current Repository Position
 
-Current confirmed status:
+The repository has now completed:
 
-- milestone baseline: through `M13`, complete
-- current cycle state: shipped local-first runtime baseline exists
-- `M9` closeout cycle: **complete**
-- `M10 Phase 0` reassessment and scope freeze: **complete**
-- `M10 Phase 1` ownership-topology freeze: **complete**
-- `M10 Phase 2` local barrier and parallel batch execution: **complete**
-- `M11`: **complete**
-- `M12`: **complete**
-- `M13`: **complete**
-- next approved work: **`M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`**
-- integrated root-level `M8` plan:
-  - `universal_agentic_workflow_os_M8_phase_plan_v1_0.md`
-- supporting `M8` planning inputs:
-  - `docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md`
-  - `docs/reviews/m8-external-tool-integration-and-self-build-plan.md`
-  - `docs/reviews/m8-pre-entry-extra-optimization-assessment.md`
-  - `docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md`
+- `M8` through `M20`
+- the runtime, governance, orchestration, Web operator UI, remote worker productization, repo-mutation baseline, and multi-control-plane consensus closure
+- retirement of `TD-021`
 
-The current controlling closeout record for the shipped baseline is:
+Current status:
 
-- `docs/reviews/m13-freeze-review.md`
+- the mainline product is `v1 core complete`
+- no open structural debt remains on the mainline control-plane path
+- the next approved work is `M21 Phase 0 - Post-M20 Rebaseline And Expansion Freeze`
 
-The current integrated route synthesis is:
+## 3. What Must Happen Next
 
-- `docs/reviews/post-m13-integrated-technical-roadmap.md`
+Until `M21 Phase 0` is opened, the repository should not auto-start new breadth work.
 
-The current historical milestone closeout records for the latest cycle are:
+The next cycle must begin by:
 
-- `docs/reviews/m11-freeze-review.md`
-- `docs/reviews/m12-freeze-review.md`
-- `docs/reviews/m13-freeze-review.md`
+1. reading [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
+2. reading [docs/reviews/post-m20-integrated-technical-roadmap.md](reviews/post-m20-integrated-technical-roadmap.md)
+3. opening `M21 Phase 0 - Post-M20 Rebaseline And Expansion Freeze`
+4. deciding which breadth track, if any, is justified next:
+   - workflow autonomy
+   - selective ecosystem expansion
+   - multimodal / provider breadth
 
-Together those records say the repository has completed the `M9` closeout cycle, completed the full `M10` local-first ownership/concurrency slice, and then completed the `M11-M13` self-hosted workflow, config/durable, and orchestration baseline cycle.
+## 4. Task-Card Protocol
 
-Current next approved phase:
+The repository continues to use the task-card protocol for every new active phase:
 
-- **`M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`**
+1. write the current phase doc first
+2. write the current phase task-card index
+3. write the current phase detailed task cards
+4. execute only after the detailed cards exist
+5. update cards with actual results while implementing
+6. close the phase with tests, review, and living-doc updates
 
-This means the repository is currently at:
+Rules:
 
-1. `M7` complete
-2. `Pre-M8` hardening complete
-3. `M8 Phase 0` through `M8 Phase 7` complete
-4. `M9 Phase 0` through `M9 Phase 5` complete
-5. `M10 Phase 0 - Post-M9 Rebaseline And Scope Freeze` complete
-6. `M10 Phase 1 - Ownership Topology And Claim Domain Freeze` complete
-7. `M10 Phase 2 - Local Barrier And Parallel Batch Execution` complete
-8. `M11` complete
-9. `M12` complete
-10. `M13` complete
-11. the next required step is `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`
+- generate task cards only for the current active phase
+- do not pre-generate future phase task-card packs
+- completed historical task cards may remain in the repo as records
+- complex phases require standalone detailed cards for every task
 
----
+## 5. Collaboration Mode
 
-## 3. Standard Development Loop
+Default collaboration remains:
 
-Every new phase should follow this exact loop.
+- architecture, high-risk semantics, and final release decisions are human-led
+- workflow is used as the bounded execution engine, validation surface, and audit/replay control plane
+- bug-first always applies: if workflow self-dogfood exposes a real bug, repair it before continuing feature scope
 
-### Step 1. Reassess the current baseline
+## 6. What Counts As Done
 
-Before writing code:
+### Task done
 
-- read `README.md`
-- read the latest freeze review
-- read the current active plan
-- read `docs/tech-debt-registry.md`
-- read the immediately previous phase review and closeout notes
-- if the phase touches runtime/review/reconcile/diagnostics/governance, query the legacy reference docs and open only the 1 to 3 most relevant indexed items
+- code or documentation delta is implemented
+- declared tests pass
+- task-card status is updated
+- any promised evidence is recorded
 
-Goal:
+### Phase done
 
-- confirm what is already true
-- confirm what is blocked
-- confirm what the next phase is actually allowed to do
-- decide whether legacy consultation is helpful for invariants, tests, or anti-pattern checks
-
-### Step 2. Write or refresh the phase document
-
-Create or update the phase doc first.
-
-The phase doc must define:
-
-- phase goal
-- in-scope items
-- out-of-scope items
-- dependencies
-- target outputs
-- phase gate
-- risks
-- expected next reassessment
-
-### Step 3. Split the phase into task cards
-
-Create or update the phase task-card index.
-
-Important timing rule:
-
-- generate task cards only for the **current active phase**
-- do not pre-generate future-phase task-card indexes
-- do not pre-generate future-phase detailed task cards
-- future phases may be named in the phase doc as frozen sequence or next reassessment, but their task-card pack is opened only when that phase actually becomes active
-
-The phase task-card index must define:
-
-- task order
-- dependencies
-- complexity level
-- write set
-- test expectations
-- closeout requirements
-
-### Step 4. Create separate docs for complex tasks
-
-If a task touches any of these, it should get its own task-card file:
-
-- contracts
-- migrations
-- repositories
-- service boundaries
-- CLI/API surfaces
-- runtime semantics
-- state transitions
-- review gates
-- validation flow
-
-If the current phase is itself complex, then:
-
-- every task in that current phase should get its own detailed card
-- the phase index stays a navigation doc, not a substitute for those cards
-
-### Step 5. Execute one task at a time
-
-Do not implement a whole phase in one pass.
-
-The expected loop is:
-
-1. open task card
-2. implement the smallest coherent slice
-3. run the task-level tests
-4. update the task card with actual result
-5. only then move to the next task
-
-### Step 6. Run phase-level verification
-
-After all tasks in a phase are done:
-
-- run the targeted phase test set
-- run any required governance or validation checks
-- update phase closeout text
-- write the phase review
-
-### Step 7. Reassess before the next phase
-
-Do not auto-continue based only on the old plan.
-
-Before the next phase starts:
-
-- compare actual implementation with the phase doc
-- update scope if reality changed
-- confirm the next phase is still the right one
-- only then generate the next phase's task-card index and detailed task cards
-
----
-
-## 4. Required Test And Review Flow
-
-The expected validation stack is layered.
-
-### Task-level tests
-
-Run the smallest relevant test set for the task:
-
-- contract tests
-- repository tests
-- execution-loop tests
-- CLI tests
-- API tests
-- governance tests
-
-### Phase-level verification
-
-At phase closeout, run the phase-appropriate combined checks.
-Typical examples:
-
-- targeted `pytest` suites
-- `pytest -q` when the phase changes shared behavior
-- `python -m infra.scripts.offline_validation --skip-offline-probe` when operator/runtime behavior changes
-- specific smoke/demo commands if the phase changes shipped workflow paths
-
-### Review documents
-
-The normal documentation outputs are:
-
-- updated phase doc
-- updated phase task-card index
-- updated complex task cards
-- phase review document in `docs/reviews/`
-
-If the phase closes a milestone or a hardening gate, also write:
-
-- freeze review
-
----
-
-## 5. Document Update Rules
-
-This is the current rule of thumb for documentation maintenance.
-
-### Always update these when behavior changes
-
-- `README.md`
-  - if user-visible commands, routes, runtime lanes, or current-state claims changed
-- active phase doc
-  - if scope, gate, or implementation reality changed
-- active phase task-card index
-  - if task status or dependencies changed
-- complex task docs
-  - if the actual implementation differs from the plan
-
-### Update these when governance or roadmap meaning changes
-
-- `docs/tech-debt-registry.md`
-  - when a debt is created, repaid, renamed, or re-scoped
-- `docs/reviews/...`
-  - when a phase closes or a new planning/reassessment decision is made
-
-### Do not rewrite these as if they were current-state docs
-
-- old freeze reviews
-- old phase reviews
-- old milestone task-card indexes
-
-Those are historical records and should stay historically accurate.
-
-If a historical record needs reinterpretation, add a new current document that explains the reinterpretation instead of rewriting history.
-
----
-
-## 6. How To Decide “What Should Be Done Next”
-
-Use this priority order:
-
-1. latest active synthesis or reassessment doc
-2. latest freeze review
-3. tech-debt items marked as blocking the next gate
-4. current README status
-5. historical milestone records
-
-For the repository **right now**, the answer is:
-
-- use `docs/reviews/post-m13-integrated-technical-roadmap.md` as the current route synthesis
-- treat `M13` as a completed orchestration-baseline milestone on top of the earlier `M10-M12` local-first/runtime/config foundation
-- do **not** auto-claim hosted/distributed completion from the shipped loopback external-worker boundary
-- begin the next cycle with a post-`M13` rebaseline and scope freeze
-
-That means the next concrete work should be:
-
-1. read `docs/reviews/m13-freeze-review.md`
-2. open `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`
-3. generate only the `M14 Phase 0` task-card pack when that phase becomes active
-4. reassess how the post-`M13` operator web UI and human-control surface should stage against the remaining hosted/distributed debt
-
----
-
-## 7. What “Done” Means
-
-### A task is done when:
-
-- code is implemented
-- the declared tests for that task pass
-- the task card status is updated
-- any planned documentation delta is written
-
-### A phase is done when:
-
-- every task is completed
+- every task card in the active phase is complete
 - phase-level verification passes
-- the phase review is written
-- next-step reassessment is recorded
+- phase review or equivalent closeout is written
 
-### A milestone or gate is done when:
+### Milestone done
 
-- the freeze review exists
-- the debt implications are updated
-- the repository can clearly state what is complete and what is deferred
+- freeze review exists
+- living docs are updated
+- debt implications are recorded
+- the repository can state what is complete and what remains deferred
 
----
+## 7. Current One-Line Instruction
 
-## 8. Current One-Line Instruction
-
-If you need a single current instruction for the repository, use this:
-
-> Follow the task-card protocol, treat `M13` as complete, and begin the next cycle with `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`.
+Follow the task-card protocol, treat `M20` as the completed core-complete baseline, and do not begin any new breadth until `M21 Phase 0 - Post-M20 Rebaseline And Expansion Freeze` is explicitly opened.

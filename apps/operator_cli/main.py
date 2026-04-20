@@ -33,6 +33,7 @@ simulation_policy_app = typer.Typer(help="Simulation policy catalog commands.")
 memory_app = typer.Typer(help="Memory-plane inspection commands.")
 memory_namespace_app = typer.Typer(help="Memory namespace inspection commands.")
 memory_item_app = typer.Typer(help="Persistent memory item commands.")
+scheduler_app = typer.Typer(help="Scheduler authority and cluster inspection commands.")
 db_app = typer.Typer(help="Development database commands.")
 governance_app = typer.Typer(help="Governance and debt visibility commands.")
 config_app = typer.Typer(help="Unified configuration inspection commands.")
@@ -44,6 +45,7 @@ app.add_typer(domain_pack_app, name="domain-pack")
 app.add_typer(capability_app, name="capability")
 app.add_typer(simulation_app, name="simulation")
 app.add_typer(memory_app, name="memory")
+app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(db_app, name="db")
 app.add_typer(governance_app, name="governance")
 app.add_typer(config_app, name="config")
@@ -266,6 +268,13 @@ def run_create(
     task_kind: Optional[str] = typer.Option(None, "--task-kind", help="Requested task kind when compiling."),
     adapter: Optional[str] = typer.Option(None, "--adapter", help="Requested adapter override when compiling."),
     memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id", help="Explicit memory item ids."),
+    task_card_ref: Optional[str] = typer.Option(None, "--task-card-ref", help="Detailed task card reference for repo mutation."),
+    task_card_path: Optional[str] = typer.Option(None, "--task-card-path", help="Detailed task card path for repo mutation."),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Explicit writable paths for repo mutation."),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Explicit read-only context paths for repo mutation."),
+    test_command: Optional[list[str]] = typer.Option(None, "--test-command", help="Explicit test commands to run after applying a patch."),
+    max_fix_iterations: int = typer.Option(0, "--max-fix-iterations", min=0, help="Maximum bounded repair iterations."),
+    mutation_mode: Optional[str] = typer.Option(None, "--mutation-mode", help="artifact_only or patch_apply."),
     prepare: bool = typer.Option(False, "--prepare", help="Prepare the run internally after creation."),
     execute: bool = typer.Option(False, "--execute", help="Execute the prepared run internally."),
 ) -> None:
@@ -280,6 +289,13 @@ def run_create(
                 task_kind=task_kind,
                 adapter_name=adapter,
                 memory_item_ids=memory_item_id,
+                task_card_ref=task_card_ref,
+                task_card_path=task_card_path,
+                write_set=write_set,
+                read_set=read_set,
+                test_commands=test_command,
+                max_fix_iterations=max_fix_iterations,
+                mutation_mode=mutation_mode,
             )
         )
         current_run = prepared.run
@@ -292,6 +308,11 @@ def run_create(
             prepared.capability_route.adapter_name if prepared.capability_route is not None else None
         )
         payload["execution_lane"] = str(prepared.execution_lane)
+        payload["mutation_contract"] = (
+            prepared.task_packet.mutation_contract.model_dump(mode="json")
+            if prepared.task_packet.mutation_contract is not None
+            else None
+        )
         payload["tool_projection_manifest"] = (
             prepared.tool_projection_manifest.model_dump(mode="json")
             if prepared.tool_projection_manifest is not None
@@ -323,6 +344,13 @@ def run_compile(
     task_kind: Optional[str] = typer.Option(None, "--task-kind", help="Requested task kind override."),
     adapter: Optional[str] = typer.Option(None, "--adapter", help="Requested adapter override."),
     memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id", help="Explicit memory item ids."),
+    task_card_ref: Optional[str] = typer.Option(None, "--task-card-ref", help="Detailed task card reference for repo mutation."),
+    task_card_path: Optional[str] = typer.Option(None, "--task-card-path", help="Detailed task card path for repo mutation."),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Explicit writable paths for repo mutation."),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Explicit read-only context paths for repo mutation."),
+    test_command: Optional[list[str]] = typer.Option(None, "--test-command", help="Explicit test commands to run after applying a patch."),
+    max_fix_iterations: int = typer.Option(0, "--max-fix-iterations", min=0, help="Maximum bounded repair iterations."),
+    mutation_mode: Optional[str] = typer.Option(None, "--mutation-mode", help="artifact_only or patch_apply."),
 ) -> None:
     prepared = _run_workflow_action(
         lambda: _service(ctx).compile_run(
@@ -330,6 +358,13 @@ def run_compile(
             task_kind=task_kind,
             adapter_name=adapter,
             memory_item_ids=memory_item_id,
+            task_card_ref=task_card_ref,
+            task_card_path=task_card_path,
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_command,
+            max_fix_iterations=max_fix_iterations,
+            mutation_mode=mutation_mode,
         )
     )
     _emit_json(
@@ -341,6 +376,11 @@ def run_compile(
             "domain_pack_id": prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None,
             "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
             "execution_lane": str(prepared.execution_lane),
+            "mutation_contract": (
+                prepared.task_packet.mutation_contract.model_dump(mode="json")
+                if prepared.task_packet.mutation_contract is not None
+                else None
+            ),
             "tool_projection_manifest": (
                 prepared.tool_projection_manifest.model_dump(mode="json")
                 if prepared.tool_projection_manifest is not None
@@ -359,6 +399,13 @@ def run_recompile(
     task_kind: Optional[str] = typer.Option(None, "--task-kind", help="Requested task kind override."),
     adapter: Optional[str] = typer.Option(None, "--adapter", help="Requested adapter override."),
     memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id", help="Explicit memory item ids."),
+    task_card_ref: Optional[str] = typer.Option(None, "--task-card-ref", help="Detailed task card reference for repo mutation."),
+    task_card_path: Optional[str] = typer.Option(None, "--task-card-path", help="Detailed task card path for repo mutation."),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Explicit writable paths for repo mutation."),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Explicit read-only context paths for repo mutation."),
+    test_command: Optional[list[str]] = typer.Option(None, "--test-command", help="Explicit test commands to run after applying a patch."),
+    max_fix_iterations: int = typer.Option(0, "--max-fix-iterations", min=0, help="Maximum bounded repair iterations."),
+    mutation_mode: Optional[str] = typer.Option(None, "--mutation-mode", help="artifact_only or patch_apply."),
 ) -> None:
     prepared = _run_workflow_action(
         lambda: _service(ctx).recompile_run(
@@ -366,6 +413,13 @@ def run_recompile(
             task_kind=task_kind,
             adapter_name=adapter,
             memory_item_ids=memory_item_id,
+            task_card_ref=task_card_ref,
+            task_card_path=task_card_path,
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_command,
+            max_fix_iterations=max_fix_iterations,
+            mutation_mode=mutation_mode,
         )
     )
     _emit_json(
@@ -377,6 +431,11 @@ def run_recompile(
             "domain_pack_id": prepared.domain_pack.domain_pack_id if prepared.domain_pack is not None else None,
             "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
             "execution_lane": str(prepared.execution_lane),
+            "mutation_contract": (
+                prepared.task_packet.mutation_contract.model_dump(mode="json")
+                if prepared.task_packet.mutation_contract is not None
+                else None
+            ),
             "tool_projection_manifest": (
                 prepared.tool_projection_manifest.model_dump(mode="json")
                 if prepared.tool_projection_manifest is not None
@@ -459,6 +518,8 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
     payload["worker_lease_projection"] = detail["worker_lease_projection"]
     payload["execution_target"] = detail["execution_target"]
     payload["lease_renewals"] = detail["lease_renewals"]
+    payload["mutation_contract"] = detail["mutation_contract"]
+    payload["mutation_result"] = detail["mutation_result"]
     payload["orchestration"] = detail["orchestration"]
     payload["effective_review_state"] = detail["effective_review_state"]
     payload["domain_pack"] = detail["domain_pack"]
@@ -513,6 +574,11 @@ def run_audit_report(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("replay-packet")
 def run_replay_packet(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_replay_packet(run_id)))
+
+
+@run_app.command("mutation-report")
+def run_mutation_report(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_mutation_report(run_id)))
 
 
 @run_app.command("orchestration")
@@ -611,6 +677,16 @@ def run_timeline(ctx: typer.Context, run_id: str, as_json: bool = typer.Option(F
 def run_handoffs(ctx: typer.Context, run_id: str) -> None:
     handoffs = _run_workflow_action(lambda: _service(ctx).list_handoffs(run_id))
     _emit_json([handoff.model_dump(mode="json") for handoff in handoffs])
+
+
+@scheduler_app.command("cluster")
+def scheduler_cluster(ctx: typer.Context) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).scheduler_authority_cluster.cluster_snapshot()))
+
+
+@scheduler_app.command("lease")
+def scheduler_lease(ctx: typer.Context, lease_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_scheduler_lease(lease_id)))
 
 
 @task_app.command("evidence")

@@ -7,6 +7,8 @@ from typing import Any
 
 from packages.contracts import (
     BudgetLedger,
+    MutationContract,
+    MutationMode,
     ReviewDecision,
     ReviewPolicy,
     ReviewerType,
@@ -14,6 +16,8 @@ from packages.contracts import (
     Run,
     RunEvent,
     RunEventType,
+    SchedulerLeaseDecision,
+    SchedulerLeaseProposal,
     RunSnapshotStage,
     RunStatus,
     RuntimeAttemptStatus,
@@ -33,6 +37,7 @@ from packages.core_domain.db import unit_of_work
 from packages.core_domain.errors import (
     BudgetExhaustedError,
     EntityNotFoundError,
+    MutationContractError,
     ParallelBarrierBrokenError,
     PresetNotFoundError,
     WorkflowError,
@@ -55,19 +60,58 @@ class LifecycleServiceMixin:
         requested_task_kind: TaskKind | str | None = None,
         requested_adapter: str | None = None,
         memory_item_ids: list[str] | None = None,
+        task_card_ref: str | None = None,
+        task_card_path: str | None = None,
+        write_set: list[str] | None = None,
+        read_set: list[str] | None = None,
+        test_commands: list[str] | None = None,
+        max_fix_iterations: int = 0,
+        mutation_mode: MutationMode | str | None = None,
     ) -> CompileSnapshot:
         resolved_task_kind = self._resolve_task_kind(preset, requested_task_kind)
+        resolved_mutation_mode = MutationMode(mutation_mode) if mutation_mode is not None else MutationMode.artifact_only
+        mutation_contract = (
+            MutationContract(
+                task_card_ref=task_card_ref,
+                task_card_path=task_card_path,
+                write_set=list(write_set or []),
+                read_set=list(read_set or []),
+                test_commands=list(test_commands or []),
+                max_fix_iterations=max_fix_iterations,
+                mutation_mode=resolved_mutation_mode,
+            )
+            if (
+                task_card_ref is not None
+                or task_card_path is not None
+                or write_set
+                or read_set
+                or test_commands
+                or resolved_mutation_mode != MutationMode.artifact_only
+            )
+            else None
+        )
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        selected_adapter = requested_adapter or self._default_adapter_for_preset(
+        default_adapter = self._default_adapter_for_preset(
             preset,
             resolved_task_kind,
             domain_pack,
         )
+        selected_adapter = requested_adapter or (
+            "opencode"
+            if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply
+            else default_adapter
+        )
+        if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply and selected_adapter != "opencode":
+            raise MutationContractError(
+                "patch_apply mutation contracts require the opencode adapter",
+                {"adapter_name": selected_adapter},
+            )
         capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
         execution_lane = self._resolve_execution_lane(
             preset=preset,
             task_kind=resolved_task_kind,
             selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
+            mutation_contract=mutation_contract,
         )
         tool_projection_manifest, mcp_server_profiles = self._build_tool_projection_manifest(
             run=run,
@@ -92,6 +136,7 @@ class LifecycleServiceMixin:
             execution_lane=execution_lane,
             tool_projection_manifest=tool_projection_manifest,
             mcp_server_profiles=mcp_server_profiles,
+            mutation_contract=mutation_contract,
         )
         worker_pool_profile = self._selected_worker_pool_profile()
         if worker_pool_profile is not None:
@@ -124,6 +169,13 @@ class LifecycleServiceMixin:
         task_kind: TaskKind | str | None = None,
         adapter_name: str | None = None,
         memory_item_ids: list[str] | None = None,
+        task_card_ref: str | None = None,
+        task_card_path: str | None = None,
+        write_set: list[str] | None = None,
+        read_set: list[str] | None = None,
+        test_commands: list[str] | None = None,
+        max_fix_iterations: int = 0,
+        mutation_mode: MutationMode | str | None = None,
     ) -> PreparedRunBundle:
         run = self.get_run(run_id)
         self._require_status(run, "compile", [RunStatus.pending])
@@ -136,6 +188,13 @@ class LifecycleServiceMixin:
             task_kind,
             requested_adapter=adapter_name,
             memory_item_ids=memory_item_ids,
+            task_card_ref=task_card_ref,
+            task_card_path=task_card_path,
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_commands,
+            max_fix_iterations=max_fix_iterations,
+            mutation_mode=mutation_mode,
         )
 
         with unit_of_work(self.db_path) as connection:
@@ -293,6 +352,13 @@ class LifecycleServiceMixin:
         task_kind: TaskKind | str | None = None,
         adapter_name: str | None = None,
         memory_item_ids: list[str] | None = None,
+        task_card_ref: str | None = None,
+        task_card_path: str | None = None,
+        write_set: list[str] | None = None,
+        read_set: list[str] | None = None,
+        test_commands: list[str] | None = None,
+        max_fix_iterations: int = 0,
+        mutation_mode: MutationMode | str | None = None,
         *,
         ignore_budget: bool = False,
     ) -> PreparedRunBundle:
@@ -307,6 +373,13 @@ class LifecycleServiceMixin:
             task_kind,
             requested_adapter=adapter_name,
             memory_item_ids=memory_item_ids,
+            task_card_ref=task_card_ref,
+            task_card_path=task_card_path,
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_commands,
+            max_fix_iterations=max_fix_iterations,
+            mutation_mode=mutation_mode,
         )
 
         with unit_of_work(self.db_path) as connection:
@@ -741,6 +814,34 @@ class LifecycleServiceMixin:
                 reason_if_superseded="resume",
                 force_new=True,
             )
+            scheduler_submission, handoff_envelope = self._ensure_committed_scheduler_lease(
+                run=run,
+                runtime_task=runtime_task,
+                connection=connection,
+            )
+            state_ref = self._state_ref_with_payload_updates(
+                state_ref,
+                self._scheduler_arbitration_updates(
+                    state_ref,
+                    control_plane_id=self.control_plane_identity.control_plane_id,
+                    proposal=(
+                        SchedulerLeaseProposal.model_validate(scheduler_submission["proposal"])
+                        if isinstance(scheduler_submission.get("proposal"), dict)
+                        else None
+                    ),
+                    decision=(
+                        SchedulerLeaseDecision.model_validate(scheduler_submission["decision"])
+                        if isinstance(scheduler_submission.get("decision"), dict)
+                        else None
+                    ),
+                    committed_lease=scheduler_submission.get("committed_lease"),
+                    term=scheduler_submission.get("term"),
+                    votes=scheduler_submission.get("votes"),
+                    handoff_envelope=handoff_envelope,
+                    cluster=scheduler_submission.get("cluster"),
+                    conflict=scheduler_submission.get("conflict"),
+                ),
+            )
             owner_kind, owner_id, owner_name = self._control_plane_identity()
             claim = self._acquire_runtime_claim(
                 run.run_id,
@@ -813,6 +914,9 @@ class LifecycleServiceMixin:
                     },
                 }
             )
+            scheduler_context = self._scheduler_context_for_dispatch(
+                scheduler_submission.get("committed_lease") if isinstance(scheduler_submission, dict) else None
+            )
 
             adapter = self.worker_router.route(execution_packet)
             adapter_name = adapter.__class__.__name__.replace("Adapter", "").lower()
@@ -884,14 +988,62 @@ class LifecycleServiceMixin:
                 connection.commit()
                 execution_result = self._execute_project_delivery_orchestration(execution_packet)
             elif worker_pool_profile is not None:
-                execution_result = self.external_worker_gateway.dispatch(
+                if execution_packet.mutation_contract is not None and execution_packet.mutation_contract.mutation_mode == MutationMode.patch_apply:
+                    raise MutationContractError(
+                        "repo mutation tasks must run against the local workspace and cannot be dispatched to worker pools",
+                        {"worker_pool_id": worker_pool_profile.worker_pool_id},
+                    )
+                if worker_pool_profile.dispatch_mode == "remote_http":
+                    connection.commit()
+                dispatch_result = self.external_worker_gateway.dispatch(
                     packet=execution_packet,
                     profile=worker_pool_profile,
                     lease_id=worker_lease.lease_id,
                     launch_local=adapter.launch,
-                ).execution_result
+                    scheduler_context=scheduler_context,
+                )
+                execution_result = dispatch_result.execution_result
+                if worker_pool_profile.dispatch_mode == "remote_http":
+                    refreshed_state = self.runtime_state_repo.get_by_task(runtime_task.runtime_task_id, connection=connection)
+                    if refreshed_state is not None:
+                        resumed_state = refreshed_state
+                self.event_repo.append(
+                    RunEvent(
+                        run_id=run.run_id,
+                        event_type=RunEventType.worker_dispatch_accepted,
+                        object_type="worker_lease",
+                        object_id=worker_lease.lease_id,
+                        summary="Worker dispatch accepted",
+                        payload_json={
+                            "run_id": run.run_id,
+                            "runtime_task_id": runtime_task.runtime_task_id,
+                            "lease_id": worker_lease.lease_id,
+                            "worker_pool_id": worker_pool_profile.worker_pool_id,
+                            "dispatch_id": dispatch_result.execution_target.dispatch_id,
+                        },
+                    ),
+                    connection=connection,
+                )
             else:
-                execution_result = adapter.launch(execution_packet)
+                execution_result = self._execute_repo_mutation(adapter, execution_packet)
+            if isinstance(execution_result.metadata.get("execution_target"), dict):
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {"execution_target": execution_result.metadata["execution_target"]},
+                )
+            if isinstance(execution_result.metadata.get("lease_renewals"), list):
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {"lease_renewals": execution_result.metadata["lease_renewals"]},
+                )
+            if isinstance(execution_result.metadata.get("mutation_result"), dict):
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {
+                        "mutation_contract": execution_result.metadata.get("mutation_contract"),
+                        "mutation_result": execution_result.metadata["mutation_result"],
+                    },
+                )
             completed_status = TaskStatus.completed if execution_result.return_code == 0 else TaskStatus.failed
             self.task_repo.update_runtime_task_status(runtime_task.runtime_task_id, completed_status, connection=connection)
             self.event_repo.append(

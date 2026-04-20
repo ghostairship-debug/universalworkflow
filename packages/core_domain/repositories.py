@@ -9,6 +9,7 @@ from typing import Any
 
 from packages.contracts import (
     BudgetLedger,
+    ControlPlaneIdentity,
     Evidence,
     HandoffLite,
     MemoryItem,
@@ -17,6 +18,9 @@ from packages.contracts import (
     ReviewVerdict,
     Run,
     RunEvent,
+    SchedulerLeaseDecision,
+    SchedulerLeaseProposal,
+    SchedulerPeerHeartbeat,
     SimulationRecord,
     RuntimeAttempt,
     RunSnapshot,
@@ -90,14 +94,31 @@ class RunRepository(RepositoryBase):
             row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return Run.model_validate(dict(row)) if row else None
 
-    def list(self, limit: int | None = None, connection: sqlite3.Connection | None = None) -> list[Run]:
-        query = "SELECT * FROM runs ORDER BY updated_at DESC, created_at DESC, run_id DESC"
-        params: tuple[Any, ...] = ()
+    def list(
+        self,
+        limit: int | None = None,
+        *,
+        status: str | None = None,
+        preset_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[Run]:
+        query = "SELECT * FROM runs"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if preset_id is not None:
+            clauses.append("preset_id = ?")
+            params.append(preset_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC, created_at DESC, run_id DESC"
         if limit is not None:
             query += " LIMIT ?"
-            params = (limit,)
+            params.append(limit)
         with self._connection(connection) as conn:
-            rows = conn.execute(query, params).fetchall()
+            rows = conn.execute(query, tuple(params)).fetchall()
         return [Run.model_validate(dict(row)) for row in rows]
 
     def update_status(self, run_id: str, status: str, connection: sqlite3.Connection | None = None) -> Run | None:
@@ -247,8 +268,8 @@ class TaskRepository(RepositoryBase):
                 """
                 INSERT INTO task_packets (
                   task_packet_id, runtime_task_id, run_id, task_kind, command_json, working_directory,
-                  env_json, expected_artifacts_json, schema_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  env_json, expected_artifacts_json, mutation_contract_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_packet.task_packet_id,
@@ -259,6 +280,11 @@ class TaskRepository(RepositoryBase):
                     task_packet.working_directory,
                     _json_dump(task_packet.env),
                     _json_dump(task_packet.expected_artifacts),
+                    (
+                        _json_dump(task_packet.mutation_contract.model_dump(mode="json"))
+                        if task_packet.mutation_contract is not None
+                        else None
+                    ),
                     task_packet.schema_version,
                     task_packet.created_at.isoformat(),
                 ),
@@ -289,6 +315,9 @@ class TaskRepository(RepositoryBase):
         data["command"] = _json_load(data.pop("command_json"))
         data["env"] = _json_load(data.pop("env_json"))
         data["expected_artifacts"] = _json_load(data.pop("expected_artifacts_json"))
+        mutation_contract_json = data.pop("mutation_contract_json", None)
+        if mutation_contract_json:
+            data["mutation_contract"] = _json_load(mutation_contract_json)
         return TaskPacket.model_validate(data)
 
     def list_runtime_tasks_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[RuntimeTask]:
@@ -1232,3 +1261,305 @@ class WorkerLeaseRepository(RepositoryBase):
                 (status, released_at, release_reason, lease_id),
             )
         return self.get(lease_id, connection=connection)
+
+    def touch(
+        self,
+        lease_id: str,
+        *,
+        heartbeat_at: str,
+        lease_expires_at: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> WorkerLease | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE worker_leases
+                SET heartbeat_at = ?, lease_expires_at = ?
+                WHERE lease_id = ? AND status = 'active'
+                """,
+                (heartbeat_at, lease_expires_at, lease_id),
+            )
+        return self.get(lease_id, connection=connection)
+
+
+class SchedulerLeaseProposalRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> SchedulerLeaseProposal:
+        return SchedulerLeaseProposal.model_validate(dict(row))
+
+    def create(
+        self,
+        proposal: SchedulerLeaseProposal,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseProposal:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO scheduler_lease_proposals (
+                  proposal_id, control_plane_id, run_id, runtime_task_id, domain_kind, domain_key,
+                  requested_lease_seconds, requested_epoch, status, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    proposal.proposal_id,
+                    proposal.control_plane_id,
+                    proposal.run_id,
+                    proposal.runtime_task_id,
+                    proposal.domain_kind,
+                    proposal.domain_key,
+                    proposal.requested_lease_seconds,
+                    proposal.requested_epoch,
+                    proposal.status,
+                    proposal.schema_version,
+                    proposal.created_at.isoformat(),
+                ),
+            )
+        return proposal
+
+    def get(
+        self,
+        proposal_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseProposal | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT * FROM scheduler_lease_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def update_status(
+        self,
+        proposal_id: str,
+        status: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseProposal | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                "UPDATE scheduler_lease_proposals SET status = ? WHERE proposal_id = ?",
+                (status, proposal_id),
+            )
+        return self.get(proposal_id, connection=connection)
+
+    def list_for_run(
+        self,
+        run_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[SchedulerLeaseProposal]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM scheduler_lease_proposals
+                WHERE run_id = ?
+                ORDER BY created_at, proposal_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def list_for_task(
+        self,
+        runtime_task_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[SchedulerLeaseProposal]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM scheduler_lease_proposals
+                WHERE runtime_task_id = ?
+                ORDER BY created_at, proposal_id
+                """,
+                (runtime_task_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+
+class SchedulerLeaseDecisionRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> SchedulerLeaseDecision:
+        return SchedulerLeaseDecision.model_validate(dict(row))
+
+    def create(
+        self,
+        decision: SchedulerLeaseDecision,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseDecision:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO scheduler_lease_decisions (
+                  decision_id, lease_id, proposal_id, control_plane_id, run_id, runtime_task_id,
+                  domain_kind, domain_key, lease_epoch, decision, reason, lease_expires_at,
+                  released_at, release_reason, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision.decision_id,
+                    decision.lease_id,
+                    decision.proposal_id,
+                    decision.control_plane_id,
+                    decision.run_id,
+                    decision.runtime_task_id,
+                    decision.domain_kind,
+                    decision.domain_key,
+                    decision.lease_epoch,
+                    decision.decision,
+                    decision.reason,
+                    decision.lease_expires_at.isoformat(),
+                    decision.released_at.isoformat() if decision.released_at is not None else None,
+                    decision.release_reason,
+                    decision.schema_version,
+                    decision.created_at.isoformat(),
+                ),
+            )
+        return decision
+
+    def get(
+        self,
+        lease_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseDecision | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT * FROM scheduler_lease_decisions WHERE lease_id = ? ORDER BY created_at DESC, decision_id DESC LIMIT 1",
+                (lease_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def get_active_for_domain(
+        self,
+        domain_kind: str,
+        domain_key: str,
+        *,
+        now_iso: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseDecision | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM scheduler_lease_decisions
+                WHERE domain_kind = ?
+                  AND domain_key = ?
+                  AND decision = 'granted'
+                  AND released_at IS NULL
+                  AND lease_expires_at > ?
+                ORDER BY created_at DESC, decision_id DESC
+                LIMIT 1
+                """,
+                (domain_kind, domain_key, now_iso),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def latest_for_domain(
+        self,
+        domain_kind: str,
+        domain_key: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseDecision | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM scheduler_lease_decisions
+                WHERE domain_kind = ? AND domain_key = ?
+                ORDER BY created_at DESC, decision_id DESC
+                LIMIT 1
+                """,
+                (domain_kind, domain_key),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def list_for_run(
+        self,
+        run_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[SchedulerLeaseDecision]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM scheduler_lease_decisions
+                WHERE run_id = ?
+                ORDER BY created_at, decision_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]
+
+    def release(
+        self,
+        lease_id: str,
+        *,
+        released_at: str,
+        release_reason: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerLeaseDecision | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE scheduler_lease_decisions
+                SET released_at = ?, release_reason = ?
+                WHERE lease_id = ? AND released_at IS NULL
+                """,
+                (released_at, release_reason, lease_id),
+            )
+        return self.get(lease_id, connection=connection)
+
+
+class SchedulerPeerHeartbeatRepository(RepositoryBase):
+    def _row_to_model(self, row: Any) -> SchedulerPeerHeartbeat:
+        return SchedulerPeerHeartbeat.model_validate(dict(row))
+
+    def create(
+        self,
+        heartbeat: SchedulerPeerHeartbeat,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerPeerHeartbeat:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO scheduler_peer_heartbeats (
+                  heartbeat_id, control_plane_id, status, lease_count, observed_at, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    heartbeat.heartbeat_id,
+                    heartbeat.control_plane_id,
+                    heartbeat.status,
+                    heartbeat.lease_count,
+                    heartbeat.observed_at.isoformat(),
+                    heartbeat.schema_version,
+                    heartbeat.created_at.isoformat(),
+                ),
+            )
+        return heartbeat
+
+    def latest_for_control_plane(
+        self,
+        control_plane_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> SchedulerPeerHeartbeat | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM scheduler_peer_heartbeats
+                WHERE control_plane_id = ?
+                ORDER BY observed_at DESC, heartbeat_id DESC
+                LIMIT 1
+                """,
+                (control_plane_id,),
+            ).fetchone()
+        return self._row_to_model(row) if row is not None else None
+
+    def list_recent(
+        self,
+        *,
+        limit: int = 20,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[SchedulerPeerHeartbeat]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM scheduler_peer_heartbeats
+                ORDER BY observed_at DESC, heartbeat_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._row_to_model(row) for row in rows]

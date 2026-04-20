@@ -7,8 +7,11 @@ from typing import Any
 
 from packages.contracts import (
     AgentRoleType,
+    AuthorityNodeIdentity,
     BudgetLedger,
     CapabilityRoute,
+    ControlPlaneIdentity,
+    ControlPlaneHandoffEnvelope,
     ExecutionLaneType,
     DomainPackDefinition,
     DomainPackResolution,
@@ -16,11 +19,14 @@ from packages.contracts import (
     ExecutionTargetRef,
     HandoffLite,
     LeaseRenewalRecord,
+    LeaseFencingToken,
     MCPServerProfile,
     MemoryCandidate,
     MemoryItem,
     MemoryNamespace,
     MemoryRetrievalPreview,
+    MutationContract,
+    MutationMode,
     OrchestrationBarrier,
     OrchestrationPlan,
     OrchestrationStep,
@@ -44,9 +50,16 @@ from packages.contracts import (
     RuntimeGateway,
     RuntimeGraphStep,
     RuntimeStateRef,
+    RepoMutationResult,
+    SchedulerCommittedLease,
+    SchedulerConsensusTerm,
     OwnershipActorKind,
     OwnershipDomainKind,
     RunStatus,
+    SchedulerLeaseDecision,
+    SchedulerLeaseProposal,
+    SchedulerPeerHeartbeat,
+    SchedulerVoteRecord,
     SimulationPolicyDefinition,
     SimulationRecord,
     SimulationRecordSource,
@@ -82,10 +95,14 @@ from packages.core_domain.errors import (
     EntityNotFoundError,
     ExecutionLaneNotAllowedError,
     InvalidStateTransitionError,
+    MutationContractError,
+    PatchApplyError,
     PresetNotFoundError,
     PresetRequiredError,
     RepairActionNotAvailableError,
+    RepoMutationScopeError,
     RuntimeClaimConflictError,
+    SchedulerArbitrationError,
     TaskKindNotAllowedError,
     UnsupportedRepairActionError,
     UnsupportedTaskKindError,
@@ -108,6 +125,9 @@ from packages.core_domain.repositories import (
     ReviewRepository,
     RunSnapshotRepository,
     RunRepository,
+    SchedulerLeaseDecisionRepository,
+    SchedulerLeaseProposalRepository,
+    SchedulerPeerHeartbeatRepository,
     SimulationRecordRepository,
     RuntimeAttemptRepository,
     RuntimeClaimRepository,
@@ -130,6 +150,17 @@ from packages.core_domain.external_workers import (
     load_worker_pool_profiles,
     resolve_worker_pool_profile,
 )
+from packages.core_domain.repo_mutation import (
+    apply_unified_diff,
+    capture_workspace_snapshot,
+    extract_touched_paths,
+    hash_patch_text,
+    is_path_allowed,
+    normalize_allowed_paths,
+    restore_workspace_snapshot,
+    run_test_commands,
+)
+from packages.core_domain.scheduler_authority import SchedulerAuthorityClusterService
 from packages.core_domain.skills import export_domain_pack_skill_bundle
 from packages.core_domain.m8_flags import (
     active_feature_flags,
@@ -206,6 +237,9 @@ class OrchestratorService(
         self.runtime_attempt_repo = RuntimeAttemptRepository(self.db_path)
         self.runtime_claim_repo = RuntimeClaimRepository(self.db_path)
         self.worker_lease_repo = WorkerLeaseRepository(self.db_path)
+        self.scheduler_proposal_repo = SchedulerLeaseProposalRepository(self.db_path)
+        self.scheduler_decision_repo = SchedulerLeaseDecisionRepository(self.db_path)
+        self.scheduler_peer_heartbeat_repo = SchedulerPeerHeartbeatRepository(self.db_path)
         self.snapshot_repo = RunSnapshotRepository(self.db_path)
         self.memory_item_repo = MemoryItemRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
@@ -228,6 +262,22 @@ class OrchestratorService(
         self.durable_runtime_pilot = durable_runtime_pilot or build_durable_runtime_pilot_from_env()
         self.external_worker_gateway = external_worker_gateway or ExternalWorkerGateway()
         self.worker_pool_profiles = load_worker_pool_profiles(self.effective_config["worker_pools"]["seed_path"])
+        control_plane_id = self.effective_config["control_plane"]["id"]
+        self.control_plane_identity = ControlPlaneIdentity(
+            control_plane_id=control_plane_id,
+            name=control_plane_id,
+            endpoint=self.effective_config["db"]["path"],
+            status="active",
+        )
+        self.scheduler_authority_cluster = SchedulerAuthorityClusterService(
+            self.db_path,
+            node_id=self.effective_config["scheduler_authority"]["node_id"],
+            bind_url=self.effective_config["scheduler_authority"]["bind_url"],
+            peer_urls=self.effective_config["scheduler_authority"]["peer_urls"],
+            quorum_size=self.effective_config["scheduler_authority"]["quorum_size"],
+            election_timeout_ms=self.effective_config["scheduler_authority"]["election_timeout_ms"],
+            heartbeat_interval_ms=self.effective_config["scheduler_authority"]["heartbeat_interval_ms"],
+        )
 
     def _resolver(self) -> PresetResolver:
         return PresetResolver(self.preset_repo.list())
@@ -344,6 +394,14 @@ class OrchestratorService(
     def _utc_now(self) -> datetime:
         return datetime.now(UTC)
 
+    def _parse_iso_datetime(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
     def _workspace_root(self) -> Path:
         return Path.cwd().resolve()
 
@@ -370,6 +428,315 @@ class OrchestratorService(
             self.worker_pool_profiles,
             self.effective_config["worker_pools"]["default_pool_id"],
         )
+
+    def _scheduler_authority_payload(self, state_ref: RuntimeStateRef | None) -> dict[str, Any]:
+        payload = (
+            dict(state_ref.state_payload.get("scheduler_authority"))
+            if state_ref is not None and isinstance(state_ref.state_payload.get("scheduler_authority"), dict)
+            else {}
+        )
+        if state_ref is None:
+            return payload
+        payload["local_control_plane_id"] = self.control_plane_identity.control_plane_id
+        active_committed_payload = payload.get("active_committed_lease")
+        active_owner = (
+            str(active_committed_payload.get("control_plane_id"))
+            if isinstance(active_committed_payload, dict) and active_committed_payload.get("control_plane_id") is not None
+            else None
+        )
+        payload["stale_plane_detected"] = bool(
+            active_owner is not None and active_owner != self.control_plane_identity.control_plane_id
+        )
+        payload["takeover_state"] = {
+            "local_control_plane_id": self.control_plane_identity.control_plane_id,
+            "active_control_plane_id": active_owner,
+            "active_owner_is_local": active_owner == self.control_plane_identity.control_plane_id if active_owner is not None else None,
+            "handoff_count": len(self._scheduler_handoff_history(payload)),
+        }
+        return payload
+
+    def _scheduler_decision_history(
+        self,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        history = payload.get("decision_history")
+        return [dict(item) for item in history if isinstance(item, dict)] if isinstance(history, list) else []
+
+    def _scheduler_conflicts(
+        self,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        conflicts = payload.get("conflicts")
+        return [dict(item) for item in conflicts if isinstance(item, dict)] if isinstance(conflicts, list) else []
+
+    def _scheduler_handoff_history(
+        self,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        handoffs = payload.get("handoff_history")
+        return [dict(item) for item in handoffs if isinstance(item, dict)] if isinstance(handoffs, list) else []
+
+    def _cluster_summary_payload(
+        self,
+        *,
+        cluster: dict[str, Any] | None = None,
+        term: SchedulerConsensusTerm | dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if cluster is None and term is None:
+            return None
+        term_payload = (
+            term.model_dump(mode="json")
+            if isinstance(term, SchedulerConsensusTerm)
+            else (dict(term) if isinstance(term, dict) else None)
+        )
+        cluster_payload = dict(cluster) if isinstance(cluster, dict) else {}
+        return {
+            "mode": self.effective_config["scheduler_authority"]["mode"],
+            "node_id": self.effective_config["scheduler_authority"]["node_id"],
+            "bind_url": self.effective_config["scheduler_authority"]["bind_url"],
+            "quorum_size": cluster_payload.get("quorum_size"),
+            "leader_node_id": cluster_payload.get("leader_node_id"),
+            "term_no": cluster_payload.get("term_no") or (term_payload or {}).get("term_no"),
+            "commit_index": cluster_payload.get("commit_index") or (term_payload or {}).get("commit_index"),
+            "cluster": cluster_payload,
+            "term": term_payload,
+        }
+
+    def _scheduler_context_for_dispatch(
+        self,
+        committed_lease: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(committed_lease, dict):
+            return None
+        return {
+            "control_plane_id": committed_lease.get("control_plane_id"),
+            "committed_lease_id": committed_lease.get("committed_lease_id"),
+            "fencing_token": committed_lease.get("fencing_token"),
+            "term_no": committed_lease.get("term_no"),
+            "commit_index": committed_lease.get("commit_index"),
+            "lease_epoch": committed_lease.get("lease_epoch"),
+        }
+
+    def _scheduler_arbitration_updates(
+        self,
+        state_ref: RuntimeStateRef | None,
+        *,
+        control_plane_id: str,
+        proposal: SchedulerLeaseProposal | None = None,
+        decision: SchedulerLeaseDecision | None = None,
+        committed_lease: SchedulerCommittedLease | dict[str, Any] | None = None,
+        term: SchedulerConsensusTerm | dict[str, Any] | None = None,
+        votes: list[SchedulerVoteRecord | dict[str, Any]] | None = None,
+        handoff_envelope: ControlPlaneHandoffEnvelope | dict[str, Any] | None = None,
+        heartbeat: SchedulerPeerHeartbeat | None = None,
+        cluster: dict[str, Any] | None = None,
+        conflict: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        current = self._scheduler_authority_payload(state_ref)
+        history = self._scheduler_decision_history(current)
+        conflicts = self._scheduler_conflicts(current)
+        handoff_history = self._scheduler_handoff_history(current)
+        if decision is not None:
+            history.append(decision.model_dump(mode="json"))
+        if conflict is not None:
+            conflicts.append(conflict)
+        if handoff_envelope is not None:
+            handoff_history.append(
+                handoff_envelope.model_dump(mode="json")
+                if isinstance(handoff_envelope, ControlPlaneHandoffEnvelope)
+                else dict(handoff_envelope)
+            )
+        current_active = current.get("active_decision") if isinstance(current.get("active_decision"), dict) else None
+        if decision is not None:
+            if decision.decision == "granted" and decision.released_at is None:
+                current_active = decision.model_dump(mode="json")
+            elif current_active is not None and current_active.get("lease_id") == decision.lease_id:
+                current_active = None
+        committed_payload = (
+            committed_lease.model_dump(mode="json")
+            if isinstance(committed_lease, SchedulerCommittedLease)
+            else (dict(committed_lease) if isinstance(committed_lease, dict) else current.get("active_committed_lease"))
+        )
+        updates = {
+            "control_plane_id": control_plane_id,
+            "scheduler_authority": {
+                "authority_control_plane_id": self.control_plane_identity.control_plane_id,
+                "latest_proposal": proposal.model_dump(mode="json") if proposal is not None else current.get("latest_proposal"),
+                "latest_decision": decision.model_dump(mode="json") if decision is not None else current.get("latest_decision"),
+                "active_decision": current_active,
+                "active_committed_lease": committed_payload,
+                "cluster_summary": self._cluster_summary_payload(cluster=cluster, term=term) or current.get("cluster_summary"),
+                "vote_records": [
+                    vote.model_dump(mode="json") if isinstance(vote, SchedulerVoteRecord) else dict(vote)
+                    for vote in (votes or [])
+                ] or current.get("vote_records"),
+                "decision_history": history[-20:],
+                "handoff_history": handoff_history[-20:],
+                "conflicts": conflicts[-20:],
+                "last_peer_heartbeat": (
+                    heartbeat.model_dump(mode="json") if heartbeat is not None else current.get("last_peer_heartbeat")
+                ),
+            },
+        }
+        if decision is not None:
+            updates["lease_epoch"] = decision.lease_epoch
+            updates["scheduler_decision_ref"] = decision.decision_id
+            updates["scheduler_lease_id"] = decision.lease_id
+            updates["arbitration_provenance"] = {
+                "decision_id": decision.decision_id,
+                "lease_id": decision.lease_id,
+                "lease_epoch": decision.lease_epoch,
+                "control_plane_id": decision.control_plane_id,
+                "authority_control_plane_id": self.control_plane_identity.control_plane_id,
+                "decision": decision.decision,
+                "reason": decision.reason,
+                "lease_expires_at": decision.lease_expires_at.isoformat(),
+                "released_at": decision.released_at.isoformat() if decision.released_at is not None else None,
+                "release_reason": decision.release_reason,
+                "committed_lease_id": committed_payload.get("committed_lease_id") if isinstance(committed_payload, dict) else None,
+                "fencing_token": committed_payload.get("fencing_token") if isinstance(committed_payload, dict) else None,
+                "term_no": committed_payload.get("term_no") if isinstance(committed_payload, dict) else None,
+                "commit_index": committed_payload.get("commit_index") if isinstance(committed_payload, dict) else None,
+            }
+        return updates
+
+    def _create_control_plane_handoff_envelope(
+        self,
+        *,
+        run_id: str,
+        runtime_task_id: str,
+        from_control_plane_id: str,
+        to_control_plane_id: str,
+        committed_lease: SchedulerCommittedLease,
+        connection=None,
+    ) -> ControlPlaneHandoffEnvelope:
+        snapshots = self.snapshot_repo.list_for_run(run_id)
+        latest_snapshot = snapshots[-1] if snapshots else None
+        latest_review_verdict = self.review_repo.latest_for_run(run_id)
+        state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
+        replay_excerpt = {}
+        try:
+            replay = self.get_run_replay_packet(run_id)
+            replay_excerpt = {
+                "headline": replay["summary"]["headline"],
+                "next_action": replay["summary"]["next_action"],
+                "failure_taxonomy": replay["summary"]["failure_taxonomy"],
+            }
+        except WorkflowError:
+            replay_excerpt = {}
+        envelope = self.scheduler_authority_cluster.create_handoff_envelope(
+            run_id=run_id,
+            runtime_task_id=runtime_task_id,
+            from_control_plane_id=from_control_plane_id,
+            to_control_plane_id=to_control_plane_id,
+            committed_lease_id=committed_lease.committed_lease_id,
+            term_no=committed_lease.term_no,
+            commit_index=committed_lease.commit_index,
+            snapshot_payload=latest_snapshot.snapshot_payload if latest_snapshot is not None else {},
+            review_state=(
+                latest_review_verdict.model_dump(mode="json")
+                if latest_review_verdict is not None
+                else {"effective_review_state": "not_requested"}
+            ),
+            durable_refs=self._durable_refs_for_state(state_ref),
+            replay_excerpt=replay_excerpt,
+            connection=connection,
+        )
+        return envelope
+
+    def _ensure_committed_scheduler_lease(
+        self,
+        *,
+        run: Run,
+        runtime_task: RuntimeTask,
+        connection=None,
+    ) -> tuple[dict[str, Any], ControlPlaneHandoffEnvelope | None]:
+        result = self.scheduler_authority_cluster.submit_proposal(
+            control_plane_id=self.control_plane_identity.control_plane_id,
+            run_id=run.run_id,
+            runtime_task_id=runtime_task.runtime_task_id,
+            domain_kind="runtime_task",
+            domain_key=runtime_task.runtime_task_id,
+            connection=connection,
+        )
+        if not result.get("granted"):
+            raise SchedulerArbitrationError(
+                "control plane does not own a committed scheduler lease for the runtime task",
+                {
+                    "run_id": run.run_id,
+                    "runtime_task_id": runtime_task.runtime_task_id,
+                    "result": result,
+                },
+            )
+        previous = result.get("previous_committed_lease")
+        current = result.get("committed_lease")
+        handoff_envelope = None
+        if (
+            isinstance(previous, dict)
+            and isinstance(current, dict)
+            and previous.get("control_plane_id") is not None
+            and previous.get("control_plane_id") != current.get("control_plane_id")
+        ):
+            handoff_envelope = self._create_control_plane_handoff_envelope(
+                run_id=run.run_id,
+                runtime_task_id=runtime_task.runtime_task_id,
+                from_control_plane_id=str(previous["control_plane_id"]),
+                to_control_plane_id=str(current["control_plane_id"]),
+                committed_lease=SchedulerCommittedLease.model_validate(current),
+                connection=connection,
+            )
+            result["handoff_envelope"] = handoff_envelope.model_dump(mode="json")
+        return result, handoff_envelope
+
+    def _validate_callback_scheduler_context(
+        self,
+        *,
+        runtime_task_id: str,
+        execution_target: dict[str, Any] | None,
+        connection=None,
+    ) -> SchedulerCommittedLease:
+        current_committed = self.scheduler_authority_cluster.get_active_committed_lease_for_domain(
+            domain_kind="runtime_task",
+            domain_key=runtime_task_id,
+            connection=connection,
+        )
+        if current_committed is None:
+            raise SchedulerArbitrationError(
+                "worker callback arrived without an active committed scheduler lease",
+                {"runtime_task_id": runtime_task_id},
+            )
+        if current_committed.control_plane_id != self.control_plane_identity.control_plane_id:
+            raise SchedulerArbitrationError(
+                "worker callback was received by a stale control plane",
+                {
+                    "runtime_task_id": runtime_task_id,
+                    "active_control_plane_id": current_committed.control_plane_id,
+                    "local_control_plane_id": self.control_plane_identity.control_plane_id,
+                },
+            )
+        target = execution_target or {}
+        if (
+            target.get("committed_lease_id")
+            and str(target.get("committed_lease_id")) != current_committed.committed_lease_id
+        ):
+            raise SchedulerArbitrationError(
+                "worker callback committed lease does not match the active committed lease",
+                {
+                    "runtime_task_id": runtime_task_id,
+                    "callback_committed_lease_id": target.get("committed_lease_id"),
+                    "active_committed_lease_id": current_committed.committed_lease_id,
+                },
+            )
+        if target.get("fencing_token") and str(target.get("fencing_token")) != current_committed.fencing_token:
+            raise SchedulerArbitrationError(
+                "worker callback fencing token does not match the active committed lease",
+                {
+                    "runtime_task_id": runtime_task_id,
+                    "callback_fencing_token": target.get("fencing_token"),
+                    "active_fencing_token": current_committed.fencing_token,
+                },
+            )
+        return current_committed
 
     def _default_project_delivery_plan(self, run_id: str) -> OrchestrationPlan:
         barrier = OrchestrationBarrier(
@@ -458,6 +825,7 @@ class OrchestratorService(
         *,
         preferred_adapter: str | None,
         fallback_adapter: str | None,
+        mutation_contract: MutationContract | None = None,
     ) -> PreparedRunBundle:
         adapter_candidates = [preferred_adapter, fallback_adapter, None]
         seen: set[str | None] = set()
@@ -466,7 +834,17 @@ class OrchestratorService(
                 continue
             seen.add(adapter_name)
             try:
-                return self.compile_run(run_id, adapter_name=adapter_name)
+                return self.compile_run(
+                    run_id,
+                    adapter_name=adapter_name,
+                    task_card_ref=mutation_contract.task_card_ref if mutation_contract is not None else None,
+                    task_card_path=mutation_contract.task_card_path if mutation_contract is not None else None,
+                    write_set=mutation_contract.write_set if mutation_contract is not None else None,
+                    read_set=mutation_contract.read_set if mutation_contract is not None else None,
+                    test_commands=mutation_contract.test_commands if mutation_contract is not None else None,
+                    max_fix_iterations=mutation_contract.max_fix_iterations if mutation_contract is not None else 0,
+                    mutation_mode=mutation_contract.mutation_mode if mutation_contract is not None else None,
+                )
             except (
                 CapabilityAdapterNotFoundError,
                 ExecutionLaneNotAllowedError,
@@ -504,6 +882,223 @@ class OrchestratorService(
         resolved.write_text(content, encoding="utf-8")
         return [resolved.as_posix()]
 
+    def _task_card_content_for_mutation(self, contract: MutationContract | None, *, working_directory: str) -> str | None:
+        if contract is None or not contract.task_card_path:
+            return None
+        task_card_path = Path(contract.task_card_path)
+        if not task_card_path.is_absolute():
+            task_card_path = Path(working_directory) / task_card_path
+        resolved = task_card_path.resolve()
+        if not resolved.exists():
+            raise MutationContractError(
+                "task_card_path does not exist for mutation contract",
+                {"task_card_path": contract.task_card_path},
+            )
+        return resolved.read_text(encoding="utf-8")
+
+    def _packet_for_mutation_attempt(
+        self,
+        packet: TaskPacket,
+        contract: MutationContract,
+        *,
+        attempt_index: int,
+        failure_feedback: str | None,
+    ) -> TaskPacket:
+        task_card_content = self._task_card_content_for_mutation(contract, working_directory=packet.working_directory)
+        return TaskPacket.model_validate(
+            {
+                **packet.model_dump(mode="json"),
+                "env": {
+                    **packet.env,
+                    "WORKFLOW_MUTATION_TASK_CARD_REF": contract.task_card_ref or "",
+                    "WORKFLOW_MUTATION_TASK_CARD_PATH": contract.task_card_path or "",
+                    "WORKFLOW_MUTATION_TASK_CARD_CONTENT": task_card_content or "",
+                    "WORKFLOW_MUTATION_WRITE_SET": json.dumps(contract.write_set, ensure_ascii=False),
+                    "WORKFLOW_MUTATION_READ_SET": json.dumps(contract.read_set, ensure_ascii=False),
+                    "WORKFLOW_MUTATION_TEST_COMMANDS": json.dumps(contract.test_commands, ensure_ascii=False),
+                    "WORKFLOW_MUTATION_ATTEMPT_INDEX": str(attempt_index),
+                    "WORKFLOW_MUTATION_FAILURE_FEEDBACK": failure_feedback or "",
+                },
+            }
+        )
+
+    def _merge_test_feedback(self, attempts: list[dict[str, Any]]) -> str:
+        if not attempts:
+            return ""
+        chunks: list[str] = []
+        for attempt in attempts[-3:]:
+            chunks.append(
+                "\n".join(
+                    [
+                        f"command: {attempt['command']}",
+                        f"return_code: {attempt['return_code']}",
+                        f"stdout:\n{attempt['stdout']}",
+                        f"stderr:\n{attempt['stderr']}",
+                    ]
+                ).strip()
+            )
+        return "\n\n".join(chunks)
+
+    def _execute_repo_mutation(
+        self,
+        adapter,
+        packet: TaskPacket,
+    ) -> ExecutionResult:
+        contract = packet.mutation_contract
+        if contract is None or contract.mutation_mode != MutationMode.patch_apply:
+            return adapter.launch(packet)
+        if adapter.normalized_name() != "opencode":
+            raise MutationContractError(
+                "repo mutation execution requires the opencode adapter",
+                {"adapter_name": adapter.normalized_name()},
+            )
+        allowed_paths = normalize_allowed_paths(packet.working_directory, contract.write_set)
+        baseline_snapshot = capture_workspace_snapshot(packet.working_directory, contract.write_set)
+        attempt_limit = max(contract.max_fix_iterations, 0)
+        failure_feedback: str | None = None
+        aggregated_test_attempts: list[dict[str, Any]] = []
+        out_of_scope_rejections: list[str] = []
+        last_result: ExecutionResult | None = None
+        last_patch_hash: str | None = None
+        last_touched_paths: list[str] = []
+        final_test_status = "patch_generation_failed"
+
+        for attempt_index in range(attempt_limit + 1):
+            if attempt_index > 0:
+                restore_workspace_snapshot(
+                    packet.working_directory,
+                    baseline_snapshot,
+                    extra_paths=last_touched_paths,
+                )
+                last_touched_paths = []
+            attempt_packet = self._packet_for_mutation_attempt(
+                packet,
+                contract,
+                attempt_index=attempt_index,
+                failure_feedback=failure_feedback,
+            )
+            execution_result = adapter.launch(attempt_packet)
+            last_result = execution_result
+            patch_text = ""
+            if execution_result.artifact_paths:
+                patch_path = Path(execution_result.artifact_paths[0])
+                if patch_path.exists():
+                    patch_text = patch_path.read_text(encoding="utf-8")
+            if execution_result.return_code != 0 and not patch_text.strip():
+                failure_feedback = execution_result.stderr or execution_result.stdout or "opencode patch generation failed"
+                final_test_status = "patch_generation_failed"
+                if attempt_index < attempt_limit:
+                    continue
+                break
+            try:
+                touched_paths = extract_touched_paths(patch_text, workspace_root=packet.working_directory)
+            except ValueError as exc:
+                failure_feedback = str(exc)
+                final_test_status = "patch_parse_failed"
+                if attempt_index < attempt_limit:
+                    continue
+                raise PatchApplyError(
+                    "opencode did not return a valid unified diff patch",
+                    {"reason": str(exc), "attempt_index": attempt_index},
+                ) from exc
+            rejected_paths = [path for path in touched_paths if not is_path_allowed(path, allowed_paths)]
+            if rejected_paths:
+                out_of_scope_rejections.extend(rejected_paths)
+                failure_feedback = f"patch touched out-of-scope paths: {', '.join(rejected_paths)}"
+                final_test_status = "patch_rejected"
+                if attempt_index < attempt_limit:
+                    continue
+                raise RepoMutationScopeError(
+                    "patch attempted to modify files outside the allowed write_set",
+                    {
+                        "rejected_paths": rejected_paths,
+                        "allowed_paths": allowed_paths,
+                    },
+                )
+            try:
+                last_patch_hash = hash_patch_text(patch_text)
+                last_touched_paths = apply_unified_diff(
+                    packet.working_directory,
+                    patch_text,
+                    allowed_paths=allowed_paths,
+                )
+            except ValueError as exc:
+                failure_feedback = str(exc)
+                final_test_status = "patch_apply_failed"
+                if attempt_index < attempt_limit:
+                    continue
+                raise PatchApplyError(
+                    "failed to apply the generated unified diff patch",
+                    {"reason": str(exc), "attempt_index": attempt_index},
+                ) from exc
+            command_attempts = []
+            if contract.test_commands:
+                command_attempts = run_test_commands(contract.test_commands, working_directory=packet.working_directory)
+                for command_attempt in command_attempts:
+                    aggregated_test_attempts.append({"iteration": attempt_index, **command_attempt})
+            if command_attempts and any(not bool(item["passed"]) for item in command_attempts):
+                failure_feedback = self._merge_test_feedback(command_attempts)
+                final_test_status = "failed"
+                if attempt_index < attempt_limit:
+                    continue
+                restore_workspace_snapshot(
+                    packet.working_directory,
+                    baseline_snapshot,
+                    extra_paths=last_touched_paths,
+                )
+                break
+            final_test_status = "passed" if contract.test_commands else "not_requested"
+            mutation_result = RepoMutationResult(
+                changed_files=sorted(set(last_touched_paths)),
+                applied_patch_hash=last_patch_hash,
+                out_of_scope_rejections=sorted(set(out_of_scope_rejections)),
+                test_attempts=aggregated_test_attempts,
+                fix_iteration_count=attempt_index,
+                final_test_status=final_test_status,
+            )
+            return ExecutionResult(
+                runtime_task_id=execution_result.runtime_task_id,
+                return_code=0,
+                stdout=execution_result.stdout,
+                stderr=execution_result.stderr,
+                started_at=execution_result.started_at,
+                finished_at=execution_result.finished_at,
+                duration_ms=execution_result.duration_ms,
+                artifact_paths=execution_result.artifact_paths,
+                adapter_name=execution_result.adapter_name,
+                metadata={
+                    **execution_result.metadata,
+                    "mutation_contract": contract.model_dump(mode="json"),
+                    "mutation_result": mutation_result.model_dump(mode="json"),
+                },
+            )
+
+        failed_result = last_result or adapter.launch(packet)
+        mutation_result = RepoMutationResult(
+            changed_files=[],
+            applied_patch_hash=last_patch_hash,
+            out_of_scope_rejections=sorted(set(out_of_scope_rejections)),
+            test_attempts=aggregated_test_attempts,
+            fix_iteration_count=attempt_limit,
+            final_test_status=final_test_status,
+        )
+        return ExecutionResult(
+            runtime_task_id=failed_result.runtime_task_id,
+            return_code=failed_result.return_code or 1,
+            stdout=failed_result.stdout,
+            stderr=failed_result.stderr or failure_feedback or "repo mutation failed",
+            started_at=failed_result.started_at,
+            finished_at=failed_result.finished_at,
+            duration_ms=failed_result.duration_ms,
+            artifact_paths=failed_result.artifact_paths,
+            adapter_name=failed_result.adapter_name,
+            metadata={
+                **failed_result.metadata,
+                "mutation_contract": contract.model_dump(mode="json"),
+                "mutation_result": mutation_result.model_dump(mode="json"),
+            },
+        )
+
     def _execute_project_delivery_orchestration(self, packet: TaskPacket) -> ExecutionResult:
         from packages.worker_adapters.base import utc_now
 
@@ -515,6 +1110,7 @@ class OrchestratorService(
             else self._default_project_delivery_plan(packet.run_id)
         )
         parent_goal = packet.env.get("WORKFLOW_RUN_GOAL", "")
+        parent_mutation_contract = packet.mutation_contract
         child_runs: list[dict[str, Any]] = []
         role_progress: dict[str, dict[str, Any]] = {}
 
@@ -551,11 +1147,19 @@ class OrchestratorService(
         parallel_steps = [step for step in orchestration.steps if step.role in {AgentRoleType.coder, AgentRoleType.researcher}]
         parallel_run_ids: list[str] = []
         for step in parallel_steps:
+            mutation_contract = (
+                parent_mutation_contract
+                if step.role == AgentRoleType.coder
+                and parent_mutation_contract is not None
+                and parent_mutation_contract.mutation_mode == MutationMode.patch_apply
+                else None
+            )
             child_run = self.create_run(self._role_goal_for(parent_goal, step.role), step.preset_id)
             prepared = self._compile_child_run_with_fallback(
                 child_run.run_id,
                 preferred_adapter=step.preferred_adapter,
                 fallback_adapter=step.fallback_adapter,
+                mutation_contract=mutation_contract,
             )
             step.run_id = child_run.run_id
             step.status = "prepared"
@@ -567,6 +1171,11 @@ class OrchestratorService(
                     "status": "prepared",
                     "runtime_task_id": prepared.task_packet.runtime_task_id,
                     "barrier_id": step.barrier_id,
+                    "mutation_contract": (
+                        prepared.task_packet.mutation_contract.model_dump(mode="json")
+                        if prepared.task_packet.mutation_contract is not None
+                        else None
+                    ),
                 }
             )
         parallel_result = self.resume_runs_parallel(parallel_run_ids, max_workers=2) if parallel_run_ids else {"results": []}
@@ -578,6 +1187,7 @@ class OrchestratorService(
                     recovered_run.run_id,
                     preferred_adapter=step.fallback_adapter,
                     fallback_adapter=None,
+                    mutation_contract=mutation_contract if step.role == AgentRoleType.coder else None,
                 )
                 self.resume_run(recovered_run.run_id)
                 finalized = self._finalize_child_run_if_waiting(recovered_run.run_id)
@@ -587,14 +1197,22 @@ class OrchestratorService(
                         child["run_id"] = recovered_run.run_id
                         child["runtime_task_id"] = recovered_bundle.task_packet.runtime_task_id
             step.status = str(finalized.status)
+            mutation_report = (
+                self.get_run_mutation_report(step.run_id)
+                if step.role == AgentRoleType.coder and step.run_id is not None
+                else None
+            )
             role_progress[str(step.role)] = {
                 "status": str(finalized.status),
                 "run_id": step.run_id,
                 "barrier_id": step.barrier_id,
+                "mutation_report": mutation_report,
             }
             for child in child_runs:
                 if child["run_id"] == step.run_id:
                     child["status"] = str(finalized.status)
+                    if mutation_report is not None:
+                        child["mutation_report"] = mutation_report
         for barrier in orchestration.barriers:
             barrier.status = "released" if parallel_run_ids else "skipped"
 
@@ -694,7 +1312,10 @@ class OrchestratorService(
         preset: PresetDefinition,
         task_kind: TaskKind,
         selected_adapter: str | None,
+        mutation_contract: MutationContract | None = None,
     ) -> ExecutionLaneType:
+        if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply:
+            return ExecutionLaneType.repo_change_controlled
         if preset.preset_id == "feature_delivery":
             if selected_adapter == "agent":
                 raise ExecutionLaneNotAllowedError(
@@ -1526,6 +2147,7 @@ class OrchestratorService(
         expired_active_claims = self._expired_active_claims(context)
         active_worker_leases = self._active_worker_leases_for(context)
         expired_active_worker_leases = self._expired_active_worker_leases(context)
+        scheduler_authority = self._scheduler_authority_payload(last_runtime_state)
 
         if (
             str(context.run.status) in {RunStatus.prepared, RunStatus.running, RunStatus.awaiting_review}
@@ -1706,6 +2328,67 @@ class OrchestratorService(
                         "lease_ids": [lease.lease_id for lease in active_worker_leases],
                         "runtime_task_ids": [lease.runtime_task_id for lease in active_worker_leases],
                         "adapter_names": [lease.adapter_name for lease in active_worker_leases],
+                    },
+                )
+            )
+
+        active_decision = (
+            scheduler_authority.get("active_decision") if isinstance(scheduler_authority.get("active_decision"), dict) else None
+        )
+        if active_decision is not None:
+            lease_expires_at = self._parse_iso_datetime(active_decision.get("lease_expires_at"))
+            released_at = self._parse_iso_datetime(active_decision.get("released_at"))
+            if released_at is None and lease_expires_at is not None and lease_expires_at <= self._utc_now():
+                problems.append(
+                    self._inspection_problem(
+                        "scheduler_authority_lease_expired",
+                        "scheduler authority still projects an active lease decision whose lease has already expired",
+                        "submit_scheduler_proposal_or_release_scheduler_lease",
+                        repairable=False,
+                        details={
+                            "decision_id": active_decision.get("decision_id"),
+                            "lease_id": active_decision.get("lease_id"),
+                            "control_plane_id": active_decision.get("control_plane_id"),
+                            "lease_epoch": active_decision.get("lease_epoch"),
+                            "lease_expires_at": active_decision.get("lease_expires_at"),
+                        },
+                    )
+                )
+
+        conflicts = scheduler_authority.get("conflicts")
+        if isinstance(conflicts, list) and conflicts:
+            latest_conflict = next((item for item in reversed(conflicts) if isinstance(item, dict)), None)
+            problems.append(
+                self._inspection_problem(
+                    "scheduler_authority_conflict",
+                    "scheduler authority recorded at least one cross-control-plane lease conflict for this runtime task",
+                    "inspect_scheduler_authority_conflicts",
+                    severity="warning",
+                    repairable=False,
+                    details=latest_conflict or {"conflict_count": len(conflicts)},
+                )
+            )
+
+        active_committed = (
+            scheduler_authority.get("active_committed_lease")
+            if isinstance(scheduler_authority.get("active_committed_lease"), dict)
+            else None
+        )
+        if scheduler_authority.get("stale_plane_detected") and active_committed is not None:
+            problems.append(
+                self._inspection_problem(
+                    "scheduler_authority_stale_control_plane",
+                    "the local control plane is stale and no longer owns the active committed scheduler lease",
+                    "inspect_scheduler_authority_takeover",
+                    severity="warning",
+                    repairable=False,
+                    details={
+                        "local_control_plane_id": scheduler_authority.get("local_control_plane_id"),
+                        "active_control_plane_id": active_committed.get("control_plane_id"),
+                        "committed_lease_id": active_committed.get("committed_lease_id"),
+                        "fencing_token": active_committed.get("fencing_token"),
+                        "term_no": active_committed.get("term_no"),
+                        "commit_index": active_committed.get("commit_index"),
                     },
                 )
             )
@@ -2213,8 +2896,14 @@ class OrchestratorService(
     def list_presets(self) -> list[PresetDefinition]:
         return self.preset_repo.list()
 
-    def list_runs(self, limit: int = 10) -> list[Run]:
-        return self.run_repo.list(limit=limit)
+    def list_runs(
+        self,
+        limit: int = 10,
+        *,
+        status: str | None = None,
+        preset_id: str | None = None,
+    ) -> list[Run]:
+        return self.run_repo.list(limit=limit, status=status, preset_id=preset_id)
 
     def suggest_presets(self, goal: str) -> list[PresetSuggestion]:
         return self._resolver().suggest(goal)
@@ -2290,6 +2979,7 @@ class OrchestratorService(
             "task_kind": str(snapshot.runtime_task.task_kind),
             "expected_artifacts": snapshot.task_packet.expected_artifacts,
             "working_directory": snapshot.task_packet.working_directory,
+            "control_plane_id": self.control_plane_identity.control_plane_id,
             "domain_pack_id": snapshot.domain_pack.domain_pack_id if snapshot.domain_pack is not None else None,
             "domain_pack_resolution": (
                 snapshot.domain_pack.model_dump(mode="json") if snapshot.domain_pack is not None else None
@@ -2297,6 +2987,11 @@ class OrchestratorService(
             "capability_adapter": snapshot.capability_route.adapter_name if snapshot.capability_route is not None else None,
             "memory_retrieval_preview": (
                 snapshot.memory_preview.model_dump(mode="json") if snapshot.memory_preview is not None else None
+            ),
+            "mutation_contract": (
+                snapshot.task_packet.mutation_contract.model_dump(mode="json")
+                if snapshot.task_packet.mutation_contract is not None
+                else None
             ),
         }
         payload["context_budget"] = build_context_budget_report(payload)
@@ -2526,6 +3221,171 @@ class OrchestratorService(
         self.get_run(run_id)
         return self.worker_lease_repo.list_for_run(run_id)
 
+    def submit_scheduler_proposal(
+        self,
+        *,
+        control_plane_id: str,
+        run_id: str,
+        runtime_task_id: str,
+        domain_kind: str = "runtime_task",
+        domain_key: str,
+        requested_lease_seconds: int = 300,
+        requested_epoch: int = 1,
+    ) -> dict[str, Any]:
+        self.get_run(run_id)
+        with unit_of_work(self.db_path) as connection:
+            state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
+            result = self.scheduler_authority_cluster.submit_proposal(
+                control_plane_id=control_plane_id,
+                run_id=run_id,
+                runtime_task_id=runtime_task_id,
+                domain_kind=domain_kind,
+                domain_key=domain_key,
+                requested_lease_seconds=requested_lease_seconds,
+                requested_epoch=requested_epoch,
+                connection=connection,
+            )
+            proposal = (
+                SchedulerLeaseProposal.model_validate(result["proposal"])
+                if isinstance(result.get("proposal"), dict)
+                else None
+            )
+            decision = (
+                SchedulerLeaseDecision.model_validate(result["decision"])
+                if isinstance(result.get("decision"), dict)
+                else None
+            )
+            committed_lease = (
+                SchedulerCommittedLease.model_validate(result["committed_lease"])
+                if isinstance(result.get("committed_lease"), dict)
+                else None
+            )
+            term = (
+                SchedulerConsensusTerm.model_validate(result["term"])
+                if isinstance(result.get("term"), dict)
+                else None
+            )
+            votes = [
+                SchedulerVoteRecord.model_validate(item)
+                for item in result.get("votes", [])
+                if isinstance(item, dict)
+            ]
+            handoff_envelope = (
+                ControlPlaneHandoffEnvelope.model_validate(result["handoff_envelope"])
+                if isinstance(result.get("handoff_envelope"), dict)
+                else None
+            )
+            if state_ref is not None:
+                updates = self._scheduler_arbitration_updates(
+                    state_ref,
+                    control_plane_id=control_plane_id,
+                    proposal=proposal,
+                    decision=decision,
+                    committed_lease=committed_lease,
+                    term=term,
+                    votes=votes,
+                    handoff_envelope=handoff_envelope,
+                    cluster=result.get("cluster"),
+                    conflict=result.get("conflict"),
+                )
+                self.runtime_state_repo.upsert(
+                    self._state_ref_with_payload_updates(state_ref, updates),
+                    connection=connection,
+                )
+            return result
+
+    def record_scheduler_peer_heartbeat(
+        self,
+        *,
+        control_plane_id: str,
+        status: str = "active",
+        lease_count: int = 0,
+        observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        heartbeat = self.scheduler_peer_heartbeat_repo.create(
+            SchedulerPeerHeartbeat(
+                control_plane_id=control_plane_id,
+                status=status,
+                lease_count=lease_count,
+                observed_at=datetime.fromisoformat(observed_at) if observed_at is not None else self._utc_now(),
+            )
+        )
+        cluster = self.scheduler_authority_cluster.heartbeat_node(
+            node_id=control_plane_id,
+            bind_url=f"internal://{control_plane_id}",
+            status=status,
+            role="control_plane",
+            observed_at=heartbeat.observed_at.isoformat(),
+        )
+        return {
+            "heartbeat": heartbeat.model_dump(mode="json"),
+            "cluster": cluster["cluster"],
+        }
+
+    def release_scheduler_lease(
+        self,
+        lease_id: str,
+        *,
+        release_reason: str = "control_plane_release",
+    ) -> dict[str, Any]:
+        with unit_of_work(self.db_path) as connection:
+            released = self.scheduler_authority_cluster.release_lease(
+                lease_id,
+                release_reason=release_reason,
+                connection=connection,
+            )
+            decision = (
+                SchedulerLeaseDecision.model_validate(released["decision"])
+                if isinstance(released.get("decision"), dict)
+                else None
+            )
+            if decision is None:
+                raise EntityNotFoundError("scheduler_lease", lease_id)
+            state_ref = self.runtime_state_repo.get_by_task(decision.runtime_task_id, connection=connection)
+            if state_ref is not None:
+                updates = self._scheduler_arbitration_updates(
+                    state_ref,
+                    control_plane_id=decision.control_plane_id,
+                    decision=decision,
+                    committed_lease=released.get("committed_lease"),
+                    cluster=released.get("cluster"),
+                )
+                self.runtime_state_repo.upsert(
+                    self._state_ref_with_payload_updates(state_ref, updates),
+                    connection=connection,
+                )
+            latest_heartbeat = self.scheduler_peer_heartbeat_repo.latest_for_control_plane(
+                decision.control_plane_id,
+                connection=connection,
+            )
+            return {
+                "decision": decision.model_dump(mode="json"),
+                "committed_lease": released.get("committed_lease"),
+                "cluster": released.get("cluster"),
+                "latest_peer_heartbeat": (
+                    latest_heartbeat.model_dump(mode="json") if latest_heartbeat is not None else None
+                ),
+            }
+
+    def get_scheduler_lease(self, lease_id: str) -> dict[str, Any]:
+        payload = self.scheduler_authority_cluster.get_lease(lease_id)
+        decision = (
+            SchedulerLeaseDecision.model_validate(payload["decision"])
+            if isinstance(payload.get("decision"), dict)
+            else None
+        )
+        latest_heartbeat = (
+            self.scheduler_peer_heartbeat_repo.latest_for_control_plane(decision.control_plane_id)
+            if decision is not None
+            else None
+        )
+        return {
+            **payload,
+            "latest_peer_heartbeat": (
+                latest_heartbeat.model_dump(mode="json") if latest_heartbeat is not None else None
+            ),
+        }
+
     def list_runtime_attempts(self, run_id: str) -> list[RuntimeAttempt]:
         self.get_run(run_id)
         return self.runtime_attempt_repo.list_for_run(run_id)
@@ -2540,6 +3400,214 @@ class OrchestratorService(
         if ledger is None:
             raise EntityNotFoundError("budget_ledger", run_id)
         return ledger
+
+    def _worker_callback_registry(self, state_ref: RuntimeStateRef | None) -> dict[str, list[str]]:
+        if state_ref is None:
+            return {"heartbeat": [], "completion": []}
+        callbacks = state_ref.state_payload.get("worker_callbacks")
+        if not isinstance(callbacks, dict):
+            return {"heartbeat": [], "completion": []}
+        heartbeat = callbacks.get("heartbeat")
+        completion = callbacks.get("completion")
+        return {
+            "heartbeat": [str(item) for item in heartbeat] if isinstance(heartbeat, list) else [],
+            "completion": [str(item) for item in completion] if isinstance(completion, list) else [],
+        }
+
+    def _append_worker_callback(
+        self,
+        state_ref: RuntimeStateRef,
+        *,
+        callback_type: str,
+        callback_id: str,
+        payload: dict[str, Any],
+    ) -> RuntimeStateRef:
+        registry = self._worker_callback_registry(state_ref)
+        callback_ids = registry.setdefault(callback_type, [])
+        if callback_id not in callback_ids:
+            callback_ids.append(callback_id)
+        callback_history = list(state_ref.state_payload.get("worker_callback_history") or [])
+        callback_history.append({"type": callback_type, "callback_id": callback_id, **payload})
+        return self._state_ref_with_payload_updates(
+            state_ref,
+            {
+                "worker_callbacks": registry,
+                "worker_callback_history": callback_history[-20:],
+            },
+        )
+
+    def record_worker_heartbeat(
+        self,
+        *,
+        callback_id: str,
+        dispatch_id: str,
+        run_id: str,
+        runtime_task_id: str,
+        lease_id: str,
+        worker_pool_id: str,
+        heartbeat_at: str,
+        lease_expires_at: str,
+        execution_target: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with unit_of_work(self.db_path) as connection:
+            state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
+            if state_ref is None:
+                raise EntityNotFoundError("runtime_state_ref", runtime_task_id)
+            committed_lease = self._validate_callback_scheduler_context(
+                runtime_task_id=runtime_task_id,
+                execution_target=execution_target,
+                connection=connection,
+            )
+            registry = self._worker_callback_registry(state_ref)
+            if callback_id in registry["heartbeat"]:
+                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
+            lease = self.worker_lease_repo.touch(
+                lease_id,
+                heartbeat_at=heartbeat_at,
+                lease_expires_at=lease_expires_at,
+                connection=connection,
+            )
+            if lease is None:
+                raise EntityNotFoundError("worker_lease", lease_id)
+            renewed_at = datetime.fromisoformat(heartbeat_at)
+            renewal = LeaseRenewalRecord(
+                run_id=run_id,
+                runtime_task_id=runtime_task_id,
+                worker_pool_id=worker_pool_id,
+                lease_id=lease_id,
+                status="renewed",
+                renewed_at=renewed_at,
+                heartbeat_at=renewed_at,
+                lease_expires_at=datetime.fromisoformat(lease_expires_at),
+                callback_id=callback_id,
+                source="worker_callback",
+            )
+            current_renewals = self._lease_renewals_for(state_ref, None)
+            if callback_id not in {item.get("callback_id") for item in current_renewals if isinstance(item, dict)}:
+                current_renewals.append(renewal.model_dump(mode="json"))
+            payload_updates: dict[str, Any] = {
+                "lease_renewals": current_renewals[-20:],
+            }
+            if execution_target is not None:
+                payload_updates["execution_target"] = {
+                    **execution_target,
+                    "last_callback_at": heartbeat_at,
+                }
+                payload_updates["committed_scheduler_lease"] = committed_lease.model_dump(mode="json")
+            updated_state = self._append_worker_callback(
+                self._state_ref_with_payload_updates(state_ref, payload_updates),
+                callback_type="heartbeat",
+                callback_id=callback_id,
+                payload={
+                    "dispatch_id": dispatch_id,
+                    "lease_id": lease_id,
+                    "heartbeat_at": heartbeat_at,
+                    "lease_expires_at": lease_expires_at,
+                },
+            )
+            self.runtime_state_repo.upsert(updated_state, connection=connection)
+            self.event_repo.append(
+                RunEvent(
+                    run_id=run_id,
+                    event_type=RunEventType.worker_heartbeat_received,
+                    object_type="worker_lease",
+                    object_id=lease_id,
+                    summary="Worker heartbeat received",
+                    payload_json={
+                        "run_id": run_id,
+                        "runtime_task_id": runtime_task_id,
+                        "lease_id": lease_id,
+                        "worker_pool_id": worker_pool_id,
+                        "callback_id": callback_id,
+                        "heartbeat_at": heartbeat_at,
+                        "lease_expires_at": lease_expires_at,
+                    },
+                ),
+                connection=connection,
+            )
+        return {"accepted": True, "duplicate": False, "callback_id": callback_id}
+
+    def record_worker_completion(
+        self,
+        *,
+        callback_id: str,
+        dispatch_id: str,
+        run_id: str,
+        runtime_task_id: str,
+        lease_id: str,
+        worker_pool_id: str,
+        execution_target: dict[str, Any],
+        lease_renewals: list[dict[str, Any]] | None = None,
+        execution_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with unit_of_work(self.db_path) as connection:
+            state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
+            if state_ref is None:
+                raise EntityNotFoundError("runtime_state_ref", runtime_task_id)
+            committed_lease = self._validate_callback_scheduler_context(
+                runtime_task_id=runtime_task_id,
+                execution_target=execution_target,
+                connection=connection,
+            )
+            registry = self._worker_callback_registry(state_ref)
+            if callback_id in registry["completion"]:
+                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
+            payload_updates: dict[str, Any] = {
+                "execution_target": {
+                    **execution_target,
+                    "last_callback_at": self._utc_now().isoformat(),
+                },
+                "committed_scheduler_lease": committed_lease.model_dump(mode="json"),
+            }
+            if lease_renewals is not None:
+                merged_renewals = self._lease_renewals_for(state_ref, None)
+                seen_callback_ids = {
+                    item.get("callback_id")
+                    for item in merged_renewals
+                    if isinstance(item, dict)
+                }
+                for renewal in lease_renewals:
+                    callback_ref = renewal.get("callback_id") if isinstance(renewal, dict) else None
+                    if callback_ref and callback_ref in seen_callback_ids:
+                        continue
+                    if isinstance(renewal, dict):
+                        merged_renewals.append(renewal)
+                        if callback_ref:
+                            seen_callback_ids.add(callback_ref)
+                payload_updates["lease_renewals"] = merged_renewals[-20:]
+            if execution_result is not None:
+                payload_updates["remote_execution_result"] = execution_result
+            updated_state = self._append_worker_callback(
+                self._state_ref_with_payload_updates(state_ref, payload_updates),
+                callback_type="completion",
+                callback_id=callback_id,
+                payload={
+                    "dispatch_id": dispatch_id,
+                    "lease_id": lease_id,
+                    "return_code": execution_result.get("return_code") if execution_result is not None else None,
+                },
+            )
+            self.runtime_state_repo.upsert(updated_state, connection=connection)
+            self.event_repo.append(
+                RunEvent(
+                    run_id=run_id,
+                    event_type=RunEventType.worker_completion_recorded,
+                    object_type="runtime_task",
+                    object_id=runtime_task_id,
+                    summary="Worker completion callback recorded",
+                    payload_json={
+                        "run_id": run_id,
+                        "runtime_task_id": runtime_task_id,
+                        "lease_id": lease_id,
+                        "worker_pool_id": worker_pool_id,
+                        "callback_id": callback_id,
+                        "dispatch_id": dispatch_id,
+                        "return_code": execution_result.get("return_code") if execution_result is not None else None,
+                    },
+                ),
+                connection=connection,
+            )
+        return {"accepted": True, "duplicate": False, "callback_id": callback_id}
 
     def apply_run_repair(self, run_id: str, action: str | None = None) -> dict[str, Any]:
         run = self.get_run(run_id)

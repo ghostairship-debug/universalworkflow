@@ -149,6 +149,16 @@ def build_effective_config(
             "path": db_path.value,
             "path_source": db_path.source,
         },
+        "control_plane": {
+            "id": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_CONTROL_PLANE_ID",
+                config=raw_config,
+                config_key="control_plane.id",
+                default="control_plane_local",
+                coerce=str,
+            ),
+        },
         "runtime_gateway": {
             "provider": runtime_gateway_provider.value,
             "provider_source": runtime_gateway_provider.source,
@@ -319,12 +329,112 @@ def build_effective_config(
                 default=60,
                 coerce=_coerce_int,
             ),
+            "callback_base_url": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_WORKER_POOL_CALLBACK_BASE_URL",
+                config=raw_config,
+                config_key="worker_pools.callback_base_url",
+                default=None,
+            ),
+            "shared_secret": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_WORKER_POOL_SHARED_SECRET",
+                config=raw_config,
+                config_key="worker_pools.shared_secret",
+                default=None,
+            ),
+            "allowed_callback_origins": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_WORKER_POOL_ALLOWED_CALLBACK_ORIGINS",
+                config=raw_config,
+                config_key="worker_pools.allowed_callback_origins",
+                default=[],
+                coerce=lambda item: (
+                    [segment.strip() for segment in item.split(",") if segment.strip()]
+                    if isinstance(item, str)
+                    else list(item or [])
+                ),
+            ),
+            "remote_timeout_seconds": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_REMOTE_WORKER_TIMEOUT_SECONDS",
+                config=raw_config,
+                config_key="worker_pools.remote_timeout_seconds",
+                default=120,
+                coerce=_coerce_int,
+            ),
+        },
+        "scheduler_authority": {
+            "mode": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_MODE",
+                config=raw_config,
+                config_key="scheduler_authority.mode",
+                default="quorum",
+                coerce=lambda item: str(item).strip().lower(),
+            ),
+            "node_id": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_NODE_ID",
+                config=raw_config,
+                config_key="scheduler_authority.node_id",
+                default="authority_local",
+                coerce=str,
+            ),
+            "bind_url": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_BIND_URL",
+                config=raw_config,
+                config_key="scheduler_authority.bind_url",
+                default="http://127.0.0.1:8020",
+                coerce=str,
+            ),
+            "peer_urls": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_PEER_URLS",
+                config=raw_config,
+                config_key="scheduler_authority.peer_urls",
+                default=[],
+                coerce=lambda item: (
+                    [segment.strip() for segment in item.split(",") if segment.strip()]
+                    if isinstance(item, str)
+                    else list(item or [])
+                ),
+            ),
+            "quorum_size": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_QUORUM_SIZE",
+                config=raw_config,
+                config_key="scheduler_authority.quorum_size",
+                default=0,
+                coerce=_coerce_int,
+            ),
+            "election_timeout_ms": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_ELECTION_TIMEOUT_MS",
+                config=raw_config,
+                config_key="scheduler_authority.election_timeout_ms",
+                default=15000,
+                coerce=_coerce_int,
+            ),
+            "heartbeat_interval_ms": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_HEARTBEAT_INTERVAL_MS",
+                config=raw_config,
+                config_key="scheduler_authority.heartbeat_interval_ms",
+                default=3000,
+                coerce=_coerce_int,
+            ),
         },
     }
 
     effective = {
         "config_path": config_path.as_posix() if config_path is not None else None,
         "db": config_values["db"],
+        "control_plane": {
+            "id": config_values["control_plane"]["id"].value,
+            "id_source": config_values["control_plane"]["id"].source,
+        },
         "runtime_gateway": {
             "provider": config_values["runtime_gateway"]["provider"],
             "provider_source": config_values["runtime_gateway"]["provider_source"],
@@ -370,7 +480,30 @@ def build_effective_config(
             "seed_path_source": config_values["worker_pools"]["seed_path"].source,
             "dispatch_timeout_seconds": config_values["worker_pools"]["dispatch_timeout_seconds"].value,
             "dispatch_timeout_seconds_source": config_values["worker_pools"]["dispatch_timeout_seconds"].source,
+            "callback_base_url": config_values["worker_pools"]["callback_base_url"].value,
+            "callback_base_url_source": config_values["worker_pools"]["callback_base_url"].source,
+            "shared_secret_present": bool(config_values["worker_pools"]["shared_secret"].value),
+            "shared_secret_source": config_values["worker_pools"]["shared_secret"].source,
+            "allowed_callback_origins": config_values["worker_pools"]["allowed_callback_origins"].value,
+            "allowed_callback_origins_source": config_values["worker_pools"]["allowed_callback_origins"].source,
+            "remote_timeout_seconds": config_values["worker_pools"]["remote_timeout_seconds"].value,
+            "remote_timeout_seconds_source": config_values["worker_pools"]["remote_timeout_seconds"].source,
+        },
+        "scheduler_authority": {
+            "mode": config_values["scheduler_authority"]["mode"].value,
+            "mode_source": config_values["scheduler_authority"]["mode"].source,
+            "node_id": config_values["scheduler_authority"]["node_id"].value,
+            "node_id_source": config_values["scheduler_authority"]["node_id"].source,
+            "bind_url": config_values["scheduler_authority"]["bind_url"].value,
+            "bind_url_source": config_values["scheduler_authority"]["bind_url"].source,
+            "peer_urls": config_values["scheduler_authority"]["peer_urls"].value,
+            "peer_urls_source": config_values["scheduler_authority"]["peer_urls"].source,
+            "quorum_size": config_values["scheduler_authority"]["quorum_size"].value,
+            "quorum_size_source": config_values["scheduler_authority"]["quorum_size"].source,
+            "election_timeout_ms": config_values["scheduler_authority"]["election_timeout_ms"].value,
+            "election_timeout_ms_source": config_values["scheduler_authority"]["election_timeout_ms"].source,
+            "heartbeat_interval_ms": config_values["scheduler_authority"]["heartbeat_interval_ms"].value,
+            "heartbeat_interval_ms_source": config_values["scheduler_authority"]["heartbeat_interval_ms"].source,
         },
     }
     return effective
-

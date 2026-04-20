@@ -171,6 +171,26 @@ class BudgetExhaustedError(WorkflowError):
         )
 
 
+class MutationContractError(WorkflowError):
+    code = "mutation_contract_invalid"
+    status_code = 422
+
+
+class RepoMutationScopeError(WorkflowError):
+    code = "repo_mutation_scope_error"
+    status_code = 409
+
+
+class PatchApplyError(WorkflowError):
+    code = "repo_patch_apply_failed"
+    status_code = 409
+
+
+class SchedulerArbitrationError(WorkflowError):
+    code = "scheduler_arbitration_error"
+    status_code = 409
+
+
 class RuntimeGatewayConfigurationError(WorkflowError):
     code = "runtime_gateway_configuration_error"
     status_code = 422

@@ -6,8 +6,13 @@ import pytest
 
 from packages.contracts import (
     BudgetLedger,
+    SchedulerLeaseDecision,
+    SchedulerLeaseProposal,
+    SchedulerPeerHeartbeat,
     HandoffLite,
     MemoryItem,
+    MutationContract,
+    MutationMode,
     Phase,
     Run,
     RunEvent,
@@ -40,6 +45,9 @@ from packages.core_domain.repositories import (
     RunSnapshotRepository,
     RuntimeClaimRepository,
     RunRepository,
+    SchedulerLeaseDecisionRepository,
+    SchedulerLeaseProposalRepository,
+    SchedulerPeerHeartbeatRepository,
     SimulationRecordRepository,
     RuntimeStateRepository,
     TaskRepository,
@@ -60,6 +68,8 @@ def test_migrate_and_wal_mode(tmp_path: Path) -> None:
     assert "008_m6_memory_items.sql" in applied
     assert "009_m7_simulation_records.sql" in applied
     assert "010_m10_ownership_topology.sql" in applied
+    assert "011_m16_repo_mutation_contracts.sql" in applied
+    assert "012_m18_scheduler_authority.sql" in applied
     assert get_journal_mode(db_path) == "wal"
 
     second_apply = migrate(db_path)
@@ -216,6 +226,12 @@ def test_run_task_and_timeline_round_trip(tmp_path: Path) -> None:
             task_kind=TaskKind.shell_exec,
             command=["python", "-c", "print('ok')"],
             working_directory=".",
+            mutation_contract=MutationContract(
+                task_card_ref="M16-1A",
+                write_set=["README.md"],
+                test_commands=["python -m pytest -q"],
+                mutation_mode=MutationMode.patch_apply,
+            ),
         )
     )
 
@@ -250,6 +266,10 @@ def test_run_task_and_timeline_round_trip(tmp_path: Path) -> None:
         RunEventType.runtime_task_created,
     ]
     assert "stdout" not in events[1].payload_json
+    stored_packet = task_repo.get_task_packet(runtime_task.runtime_task_id)
+    assert stored_packet is not None
+    assert stored_packet.mutation_contract is not None
+    assert stored_packet.mutation_contract.mutation_mode == "patch_apply"
 
 
 def test_run_repository_lists_recent_runs_in_updated_order(tmp_path: Path) -> None:
@@ -558,6 +578,87 @@ def test_worker_lease_repository_round_trip(tmp_path: Path) -> None:
     assert released.release_reason == "completed"
     assert lease_repo.get_active_for_task(runtime_task.runtime_task_id) is None
     assert len(lease_repo.list_for_run(run.run_id)) == 1
+
+
+def test_scheduler_authority_repositories_round_trip(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    run_repo = RunRepository(db_path)
+    task_repo = TaskRepository(db_path)
+    proposal_repo = SchedulerLeaseProposalRepository(db_path)
+    decision_repo = SchedulerLeaseDecisionRepository(db_path)
+    heartbeat_repo = SchedulerPeerHeartbeatRepository(db_path)
+
+    run = run_repo.create(Run(goal="Scheduler authority round trip", preset_id="feature_delivery"))
+    phase = task_repo.create_phase(Phase(run_id=run.run_id, name="authority", order_index=0))
+    task_card = task_repo.create_task_card(
+        TaskCard(
+            run_id=run.run_id,
+            title="Persist scheduler authority state",
+            description="Create one runtime task and authority lease records",
+            acceptance_criteria=["scheduler authority rows exist"],
+        )
+    )
+    runtime_task = task_repo.create_runtime_task(
+        RuntimeTask(
+            run_id=run.run_id,
+            phase_id=phase.phase_id,
+            task_card_id=task_card.task_card_id,
+            task_kind=TaskKind.shell_exec,
+            summary="Authority task",
+        )
+    )
+
+    proposal = proposal_repo.create(
+        SchedulerLeaseProposal(
+            control_plane_id="control_plane_alpha",
+            run_id=run.run_id,
+            runtime_task_id=runtime_task.runtime_task_id,
+            domain_key=runtime_task.runtime_task_id,
+            requested_lease_seconds=120,
+        )
+    )
+    decision = decision_repo.create(
+        SchedulerLeaseDecision(
+            proposal_id=proposal.proposal_id,
+            control_plane_id="control_plane_alpha",
+            run_id=run.run_id,
+            runtime_task_id=runtime_task.runtime_task_id,
+            domain_key=runtime_task.runtime_task_id,
+            lease_epoch=1,
+            lease_expires_at=run.created_at,
+        )
+    )
+    heartbeat = heartbeat_repo.create(
+        SchedulerPeerHeartbeat(
+            control_plane_id="control_plane_alpha",
+            lease_count=1,
+            observed_at=run.created_at,
+        )
+    )
+
+    assert proposal_repo.get(proposal.proposal_id) is not None
+    active = decision_repo.get_active_for_domain(
+        "runtime_task",
+        runtime_task.runtime_task_id,
+        now_iso=(run.created_at.replace(year=run.created_at.year - 1)).isoformat(),
+    )
+    assert active is not None
+    assert active.lease_id == decision.lease_id
+    latest = heartbeat_repo.latest_for_control_plane("control_plane_alpha")
+    assert latest is not None
+    assert latest.heartbeat_id == heartbeat.heartbeat_id
+
+    released = decision_repo.release(
+        decision.lease_id,
+        released_at=run.created_at.isoformat(),
+        release_reason="test_release",
+    )
+    assert released is not None
+    assert released.release_reason == "test_release"
+    assert decision_repo.get(decision.lease_id) is not None
 
 
 def test_runtime_attempt_repository_round_trip(tmp_path: Path) -> None:

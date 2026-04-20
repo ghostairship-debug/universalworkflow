@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
+import sys
 
 from typer.testing import CliRunner
 
@@ -10,6 +11,8 @@ from apps.operator_cli.main import app
 from packages.contracts import RuntimeClaim, RuntimeGraphStep, RuntimeStateRef, WorkerLease
 from packages.core_domain.db import unit_of_work
 from packages.core_domain.services import OrchestratorService
+from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 
 
 runner = CliRunner()
@@ -17,6 +20,35 @@ runner = CliRunner()
 
 def _invoke(tmp_path: Path, *args: str, env: dict[str, str] | None = None):
     return runner.invoke(app, ["--db-path", str(tmp_path / "workflow.db"), *args], env=env)
+
+
+def _fake_cli_patch_launch(self, packet):  # type: ignore[override]
+    started_at = utc_now()
+    artifact_path = Path(packet.expected_artifacts[0])
+    if not artifact_path.is_absolute():
+        artifact_path = Path(packet.working_directory) / artifact_path
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_text = (
+        "--- cli_target.txt\n"
+        "+++ cli_target.txt\n"
+        "@@ -1 +1 @@\n"
+        "-before\n"
+        "+after\n"
+    )
+    artifact_path.write_text(patch_text, encoding="utf-8")
+    finished_at = utc_now()
+    return ExecutionResult(
+        runtime_task_id=packet.runtime_task_id,
+        return_code=0,
+        stdout=patch_text,
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+        artifact_paths=[artifact_path.resolve().as_posix()],
+        adapter_name=self.normalized_name(),
+        metadata={"mutation_mode": "patch_apply"},
+    )
 
 
 def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
@@ -195,11 +227,10 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "governance", "tech-debt")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["open_debt_count"] >= 1
-    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019", "TD-020"]
+    assert payload["open_debt_count"] == 0
+    assert payload["open_items"] == []
     assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"]["M14"] == 1
-    assert payload["planned_phase_counts"]["M15"] == 1
+    assert payload["planned_phase_counts"] == {}
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
@@ -230,6 +261,7 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -252,10 +284,8 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     assert "platformized domain pack" in payload["gates"][3]["detail"]
     assert payload["gates"][5]["gate"] == "local_foundation_closure"
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
-    assert payload["remaining_gaps"] == [
-        "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline",
-        "the full operator web UI and human control surface are still deferred into M14",
-    ]
+    assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
+    assert payload["remaining_gaps"] == []
 
 
 def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -269,6 +299,7 @@ def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -298,8 +329,8 @@ def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
 
     assert alerts_result.exit_code == 0
     alerts_payload = json.loads(alerts_result.stdout)
-    assert alerts_payload["overall_status"] == "degraded"
-    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
+    assert alerts_payload["overall_status"] == "clear"
+    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
 
 
 def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(tmp_path: Path) -> None:
@@ -312,6 +343,7 @@ def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(t
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -601,6 +633,68 @@ def test_cli_compile_supports_explicit_memory_item_selection(tmp_path: Path) -> 
     assert detail_payload["memory_retrieval_preview"]["selected_memory_item_ids"] == [materialized_item["memory_item_id"]]
 
 
+def test_cli_compile_and_mutation_report_support_repo_mutation_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    monkeypatch.setattr(OpenCodeAdapter, "launch", _fake_cli_patch_launch)
+    target_file = tmp_path / "cli_target.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "cli_task_card.md"
+    task_card.write_text("# CLI Mutation\n", encoding="utf-8")
+    verifier = tmp_path / "verify_cli_target.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('cli_target.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+    test_command = f"{sys.executable} {verifier.name}"
+
+    _invoke(tmp_path, "db", "reset")
+    run_id = json.loads(
+        _invoke(
+            tmp_path,
+            "run",
+            "create",
+            "--goal",
+            "CLI repo mutation",
+            "--preset",
+            "feature_delivery",
+        ).stdout
+    )["run"]["run_id"]
+    compile_result = _invoke(
+        tmp_path,
+        "run",
+        "compile",
+        run_id,
+        "--adapter",
+        "opencode",
+        "--task-card-ref",
+        "M16-CLI",
+        "--task-card-path",
+        task_card.as_posix(),
+        "--write-set",
+        "cli_target.txt",
+        "--test-command",
+        test_command,
+        "--mutation-mode",
+        "patch_apply",
+    )
+    assert compile_result.exit_code == 0
+    compile_payload = json.loads(compile_result.stdout)
+    assert compile_payload["mutation_contract"]["mutation_mode"] == "patch_apply"
+    resume_result = _invoke(tmp_path, "run", "resume", run_id)
+    assert resume_result.exit_code == 0
+    mutation_report_result = _invoke(tmp_path, "run", "mutation-report", run_id)
+    mutation_payload = json.loads(mutation_report_result.stdout)
+    assert mutation_payload["mutation_result"]["final_test_status"] == "passed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+
+
 def test_cli_recommended_review_escalates_after_auto_fail(tmp_path: Path) -> None:
     _invoke(tmp_path, "db", "reset")
 
@@ -801,6 +895,18 @@ def test_cli_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     error = json.loads(compile_result.stdout)["error"]
     assert error["code"] == "capability_adapter_not_found"
     assert error["details"]["available_adapters"] == ["shell", "opencode"]
+
+
+def test_cli_scheduler_cluster_exposes_quorum_snapshot(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+
+    cluster_result = _invoke(tmp_path, "scheduler", "cluster")
+
+    assert cluster_result.exit_code == 0
+    payload = json.loads(cluster_result.stdout)
+    assert payload["mode"] == "quorum"
+    assert payload["leader_node_id"] is not None
+    assert payload["quorum_size"] >= 1
 
 
 def test_cli_compile_recompile_status_detail_and_handoffs(tmp_path: Path) -> None:

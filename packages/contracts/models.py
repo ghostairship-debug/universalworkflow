@@ -79,8 +79,14 @@ class TaskKind(StrEnum):
     noop = "noop"
 
 
+class MutationMode(StrEnum):
+    artifact_only = "artifact_only"
+    patch_apply = "patch_apply"
+
+
 class ExecutionLaneType(StrEnum):
     native_deterministic = "native_deterministic"
+    repo_change_controlled = "repo_change_controlled"
     standard_agent = "standard_agent"
     durable_incremental = "durable_incremental"
     graph_native_complex = "graph_native_complex"
@@ -120,6 +126,148 @@ class AgentRoleType(StrEnum):
     researcher = "researcher"
     reviewer = "reviewer"
     operator = "operator"
+
+
+class ControlPlaneIdentity(PersistedContractModel):
+    control_plane_id: str
+    name: str
+    endpoint: str
+    status: str = "active"
+
+
+class AuthorityNodeIdentity(PersistedContractModel):
+    node_id: str
+    bind_url: str
+    status: str = "active"
+    role: str = "follower"
+    last_heartbeat_at: datetime = Field(default_factory=utc_now)
+
+
+class SchedulerConsensusTerm(PersistedContractModel):
+    term_id: str = Field(default_factory=lambda: new_id("term"))
+    term_no: int = Field(default=1, ge=1)
+    leader_node_id: str
+    quorum_size: int = Field(default=1, ge=1)
+    commit_index: int = Field(default=0, ge=0)
+    status: str = "active"
+    started_at: datetime = Field(default_factory=utc_now)
+    last_heartbeat_at: datetime = Field(default_factory=utc_now)
+    closed_at: datetime | None = None
+    close_reason: str | None = None
+
+
+class SchedulerVoteRecord(PersistedContractModel):
+    vote_id: str = Field(default_factory=lambda: new_id("vote"))
+    proposal_id: str
+    term_no: int = Field(ge=1)
+    voter_node_id: str
+    vote: str = "granted"
+    reason: str = "peer_accept"
+
+
+class LeaseFencingToken(ContractModel):
+    token: str = Field(default_factory=lambda: new_id("fence"))
+    control_plane_id: str
+    term_no: int = Field(ge=1)
+    commit_index: int = Field(ge=1)
+    lease_epoch: int = Field(ge=1)
+
+
+class MutationContract(ContractModel):
+    task_card_ref: str | None = None
+    task_card_path: str | None = None
+    write_set: list[str] = Field(default_factory=list)
+    read_set: list[str] = Field(default_factory=list)
+    test_commands: list[str] = Field(default_factory=list)
+    max_fix_iterations: int = Field(default=0, ge=0)
+    mutation_mode: MutationMode = MutationMode.artifact_only
+
+    @model_validator(mode="after")
+    def validate_patch_apply_contract(self) -> "MutationContract":
+        if self.mutation_mode == MutationMode.patch_apply and not self.write_set:
+            raise ValueError("patch_apply mutation contract requires a non-empty write_set")
+        return self
+
+
+class RepoMutationResult(ContractModel):
+    changed_files: list[str] = Field(default_factory=list)
+    applied_patch_hash: str | None = None
+    out_of_scope_rejections: list[str] = Field(default_factory=list)
+    test_attempts: list[dict[str, Any]] = Field(default_factory=list)
+    fix_iteration_count: int = Field(default=0, ge=0)
+    final_test_status: str = "not_requested"
+
+
+class SchedulerLeaseProposal(PersistedContractModel):
+    proposal_id: str = Field(default_factory=lambda: new_id("proposal"))
+    control_plane_id: str
+    run_id: str
+    runtime_task_id: str
+    domain_kind: str = "runtime_task"
+    domain_key: str
+    requested_lease_seconds: int = Field(default=300, ge=1)
+    requested_epoch: int = Field(default=1, ge=1)
+    status: str = "pending"
+
+
+class SchedulerLeaseDecision(PersistedContractModel):
+    decision_id: str = Field(default_factory=lambda: new_id("decision"))
+    lease_id: str = Field(default_factory=lambda: new_id("schedlease"))
+    proposal_id: str
+    control_plane_id: str
+    run_id: str
+    runtime_task_id: str
+    domain_kind: str = "runtime_task"
+    domain_key: str
+    lease_epoch: int = Field(default=1, ge=1)
+    decision: str = "granted"
+    reason: str = "authority_granted"
+    lease_expires_at: datetime = Field(default_factory=utc_now)
+    released_at: datetime | None = None
+    release_reason: str | None = None
+
+
+class SchedulerPeerHeartbeat(PersistedContractModel):
+    heartbeat_id: str = Field(default_factory=lambda: new_id("peerhb"))
+    control_plane_id: str
+    status: str = "active"
+    lease_count: int = Field(default=0, ge=0)
+    observed_at: datetime = Field(default_factory=utc_now)
+
+
+class SchedulerCommittedLease(PersistedContractModel):
+    committed_lease_id: str = Field(default_factory=lambda: new_id("committed"))
+    lease_id: str
+    proposal_id: str
+    decision_id: str | None = None
+    control_plane_id: str
+    run_id: str
+    runtime_task_id: str
+    domain_kind: str = "runtime_task"
+    domain_key: str
+    term_no: int = Field(default=1, ge=1)
+    commit_index: int = Field(default=1, ge=1)
+    lease_epoch: int = Field(default=1, ge=1)
+    fencing_token: str = Field(default_factory=lambda: new_id("fence"))
+    status: str = "active"
+    lease_expires_at: datetime = Field(default_factory=utc_now)
+    released_at: datetime | None = None
+    release_reason: str | None = None
+
+
+class ControlPlaneHandoffEnvelope(PersistedContractModel):
+    envelope_id: str = Field(default_factory=lambda: new_id("handoffenv"))
+    run_id: str
+    runtime_task_id: str
+    from_control_plane_id: str
+    to_control_plane_id: str
+    committed_lease_id: str
+    term_no: int = Field(ge=1)
+    commit_index: int = Field(ge=1)
+    snapshot_payload: dict[str, Any] = Field(default_factory=dict)
+    review_state: dict[str, Any] = Field(default_factory=dict)
+    durable_refs: dict[str, Any] = Field(default_factory=dict)
+    replay_excerpt: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityRoute(ContractModel):
@@ -183,6 +331,11 @@ class WorkerPoolProfile(PersistedContractModel):
     adapter_name: str = "shell"
     dispatch_mode: str = "loopback"
     base_url: str | None = None
+    auth_mode: str = "none"
+    shared_secret_env: str | None = None
+    callback_base_url: str | None = None
+    heartbeat_interval_seconds: int = Field(default=30, ge=1)
+    lease_ttl_seconds: int = Field(default=300, ge=1)
 
 
 class ExecutionTargetRef(ContractModel):
@@ -193,6 +346,16 @@ class ExecutionTargetRef(ContractModel):
     worker_name: str | None = None
     worker_id: str | None = None
     dispatched_at: str | None = None
+    dispatch_id: str | None = None
+    base_url: str | None = None
+    callback_base_url: str | None = None
+    auth_mode: str | None = None
+    last_callback_at: str | None = None
+    control_plane_id: str | None = None
+    committed_lease_id: str | None = None
+    fencing_token: str | None = None
+    term_no: int | None = None
+    commit_index: int | None = None
 
 
 class LeaseRenewalRecord(ContractModel):
@@ -204,6 +367,14 @@ class LeaseRenewalRecord(ContractModel):
     status: str
     renewed_at: datetime = Field(default_factory=utc_now)
     lease_expires_at: datetime
+    callback_id: str | None = None
+    heartbeat_at: datetime | None = None
+    source: str = "control_plane"
+    control_plane_id: str | None = None
+    committed_lease_id: str | None = None
+    fencing_token: str | None = None
+    term_no: int | None = None
+    commit_index: int | None = None
 
 
 class TraceContext(ContractModel):
@@ -295,6 +466,7 @@ class TaskPacket(PersistedContractModel):
     working_directory: str
     env: dict[str, str] = Field(default_factory=dict)
     expected_artifacts: list[str] = Field(default_factory=list)
+    mutation_contract: MutationContract | None = None
 
 
 class ArtifactRef(ContractModel):

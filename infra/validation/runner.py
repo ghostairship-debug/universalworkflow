@@ -8,6 +8,7 @@ from typing import Any
 
 from infra.validation.api_flow import validate_api_flow
 from infra.validation.cli_flow import validate_cli_flow
+from infra.validation.cluster_flow import validate_cluster_flow
 from infra.validation.common import DEFAULT_REPORT_PATH, PROJECT_ROOT, sanitized_env, tcp_probe, utc_now_iso
 from infra.validation.smoke_flow import validate_smoke_flow
 
@@ -46,11 +47,13 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     cli_db_path = PROJECT_ROOT / "state" / "offline_validate_cli.db"
     smoke_db_path = PROJECT_ROOT / "state" / "offline_validate_smoke.db"
     api_db_path = PROJECT_ROOT / "state" / "offline_validate_api.db"
+    cluster_db_path = PROJECT_ROOT / "state" / "offline_validate_cluster.db"
 
     for key, fn, fn_args in [
         ("cli_flow", validate_cli_flow, (env, cli_db_path)),
         ("smoke_flow", validate_smoke_flow, (env, smoke_db_path)),
         ("api_flow", validate_api_flow, (env, api_db_path, args.api_port)),
+        ("cluster_flow", validate_cluster_flow, (env, cluster_db_path)),
     ]:
         try:
             checks[key] = fn(*fn_args)
@@ -65,6 +68,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             bool(checks["cli_flow"].get("passed")),
             bool(checks["smoke_flow"].get("passed")),
             bool(checks["api_flow"].get("passed")),
+            bool(checks["cluster_flow"].get("passed")),
         ]
     )
     return report

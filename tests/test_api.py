@@ -13,6 +13,8 @@ from packages.core_domain.db import migrate
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
+from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 
 
 class _FakeApiGatewayResponse:
@@ -34,6 +36,35 @@ def build_client(db_path: Path, runtime_gateway: RuntimeGateway | None = None) -
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
     return TestClient(create_app(db_path, runtime_gateway=runtime_gateway))
+
+
+def _fake_api_patch_launch(self, packet):  # type: ignore[override]
+    started_at = utc_now()
+    artifact_path = Path(packet.expected_artifacts[0])
+    if not artifact_path.is_absolute():
+        artifact_path = Path(packet.working_directory) / artifact_path
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_text = (
+        "--- api_target.txt\n"
+        "+++ api_target.txt\n"
+        "@@ -1 +1 @@\n"
+        "-before\n"
+        "+after\n"
+    )
+    artifact_path.write_text(patch_text, encoding="utf-8")
+    finished_at = utc_now()
+    return ExecutionResult(
+        runtime_task_id=packet.runtime_task_id,
+        return_code=0,
+        stdout=patch_text,
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+        artifact_paths=[artifact_path.resolve().as_posix()],
+        adapter_name=self.normalized_name(),
+        metadata={"mutation_mode": "patch_apply"},
+    )
 
 
 def test_api_can_create_run_and_read_timeline(tmp_path: Path) -> None:
@@ -348,11 +379,10 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     response = client.get("/governance/tech-debt")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["open_debt_count"] >= 1
-    assert [item["debt_id"] for item in payload["open_items"]] == ["TD-019", "TD-020"]
+    assert payload["open_debt_count"] == 0
+    assert payload["open_items"] == []
     assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"]["M14"] == 1
-    assert payload["planned_phase_counts"]["M15"] == 1
+    assert payload["planned_phase_counts"] == {}
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
@@ -386,6 +416,7 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -402,10 +433,8 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     assert "platformized domain pack" in payload["gates"][3]["detail"]
     assert payload["gates"][5]["gate"] == "local_foundation_closure"
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
-    assert payload["remaining_gaps"] == [
-        "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline",
-        "the full operator web UI and human control surface are still deferred into M14",
-    ]
+    assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
+    assert payload["remaining_gaps"] == []
 
 
 def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -420,6 +449,7 @@ def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> No
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -435,8 +465,8 @@ def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> No
     assert metrics_response.json()["automation"]["governance_metrics_available"] is True
 
     assert alerts_response.status_code == 200
-    assert alerts_response.json()["overall_status"] == "degraded"
-    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
+    assert alerts_response.json()["overall_status"] == "clear"
+    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
 
 
 def test_api_exposes_governance_domain_pack_platform_report(tmp_path: Path) -> None:
@@ -511,6 +541,259 @@ def test_api_compile_and_status_detail_are_public_in_m1(tmp_path: Path) -> None:
     handoffs_response = client.get(f"/runs/{run_id}/handoffs")
     assert handoffs_response.status_code == 200
     assert len(handoffs_response.json()) == 1
+
+
+def test_api_compile_and_mutation_report_support_repo_mutation_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    monkeypatch.setattr(OpenCodeAdapter, "launch", _fake_api_patch_launch)
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    target_file = tmp_path / "api_target.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "api_task_card.md"
+    task_card.write_text("# API Mutation\n", encoding="utf-8")
+    import sys
+
+    verifier = tmp_path / "verify_api_target.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('api_target.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+    test_command = f"{sys.executable} {verifier.name}"
+
+    run = client.post("/runs", json={"goal": "API repo mutation", "preset_id": "feature_delivery"}).json()
+    compile_response = client.post(
+        f"/runs/{run['run_id']}/compile",
+        json={
+            "adapter_name": "opencode",
+            "task_card_ref": "M16-API",
+            "task_card_path": task_card.as_posix(),
+            "write_set": ["api_target.txt"],
+            "test_commands": [test_command],
+            "mutation_mode": "patch_apply",
+        },
+    )
+
+    assert compile_response.status_code == 200
+    assert compile_response.json()["mutation_contract"]["mutation_mode"] == "patch_apply"
+
+    resume_response = client.post(f"/runs/{run['run_id']}/resume")
+    mutation_report_response = client.get(f"/runs/{run['run_id']}/mutation-report")
+
+    assert resume_response.status_code == 200
+    assert mutation_report_response.status_code == 200
+    assert mutation_report_response.json()["mutation_result"]["final_test_status"] == "passed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+
+
+def test_api_scheduler_authority_grants_and_projects_first_slice(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Scheduler authority grant", "feature_delivery")
+    service.compile_run(run.run_id)
+    runtime_task_id = service.get_status_detail(run.run_id)["runtime_task_ids"][0]
+
+    proposal_response = client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_alpha",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+            "requested_lease_seconds": 120,
+        },
+    )
+    assert proposal_response.status_code == 201
+    payload = proposal_response.json()
+    assert payload["granted"] is True
+    assert payload["decision"]["control_plane_id"] == "control_plane_alpha"
+    assert payload["decision"]["lease_epoch"] == 1
+
+    lease_response = client.get(f"/scheduler/leases/{payload['decision']['lease_id']}")
+    detail_response = client.get(f"/runs/{run.run_id}/status-detail")
+    replay_response = client.get(f"/runs/{run.run_id}/replay-packet")
+
+    assert lease_response.status_code == 200
+    assert lease_response.json()["active"] is True
+    assert detail_response.status_code == 200
+    assert detail_response.json()["scheduler_authority"]["active_decision"]["lease_id"] == payload["decision"]["lease_id"]
+    assert replay_response.status_code == 200
+    assert replay_response.json()["scheduler_authority"]["latest_decision"]["decision_id"] == payload["decision"]["decision_id"]
+
+
+def test_api_scheduler_authority_conflict_duplicate_and_release_flow(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Scheduler authority conflict", "feature_delivery")
+    service.compile_run(run.run_id)
+    runtime_task_id = service.get_status_detail(run.run_id)["runtime_task_ids"][0]
+
+    granted = client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_alpha",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+        },
+    )
+    duplicate = client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_alpha",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+        },
+    )
+    conflict = client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_beta",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+        },
+    )
+
+    granted_payload = granted.json()
+    duplicate_payload = duplicate.json()
+    conflict_payload = conflict.json()
+
+    assert granted.status_code == 201
+    assert duplicate.status_code == 201
+    assert duplicate_payload["duplicate"] is True
+    assert duplicate_payload["decision"]["lease_id"] == granted_payload["decision"]["lease_id"]
+    assert conflict.status_code == 201
+    assert conflict_payload["granted"] is False
+    assert conflict_payload["conflict"]["active_control_plane_id"] == "control_plane_alpha"
+
+    heartbeat_response = client.post(
+        "/scheduler/heartbeats",
+        json={"control_plane_id": "control_plane_alpha", "lease_count": 1},
+    )
+    release_response = client.post(
+        f"/scheduler/releases/{granted_payload['decision']['lease_id']}",
+        json={"release_reason": "test_release"},
+    )
+    lease_response = client.get(f"/scheduler/leases/{granted_payload['decision']['lease_id']}")
+    inspection_response = client.get(f"/runs/{run.run_id}/inspection")
+
+    assert heartbeat_response.status_code == 201
+    assert release_response.status_code == 200
+    assert release_response.json()["decision"]["release_reason"] == "test_release"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["active"] is False
+    assert lease_response.json()["latest_peer_heartbeat"]["control_plane_id"] == "control_plane_alpha"
+    assert inspection_response.status_code == 200
+    assert inspection_response.json()["problem_count"] >= 1
+    assert any(
+        problem["problem"] == "scheduler_authority_conflict"
+        for problem in inspection_response.json()["problems"]
+    )
+
+
+def test_api_scheduler_authority_regrants_after_expiry_and_survives_restart(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Scheduler authority stale lease", "feature_delivery")
+    service.compile_run(run.run_id)
+    runtime_task_id = service.get_status_detail(run.run_id)["runtime_task_ids"][0]
+
+    first = client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_alpha",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+            "requested_lease_seconds": 1,
+        },
+    )
+    first_payload = first.json()
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE scheduler_committed_leases SET lease_expires_at = ? WHERE lease_id = ?",
+            ((datetime.now(UTC) - timedelta(minutes=1)).isoformat(), first_payload["decision"]["lease_id"]),
+        )
+
+    restarted_client = build_client(db_path)
+    second = restarted_client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_beta",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+            "requested_epoch": 2,
+        },
+    )
+    second_payload = second.json()
+    detail_response = restarted_client.get(f"/runs/{run.run_id}/status-detail")
+
+    assert second.status_code == 201
+    assert second_payload["granted"] is True
+    assert second_payload["decision"]["control_plane_id"] == "control_plane_beta"
+    assert second_payload["committed_lease"]["control_plane_id"] == "control_plane_beta"
+    assert second_payload["decision"]["lease_epoch"] >= 2
+    assert detail_response.status_code == 200
+    assert detail_response.json()["scheduler_authority"]["active_decision"]["control_plane_id"] == "control_plane_beta"
+    assert (
+        detail_response.json()["scheduler_authority"]["active_committed_lease"]["control_plane_id"]
+        == "control_plane_beta"
+    )
+
+
+def test_api_scheduler_cluster_and_operator_view_expose_cluster_topology(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Operator cluster projection", "feature_delivery")
+    service.compile_run(run.run_id)
+    runtime_task_id = service.get_status_detail(run.run_id)["runtime_task_ids"][0]
+
+    proposal = client.post(
+        "/scheduler/proposals",
+        json={
+            "control_plane_id": "control_plane_alpha",
+            "run_id": run.run_id,
+            "runtime_task_id": runtime_task_id,
+            "domain_key": runtime_task_id,
+        },
+    )
+    cluster_response = client.get("/scheduler/cluster")
+    operator_view = client.get(f"/runs/{run.run_id}/operator-view")
+    dashboard_html = client.get("/ui").text
+    governance_html = client.get("/ui/governance").text
+
+    assert proposal.status_code == 201
+    assert cluster_response.status_code == 200
+    assert operator_view.status_code == 200
+    cluster_payload = cluster_response.json()
+    operator_payload = operator_view.json()
+    assert cluster_payload["mode"] == "quorum"
+    assert cluster_payload["leader_node_id"] is not None
+    assert operator_payload["cluster_overview"]["leader_node_id"] == cluster_payload["leader_node_id"]
+    assert (
+        operator_payload["scheduler_authority"]["active_committed_lease"]["control_plane_id"]
+        == "control_plane_alpha"
+    )
+    assert "Cluster Topology" in dashboard_html
+    assert "Cluster Topology" in governance_html
 
 
 def test_api_exposes_run_replay_packet(tmp_path: Path) -> None:

@@ -178,6 +178,7 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -196,6 +197,7 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
         "governance_automation",
         "local_foundation_closure",
         "orchestration_baseline",
+        "cluster_failover_core_completion",
     ]
     assert report["validation_summary"]["overall_passed"] is True
     assert report["review_policy_summary"]["supported_policy_count"] == 5
@@ -206,12 +208,8 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     ]
     assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in report["gates"][3]["detail"]
-    assert (
-        "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline"
-        in report["remaining_gaps"]
-    )
-    assert "the full operator web UI and human control surface are still deferred into M14" in report["remaining_gaps"]
-    assert report["governance_alerts"]["overall_status"] == "degraded"
+    assert report["remaining_gaps"] == []
+    assert report["governance_alerts"]["overall_status"] == "clear"
     assert report["governance_metrics"]["review_policy"]["supported_policy_count"] == 5
     assert report["validation_evidence"]["report_present"] is True
     assert report["validation_evidence"]["source_mode"] == "explicit_arg"
@@ -256,6 +254,7 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -268,8 +267,8 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
         validation_report_path=validation_report_path,
     )
 
-    assert report["metrics_version"] == "m13_freeze_v1"
-    assert report["tech_debt"]["open_debt_ids"] == ["TD-019", "TD-020"]
+    assert report["metrics_version"] == "m20_core_complete_v1"
+    assert report["tech_debt"]["open_debt_ids"] == []
     assert report["review_policy"]["supported_policy_count"] == 5
     assert report["review_policy"]["reference_only_candidates"] == []
     assert report["validation"]["overall_passed"] is True
@@ -286,6 +285,7 @@ def test_build_governance_alert_report_flags_open_debt_as_degraded(tmp_path: Pat
                     "cli_flow": {"passed": True},
                     "smoke_flow": {"passed": True},
                     "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
                 },
             },
             ensure_ascii=False,
@@ -298,6 +298,6 @@ def test_build_governance_alert_report_flags_open_debt_as_degraded(tmp_path: Pat
         validation_report_path=validation_report_path,
     )
 
-    assert report["overall_status"] == "degraded"
-    assert any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["alerts"])
+    assert report["overall_status"] == "clear"
+    assert not any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["alerts"])
     assert not any(alert["alert_id"] == "reference_only_review_policy_remaining" for alert in report["alerts"])

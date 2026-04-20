@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from packages.contracts import (
+    MutationMode,
     RunEventType,
     RunSnapshotStage,
     SimulationRecordSource,
@@ -33,6 +34,7 @@ from packages.core_domain.errors import (
     BudgetExhaustedError,
     CapabilityAdapterNotFoundError,
     InvalidStateTransitionError,
+    RepoMutationScopeError,
     RepairActionNotAvailableError,
     RuntimeClaimConflictError,
     WorkflowError,
@@ -79,6 +81,25 @@ def _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeou
         command,
         0,
         stdout=json.dumps({"type": "text", "part": {"text": content_match.group(1)}}),
+        stderr="",
+    )
+
+
+def _fake_patch_runner(command, cwd, env, capture_output, text, check, timeout):
+    write_set = json.loads(env.get("WORKFLOW_MUTATION_WRITE_SET", "[]"))
+    assert write_set
+    target = write_set[0].replace("\\", "/")
+    patch_text = (
+        f"--- {target}\n"
+        f"+++ {target}\n"
+        "@@ -1 +1 @@\n"
+        "-before\n"
+        "+after\n"
+    )
+    return subprocess.CompletedProcess(
+        command,
+        0,
+        stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
         stderr="",
     )
 
@@ -1250,6 +1271,202 @@ def test_project_delivery_runs_multi_role_orchestration(tmp_path: Path) -> None:
     assert detail["orchestration"]["role_progress"]["reviewer"]["status"] == "completed"
     assert detail["orchestration"]["parallel_batch"]["member_count"] == 2
     assert replay["orchestration"]["parallel_batch"]["status"] == "released"
+
+
+def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "mutated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "task_card.md"
+    task_card.write_text("# M16\n\nImplement one bounded mutation.\n", encoding="utf-8")
+    verifier = tmp_path / "verify_mutated.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('mutated.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+    test_command = f"{sys.executable} {verifier.name}"
+
+    run = service.create_run("Bounded repo mutation", "feature_delivery")
+    prepared = service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        task_card_ref="M16-1A",
+        task_card_path=task_card.as_posix(),
+        write_set=["mutated.txt"],
+        read_set=["task_card.md"],
+        test_commands=[test_command],
+        mutation_mode=MutationMode.patch_apply,
+    )
+    detail = service.get_status_detail(run.run_id)
+
+    assert prepared.execution_lane == "repo_change_controlled"
+    assert prepared.task_packet.mutation_contract is not None
+    assert prepared.task_packet.mutation_contract.write_set == ["mutated.txt"]
+    assert detail["mutation_contract"]["task_card_ref"] == "M16-1A"
+    assert detail["execution_lane"] == "repo_change_controlled"
+
+    bundle = service.resume_run(run.run_id)
+    mutation_report = service.get_run_mutation_report(run.run_id)
+    detail_after = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+    assert mutation_report["mutation_result"]["final_test_status"] == "passed"
+    assert mutation_report["mutation_result"]["changed_files"] == ["mutated.txt"]
+    assert detail_after["mutation_result"]["fix_iteration_count"] == 0
+    assert detail_after["mutation_result"]["test_attempts"][0]["passed"] is True
+
+
+def test_repo_mutation_rejects_out_of_scope_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    def _rejecting_runner(command, cwd, env, capture_output, text, check, timeout):
+        patch_text = (
+            "--- rogue.txt\n"
+            "+++ rogue.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+outside\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_rejecting_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "allowed.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    run = service.create_run("Reject out of scope mutation", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=["allowed.txt"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    with pytest.raises(RepoMutationScopeError):
+        service.resume_run(run.run_id)
+
+    assert target_file.read_text(encoding="utf-8") == "before\n"
+    assert not (tmp_path / "rogue.txt").exists()
+
+
+def test_repo_mutation_retries_with_bounded_fix_iterations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    def _iterating_runner(command, cwd, env, capture_output, text, check, timeout):
+        target = json.loads(env["WORKFLOW_MUTATION_WRITE_SET"])[0].replace("\\", "/")
+        attempt_index = int(env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0"))
+        next_value = "broken" if attempt_index == 0 else "after"
+        patch_text = (
+            f"--- {target}\n"
+            f"+++ {target}\n"
+            "@@ -1 +1 @@\n"
+            "-before\n"
+            f"+{next_value}\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_iterating_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "iterated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    verifier = tmp_path / "verify_iterated.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('iterated.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+    test_command = f"{sys.executable} {verifier.name}"
+
+    run = service.create_run("Bounded fix loop", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=["iterated.txt"],
+        test_commands=[test_command],
+        max_fix_iterations=1,
+        mutation_mode=MutationMode.patch_apply,
+    )
+    service.resume_run(run.run_id)
+    mutation_report = service.get_run_mutation_report(run.run_id)
+
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+    assert mutation_report["mutation_result"]["fix_iteration_count"] == 1
+    assert [item["iteration"] for item in mutation_report["mutation_result"]["test_attempts"]] == [0, 1]
+    assert mutation_report["mutation_result"]["final_test_status"] == "passed"
+
+
+def test_project_delivery_coder_uses_repo_mutation_when_parent_contract_is_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "project_slice.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "project_task_card.md"
+    task_card.write_text("# Project Slice\n\nImplement the bounded coder change.\n", encoding="utf-8")
+    verifier = tmp_path / "verify_project_slice.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('project_slice.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+    test_command = f"{sys.executable} {verifier.name}"
+
+    run = service.create_run("Dogfood project delivery mutation", "project_delivery")
+    service.compile_run(
+        run.run_id,
+        task_card_ref="M17-3A",
+        task_card_path=task_card.as_posix(),
+        write_set=["project_slice.txt"],
+        test_commands=[test_command],
+        mutation_mode=MutationMode.patch_apply,
+    )
+    service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert detail["orchestration"]["role_progress"]["coder"]["mutation_report"]["mutation_result"]["final_test_status"] == "passed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
 
 
 def test_domain_pack_skill_export_requires_flag_then_exports_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

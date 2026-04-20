@@ -41,6 +41,9 @@
 | TD-010 | governance visibility remained document-centric and lacked quantitative automation and alerts | M0 | M9 | Added quantitative governance metrics, automated alert reports, and updated release-readiness integration |
 | TD-001 | claim and worker-lease semantics remained local-only and did not provide explicit repository-owned ownership topology | M0 | M10 | Added explicit claim/worker ownership topology, attempt-aware claim and lease linkage, coherent ownership projections, and local batch-domain semantics without turning the runtime into a multi-node scheduler |
 | TD-009 | execution semantics were still serial-first and did not implement claim/lease/barrier-aware local batch concurrency | M0 | M10 | Added local batch-barrier events, parallel batch resume semantics, projection surfaces, and CLI/API batch-resume entry points for the supported local control plane |
+| TD-020 | the full operator web UI and human control surface were still missing beyond CLI/API and the read-mostly TUI | M5-M13 | M14 | Added a built-in FastAPI web operator surface with dashboard, run explorer, pending-review console, governance/config pages, and controller-owned human action routes |
+| TD-019 | hosted remote worker pools and multi-node scheduling were still not productized beyond the shipped local-first / loopback external-worker baseline | M10 | M15 | Added single-control-plane remote HTTP worker pools, callback-driven lease renewal/completion recording, remote worker bootstrap packaging, and remote worker recovery coverage while keeping repository truth in the control plane |
+| TD-021 | a centralized scheduler-authority first slice existed for multi-control-plane identity, lease proposal, and arbitration provenance, but true distributed scheduler consensus and cross-control-plane failover were still incomplete | M15 | M20 | Added majority-quorum scheduler authority peers, committed cross-control-plane lease ownership, fencing-token enforced remote callbacks, takeover handoff lineage, cluster operator surfaces, and offline cutover validation while keeping repository truth inside the control planes |
 
 ---
 
@@ -48,8 +51,6 @@
 
 | ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-019 | hosted remote worker pools and multi-node scheduling are still not productized beyond the shipped local-first / loopback external-worker baseline | M10 | M15 | active | blocks hosted worker pools, distributed lease renewal, and multi-node scheduler consensus |
-| TD-020 | the full operator web UI and human control surface are still missing beyond CLI/API and the read-mostly TUI | M5-M13 | M14 | active | blocks rich orchestration visibility, review-console UX, and human intervention workflows |
 
 ---
 

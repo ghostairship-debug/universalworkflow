@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from packages.contracts import TaskKind, TaskPacket
+from packages.contracts import MutationMode, TaskKind, TaskPacket
 from packages.core_domain.compile import build_artifact_content
 from packages.core_domain.config import build_effective_config
 from packages.core_domain.errors import WorkerAdapterUnavailableError
@@ -61,6 +61,11 @@ class OpenCodeAdapter(CliAdapterBase):
             path = Path(packet.working_directory) / path
         return path.resolve().as_posix()
 
+    def _mutation_mode_for(self, packet: TaskPacket) -> MutationMode:
+        if packet.mutation_contract is not None:
+            return MutationMode(packet.mutation_contract.mutation_mode)
+        return MutationMode(packet.env.get("WORKFLOW_MUTATION_MODE", MutationMode.artifact_only))
+
     def _artifact_content_for(self, packet: TaskPacket) -> str:
         return build_artifact_content(
             preset_id=packet.env.get("WORKFLOW_PRESET_ID", ""),
@@ -73,6 +78,38 @@ class OpenCodeAdapter(CliAdapterBase):
         )
 
     def _prompt_for(self, packet: TaskPacket) -> str:
+        mutation_mode = self._mutation_mode_for(packet)
+        if mutation_mode == MutationMode.patch_apply:
+            write_set = packet.env.get("WORKFLOW_MUTATION_WRITE_SET", "[]")
+            read_set = packet.env.get("WORKFLOW_MUTATION_READ_SET", "[]")
+            test_commands = packet.env.get("WORKFLOW_MUTATION_TEST_COMMANDS", "[]")
+            attempt_index = packet.env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0")
+            failure_feedback = packet.env.get("WORKFLOW_MUTATION_FAILURE_FEEDBACK", "").strip()
+            task_card_ref = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_REF", "").strip()
+            task_card_content = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
+            failure_block = (
+                "Previous attempt failed. Use the feedback below to produce a corrected patch.\n"
+                f"{failure_feedback}\n"
+                if failure_feedback
+                else ""
+            )
+            task_card_block = (
+                f"Task card ref: {task_card_ref}\nTask card content:\n{task_card_content}\n"
+                if task_card_ref or task_card_content
+                else ""
+            )
+            return (
+                "You are executing a local workflow repo mutation task inside a controlled repository.\n"
+                f"Working directory: {Path(packet.working_directory).resolve().as_posix()}\n"
+                f"Attempt index: {attempt_index}\n"
+                f"Allowed write_set JSON: {write_set}\n"
+                f"Read-only context paths JSON: {read_set}\n"
+                f"Explicit test commands JSON: {test_commands}\n"
+                f"{task_card_block}"
+                f"{failure_block}"
+                "Return only one valid unified diff patch that modifies files inside write_set.\n"
+                "Do not wrap the patch in code fences. Do not add commentary before or after the diff.\n"
+            )
         content = self._artifact_content_for(packet)
         return (
             "You are executing a local workflow task inside a controlled repository.\n"
@@ -150,6 +187,7 @@ class OpenCodeAdapter(CliAdapterBase):
         if completed.returncode == 0 and output_text:
             self._write_artifact(packet, output_text)
         finished_at = utc_now()
+        metadata = {"mutation_mode": str(self._mutation_mode_for(packet))}
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=completed.returncode,
@@ -160,4 +198,5 @@ class OpenCodeAdapter(CliAdapterBase):
             duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
             artifact_paths=self.collect_artifacts(packet),
             adapter_name=self.normalized_name(),
+            metadata=metadata,
         )

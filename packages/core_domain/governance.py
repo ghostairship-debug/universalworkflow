@@ -140,7 +140,7 @@ def _build_tech_debt_report_payload(
     next_cycle_focus_items = [
         item
         for item in open_items
-        if item["planned_repayment_phase"] in {"Next Cycle", "M10", "M11", "M12", "M13", "M14", "M15"}
+        if item["planned_repayment_phase"] in {"Next Cycle", "M10", "M11", "M12", "M13", "M14", "M15", "M16", "M17", "M18", "M19+"}
     ]
     active_gate_focus_items = (
         pre_m8_focus_items
@@ -534,7 +534,7 @@ def build_governance_metrics_report(
     checks = (validation_report or {}).get("checks", {})
     passed_check_count = sum(1 for item in checks.values() if item.get("passed") is True)
     return {
-        "metrics_version": "m13_freeze_v1",
+        "metrics_version": "m20_core_complete_v1",
         "generated_at": datetime.now(UTC).isoformat(),
         "source_paths": {
             "tech_debt_registry": tech_debt["source_path"],
@@ -566,6 +566,7 @@ def build_governance_metrics_report(
             "check_count": len(checks),
             "passed_check_count": passed_check_count,
             "failed_or_missing_check_count": len(checks) - passed_check_count,
+            "cluster_flow_passed": checks.get("cluster_flow", {}).get("passed"),
         },
         "platform": {
             "capability_route_count": len(capability_routes),
@@ -611,6 +612,15 @@ def build_governance_alert_report(
                 "recommended_action": "resolve validation failures before freeze or release",
             }
         )
+    if metrics["validation"].get("cluster_flow_passed") is not True:
+        alerts.append(
+            {
+                "alert_id": "cluster_cutover_validation_missing_or_failed",
+                "severity": "blocking",
+                "message": "cluster cutover validation is missing or not fully green",
+                "recommended_action": "run the M20 cluster demo or offline validation cluster flow before claiming core completion",
+            }
+        )
     if metrics["review_policy"]["reference_only_candidates"]:
         alerts.append(
             {
@@ -646,7 +656,7 @@ def build_governance_alert_report(
     else:
         overall_status = "clear"
     return {
-        "alerts_version": "m13_freeze_v1",
+        "alerts_version": "m20_core_complete_v1",
         "overall_status": overall_status,
         "alert_count": len(alerts),
         "alerts": alerts,
@@ -654,6 +664,7 @@ def build_governance_alert_report(
             "open_debt_count": metrics["tech_debt"]["open_debt_count"],
             "supported_policy_count": metrics["review_policy"]["supported_policy_count"],
             "validation_overall_passed": metrics["validation"]["overall_passed"],
+            "cluster_flow_passed": metrics["validation"].get("cluster_flow_passed"),
             "awaiting_review_runs": awaiting_review_runs,
         },
     }
@@ -705,6 +716,7 @@ def build_release_readiness_report(
             "cli_flow_passed": checks.get("cli_flow", {}).get("passed"),
             "smoke_flow_passed": checks.get("smoke_flow", {}).get("passed"),
             "api_flow_passed": checks.get("api_flow", {}).get("passed"),
+            "cluster_flow_passed": checks.get("cluster_flow", {}).get("passed"),
             "source_path": validation_evidence["source_path"],
             "generated_at": validation_evidence["generated_at"],
         }
@@ -756,11 +768,17 @@ def build_release_readiness_report(
             "passed": "project_delivery" in preset_ids,
             "detail": "the shipped preset catalog includes the formal project_delivery orchestration baseline",
         },
+        {
+            "gate": "cluster_failover_core_completion",
+            "passed": (
+                validation_summary is not None
+                and validation_summary["cluster_flow_passed"] is True
+                and not any(item["debt_id"] == "TD-021" for item in tech_debt["open_items"])
+            ),
+            "detail": "multi-authority cluster cutover validation is green and TD-021 is retired from the open registry",
+        },
     ]
-    remaining_gap_map = {
-        "TD-019": "hosted remote worker pools and multi-node scheduling are still deferred beyond the shipped local-first/loopback baseline",
-        "TD-020": "the full operator web UI and human control surface are still deferred into M14",
-    }
+    remaining_gap_map: dict[str, str] = {}
     remaining_gaps = [
         remaining_gap_map[item["debt_id"]]
         for item in tech_debt["open_items"]
@@ -768,7 +786,7 @@ def build_release_readiness_report(
     ]
 
     return {
-        "readiness_version": "m13_freeze_v1",
+        "readiness_version": "m20_core_complete_v1",
         "overall_ready": all(gate["passed"] for gate in gates),
         "gates": gates,
         "validation_summary": validation_summary,
@@ -784,7 +802,7 @@ def build_release_readiness_report(
         "remaining_gaps": remaining_gaps,
         "governance_metrics": governance_metrics,
         "governance_alerts": governance_alerts,
-        "recommended_next_step": "start M14 with a post-M13 rebaseline before widening the operator web UI and human control surface",
+        "recommended_next_step": "treat the mainline product as core complete and open M21 Phase 0 only when autonomy or ecosystem breadth is ready for a fresh rebaseline",
         "source_paths": {
             "validation_report": validation_evidence["source_path"],
             "tech_debt_registry": tech_debt["source_path"],

@@ -1,6 +1,6 @@
 # Universal Agentic Workflow OS
 
-This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, unified `workflow.toml`-backed configuration, an opt-in external worker-pool boundary, real durable checkpoint snapshots, a formal `project_delivery` orchestration baseline, an opt-in OpenAI-backed `RuntimeGateway`, a read-mostly operator TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
+This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, unified `workflow.toml`-backed configuration, real remote HTTP worker-pool productization, real durable checkpoint snapshots, a formal `project_delivery` orchestration baseline, bounded repo-mutation contracts for semi-automatic workflow-driven development, majority-quorum scheduler-authority peers with committed cross-control-plane lease ownership and takeover lineage, an opt-in OpenAI-backed `RuntimeGateway`, a built-in FastAPI Web operator UI, the existing terminal TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
 
 ## Environment
 
@@ -41,7 +41,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 ## Current repository status
 
-- Milestone baseline: through `M13`, complete
+- Milestone baseline: through `M20`, complete
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
@@ -50,14 +50,17 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - `shell`, `opencode`, `noop`, and feature-flagged `agent` adapter routing
   - router-first capability plane with built-in capability projection and local stdio MCP pilot support
   - unified `workflow.toml` + env + explicit override config precedence
-  - opt-in worker-pool boundary with local/loopback external dispatch support
+  - productized worker-pool boundary with local/loopback and real remote HTTP dispatch support
   - OTel-first trace-export abstraction with an optional Langfuse sink
   - one platformized `Domain Pack`
   - persisted `Memory` baseline with retrieval preview and compile-time injection
   - deterministic local `Simulation` baseline with persisted records and selected lifecycle hooks
   - durable pilot checkpoint snapshots in `state/durable`
   - `project_delivery` planner -> parallel worker -> reviewer orchestration baseline
+  - controlled repo mutation through explicit write-sets, patch apply, and bounded test/fix loops
+  - majority-quorum scheduler-authority peers, committed cross-control-plane lease ownership, and fenced takeover lineage
   - Agent Skill-compatible domain-pack export
+  - `v1 core complete` mainline product status
 - Current planning position:
   - `M8` is complete
   - `M9` is complete
@@ -65,20 +68,27 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - `M11` is complete
   - `M12` is complete
   - `M13` is complete
+  - `M14` is complete
+  - `M15` is complete
+  - `M16` is complete
+  - `M17` is complete
+  - `M18` is complete
+  - `M19` is complete
+  - `M20` is complete
   - `M8 Phase 0` through `M8 Phase 7` are complete
   - `M9 Phase 0` through `M9 Phase 5` are complete
   - `M10 Phase 0 - Post-M9 Rebaseline And Scope Freeze` is complete
   - `M10 Phase 1 - Ownership Topology And Claim Domain Freeze` is complete
   - `M10 Phase 2 - Local Barrier And Parallel Batch Execution` is complete
-  - the next approved work is `M14 Phase 0 - Post-M13 Rebaseline And Scope Freeze`
-  - the current integrated route synthesis is [docs/reviews/post-m13-integrated-technical-roadmap.md](docs/reviews/post-m13-integrated-technical-roadmap.md)
+  - the next approved work is `M21 Phase 0 - Post-M20 Rebaseline And Expansion Freeze`
+  - the current integrated route synthesis is [docs/reviews/post-m20-integrated-technical-roadmap.md](docs/reviews/post-m20-integrated-technical-roadmap.md)
   - the integrated root-level `M8` development plan is [universal_agentic_workflow_os_M8_phase_plan_v1_0.md](universal_agentic_workflow_os_M8_phase_plan_v1_0.md)
   - the GPT-Pro-driven reassessment of the `M8` plan is [docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md](docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md)
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
-  - the controlling shipped-baseline closeout record is [docs/reviews/m13-freeze-review.md](docs/reviews/m13-freeze-review.md)
+  - the controlling shipped-baseline closeout record is [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
   - the `M10` reassessment record is [docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md](docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md)
   - the `M10` feature-phase reviews are [docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md](docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md) and [docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md](docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md)
-  - the `M11-M13` closeout records are [docs/reviews/m11-freeze-review.md](docs/reviews/m11-freeze-review.md), [docs/reviews/m12-freeze-review.md](docs/reviews/m12-freeze-review.md), and [docs/reviews/m13-freeze-review.md](docs/reviews/m13-freeze-review.md)
+  - the `M11-M20` closeout records are [docs/reviews/m11-freeze-review.md](docs/reviews/m11-freeze-review.md), [docs/reviews/m12-freeze-review.md](docs/reviews/m12-freeze-review.md), [docs/reviews/m13-freeze-review.md](docs/reviews/m13-freeze-review.md), [docs/reviews/m14-freeze-review.md](docs/reviews/m14-freeze-review.md), [docs/reviews/m15-freeze-review.md](docs/reviews/m15-freeze-review.md), [docs/reviews/m16-freeze-review.md](docs/reviews/m16-freeze-review.md), [docs/reviews/m17-freeze-review.md](docs/reviews/m17-freeze-review.md), [docs/reviews/m18-freeze-review.md](docs/reviews/m18-freeze-review.md), [docs/reviews/m19-freeze-review.md](docs/reviews/m19-freeze-review.md), and [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
   - the current `M8` ecosystem reuse assessment is [docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md](docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md)
   - the current external-integration vs continued-self-build strategy is [docs/reviews/m8-external-tool-integration-and-self-build-plan.md](docs/reviews/m8-external-tool-integration-and-self-build-plan.md)
   - the current "do we need another optimization round before M8?" assessment is [docs/reviews/m8-pre-entry-extra-optimization-assessment.md](docs/reviews/m8-pre-entry-extra-optimization-assessment.md)
@@ -120,11 +130,12 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 - API simulation record persistence passes
 - API release-readiness surface passes
 - API reconcile / repair path passes
+- cluster cutover flow passes
 
-The latest validated `M13` closeout baseline is:
+The latest validated `M20` closeout baseline is:
 
 - `pytest -q`
-  - `245 passed`
+  - `264 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
   - `overall_passed=true`
 - `python -m infra.scripts.check_doc_links`
@@ -140,6 +151,11 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db domain-pack validate`
 - `workflowctl --db-path state/workflow.db capability list`
 - `workflowctl capability worker-pools`
+- `workflowctl scheduler cluster`
+- `workflowctl scheduler lease <lease_id>`
+- `workflow-remote-worker`
+- `workflow-scheduler-authority`
+- `python -m apps.operator_cli.main --db-path state/workflow.db run create --goal "Ship through remote workers" --preset feature_delivery`
 - `workflowctl --db-path state/workflow.db capability sources`
 - `workflowctl --db-path state/workflow.db capability mcp-profiles`
 - `workflowctl --db-path state/workflow.db capability projection --preset research_spike_reviewable`
@@ -154,6 +170,8 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db governance release-readiness`
 - `workflowctl governance domain-pack`
 - `workflowctl --db-path state/workflow.db tui --once`
+- `python -m infra.scripts.manage --db-path state/workflow.db dev --host 127.0.0.1 --port 8000`
+- `workflow-remote-worker`
 - `workflowctl --db-path state/workflow.db run create --goal "Build a smoke artifact" --preset feature_delivery --prepare --execute`
 - `workflowctl --db-path state/workflow.db run create --goal "Ship with advisory escalation" --preset advisory_delivery`
 - `workflowctl --db-path state/workflow.db run create --goal "Research a design choice" --preset research_spike`
@@ -189,12 +207,14 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db run snapshots <run_id>`
 - `workflowctl --db-path state/workflow.db run budget <run_id>`
 - `workflowctl --db-path state/workflow.db run inspect <run_id>`
+- `workflowctl --db-path state/workflow.db run mutation-report <run_id>`
 - `workflowctl --db-path state/workflow.db run reconcile <run_id>`
 - `workflowctl --db-path state/workflow.db run reconcile <run_id> --apply`
 - `workflowctl --db-path state/workflow.db run handoffs <run_id>`
 - `workflowctl --db-path state/workflow.db task evidence <runtime_task_id>`
 - `workflowctl --db-path state/workflow.db run cancel <run_id>`
 - `workflowctl --db-path state/workflow.db db reset`
+- `python -m infra.scripts.run_cluster_cutover_demo --db-path state/cluster_cutover_demo.db --report-path state/cluster_cutover_demo_report.json`
 
 ## Live LLM gateway
 
@@ -254,6 +274,31 @@ Inspect the effective config with:
 workflowctl config show
 ```
 
+The Web operator surface is now built in:
+
+```powershell
+python -m infra.scripts.manage --db-path state/workflow.db dev --host 127.0.0.1 --port 8000
+```
+
+Then open:
+
+- `http://127.0.0.1:8000/ui`
+- `http://127.0.0.1:8000/ui/runs`
+- `http://127.0.0.1:8000/ui/reviews`
+
+Remote worker productization and scheduler-authority peers are both built in for the shipped multi-control-plane core-complete path:
+
+```powershell
+$env:UAWO_ENABLE_EXTERNAL_WORKER_POOLS="1"
+$env:WORKFLOW_WORKER_POOL_ID="remote_http_shell"
+$env:WORKFLOW_REMOTE_WORKER_SHARED_SECRET="<shared secret>"
+$env:WORKFLOW_CONTROL_PLANE_ID="control_plane_alpha"
+$env:WORKFLOW_SCHEDULER_AUTHORITY_NODE_ID="authority-a"
+$env:WORKFLOW_SCHEDULER_AUTHORITY_BIND_URL="http://127.0.0.1:8020"
+workflow-scheduler-authority
+workflow-remote-worker
+```
+
 ## M8 external lanes
 
 `M8` external lanes are opt-in and disabled by default.
@@ -299,8 +344,8 @@ $env:WORKFLOW_WORKER_POOL_ID="mock_remote_shell"
 workflowctl capability worker-pools
 ```
 
-The shipped `M13` baseline keeps external worker pools opt-in and loopback-safe.
-It does not claim hosted remote scheduling or multi-node consensus yet.
+The `M8` borrowed-agent, MCP, durable, trace-export, and skill-export lanes remain opt-in.
+The shipped `M20` baseline now includes the completed majority-quorum scheduler-authority and cross-control-plane failover path.
 
 ## Project orchestration baseline
 

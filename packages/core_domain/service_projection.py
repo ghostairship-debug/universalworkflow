@@ -52,6 +52,80 @@ class ProjectionServiceMixin:
                 return [dict(item) for item in renewals if isinstance(item, dict)]
         return []
 
+    def _mutation_contract_for(
+        self,
+        context: RunDiagnosticContext,
+        last_runtime_state: RuntimeStateRef | None,
+    ) -> dict[str, Any] | None:
+        runtime_task = self._runtime_task_for_context(context)
+        if runtime_task is not None:
+            task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+            if task_packet is not None and task_packet.mutation_contract is not None:
+                return task_packet.mutation_contract.model_dump(mode="json")
+        if last_runtime_state is not None and isinstance(last_runtime_state.state_payload.get("mutation_contract"), dict):
+            return dict(last_runtime_state.state_payload["mutation_contract"])
+        return None
+
+    def _mutation_result_for(
+        self,
+        last_runtime_state: RuntimeStateRef | None,
+        last_evidence: Evidence | None,
+    ) -> dict[str, Any] | None:
+        if last_runtime_state is not None and isinstance(last_runtime_state.state_payload.get("mutation_result"), dict):
+            return dict(last_runtime_state.state_payload["mutation_result"])
+        if last_evidence is not None:
+            mutation_result = last_evidence.raw_execution.get("metadata", {}).get("mutation_result")
+            if isinstance(mutation_result, dict):
+                return dict(mutation_result)
+        return None
+
+    def _scheduler_authority_for(
+        self,
+        context: RunDiagnosticContext,
+        last_runtime_state: RuntimeStateRef | None,
+    ) -> dict[str, Any] | None:
+        payload = (
+            dict(last_runtime_state.state_payload.get("scheduler_authority"))
+            if last_runtime_state is not None
+            and isinstance(last_runtime_state.state_payload.get("scheduler_authority"), dict)
+            else {}
+        )
+        runtime_task = self._runtime_task_for_context(context)
+        live_cluster = self.scheduler_authority_cluster.cluster_snapshot()
+        payload["cluster_summary"] = live_cluster
+        payload["local_control_plane_id"] = self.control_plane_identity.control_plane_id
+        if runtime_task is not None:
+            active_committed = self.scheduler_authority_cluster.get_active_committed_lease_for_domain(
+                domain_kind="runtime_task",
+                domain_key=runtime_task.runtime_task_id,
+            )
+            if active_committed is not None:
+                payload["active_committed_lease"] = active_committed.model_dump(mode="json")
+        handoff_history = payload.get("handoff_history")
+        handoff_items = [dict(item) for item in handoff_history if isinstance(item, dict)] if isinstance(handoff_history, list) else []
+        for handoff in context.handoffs:
+            serialized = handoff.model_dump(mode="json")
+            if not any(item.get("envelope_id") == serialized["envelope_id"] for item in handoff_items):
+                handoff_items.append(serialized)
+        if handoff_items:
+            payload["handoff_history"] = handoff_items[-20:]
+        active_committed_payload = payload.get("active_committed_lease")
+        active_owner = (
+            str(active_committed_payload.get("control_plane_id"))
+            if isinstance(active_committed_payload, dict) and active_committed_payload.get("control_plane_id") is not None
+            else None
+        )
+        payload["stale_plane_detected"] = bool(
+            active_owner is not None and active_owner != self.control_plane_identity.control_plane_id
+        )
+        payload["takeover_state"] = {
+            "local_control_plane_id": self.control_plane_identity.control_plane_id,
+            "active_control_plane_id": active_owner,
+            "active_owner_is_local": active_owner == self.control_plane_identity.control_plane_id if active_owner is not None else None,
+            "handoff_count": len(handoff_items),
+        }
+        return payload or None
+
     def _parse_iso_datetime(self, value: str | None) -> datetime | None:
         if not value:
             return None
@@ -610,6 +684,9 @@ class ProjectionServiceMixin:
                 "domain_pack": detail["domain_pack"],
                 "capability_resolution": detail["capability_resolution"],
                 "tool_projection_manifest": detail["tool_projection_manifest"],
+                "mutation_contract": detail["mutation_contract"],
+                "mutation_result": detail["mutation_result"],
+                "scheduler_authority": detail["scheduler_authority"],
                 "simulation_policy": detail["simulation_policy"],
             },
             "failure_taxonomy": failure_taxonomy,
@@ -644,6 +721,9 @@ class ProjectionServiceMixin:
             },
             "execution_target": detail["execution_target"],
             "lease_renewals": detail["lease_renewals"],
+            "mutation_contract": detail["mutation_contract"],
+            "mutation_result": detail["mutation_result"],
+            "scheduler_authority": detail["scheduler_authority"],
             "orchestration": detail["orchestration"],
             "parallel_batch": detail["parallel_batch"],
             "context_budget": detail["context_budget"],
@@ -679,6 +759,11 @@ class ProjectionServiceMixin:
             "run_metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
             "trace_exporter": detail["trace_exporter"],
+            "mutation_packet": {
+                "contract": detail["mutation_contract"],
+                "result": detail["mutation_result"],
+            },
+            "scheduler_packet": detail["scheduler_authority"],
             "review_packet": {
                 "effective_review_state": summary["review_summary"]["effective_review_state"],
                 "latest_review_verdict": summary["review_summary"]["latest_review_verdict"],
@@ -718,6 +803,9 @@ class ProjectionServiceMixin:
             "trace_context": detail["trace_context"],
             "execution_target": detail["execution_target"],
             "lease_renewals": detail["lease_renewals"],
+            "mutation_contract": detail["mutation_contract"],
+            "mutation_result": detail["mutation_result"],
+            "scheduler_authority": detail["scheduler_authority"],
             "orchestration": detail["orchestration"],
             "parallel_batch": detail["parallel_batch"],
             "summary": {
@@ -779,6 +867,9 @@ class ProjectionServiceMixin:
         parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
         execution_target = self._execution_target_for(last_runtime_state, last_evidence)
         lease_renewals = self._lease_renewals_for(last_runtime_state, last_evidence)
+        mutation_contract = self._mutation_contract_for(context, last_runtime_state)
+        mutation_result = self._mutation_result_for(last_runtime_state, last_evidence)
+        scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
         timeline = self.get_timeline(run_id)
         review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
@@ -814,6 +905,9 @@ class ProjectionServiceMixin:
             "parallel_batch": parallel_batch,
             "execution_target": execution_target,
             "lease_renewals": lease_renewals,
+            "mutation_contract": mutation_contract,
+            "mutation_result": mutation_result,
+            "scheduler_authority": scheduler_authority,
             "orchestration": orchestration,
             "trace_context": trace_context,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
@@ -891,6 +985,9 @@ class ProjectionServiceMixin:
         parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
         execution_target = self._execution_target_for(last_runtime_state, self._last_evidence(context))
         lease_renewals = self._lease_renewals_for(last_runtime_state, self._last_evidence(context))
+        mutation_contract = self._mutation_contract_for(context, last_runtime_state)
+        mutation_result = self._mutation_result_for(last_runtime_state, self._last_evidence(context))
+        scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
         timeline = self.get_timeline(run_id)
         review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
@@ -925,6 +1022,9 @@ class ProjectionServiceMixin:
             "parallel_batch": parallel_batch,
             "execution_target": execution_target,
             "lease_renewals": lease_renewals,
+            "mutation_contract": mutation_contract,
+            "mutation_result": mutation_result,
+            "scheduler_authority": scheduler_authority,
             "orchestration": orchestration,
             "trace_context": trace_context,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
@@ -970,6 +1070,112 @@ class ProjectionServiceMixin:
     def reconcile_run(self, run_id: str) -> dict[str, Any]:
         return self.inspect_run_state(run_id)
 
+    def _run_operator_row(self, run_id: str) -> dict[str, Any]:
+        detail = self.get_status_detail(run_id)
+        summary = self.get_run_summary(run_id)
+        inspection = self.inspect_run_state(run_id)
+        latest_review_verdict = summary["review_summary"]["latest_review_verdict"]
+        return {
+            "run": detail["run"],
+            "headline": summary["headline"],
+            "effective_review_state": detail["effective_review_state"],
+            "next_action": detail["next_action"],
+            "recoverability_hint": detail["recoverability_hint"],
+            "failure_reason": detail["failure_reason"],
+            "waiting_reason": detail["waiting_reason"],
+            "review_policy": detail["review_policy"],
+            "execution_lane": detail["execution_lane"],
+            "domain_pack": detail["domain_pack"],
+            "capability_resolution": detail["capability_resolution"],
+            "execution_target": detail["execution_target"],
+            "scheduler_authority": detail["scheduler_authority"],
+            "orchestration": detail["orchestration"],
+            "parallel_batch": detail["parallel_batch"],
+            "latest_review_verdict": latest_review_verdict,
+            "review_recommended_action": (
+                detail["recoverability_hint"]
+                if detail["effective_review_state"] == "human_pending"
+                else detail["next_action"]
+            ),
+            "inspection_problem_count": inspection["problem_count"],
+            "inspection_recommended_action": inspection["recommended_action"],
+            "worker_lease_projection": detail["worker_lease_projection"],
+            "runtime_attempt_projection": detail["runtime_attempt_projection"],
+            "trace_context": detail["trace_context"],
+            "run_metrics": detail["run_metrics"],
+            "budget_projection": detail["budget_projection"],
+            "latest_snapshot": detail["latest_snapshot"],
+        }
+
+    def list_run_operator_rows(
+        self,
+        *,
+        limit: int = 10,
+        status: str | None = None,
+        preset_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return [
+            self._run_operator_row(run.run_id)
+            for run in self.list_runs(limit=limit, status=status, preset_id=preset_id)
+        ]
+
+    def list_pending_review_runs(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.list_run_operator_rows(limit=limit, status=str(RunStatus.awaiting_review))
+        return [
+            {
+                **row,
+                "latest_auto_review_verdict": (
+                    row["latest_review_verdict"]
+                    if row["latest_review_verdict"] is not None
+                    and row["latest_review_verdict"].get("reviewer_type") == str(ReviewerType.auto)
+                    else None
+                ),
+            }
+            for row in rows
+        ]
+
+    def get_operator_view(self, run_id: str) -> dict[str, Any]:
+        detail = self.get_status_detail(run_id)
+        summary = self.get_run_summary(run_id)
+        inspection = self.inspect_run_state(run_id)
+        timeline = [event.model_dump(mode="json") for event in self.get_timeline(run_id)]
+        replay_packet = self.get_run_replay_packet(run_id)
+        return {
+            "run": detail["run"],
+            "summary": summary,
+            "status_detail": detail,
+            "inspection": inspection,
+            "timeline": timeline,
+            "replay_packet_excerpt": {
+                "headline": replay_packet["summary"]["headline"],
+                "next_action": replay_packet["summary"]["next_action"],
+                "recoverability_hint": replay_packet["summary"]["recoverability_hint"],
+                "failure_taxonomy": replay_packet["summary"]["failure_taxonomy"],
+                "execution_profile": replay_packet["execution_profile"],
+            },
+            "orchestration": detail["orchestration"],
+            "mutation_report": self.get_run_mutation_report(run_id),
+            "scheduler_authority": detail["scheduler_authority"],
+            "cluster_overview": (
+                detail["scheduler_authority"]["cluster_summary"]
+                if detail.get("scheduler_authority") is not None
+                else self.scheduler_authority_cluster.cluster_snapshot()
+            ),
+            "handoffs": detail["handoffs"],
+        }
+
+    def get_run_mutation_report(self, run_id: str) -> dict[str, Any]:
+        detail = self.get_status_detail(run_id)
+        inspection = self.inspect_run_state(run_id)
+        return {
+            "run": detail["run"],
+            "execution_lane": detail["execution_lane"],
+            "mutation_contract": detail["mutation_contract"],
+            "mutation_result": detail["mutation_result"],
+            "inspection_problem_count": inspection["problem_count"],
+            "recommended_action": inspection["recommended_action"],
+        }
+
     def get_dashboard_snapshot(self, *, focus_run_id: str | None = None, limit: int = 8) -> dict[str, Any]:
         runs = self.list_runs(limit=limit)
         run_rows: list[dict[str, Any]] = []
@@ -1010,6 +1216,7 @@ class ProjectionServiceMixin:
             "trace_exporter": self.trace_exporter.describe(),
             "durable_runtime_pilot": self.durable_runtime_pilot.describe(),
             "feature_flags": self._feature_flags(),
+            "cluster_overview": self.scheduler_authority_cluster.cluster_snapshot(),
             "run_count": len(run_rows),
             "selected_run_id": selected_run_id,
             "runs": run_rows,

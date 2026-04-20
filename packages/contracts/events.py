@@ -29,6 +29,9 @@ class RunEventType(StrEnum):
     claim_released = "claim_released"
     worker_lease_acquired = "worker_lease_acquired"
     worker_lease_released = "worker_lease_released"
+    worker_dispatch_accepted = "worker_dispatch_accepted"
+    worker_heartbeat_received = "worker_heartbeat_received"
+    worker_completion_recorded = "worker_completion_recorded"
     runtime_attempt_created = "runtime_attempt_created"
     runtime_attempt_superseded = "runtime_attempt_superseded"
     runtime_attempt_closed = "runtime_attempt_closed"
@@ -184,6 +187,34 @@ class WorkerLeaseReleasedPayload(EventPayloadModel):
     reason: str
 
 
+class WorkerDispatchAcceptedPayload(EventPayloadModel):
+    run_id: str
+    runtime_task_id: str
+    lease_id: str
+    worker_pool_id: str
+    dispatch_id: str
+
+
+class WorkerHeartbeatReceivedPayload(EventPayloadModel):
+    run_id: str
+    runtime_task_id: str
+    lease_id: str
+    worker_pool_id: str
+    callback_id: str
+    heartbeat_at: str
+    lease_expires_at: str
+
+
+class WorkerCompletionRecordedPayload(EventPayloadModel):
+    run_id: str
+    runtime_task_id: str
+    lease_id: str
+    worker_pool_id: str
+    callback_id: str
+    dispatch_id: str
+    return_code: int
+
+
 class RuntimeAttemptCreatedPayload(EventPayloadModel):
     run_id: str
     runtime_task_id: str
@@ -268,6 +299,9 @@ EVENT_PAYLOAD_MODELS = {
     RunEventType.claim_released: ClaimReleasedPayload,
     RunEventType.worker_lease_acquired: WorkerLeaseAcquiredPayload,
     RunEventType.worker_lease_released: WorkerLeaseReleasedPayload,
+    RunEventType.worker_dispatch_accepted: WorkerDispatchAcceptedPayload,
+    RunEventType.worker_heartbeat_received: WorkerHeartbeatReceivedPayload,
+    RunEventType.worker_completion_recorded: WorkerCompletionRecordedPayload,
     RunEventType.runtime_attempt_created: RuntimeAttemptCreatedPayload,
     RunEventType.runtime_attempt_superseded: RuntimeAttemptSupersededPayload,
     RunEventType.runtime_attempt_closed: RuntimeAttemptClosedPayload,

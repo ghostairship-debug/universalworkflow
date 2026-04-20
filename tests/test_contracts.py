@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from packages.contracts import (
     BudgetLedger,
     CapabilityRoute,
+    ControlPlaneIdentity,
     DomainPackResolution,
     DomainPackDefinition,
     Evidence,
@@ -16,6 +17,8 @@ from packages.contracts import (
     MemoryItem,
     MemoryNamespace,
     MemoryRetrievalPreview,
+    MutationContract,
+    MutationMode,
     NON_TERMINAL_RUNTIME_GRAPH_STEPS,
     Phase,
     PresetSuggestion,
@@ -30,11 +33,15 @@ from packages.contracts import (
     RuntimeAttemptTrigger,
     RUN_STATUS_TRANSITIONS,
     RunStatus,
+    SchedulerLeaseDecision,
+    SchedulerLeaseProposal,
+    SchedulerPeerHeartbeat,
     SimulationPolicyDefinition,
     SimulationRecord,
     SimulationRecordSource,
     SimulationReport,
     SimulationTriggerPolicy,
+    RepoMutationResult,
     RuntimeClaim,
     RuntimeClaimStatus,
     RuntimeGraphStep,
@@ -207,6 +214,47 @@ def test_wave1_contracts_round_trip() -> None:
         recorded_from=SimulationRecordSource.lifecycle_terminal,
         report=simulation_report,
     )
+    mutation_contract = MutationContract(
+        task_card_ref="M16-1A",
+        task_card_path="docs/task_cards/m16_phase_1/M16-1A.md",
+        write_set=["packages/core_domain/services.py"],
+        read_set=["packages/contracts/models.py"],
+        test_commands=["python -m pytest tests/test_execution_loop.py -q"],
+        max_fix_iterations=1,
+        mutation_mode=MutationMode.patch_apply,
+    )
+    mutation_result = RepoMutationResult(
+        changed_files=["packages/core_domain/services.py"],
+        applied_patch_hash="abc123",
+        test_attempts=[{"iteration": 0, "command": "pytest", "return_code": 0, "passed": True}],
+        fix_iteration_count=0,
+        final_test_status="passed",
+    )
+    control_plane_identity = ControlPlaneIdentity(
+        control_plane_id="control_plane_alpha",
+        name="alpha",
+        endpoint="http://alpha.local",
+    )
+    scheduler_proposal = SchedulerLeaseProposal(
+        control_plane_id=control_plane_identity.control_plane_id,
+        run_id=run.run_id,
+        runtime_task_id=runtime_task.runtime_task_id,
+        domain_key=runtime_task.runtime_task_id,
+    )
+    scheduler_decision = SchedulerLeaseDecision(
+        proposal_id=scheduler_proposal.proposal_id,
+        control_plane_id=control_plane_identity.control_plane_id,
+        run_id=run.run_id,
+        runtime_task_id=runtime_task.runtime_task_id,
+        domain_key=runtime_task.runtime_task_id,
+        lease_epoch=1,
+        lease_expires_at=run.created_at,
+    )
+    scheduler_heartbeat = SchedulerPeerHeartbeat(
+        control_plane_id=control_plane_identity.control_plane_id,
+        lease_count=1,
+        observed_at=run.created_at,
+    )
 
     models = [
         run,
@@ -233,6 +281,12 @@ def test_wave1_contracts_round_trip() -> None:
         simulation_policy,
         simulation_report,
         simulation_record,
+        mutation_contract,
+        mutation_result,
+        control_plane_identity,
+        scheduler_proposal,
+        scheduler_decision,
+        scheduler_heartbeat,
     ]
     for model in models:
         dumped = model.model_dump(mode="json")
@@ -599,4 +653,11 @@ def test_budget_policy_value_domains_are_validated() -> None:
                 "default_review_policy": "auto_only",
                 "default_budget_policy": {"max_retries": -1, "timeout_seconds": 0},
             }
+        )
+
+
+def test_patch_apply_mutation_contract_requires_write_set() -> None:
+    with pytest.raises(ValidationError):
+        MutationContract(
+            mutation_mode=MutationMode.patch_apply,
         )

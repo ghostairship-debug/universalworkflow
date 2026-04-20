@@ -6,7 +6,10 @@
     "enabled": true,
     "transport": "local",
     "adapter_name": "shell",
-    "dispatch_mode": "loopback"
+    "dispatch_mode": "loopback",
+    "auth_mode": "none",
+    "heartbeat_interval_seconds": 30,
+    "lease_ttl_seconds": 300
   },
   {
     "worker_pool_id": "mock_remote_shell",
@@ -15,6 +18,24 @@
     "enabled": true,
     "transport": "http",
     "adapter_name": "shell",
-    "dispatch_mode": "loopback"
+    "dispatch_mode": "loopback",
+    "auth_mode": "none",
+    "heartbeat_interval_seconds": 30,
+    "lease_ttl_seconds": 300
+  },
+  {
+    "worker_pool_id": "remote_http_shell",
+    "name": "Remote HTTP Shell Pool",
+    "description": "A single-control-plane remote worker pool that executes shell tasks through the remote worker API and reports heartbeat/completion callbacks back to the control plane.",
+    "enabled": true,
+    "transport": "http",
+    "adapter_name": "shell",
+    "dispatch_mode": "remote_http",
+    "base_url": "http://127.0.0.1:8011",
+    "callback_base_url": "http://127.0.0.1:8000",
+    "auth_mode": "shared_secret",
+    "shared_secret_env": "WORKFLOW_REMOTE_WORKER_SHARED_SECRET",
+    "heartbeat_interval_seconds": 30,
+    "lease_ttl_seconds": 300
   }
 ]
