@@ -457,7 +457,7 @@ Prepare for ecosystem growth without losing control.
 
 1. Distinguish:
    - domain packs
-n   - skill packs
+   - skill packs
    - role packs
    - capability packs
 2. Add versioning and compatibility metadata.
