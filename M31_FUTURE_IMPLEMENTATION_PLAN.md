@@ -663,7 +663,7 @@ The current memory system should evolve into a layered model.
 - used for workbench continuity
 
 ### Layer 2 — Run memory
-n
+
 - tied to one execution run or graph
 - stores useful facts, retrieved evidence summaries, failures, decisions, checkpoints
 
