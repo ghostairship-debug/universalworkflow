@@ -436,3 +436,133 @@ addopts = "--basetemp=state/.pytest-tmp --cov=packages --cov=apps --cov-report=t
 4. **前端交互面**：自然语言后端已就位，缺一个前端 workbench 来释放其价值
 
 > **一句话**：M21-M30 证明了这个项目能够在保持极高工程纪律的同时稳步推进产品能力 — 它现在最需要的不是更多 surface，而是在打开下一轮广度之前解决 MCP 耦合、覆盖率盲区和 services.py 膨胀这三个结构性问题。
+
+---
+
+## 十一、M31 规划文档评估（第二轮重评更新版）
+
+> **评估时间**: 2026-04-21（第二轮重评后增补）
+>
+> 三份 M31 文档在第一轮评估后进行了覆盖更新（均标注为"覆盖更新版"/"第二轮重评"），本节对更新后的版本进行重新评估。`AI_AGENT_LEGACY_WHITELIST.md` 未变化，评价不变。
+
+### 11.1 文档总览（更新后）
+
+| 文档 | 更新后体量 | 核心变化 |
+|------|-----------|----------|
+| `M31_ARCHITECTURE_EVALUATION.md` | 18 KB / 565 行 | 新增"语义诚实性"主题；重新定义 scheduler authority 为 single-store quorum model；新增 automation plane / interaction plane 缺位诊断 |
+| `M31_CURRENT_STAGE_REMEDIATION_PLAN.md` | 13 KB / 478 行 | 从 8 WS 精简为 6 P0 + 4 P1；新增 5 Phase 路线（M31-A~E）；新增明确"不做什么"清单 |
+| `M31_FUTURE_IMPLEMENTATION_PLAN.md` | 20 KB / 816 行 | 新增七层平面参考架构；6 种协同拓扑；RoleFactory 设计；M32~M36 里程碑建议 |
+| `AI_AGENT_LEGACY_WHITELIST.md` | 10 KB / 227 行 | 未变化 |
+
+---
+
+### 11.2 M31_ARCHITECTURE_EVALUATION.md — 第二轮评价
+
+**质量评级**: ⭐⭐⭐⭐⭐（维持，深度提升）
+
+**第二轮更新带来的关键提升**：
+
+1. **"语义诚实性"成为显式主题** — 这是第二轮最重要的新增。明确指出 scheduler authority 当前是 single-store quorum-style ownership modeling，而非真正的 peer-to-peer replicated consensus。这个判断经代码验证完全准确（`scheduler_authority.py` 中 leader 由活跃 node_id 排序选出，votes 在同一存储上下文创建）
+2. **capability health 从"声明式"到"运行时"的差距被明确** — 准确识别 descriptor ≠ availability, enabled ≠ usable
+3. **orchestration engine 抽象缺口** — 正确指出 `project_delivery` 是 baseline flow 而非通用 graph engine
+4. **automation plane 缺位** — 首次系统性指出系统缺少 background controller
+5. **interaction plane vs operator surface 分离** — 明确"operator-ready ≠ product-ready"
+
+**需要注意的点**：
+
+1. **readiness 表新增至 13 维度**，部分维度粒度可进一步细化（如"生态/扩展模型"可拆为 domain pack / capability SDK / role pack 三个子维度）
+2. **对 memory plane 的评估偏保守** — 当前 memory 已有 namespace、candidate、materialization、retrieval preview、compile-time injection，不仅仅是"kernel primitive"
+3. **建议保持"第二轮重评"标记** — 避免与第一轮评估混淆
+
+**结论**：第二轮更新显著提升了评估深度，尤其是语义诚实性和平台边界收口两个主题。应作为 M31 **权威架构输入**。
+
+---
+
+### 11.3 M31_CURRENT_STAGE_REMEDIATION_PLAN.md — 第二轮评价
+
+**质量评级**: ⭐⭐⭐⭐☆ → ⭐⭐⭐⭐⭐（提升）
+
+**第二轮更新带来的关键提升**：
+
+1. **范围大幅收敛** — 从 8 WS × 4 阶段精简为 6 P0 + 4 P1，结构更清晰
+2. **P0 优先级排序合理**：
+   - P0-1: OrchestratorService 拆分（建议 9 个服务边界）
+   - P0-2: scheduler authority 语义收紧（路线 A/B 二选一）
+   - P0-3: orchestration graph engine 抽象
+   - P0-4: capability runtime contract 统一
+   - P0-5: interaction plane 建立
+   - P0-6: automation plane 建立
+3. **每个 P0 都有验收标准** — 可执行性显著提升
+4. **5 Phase 路线（M31-A~E）** — 比之前的 4 阶段更精细，且各有明确 exit gate
+5. **"不做什么"清单** — 5 条禁令清晰有力
+
+**仍需注意的点**：
+
+1. **6 个 P0 仍然是一个里程碑的较大负荷** — 建议 M31 实际执行范围为 P0-1 + P0-2 + Phase M31-A，其余按 M31-B~E 顺序排入后续
+2. **P0-1 建议的 9 个服务拆分可能过细** — 初期可合并为 4-5 个服务边界（RunKernel、ReviewPolicy、OwnershipLease、AuditReplay、MutationExecution），后续再细分
+3. **P0-3 的 graph engine 最低动作定义合理** — "至少两个 orchestration preset 基于同一 graph engine 工作"是可验证的最小目标
+4. **缺少工时估算** — 仍未给出时间/工作量估计
+
+**结论**：第二轮更新后，这份计划从"方向正确但范围过大"提升为"方向正确且结构可执行"。建议直接作为 M31 执行框架使用。
+
+---
+
+### 11.4 M31_FUTURE_IMPLEMENTATION_PLAN.md — 第二轮评价
+
+**质量评级**: ⭐⭐⭐⭐☆（维持，内容更丰富）
+
+**第二轮更新带来的关键提升**：
+
+1. **七层平面参考架构** — Interaction / Planning & Orchestration / Role System / Capability Runtime / Memory & Knowledge / Governance & Evolution / Kernel — 逻辑分层清晰
+2. **6 种协同拓扑** — Manager-as-code / Specialists-as-tools / Handoff / Parallel Map-Reduce / Reviewer Quorum / Monitor-Watchdog — 覆盖主流多 agent 范式，且推荐 Manager-as-code 为默认拓扑，与项目 control-plane 优势吻合
+3. **RoleFactory 设计** — 输入/输出/生命周期/晋升规则完整，是即时角色生成的合理方案
+4. **M32~M36 里程碑建议** — 比第一轮更具体，每个里程碑有明确重点
+5. **外部框架吸收策略** — 按 OpenAI SDK / LangGraph / AutoGen / CrewAI / MCP / Temporal 分别列出值得吸收的模式，避免整体替换
+
+**仍需注意的点**：
+
+1. **仍应定位为愿景文档** — 跨 M32~M36 的内容不适合作为近期执行计划
+2. **新契约与现有契约的迁移关系仍未明确** — `ExecutionGraph` vs `OrchestrationPlanGraph`、`RoleSpec` vs `AgentRoleType` 等
+3. **七层架构到当前 3-4 层的渐进路径缺失**
+4. **EngineeringTaskSpec 与现有 TaskKind/RuntimeTask 的关系仍未说明**
+
+**结论**：作为长期愿景参考极有价值，建议归档为 `docs/vision/platform_architecture_blueprint.md`。
+
+---
+
+### 11.5 AI_AGENT_LEGACY_WHITELIST.md — 评价（未变化）
+
+**质量评级**: ⭐⭐⭐⭐⭐（维持）
+
+评价与第一轮一致。建议在根目录保留，每次新 phase 启动时复查。
+
+---
+
+### 11.6 三份 M31 文档第二轮更新的整体协同评价
+
+| 维度 | 第一轮 | 第二轮 | 变化原因 |
+|------|--------|--------|----------|
+| **方向一致性** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 三份文档更加统一地指向"先语义诚实收口，再平台化扩张" |
+| **与现有代码的衔接** | ⭐⭐⭐ | ⭐⭐⭐☆ | Remediation Plan 的验收标准更具体，但迁移路径仍需补充 |
+| **范围控制** | ⭐⭐⭐ | ⭐⭐⭐⭐ | Remediation Plan 范围显著收敛，P0/P1 分级合理 |
+| **可执行性** | ⭐⭐⭐ | ⭐⭐⭐⭐ | 每个 P0 有验收标准，Phase 有 exit gate |
+| **语义诚实性** | — | ⭐⭐⭐⭐⭐ | **新增维度**。scheduler authority 诚实化是第二轮最重要的新贡献 |
+
+### 11.7 建议的文档治理动作（更新）
+
+| 动作 | 说明 |
+|------|------|
+| `M31_ARCHITECTURE_EVALUATION.md` → `docs/reviews/m31-architecture-evaluation-r2.md` | 标注为第二轮重评，作为冻结评审归档 |
+| `M31_CURRENT_STAGE_REMEDIATION_PLAN.md` → 保留根目录 | 直接作为 M31 执行框架，按 Phase M31-A 启动 |
+| `M31_FUTURE_IMPLEMENTATION_PLAN.md` → `docs/vision/platform_architecture_blueprint.md` | 重新定位为长期愿景文档 |
+| `AI_AGENT_LEGACY_WHITELIST.md` → 保留根目录 | 在每次新 phase 启动时复查 |
+
+---
+
+### 11.8 综合建议（第二轮更新版）
+
+> **核心判断**：第二轮更新显著提升了三份文档的质量和可执行性。最重要的新贡献是"语义诚实性"主题的引入 — 这不仅是技术问题，更是产品和架构层面的关键约束。
+>
+> **执行建议**：M31 实际执行应以 Remediation Plan 的 Phase M31-A（边界收口 + 语义诚实性修正）为起点，具体范围为 **P0-1（OrchestratorService 拆分初步）+ P0-2 路线 A（scheduler authority 诚实收口）+ P0 级工程卫生（MCP lazy import + pytest-cov）**。P0-3~P0-6 按 Phase M31-B~E 顺序排入后续里程碑。
+>
+> **最关键的一条**：三份文档现在共同构成了一套完整的"评估 → 修复 → 愿景"三层文档体系。评估提供诊断，修复提供执行路径，愿景提供长期方向。这个结构本身就是项目工程纪律的体现。

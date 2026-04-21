@@ -1,56 +1,48 @@
-# M31 Architecture Evaluation
+# M31 架构评估（第二轮重评）
 
-Date: 2026-04-21  
-Status: Proposed next-phase evaluation  
-Scope: whole-repo architecture, execution model, governance model, extensibility path, product-readiness path
-
----
-
-## 1. Executive summary
-
-`universalworkflow` is not a README-first prototype. It is already a real local-first agentic workflow kernel with a surprisingly mature control plane:
-
-- compile / recompile / resume are first-class lifecycle operations
-- review policies are modeled, persisted, and projected
-- runtime claims, worker leases, snapshots, simulation records, replay packets, and audit reports are all part of the system model
-- capability selection, tool projection, worker-pool dispatch, and scheduler-authority quorum slices already exist
-- a minimal domain-pack model, bounded repo-mutation contract, and a baseline multi-role `project_delivery` orchestration are implemented
-- API, CLI, TUI, and built-in web operator surfaces are already present
-- the test suite is broad enough to support confidence that this is a real kernel, not a thin shell around one demo path
-
-That said, the repository has reached a very specific inflection point:
-
-> The control plane is now more mature than the product plane.
-
-This is the central architectural fact that should govern the next phase.
-
-The project is **not** primarily blocked by missing features. It is blocked by the need to turn a strong operator-centric kernel into a clean, extensible, user-facing and agent-facing platform architecture.
-
-My bottom-line evaluation is:
-
-1. `v1 core complete` is a credible description of the current kernel.
-2. The repository is strong enough to justify continued investment.
-3. It is **not yet ready** to jump directly into broad productization, heavy ecosystem expansion, or deep autonomy/self-upgrade.
-4. The next phase should be a bounded **architecture-hardening and interface-refactor phase**, not a breadth-first feature expansion phase.
-
-If this phase is handled correctly, the project can evolve into a genuinely differentiated "agentic workflow OS / engineering control plane". If it is skipped, the most likely failure mode is not technical collapse, but **progressive structural drag**: too many features, too much operator power, too little unified product boundary.
+日期：2026-04-21  
+状态：第二轮重评 / 覆盖更新版  
+范围：对 `ghostairship-debug/universalworkflow` 当前主干的代码、测试、根目录既有评估文档、冻结评审文档，以及外部相关框架/协议进行重新评估。
 
 ---
 
-## 2. Evaluation scope and evidence base
+## 0. 本轮重评的核心结论
 
-This evaluation is based on both repository internals and current external ecosystem patterns.
+第一轮评估把项目定义为“本地优先的 agentic workflow 内核 / 控制平面”，这个方向判断仍然成立。  
+但第二轮重评要把一个更关键的事实说得更直白：
 
-### 2.1 Repository evidence reviewed
+> 当前仓库最大的风险已经不是“能力不够”，而是“代码中已经存在大量平台语义，但其中一部分仍然是**建模完成**，尚未等于**真正的平台化完成**”。
 
-Primary repository evidence examined includes:
+换句话说：
+
+- **生命周期、审计、治理、运行所有权、回放、修复**：已经明显超过原型阶段。
+- **多角色协同、能力平面、外部执行、控制面集群、产品工作台**：已经有很强的方向性与大量代码，但并非都已经达到“可以安全支撑下一轮产品化与生态扩张”的程度。
+- **最需要做的不是继续加广度，而是先把平台边界、语义诚实性、交互面、自动化面彻底收束。**
+
+本轮重评因此把项目当前状态定义为：
+
+> **一个很强的本地优先控制平面内核 + 一个尚未完全收口的平台化外层。**
+
+这与仓库当前自述的 `v1 core complete` 不矛盾；真正的问题是：  
+**“core complete”不等于“可以直接进入大规模产品化和生态扩张”。**
+
+---
+
+## 1. 评估依据
+
+本轮重评综合使用以下信息：
+
+### 1.1 仓库内已读材料
+
+重点复核了以下部分：
 
 - `README.md`
+- `pyproject.toml`
 - `docs/current_development_workflow.md`
 - `docs/reviews/m20-freeze-review.md`
 - `docs/reviews/m30-operator-control-freeze-review.md`
 - `docs/tech-debt-registry.md`
-- `pyproject.toml`
+- 根目录既有三份 M31 文档
 - `apps/operator_cli/main.py`
 - `apps/orchestrator_api/main.py`
 - `apps/orchestrator_api/web_ui.py`
@@ -65,6 +57,7 @@ Primary repository evidence examined includes:
 - `packages/runtime_langgraph/gateway.py`
 - `packages/runtime_langgraph/durable_pilot.py`
 - `packages/worker_adapters/router.py`
+- `infra/scripts/manage.py`
 - `infra/seeds/domain_packs.json`
 - `infra/seeds/worker_pool_profiles.json`
 - `infra/seeds/mcp_server_profiles.json`
@@ -72,67 +65,73 @@ Primary repository evidence examined includes:
 - `tests/test_api.py`
 - `tests/test_web_ui.py`
 
-### 2.2 External ecosystem references consulted
+### 1.2 外部对照对象
 
-I also cross-checked the current design against official materials for:
+本轮外部对照重点参考了以下方向：
 
-- LangGraph
-- OpenAI Agents SDK
-- AutoGen
-- CrewAI
-- Model Context Protocol (MCP)
-- Temporal
-- Prefect
-- Trigger.dev
+- OpenAI Agents SDK：tools、agents-as-tools、handoffs、guardrails、tracing、hosted MCP、受控沙箱
+- LangGraph：durable execution、persistence、interrupt / human-in-the-loop、workflow/agent patterns
+- AutoGen：group chat / team / message-protocol 驱动的多 agent 协作
+- CrewAI：crews 与 flows 分层、事件驱动流程与状态管理
+- MCP：tools / resources / prompts 三种原语、结构化输出、审批与授权扩展
+- Temporal / Prefect / Trigger.dev：durable workflow、background jobs、automations、work pools / queues、长任务控制与可观测性
 
-These references matter because the project is now beyond the stage where architecture can be judged only internally. The key question is no longer “does it run?” but “what kind of platform should this become, and what should it deliberately avoid becoming?”
+这些外部材料不是为了“找一个框架替代本项目”，而是为了判断：
+
+> 这个仓库下一步应该吸收哪些模式，避免哪些误区。
 
 ---
 
-## 3. What the repository already achieves
+## 2. 仓库当前“真正已完成”的部分
 
-## 3.1 It already has a real kernel
+## 2.1 生命周期内核已经明显超过原型阶段
 
-The repository is best understood as a **service-centric modular monolith** with multiple operator surfaces.
+从 CLI/API/Service 层代码看，这个项目已经不是“一次请求 -> 一次产物”的薄壳。
 
-It already includes:
+它已经形成了明确的运行状态机和持久化内核：
 
-- a persistent run lifecycle model
-- explicit compiled/prepared/resumed/awaiting_review/completed/cancelled/repaired snapshots
-- persisted runtime state refs and runtime attempts
-- claim / lease ownership modeling
-- review-policy branching in lifecycle control
-- replay / audit / summary / inspection projections
-- local execution, opencode execution, noop execution, sessionful execution, agent-lane execution, and external worker dispatch paths
-- quorum-based scheduler-authority semantics for lease ownership and handoff lineage
+- `create`
+- `compile / recompile`
+- `resume`
+- `awaiting_review`
+- `completed / failed / cancelled`
+- `inspect / reconcile / repair`
 
-This is not a toy. The kernel is already behaving like the inner control plane of an agent platform.
+并且这些动作不是 README 里的概念，而是进入了：
 
-## 3.2 The control plane is unusually strong for this stage
+- `Run`
+- `RuntimeStateRef`
+- `RuntimeAttempt`
+- `RuntimeClaim`
+- `WorkerLease`
+- `RunSnapshot`
+- `ReviewVerdict`
+- `Evidence`
+- `SimulationRecord`
 
-Three aspects are already better than most early agent-workflow repos:
+等对象与仓储逻辑中。
 
-### A. State is explicit
+这说明项目已经具备了**显式状态、显式证据、显式治理**的基础，这是一条非常正确的主线。
 
-The project persistently models:
+## 2.2 operator-facing 投影层已经非常强
 
-- runtime states
-- runtime attempts
-- snapshots
-- evidence
-- review verdicts
-- claims
-- worker leases
-- simulation records
-- scheduler proposals / decisions / committed leases / handoff envelopes
+`status-detail`、`summary`、`inspection`、`audit-report`、`replay-packet`、`operator-packet`、`operator-view`、dashboard snapshot 等一整套 operator-facing read model 已经形成。
 
-This matters because it enables replayability, inspectability, repair, and eventually automation.
+这意味着系统不是只会“执行”，而是已经会：
 
-### B. Governance is modeled, not implied
+- 解释当前状态
+- 解释失败原因
+- 给出下一步建议
+- 输出审计包
+- 输出回放包
+- 暴露 claims / leases / attempts / snapshots / orchestration / review state
 
-Review policies are not comments in a README. They actually shape lifecycle transitions.
+这一点在同类项目里是明显领先的。  
+很多 agent 项目能跑，但不能解释自己；这个仓库已经开始能解释自己。
 
-The system distinguishes:
+## 2.3 review policy 与治理语义是真正进入系统的
+
+当前支持的运行级 review policy：
 
 - `auto_only`
 - `optional`
@@ -140,417 +139,426 @@ The system distinguishes:
 - `human_required`
 - `mandatory`
 
-and projects them into status detail, review state, operator packets, and audit output. This is a major asset for future productization.
+已经进入：
 
-### C. Observability is built into the domain model
+- compile / resume / terminal 语义
+- `effective_review_state`
+- `latest_review_verdict`
+- `summary`
+- `inspection`
+- `audit-report`
+- `governance` 报告
 
-The system does not treat observability as external logging only. It has internal products for:
+这说明治理不是附加层，而是内核特征。
 
-- status detail
-- run summary
-- event inspection
-- audit report
-- replay packet
-- operator packet
-- operator view
-- dashboard snapshot
+## 2.4 repo mutation 路线是真实价值点
 
-That is a strong sign that the project is thinking like a control plane, not just like a task runner.
+当前仓库不是只会“分析”和“生成文档”，已经进入受控工程修改能力：
 
-## 3.3 The repository already has a credible extensibility baseline
+- mutation contract
+- read set / write set
+- patch apply
+- bounded fix loop
+- test commands
+- mutation report
+- orchestration 中 coder 角色可继承父级 mutation contract
 
-The following extensibility primitives already exist:
+这条线非常重要，因为它证明项目的长期方向不只是“workflow for prompts”，而是**workflow for real engineering work**。
 
-- capability descriptors and capability health
-- tool projection manifests
-- trust tiers
-- MCP profile projection
-- worker pool profiles
-- default config resolution and feature-flagged incubation
-- domain packs and skill export baseline
+## 2.5 测试覆盖广而且触及关键语义
 
-This is a meaningful base for a future plugin / extension / external capability architecture.
+测试不仅覆盖 happy path，还覆盖：
 
-## 3.4 The repo-mutation path is not superficial
-
-The bounded repo-mutation path is particularly important because it proves the system can already serve real engineering workflows, not just abstract reasoning loops.
-
-Notable strengths:
-
-- explicit mutation contract
-- read/write set constraints
-- bounded fix iterations
-- test command integration
-- patch-apply mode
-- mutation reports
-- orchestration propagation into `project_delivery`
-
-This is a credible starting point for “arbitrary engineering development” as long as it is promoted from a special case into a first-class platform contract.
-
-## 3.5 The test surface is broad and meaningful
-
-The test corpus is deep enough to materially raise confidence.
-
-It covers, among other things:
-
-- lifecycle success and failure paths
-- review-policy semantics
-- simulation recording and policy triggers
-- memory namespaces / candidate materialization / retrieval preview
-- domain-pack resolution and validation
-- capability source / MCP projection preview
-- external worker pools
-- durable pilot path
-- sessionful external agent path
-- multi-role orchestration
-- repo mutation and bounded fix loops
-- claim / worker lease lifecycle
-- parallel batch barriers
-- scheduler authority conflict / expiry / regrant paths
-- API surface and web operator surface behavior
-- inspection and repair actions
-- snapshot history and budget projection
-
-This breadth is a major reason the project deserves continued architectural investment.
-
----
-
-## 4. Architectural reading of the current system
-
-The present architecture can be summarized as:
-
-> **A powerful, service-centered control plane with multiple access surfaces, plus several promising but still partial platform abstractions.**
-
-The key architectural pattern is:
-
-- one dominant public service facade (`OrchestratorService`)
-- a set of extracted service modules / mixins underneath it
-- multiple interfaces (CLI / FastAPI / Web UI / TUI) all terminating into that shared service layer
-- typed contracts as the system language
-- SQLite-backed local-first state and governance history
-
-This is a valid architecture for getting from zero to a working core quickly. It has clearly worked.
-
-However, it now creates the main strategic tension of the repo:
-
-- it is excellent for integrating features quickly
-- it is increasingly poor as the permanent boundary for product surfaces, external integrations, dynamic multi-agent orchestration, and future ecosystem growth
-
-That is why the next phase must not be “keep adding more things to the same facade.”
-
----
-
-## 5. What should be preserved
-
-The next phase should **preserve** these properties rather than rewrite them away:
-
-1. **Local-first truth model**  
-   The project’s differentiation comes partly from local inspectability, local replay, and local control.
-
-2. **Typed contract discipline**  
-   A lot of future stability depends on continuing to treat packets, snapshots, verdicts, leases, and projections as explicit domain objects.
-
-3. **Lifecycle explicitness**  
-   `compile -> resume -> review -> terminalize` is a strong backbone.
-
-4. **Governance as domain logic**  
-   Review policies, audit products, and inspection/repair logic are not optional extras; they are core product assets.
-
-5. **Operator-grade projections**  
-   The existing projection model is strong and should be generalized, not discarded.
-
-6. **Bounded repo mutation**  
-   This is a real wedge into practical engineering workflows.
-
-7. **Control-plane ownership model**  
-   Claims, worker leases, scheduler leases, and handoff lineage are strong foundations for safe automation.
-
-8. **Feature-flagged incubation**  
-   The current flag model is useful while abstractions settle.
-
----
-
-## 6. Core weaknesses and structural gaps
-
-The repo’s problems are now mostly structural rather than purely functional.
-
-## 6.1 `OrchestratorService` is still too dominant
-
-The codebase already extracted several areas into mixins and companion services, but the effective public center of gravity is still the giant service facade.
-
-Why this is now a problem:
-
-- orchestration semantics, policy semantics, capability semantics, repair semantics, and product projection semantics remain too concentrated
-- API / CLI / Web / TUI surfaces are all tightly coupled to the same façade contract
-- future external SDKs, NL workbenches, autonomous controllers, and agent-facing APIs will all be tempted to depend on the same oversized surface
-
-This does not mean the repo should split into microservices. It means the repo now needs **clear platform boundaries inside the monolith**.
-
-Severity: **High**
-
-## 6.2 The system is still operator-surface first, not product-surface first
-
-The built-in web UI and TUI are explicitly operator surfaces, not chat-style workbenches.
-
-This is fine for the current phase, but it means the system still lacks a canonical answer to:
-
-- what is the primary end-user interaction model?
-- what is the primary builder interaction model?
-- what is the canonical session / conversation / plan-approval object?
-- how should natural language interact with structured execution state over time?
-
-Right now, the control plane can *support* these things, but it is not yet *shaped around* them.
-
-Severity: **High**
-
-## 6.3 Orchestration exists, but it is not yet a general orchestration engine
-
-`project_delivery` proves that multi-role orchestration is possible, but it is still a baseline rather than a generalized orchestration substrate.
-
-Current limitations:
-
-- one visible canonical orchestration path is still privileged
-- graph generation, role planning, barrier semantics, role-specific policy rules, reducers, and dynamic role injection are not yet first-class architecture objects
-- orchestration is still too close to service logic and too far from a stable plan/graph DSL
-
-The current system can orchestrate. It cannot yet claim to expose orchestration as a reusable platform abstraction.
-
-Severity: **High**
-
-## 6.4 Policy preview is ahead of policy enforcement
-
-M30 added important visibility around plan graph and policy preview. That is good. But the repo’s own freeze note already identifies the gap: policy gating is not yet strong enough as an enforcement layer.
-
-That means the system currently has a risk of becoming excellent at *showing* governance without being equally strong at *enforcing* governance at every relevant boundary.
-
-Severity: **High**
-
-## 6.5 Feature flags currently hide architectural incompleteness
-
-The flags are useful, but they also indicate which areas are still incubation paths rather than hardened subsystems:
-
-- agent lane
-- MCP source
+- review policy 分支
+- simulation 持久化与 policy trigger
+- memory candidate / materialization / retrieval preview
+- capability projection / MCP preview
+- external worker dispatch
 - durable pilot
-- external trace export
-- skill export
-- external worker pools
-- sessionful external agents
+- sessionful external agent lane
+- `project_delivery`
+- repo mutation 与 bounded fix loop
+- claim / lease / attempt / snapshot / budget
+- reconcile / repair
+- scheduler authority 冲突 / regrant / projection
+- API 与 Web UI surface
 
-The risk is not that these are flagged. The risk is allowing too many of them to expand before the surrounding contracts stabilize.
+这说明仓库对“语义完整性”的重视高于很多同类项目。
 
-Severity: **Medium-High**
+---
 
-## 6.6 Capability integration is promising but not yet unified enough
+## 3. 仓库当前最强的结构优势
 
-The project already has a real capability plane. However, its integration story is still spread across:
+## 3.1 本地优先的控制平面视角是对的
 
-- worker adapters
-- capability descriptors
-- capability routes
-- tool projection manifests
-- MCP profiles
-- worker pools
-- runtime gateway
-- sessionful external paths
+当前项目最有价值的差异点之一不是“用了什么模型”，而是：
 
-These pieces are adjacent, but not yet unified into one canonical “capability invocation contract” that every human-facing, agent-facing, and system-facing integration can rely on.
+> 它把 agentic execution 当成一个需要被治理、观察、回放、修复的控制平面问题。
 
-Severity: **High**
+这比“做一个多 agent demo”高一个层级。
 
-## 6.7 Memory exists, but not yet as a complete product-facing memory architecture
+## 3.2 显式所有权模型是正确方向
 
-The memory candidate/materialization flow is useful and thoughtful. But it is still closer to a kernel primitive than a complete interaction-memory architecture.
+claims、worker leases、runtime attempts、snapshots、scheduler authority 这些对象，虽然还需要进一步收口，但方向是对的：
 
-Missing pieces include:
+- 执行不是匿名的
+- 所有权不是隐式的
+- 运行与恢复不是黑盒的
+- 审计不是事后拼凑的
 
-- separation of conversation memory vs run memory vs artifact memory vs reusable project memory
-- long-lived session semantics for natural-language supervision
-- memory compaction / summarization / promotion policies
-- memory access policy tied to agent role / capability trust / review level
+## 3.3 多执行通道边界已经形成
 
-Severity: **Medium**
+当前已经形成多执行通道边界：
 
-## 6.8 The tech-debt registry currently under-describes next-stage debt
+- shell
+- opencode
+- noop
+- sessionful external agent
+- feature-flagged agent lane
+- external worker pool dispatch
+- optional runtime gateway
 
-The open debt section is empty. That can be true if interpreted narrowly as “known pre-M30 structural debts on the mainline kernel.”
+这对后续平台化非常重要，因为说明执行层已经不再被单一路径绑死。
 
-But it is misleading if interpreted as “no important structural debt remains.”
+## 3.4 capability plane 已经有真正平台雏形
 
-There is now a different class of debt:
+当前 capability plane 已具备：
 
-- architecture transition debt
-- product interface debt
+- descriptor
+- health view
+- trust tier
+- projection manifest
+- MCP profile
+- worker pool profile
+- runtime gateway projection
+
+这意味着未来做统一 capability runtime 是顺水推舟，而不是从零开始。
+
+---
+
+## 4. 第二轮重评发现的关键问题
+
+下面这些问题里，有些在第一轮已经指出；有些是第二轮深入看代码后需要更明确提出的。
+
+## 4.1 关键问题一：`OrchestratorService` 仍然是过重的真实中心
+
+虽然仓库已经拆出了 mixin 与多个 supporting service module，但从实际调用与行为分布看：
+
+- 生命周期控制
+- 编排逻辑
+- claims / leases
+- scheduler authority 绑定
+- mutation 执行
+- tool projection
+- operator projection
+- audit / replay
+- repair
+
+仍然高度通过 `OrchestratorService` 汇聚。
+
+这会导致几个后果：
+
+1. 新能力最自然的落点仍是一个巨型 façade  
+2. 新的前端 / workbench / SDK 很容易继续直接绑这个 façade  
+3. 平台内部边界会继续模糊，后续改造成本持续上升
+
+这不是“代码风格问题”，而是**平台边界问题**。
+
+## 4.2 关键问题二：当前 scheduler authority 更像“单存储上的多数派语义建模”，不是真正独立对等体共识
+
+这是本轮重评最重要的新判断之一。
+
+从当前核心实现看，`packages/core_domain/scheduler_authority.py` 里的 cluster 语义有明显的优点：
+
+- term
+- proposal
+- decision
+- vote
+- committed lease
+- handoff envelope
+- fencing token
+- cluster snapshot
+
+这些对象都存在。
+
+但更关键的是实现方式：
+
+- 活跃节点来自本地数据库中的 `authority_node_identities`
+- leader 由活跃 node_id 排序后选出
+- votes 在同一存储上下文里被创建
+- proposal 的“获批”不是通过真实 peer RPC 收集，而是在同一控制逻辑里基于活跃节点列表直接形成
+- `peer_urls` 出现在配置中，但在这部分核心算法里并没有形成真正对等体网络协议
+
+这意味着当前实现更接近于：
+
+> **单控制面 / 单存储中的 quorum-style ownership modeling 与 fencing lineage**
+
+而不是严格意义上的：
+
+> **互相独立节点上的复制日志式分布式共识系统**
+
+这并不意味着当前实现没有价值。它仍然对：
+
+- ownership fencing
+- replay/audit lineage
+- fail-closed callback validation
+- takeover lineage presentation
+
+有很高价值。
+
+但问题在于：  
+**如果继续向产品化或生态扩张对外表述“已经完成真正的多控制面多数派共识”，就会形成语义超卖。**
+
+本轮重评因此建议：
+
+- 要么明确把当前 shipped shape 定位为 **single-store quorum authority model**
+- 要么在下一阶段真正实现 peer-to-peer proposal/vote/commit replication
+- 在这之前，不应该模糊这两者之间的界线
+
+这是产品化前必须先修的“语义诚实性问题”。
+
+## 4.3 关键问题三：capability health 当前更多是“声明式健康”，不是“运行时健康”
+
+`packages/core_domain/capability_plane.py` 中的 health 视图是有用的，但目前更多是：
+
+- enabled / disabled
+- failure class catalog
+- descriptor metadata
+- `recent_call_summary` 占位
+
+而不是一个真正持续采样、持续探测、可用于自动调度的 runtime health plane。
+
+问题在于：
+
+- descriptor != availability
+- enabled != usable
+- route exists != route is healthy
+- profile listed != transport can actually perform
+
+这意味着 capability plane 已经有平台雏形，但其 **routing / scheduling / operator health semantics 仍偏静态**。
+
+## 4.4 关键问题四：orchestration baseline 已经存在，但 orchestration engine 还没有真正被抽象出来
+
+`project_delivery` 很重要，因为它证明了系统已经能做：
+
+- planner
+- coder / researcher 并行
+- reviewer
+- barrier
+- child run lineage
+
+但它仍然更接近：
+
+> “一个成功实现的 baseline flow”
+
+而不是：
+
+> “所有未来编排都建立其上的通用 graph engine”。
+
+当前还缺少真正的一等公民对象与稳定抽象，例如：
+
+- `ExecutionGraph`
+- `NodeSpec`
+- `EdgeSpec`
+- `BarrierSpec`
+- `ReducerSpec`
+- `ApprovalGateSpec`
+- `WatchdogPolicy`
+- `RoleSpec`
+
+没有这些，未来：
+
+- 固定角色体系
+- 即时角色生成
+- 动态图扩展
+- 复杂 fallback / escalation
+- 长任务自动化控制
+
+都会继续落回 service 逻辑，难以平台化。
+
+## 4.5 关键问题五：交互层仍然缺位，当前 Web/TUI 仍是 operator console
+
+当前仓库已经有：
+
+- CLI
+- API
+- TUI
+- Web UI
+
+但当前 Web UI 是内联 HTML string 构造的 operator console，定位也明确不是 chat-style workbench。
+
+这本身不是问题，问题在于：
+
+- 当前没有真正的 `IntentSession`
+- 没有 plan clarify / revise / approve 的统一对象
+- 没有会话态与运行态的正式分离
+- 没有事件流式更新面
+- 没有把 natural-language goal entry 扩展成真正的 interaction plane
+
+因此当前系统可以说是：
+
+> “后端已具备自然语言入口的部分基础，但产品交互平面还没有真正建立”。
+
+## 4.6 关键问题六：automation plane 尚未形成
+
+README、freeze review 与代码都表明：
+
+- lifecycle 很明确
+- repair 也有
+- inspection 也有
+
+但当前依然缺一个真正的 background controller / automation plane，去处理：
+
+- stale run watcher
+- waiting review timeout
+- auto-resume trigger
+- event-driven next step
+- schedule-driven orchestration
+- background reconciliation jobs
+- queue / trigger / long job control
+
+这会直接阻碍后续产品化，因为真正的 agent platform 不能长期依赖前台人工按钮推进。
+
+## 4.7 关键问题七：memory plane 还是 kernel primitive，不是产品级记忆系统
+
+当前 memory 设计很清晰，但更多是：
+
+- run-derived candidates
+- manual materialization
+- retrieval preview
+- compile-time injection
+
+这很有价值，但还不是一个完整的产品级记忆体系。  
+仍然缺少：
+
+- session memory
+- project memory
+- artifact memory
+- role-scoped memory policy
+- promotion / compaction / TTL / summarization policy
+
+因此 memory 已经起步，但还不能承载未来“对话工作台 + 长任务 + 多角色复用知识”的目标。
+
+## 4.8 关键问题八：当前 open debt 为空，但“过渡期结构债”客观存在
+
+`docs/tech-debt-registry.md` 的 open debt 为空，这在“已清掉既有核心债”的狭义上是合理的。  
+但从第二轮重评看，仍然客观存在一类新的债：
+
+- 平台边界债
+- 语义诚实性债
 - orchestration abstraction debt
-- packaging / extension-model debt
-- autonomous-controller debt
+- interaction-plane debt
+- automation-plane debt
+- capability-runtime unification debt
 
-This should be recorded explicitly in the next phase.
-
-Severity: **Medium-High**
-
----
-
-## 7. External framework comparison and architectural implication
-
-The best future path is **hybrid absorption**, not framework replacement.
-
-## 7.1 LangGraph
-
-Useful lessons:
-
-- durable checkpointing
-- interrupt/resume semantics
-- graph/state-first execution model
-- thread/checkpoint separation
-
-Implication for this repo:
-
-- LangGraph is a good **lane/runtime backend** and a useful reference model for durable agent execution.
-- It should **not** replace the repo’s core kernel and governance model.
-
-## 7.2 OpenAI Agents SDK
-
-Useful lessons:
-
-- clean distinction between code-orchestrated flow and model-driven orchestration
-- handoffs vs agents-as-tools
-- built-in tracing patterns
-- explicit conversation/run orchestration guidance
-
-Implication:
-
-- very valuable as a reference for **interaction-plane and multi-agent collaboration design**
-- not a substitute for the repo’s local-first kernel, governance, or scheduler-authority model
-
-## 7.3 AutoGen
-
-Useful lessons:
-
-- async, event-driven, distributed agent runtime
-- teams / handoffs / routed agents / actor-like structure
-- explicit distributed-agent thinking
-
-Implication:
-
-- strong reference for future distributed role-runtime or cross-node multi-agent coordination
-- should inform role-runtime architecture, not replace the current domain kernel wholesale
-
-## 7.4 CrewAI
-
-Useful lessons:
-
-- crews + flows split
-- event-driven workflow framing
-- operational automation packaging
-- enterprise automation UX direction
-
-Implication:
-
-- good reference for future workflow authoring/product UX
-- should not drive a premature rewrite of the existing kernel
-
-## 7.5 MCP
-
-Useful lessons:
-
-- clean separation between tools, resources, prompts
-- client/server capability negotiation
-- standardized protocol boundary
-
-Implication:
-
-- MCP should be an important part of the **general external capability integration layer**
-- MCP should **not** be treated as the entire platform abstraction; it is one boundary, not the only boundary
-
-## 7.6 Temporal / Prefect / Trigger.dev
-
-Useful lessons:
-
-- durable background workflows
-- long-running job supervision
-- managed queues / schedules / triggers / automation loops
-- live status and operational monitoring
-
-Implication:
-
-- very relevant for the repo’s missing background-controller / automation plane
-- these systems are more directly analogous to the repo’s future automation-control needs than to its inner review/evidence kernel
-
-### Conclusion from framework comparison
-
-The right strategic choice is:
-
-> Keep the current kernel. Generalize its abstractions. Borrow proven patterns. Avoid rewriting the project around any single external framework.
+这些不应再被写成“未来想法”，而应进入显式债务/阶段规划。
 
 ---
 
-## 8. Readiness assessment by dimension
+## 5. 当前 readiness 判断（第二轮版）
 
-| Dimension | Assessment | Notes |
+| 维度 | 评价 | 第二轮判断 |
 |---|---|---|
-| Core lifecycle kernel | Strong | compile/recompile/resume/review/repair are real |
-| Governance & auditability | Strong | review policies, audit reports, replay, inspection are already valuable |
-| Operator observability | Strong | status, packets, operator view, web UI, TUI all exist |
-| Capability integration baseline | Medium-Strong | descriptors, health, projection, MCP, worker pools exist |
-| External execution boundary | Medium-Strong | worker pools and scheduler authority are credible baselines |
-| General orchestration substrate | Medium | current baseline is real, but not yet generalized enough |
-| Dynamic role system | Weak | not first-class yet |
-| Natural-language workbench UX | Weak | backend hints exist, product surface does not |
-| Background automation / long-running control loops | Weak-Medium | not yet first-class |
-| Ecosystem / packaging model | Medium-Weak | seeds and skill export exist, but packaging architecture is still early |
-| Safe self-upgrade path | Weak | evaluation and repair exist, but self-improvement loop is not yet platformized |
+| 生命周期内核 | 强 | 已超过原型，值得保留 |
+| 治理/审计/回放 | 强 | 是仓库最大的长期资产之一 |
+| operator 可观测性 | 强 | read model 很成熟 |
+| repo mutation | 中强 | 方向非常好，但应升格成正式平台任务族 |
+| capability plane | 中强 | 已有平台雏形，但健康与统一执行契约不足 |
+| orchestration substrate | 中 | baseline 可用，但未抽象为真正 graph engine |
+| 多 agent 角色系统 | 中弱 | 有固定 baseline，无正式 role runtime |
+| 即时角色生成 | 弱 | 基本还未进入平台层 |
+| NL workbench | 弱 | 当前仍是 operator-first，不是 interaction-first |
+| automation plane | 弱 | 几乎还未成立为独立层 |
+| distributed control plane 真实性 | 中弱 | 当前更像单存储上的 quorum modeling，不应过度表述 |
+| 生态/扩展模型 | 中弱 | domain pack / skill export 是起点，不是成熟生态系统 |
+| 自我迭代升级 | 弱 | inspection / replay / repair 很好，但升级闭环尚未平台化 |
 
 ---
 
-## 9. Overall verdict
+## 6. 对根目录既有三份 M31 文档的回看结论
 
-### 9.1 What this project is now
+根目录既有三份 M31 文档的总体方向是对的，尤其是：
 
-Today, `universalworkflow` is best described as:
+- “先平台化整理，再进入产品化/生态扩张”
+- “保持本地优先内核”
+- “不要被某个外部框架整体替代”
+- “要抽出 orchestration / interaction / capability / automation 平面”
 
-> **A local-first agentic execution and governance kernel with real operator control, strong lifecycle semantics, and an emerging platform architecture.**
+这些判断都应保留。
 
-### 9.2 What it is not yet
+但本轮重评认为需要补强两点：
 
-It is not yet:
+### 6.1 要把“语义诚实性”提升为显式主题
 
-- a fully generalized multi-agent orchestration platform
-- a polished natural-language workbench
-- a mature ecosystem platform with stable extension packs
-- a safe self-improving autonomous engineering system
+尤其是 scheduler authority / multi-control-plane 这一块，要更明确区分：
 
-### 9.3 What the next phase should be
+- 已实现的 ownership / fencing / lineage / projection
+- 尚未达到的真正对等复制式共识能力
 
-The next phase should be:
+### 6.2 要把“operator-ready ≠ product-ready”写得更重
 
-> **M31: architecture hardening, protocol unification, orchestration generalization, and interaction-plane/product-plane construction.**
+当前 operator surface 已经很强，这容易造成误判，以为“产品已经很接近完成”。  
+实际上：
 
-### 9.4 Final judgment
-
-This repository is worth pushing forward.
-
-But the path forward should be disciplined:
-
-- **do not** broaden first
-- **do not** rewrite the kernel into someone else’s framework
-- **do not** confuse operator maturity with product maturity
-- **do** formalize the internal platform boundaries now
-- **do** make orchestration, role definition, interaction sessions, and capability invocation first-class architecture objects
-- **do** prepare the system for productization and ecosystem growth by reducing implicit coupling before adding more surface area
-
-In short:
-
-> The repo has earned the right to become a serious platform. It has **not** yet earned the right to skip the platform-refactor step.
+- operator control 很成熟
+- 产品交互面仍未完成
+- automation 面仍未完成
+- 多角色平台抽象仍未完成
 
 ---
 
-## 10. Recommended decision
+## 7. 最终判断
 
-Proceed to the next phase only under this framing:
+## 7.1 这不是一个需要推倒重写的项目
 
-- phase type: **bounded architecture/product hardening**
-- goal: **turn the current kernel into a stable platform substrate**
-- success condition: **the project can support humans, agents, and external systems through clean contracts rather than through one giant service surface**
+恰恰相反，这个仓库的长期价值主要来自它已经沉淀出的：
 
-That is the highest-value move available from the current state.
+- lifecycle
+- review policy
+- audit/replay
+- ownership model
+- mutation control
+- operator projection
+
+这些都不应该推倒。
+
+## 7.2 但它也绝对不应该直接跳到“大规模产品化 / 生态扩张 / 自主升级”
+
+如果现在直接进入：
+
+- 大量 provider 扩张
+- 大量 domain / role pack 扩张
+- workbench 产品化
+- 自动化控制 / 自主升级
+- 更强的 distributed execution 宣传与承诺
+
+而不先把边界收束，会很容易形成：
+
+- 语义超卖
+- 平台耦合
+- 交互复杂而难用
+- capability/runtime contract 混乱
+- 后续演化成本急剧上升
+
+## 7.3 第二轮重评的最终建议
+
+> **M31 仍然应该被视为平台硬化阶段，而且要比第一轮评估写得更收紧。**
+
+推荐的下一阶段定位是：
+
+> **M31：平台边界收口 + 语义诚实性修正 + 通用编排抽象 + 交互面/自动化面建立**
+
+在此之前：
+
+- 不建议广度优先
+- 不建议平台宣传超前于实现
+- 不建议继续让 `OrchestratorService` 成为唯一真实中心
+- 不建议把当前 scheduler authority 直接等同于成熟的分布式共识系统
+
+---
+
+## 8. 一句话结论
+
+如果用一句话概括本轮重评：
+
+> 这个仓库已经拥有一个足够强的控制平面内核，但还没有完成从“强内核”到“强平台”的最后一次关键跃迁；而这次跃迁，必须先于产品化和生态扩张发生。

@@ -1,433 +1,359 @@
-# M31+ Future Implementation Plan
+# M31+ 未来实现方案（覆盖更新版）
 
-Date: 2026-04-21  
-Status: Proposed architecture blueprint  
-Purpose: define the future implementation direction after current-state remediation, with emphasis on multi-agent collaboration, fixed roles, dynamic roles, orchestration, natural-language interaction, external capability integration, self-improvement, engineering execution, and usability
-
----
-
-## 1. Design target
-
-The future version of `universalworkflow` should not be framed as “a workflow runner with some agent features.”
-
-It should be framed as:
-
-> **A local-first agentic engineering and operations platform made of three cooperating products:**
->
-> 1. a deterministic control plane
-> 2. a conversational / guided interaction workbench
-> 3. a pluggable execution and capability runtime
-
-This future system must work well for three classes of callers:
-
-- **humans**: product builders, operators, reviewers, developers
-- **agents**: planners, researchers, coders, reviewers, monitors, domain specialists
-- **external systems**: APIs, worker pools, schedulers, IDEs, CI, MCP hosts, future SaaS surfaces
-
-And it must support three modes of execution:
-
-1. **deterministic workflow mode**  
-   good for auditable, fixed, policy-heavy workflows
-
-2. **agent-assisted workflow mode**  
-   good for bounded reasoning inside a code-owned orchestration shell
-
-3. **delegated specialist mode**  
-   good for dynamic role spawning, distributed execution, and specialized sessions when properly governed
+日期：2026-04-21  
+状态：未来实现蓝图 / 覆盖更新版  
+目标：基于第二轮评估与当前阶段问题解决方案，给出面向 M32~M36 的系统实现方案，覆盖多 agent 协同、固定角色、即时角色生成、自动化编排、外部能力接入、自然语言交互、通用能力接入、自我迭代升级、任意工程开发、易用性设计等核心关注点。
 
 ---
 
-## 2. Core architectural thesis
+## 0. 未来目标：这个系统最终应该长成什么
 
-The best future architecture is **not** “let the strongest model run everything.”
+这个项目未来不应该只是：
 
-The best future architecture is:
+- 一个 workflow runner
+- 一个多 agent demo
+- 一个 CLI 包着几个 adapter
+- 一个只能给 operator 用的本地工具
 
-> **Code-owned outer control, contract-owned state, model-owned bounded cognition, and operator-owned final governance.**
+它更合理的最终定位是：
 
-That means:
+> **一个本地优先的 agentic engineering / operations platform**  
+> **一个以控制平面为内核、以工作台为交互层、以能力运行时为执行层的平台系统。**
 
-- state transitions remain explicit
-- orchestration is compiled and inspectable
-- models can plan and execute within bounded nodes
-- tool and capability access is contract-governed
-- review, budget, risk, and trust decisions remain part of the control plane
-- natural-language interaction sits on top of the control plane rather than bypassing it
+未来成熟形态必须同时服务三类主体：
 
-This is the architecture most likely to maximize:
+### 1）人
+- 操作员
+- 开发者
+- 产品经理
+- 审核者
+- 终端用户
 
-- reliability
-- extensibility
-- debuggability
-- operator trust
-- future productization
+### 2）agent
+- planner
+- architect
+- researcher
+- coder
+- tester
+- reviewer
+- monitor
+- release manager
+- 临时生成的专业角色
+
+### 3）外部系统
+- worker pool
+- MCP servers
+- IDE / CI / repo connector
+- scheduling / automation backends
+- future hosted execution surfaces
 
 ---
 
-## 3. Proposed reference architecture
+## 1. 总体设计原则
 
-The future platform should be organized into **seven planes**.
+未来方案必须长期坚持下面几条原则。
+
+## 1.1 外层控制权归代码，局部认知权归模型
+
+这意味着：
+
+- lifecycle transition 归代码
+- review / budget / mutation / trust boundary 归代码
+- graph compile / schedule 归代码
+- model 可以参与：
+  - 计划生成
+  - 角色推断
+  - 子任务执行
+  - 局部决策
+- 但 model 不应无边界接管整个系统
+
+## 1.2 状态必须显式，不能重新退回“全靠 prompt 上下文”
+
+当前仓库最大的优势之一就是显式状态和显式证据。  
+未来必须继续保留：
+
+- state refs
+- attempts
+- claims / leases
+- snapshots
+- evidence
+- review history
+- simulation / eval / repair lineage
+
+## 1.3 多 agent 协同应由“拓扑”定义，而不是由 prompt 临时发挥
+
+也就是：
+
+- 平台决定拓扑
+- 模型在拓扑内工作
+- agent 是角色，不是随意漂移的人格
+
+## 1.4 capability 接入必须统一契约
+
+任何工具、任何 worker、任何 sessionful runtime、任何 hosted backend，都必须进入同一 capability runtime family。
+
+## 1.5 自主升级必须是受控闭环，而不是开放式自修改
+
+当前 inspection / repair / replay 很强，但未来自迭代必须通过：
+
+- eval
+- canary
+- upgrade proposal
+- human or policy gate
+- promotion decision
+
+形成受控闭环。
+
+---
+
+## 2. 未来参考架构
+
+建议未来平台分成七个平面：
 
 ```text
-+--------------------------------------------------------------+
-|  Interaction Plane                                            |
-|  chat/workbench | guided launch | operator UI | CLI | SDK     |
-+--------------------------------------------------------------+
-|  Planning & Orchestration Plane                               |
-|  intent -> plan -> graph compile -> schedule -> supervise     |
-+--------------------------------------------------------------+
-|  Role System Plane                                            |
-|  fixed roles | dynamic roles | role registry | role factory   |
-+--------------------------------------------------------------+
-|  Capability Runtime Plane                                     |
-|  adapters | MCP | worker pools | sessions | remote runtimes   |
-+--------------------------------------------------------------+
-|  Memory & Knowledge Plane                                     |
-|  session memory | run memory | artifact memory | skill memory |
-+--------------------------------------------------------------+
-|  Governance & Observability Plane                             |
-|  policy | audit | replay | evals | trace | repair | budgets   |
-+--------------------------------------------------------------+
-|  Kernel / Control Plane                                       |
-|  lifecycle | snapshots | claims | leases | scheduler truth    |
-+--------------------------------------------------------------+
++------------------------------------------------------------+
+| Interaction Plane                                          |
+| chat / workbench / guided launch / operator UI / SDK       |
++------------------------------------------------------------+
+| Planning & Orchestration Plane                             |
+| intent -> plan -> graph compile -> schedule -> supervise   |
++------------------------------------------------------------+
+| Role System Plane                                          |
+| fixed roles / generated roles / role registry / runtime    |
++------------------------------------------------------------+
+| Capability Runtime Plane                                   |
+| adapters / MCP / worker pools / sessions / hosted runtime  |
++------------------------------------------------------------+
+| Memory & Knowledge Plane                                   |
+| session / run / artifact / skill / policy memory           |
++------------------------------------------------------------+
+| Governance & Evolution Plane                               |
+| policy / audit / replay / eval / repair / promotion        |
++------------------------------------------------------------+
+| Kernel / Control Plane                                     |
+| lifecycle / snapshots / claims / leases / scheduler truth  |
++------------------------------------------------------------+
 ```
 
-The key idea is that the planes are layered, but not siloed.
+### 这七层之间的关系
 
-- the kernel provides truth
-- governance inspects and constrains truth
-- memory augments context
-- capability runtime executes work
-- role system determines who/what acts
-- orchestration decides in what order and structure things happen
-- interaction plane makes it usable
-
----
-
-## 4. Canonical platform objects
-
-To make the architecture stable, the future system should revolve around a small set of canonical objects.
-
-## 4.1 Interaction objects
-
-- `IntentSession`
-- `IntentPacket`
-- `ClarificationState`
-- `PlanDraft`
-- `LaunchDecision`
-- `ConversationTurn`
-- `FollowupRequest`
-
-These objects represent what the user is trying to do, how the system clarified it, and what approved plan led to execution.
-
-## 4.2 Orchestration objects
-
-- `ExecutionGraph`
-- `NodeSpec`
-- `EdgeSpec`
-- `BarrierSpec`
-- `ReducerSpec`
-- `ApprovalGateSpec`
-- `RetryPolicy`
-- `WatchdogPolicy`
-
-These objects represent the structure of work.
-
-## 4.3 Role objects
-
-- `RoleTemplate`
-- `RoleSpec`
-- `RoleAssignment`
-- `RoleExecutionContext`
-- `RoleTerminationRule`
-- `RoleEvaluationRubric`
-
-These objects represent who is allowed to act and under what constraints.
-
-## 4.4 Capability objects
-
-- `CapabilityDescriptor`
-- `CapabilitySelection`
-- `CapabilityInvocationEnvelope`
-- `CapabilityExecutionReceipt`
-- `ToolProjectionManifest`
-- `CapabilityTrustPolicy`
-- `SandboxProfile`
-
-These objects make every backend capability look structurally coherent to the platform.
-
-## 4.5 Memory objects
-
-- `SessionMemoryItem`
-- `RunMemoryItem`
-- `ArtifactMemoryItem`
-- `SkillMemoryItem`
-- `MemoryRetrievalPlan`
-- `MemoryPromotionRule`
-
-These objects let memory become a product subsystem instead of a side utility.
-
-## 4.6 Governance and evolution objects
-
-- `EvalScenario`
-- `EvalReport`
-- `RepairPlan`
-- `UpgradeProposal`
-- `CanaryPolicy`
-- `PromotionDecision`
-
-These objects make self-improvement and controlled evolution explicit.
+- **Kernel** 提供可审计的真相
+- **Governance** 约束真相并驱动安全演进
+- **Memory** 为角色与交互提供可控上下文
+- **Capability Runtime** 提供真正执行能力
+- **Role System** 决定谁来做什么
+- **Planning & Orchestration** 决定任务如何被拆解和编排
+- **Interaction Plane** 决定人如何舒服地使用这一切
 
 ---
 
-## 5. Multi-agent collaboration model
+## 3. 多 agent 协同的总体实现方案
 
-The collaboration model should support multiple patterns, but one default philosophy should dominate:
+多 agent 协同不应只有一种模式，未来应支持多种协同拓扑，但默认模式必须清楚。
 
-> **The platform chooses the collaboration topology; the model fills in bounded decisions inside that topology.**
+## 3.1 默认拓扑：Manager-as-code
 
-### 5.1 Supported collaboration patterns
+未来最推荐的默认拓扑不是“让最强模型自己拉很多 agent”，而是：
 
-The future platform should support at least these patterns.
+> **graph / scheduler / policy / budgets 由代码控制，agent 在图节点内部作为 bounded specialist 工作。**
 
-#### Pattern A — Manager-as-code
+适用场景：
 
-- the graph and flow are determined by code / compiled plan
-- specialist agents are used as bounded executors
-- good for predictable and high-governance workflows
+- 工程开发
+- 受控 repo mutation
+- 审核敏感流程
+- 企业工作流
+- 需要回放、重试、repair、可审计的任务
 
-This should be the default for engineering, release, mutation, and policy-sensitive flows.
+优点：
 
-#### Pattern B — Specialists-as-tools
+- 最稳定
+- 最容易加治理
+- 最适合与当前仓库的 control-plane 优势结合
 
-- a manager agent owns the final answer
-- specialist agents are wrapped as tools
-- good when the user should keep talking to one primary agent
+## 3.2 交互工作台拓扑：Specialists-as-tools
 
-This is the best default for conversational workbench UX.
+对于未来的自然语言工作台，默认更适合：
 
-#### Pattern C — Handoff / routed-specialist mode
+> 一个主对话 agent 作为 manager，其他 specialist 以 tool 形式挂入。
 
-- one agent transfers the active role to another
-- good for support-like flows or domain-specialist deep dives
-- should be opt-in, not the global default
+适用场景：
 
-#### Pattern D — Parallel map / reducer mode
+- 用户想持续对话，不想被“切来切去”
+- planner / researcher / reviewer 等专业能力需要被调用，但不想直接变成主会话主体
 
-- multiple roles execute concurrently
-- outputs are reduced, reviewed, or merged
-- good for research, code + test, multi-perspective review, and batch execution
+优点：
 
-#### Pattern E — Reviewer quorum / debate mode
+- UX 更自然
+- 角色仍然可控
+- 很适合吸收 OpenAI Agents SDK 的 agents-as-tools 模式
 
-- several reviewers or evaluators inspect the same output
-- a stronger consolidator or explicit reducer combines their outputs
-- should be used when false positives / false negatives matter
+## 3.3 深专业协作拓扑：Handoff / Routed Specialist
 
-### 5.2 Anti-loop policy
+某些场景需要从一个 agent 真的切到另一个 specialist。  
+这时才使用 handoff / routed specialist。
 
-Every collaboration mode should be bounded by:
+适用场景：
 
-- max iterations
-- max tool iterations
-- time budget
-- token budget
-- max handoffs
-- escalation conditions
-- stall detection
-- watchdog kill / reroute
+- 深领域专员接管
+- 长时间上下文切换
+- support/ops 风格的专门协作
 
-This is where the current monitor/operator idea becomes important. The platform should have a **first-class monitor role** and a **watchdog policy** that can:
+原则：
 
-- interrupt low-progress loops
-- request clarification
-- downgrade to deterministic path
-- switch models
-- escalate to human review
+- 这应该是 **opt-in**
+- 不应该成为整个系统的默认交互模式
+
+## 3.4 并行协作拓扑：Parallel Map / Reducer
+
+未来系统必须系统化支持：
+
+- 多 researcher 并行
+- coder + tester 并行
+- reviewer quorum 并行
+- 多视角分析并行
+
+输出通过 reducer / evaluator / reviewer 聚合。
+
+这与当前 `project_delivery` 的 barrier 基线高度兼容，应被正式推广。
+
+## 3.5 审核型拓扑：Reviewer Quorum / Debate
+
+对于高风险产物或重要决策，未来应支持：
+
+- 多 reviewer 并行审查
+- 大 reviewer / reducer 汇总
+- 必要时引入 human gate
+
+这种模式尤其适合：
+
+- release readiness
+- architecture decision
+- security-sensitive mutation
+- 自主升级 proposal 审批
+
+## 3.6 监控型拓扑：Monitor / Watchdog
+
+未来系统必须有“非生产角色”的 agent：
+
+- 不是写代码
+- 不是给答案
+- 而是监控执行与检测 drift / loop / stall
+
+这一角色负责：
+
+- 发现低进度循环
+- 发现角色输出 drift
+- 发现预算过快消耗
+- 触发 reroute / downgrade / escalate
+- 对接 automation controller
 
 ---
 
-## 6. Fixed role system
+## 4. 固定 agent 角色设计
 
-The future system should have a small, well-designed set of fixed core roles.
+未来应形成一套稳定、可复用、可治理的 fixed role registry。
 
-These roles are not prompts only. They should be part of the platform contract.
+## 4.1 核心固定角色
 
-## 6.1 Mandatory core roles
+### Planner
+职责：
+- 将用户意图转成 plan draft / graph candidate
+- 明确目标、范围、约束、风险
 
-### 1. Planner
+### Architect
+职责：
+- 把 plan 进一步转成技术拆解
+- 输出边界、依赖、执行顺序、接口要点
 
-Purpose:
+### Researcher
+职责：
+- 读取仓库、外部资料、历史 evidence、已有 memory
+- 给出证据与不确定性说明
 
-- transform intent into an execution graph or draft plan
+### Coder
+职责：
+- 在 mutation contract 下执行工程实现
+- 输出 patch / artifact / code delta
 
-Inputs:
+### Tester / Verifier
+职责：
+- 执行验证、测试、重现实验、lint、环境检查
+- 输出可复现证据
 
-- goal
-- constraints
-- domain context
-- policy rules
-- available capabilities
+### Reviewer
+职责：
+- 审核需求匹配度、质量、风险、可维护性
+- 输出 verdict / issue list / severity
 
-Outputs:
+### Policy Guardian
+职责：
+- 负责 trust / mutation / capability / budget / review policy 约束
+- 决定允许 / 拒绝 / 延迟 / 升级
 
-- plan draft
-- graph candidate
-- capability assumptions
-- risk notes
+### Monitor / Operator Agent
+职责：
+- 监控运行健康度
+- 发现 stall / loop / drift
+- 触发 automation / escalation
 
-### 2. Architect
+### Release Manager
+职责：
+- 收口成果
+- 生成发布/关闭/交付 packet
+- 做 ship/no-ship 准备
 
-Purpose:
+## 4.2 领域角色
 
-- turn plan into technical decomposition
-- define boundaries, interfaces, and sequencing
+未来 domain pack 可以引入领域角色，例如：
 
-Outputs:
+- Security Reviewer
+- Infra Operator
+- Product Spec Writer
+- Data Migration Specialist
+- Performance Analyst
+- Localization Specialist
+- Narrative / Content Specialist
 
-- technical task breakdown
-- dependency graph
-- implementation notes
-- risk hotspots
+原则：
 
-### 3. Retriever / Researcher
-
-Purpose:
-
-- collect relevant repo context, docs, external context, or prior artifacts
-
-Outputs:
-
-- evidence bundle
-- uncertainty report
-- cited context set
-
-### 4. Coder
-
-Purpose:
-
-- perform implementation work inside bounded mutation or artifact contracts
-
-Outputs:
-
-- patch / artifact / code change / generated files
-- self-report of assumptions and changed scope
-
-### 5. Tester / Verifier
-
-Purpose:
-
-- run checks, tests, reproduction flows, linting, validation scripts
-
-Outputs:
-
-- verification result
-- failing cases
-- reproducibility notes
-
-### 6. Reviewer
-
-Purpose:
-
-- judge output quality, requirement fit, safety, maintainability, and risk
-
-Outputs:
-
-- verdict
-- issues
-- severity
-- recommended next step
-
-### 7. Policy Guardian
-
-Purpose:
-
-- enforce trust, capability, mutation, review, and budget rules
-
-Outputs:
-
-- allow/deny/defer decisions
-- policy deltas
-- escalation triggers
-
-### 8. Monitor / Operator Agent
-
-Purpose:
-
-- observe live execution and detect stalls, loops, or drift
-
-Outputs:
-
-- interventions
-- reroute requests
-- health summaries
-- escalation signals
-
-### 9. Release Manager
-
-Purpose:
-
-- package results, summarize readiness, prepare ship/no-ship decisions
-
-Outputs:
-
-- release packet
-- readiness checklist
-- post-run summary
-
-## 6.2 Optional domain roles
-
-Later, domain packs can contribute optional roles such as:
-
-- security reviewer
-- product spec writer
-- infra operator
-- data migration specialist
-- localization specialist
-- performance analyst
-- game-design / narrative / content specialist
-
-These should plug into the same role contract rather than inventing new execution semantics.
+- 领域角色必须仍然服从统一 `RoleSpec`
+- 不允许每个 pack 自造运行语义
 
 ---
 
-## 7. Dynamic role generation system
+## 5. 即时 agent 角色生成方案
 
-The fixed roles above are necessary, but not sufficient.
+这是未来方案中最关键的增量能力之一。
 
-The platform also needs **即时 agent 角色生成** — dynamic role creation — because many real workflows need short-lived specialists.
+## 5.1 总原则
 
-## 7.1 Dynamic role generation principle
+即时生成角色必须满足五个条件：
 
-A generated role should be:
+1. **临时性**：默认只服务于当前 session / plan / graph  
+2. **结构化**：生成结果必须落成 `RoleSpec`，而不是只是一段 prompt  
+3. **边界化**：必须带 capability、memory、repo scope、budget、termination rule  
+4. **可审计**：operator 与 audit packet 中必须可见  
+5. **可淘汰/可晋升**：好角色可以晋升为模板，差角色必须被回收
 
-- **ephemeral**: scoped to one plan/graph/session unless explicitly promoted
-- **typed**: created from a stable `RoleSpec`, not from freeform text only
-- **bounded**: limited by tools, reposcope, trust, time, and stop rules
-- **reviewable**: visible to operator and to audit products
-- **cacheable**: reusable through template promotion if it performs well
+## 5.2 角色工厂（Role Factory）
 
-## 7.2 Role factory input
-
-The `RoleFactory` should take structured inputs such as:
+建议实现 `RoleFactory`，输入包括：
 
 - objective gap
-- required deliverable type
+- deliverable type
 - domain
 - risk tier
 - required capabilities
-- expected interaction style
-- max autonomy level
+- preferred collaboration mode
+- autonomy level
 - review requirement
 - budget envelope
 
-## 7.3 Role factory output
-
-The output should be a `RoleSpec` like:
+输出 `RoleSpec`，至少包含：
 
 - `role_id`
-- `role_kind` (`fixed`, `generated`, `promoted_template`)
+- `role_kind`（fixed / generated / promoted_template）
 - `name`
 - `objective`
 - `success_criteria`
@@ -441,37 +367,49 @@ The output should be a `RoleSpec` like:
 - `preferred_models`
 - `visibility_level`
 
-## 7.4 Generated role lifecycle
+## 5.3 生成角色的运行生命周期
 
-A generated role should follow a lifecycle:
+建议统一生命周期：
 
 1. proposed
-2. accepted into graph
-3. executed
+2. accepted_into_graph
+3. executing
 4. evaluated
 5. archived
-6. optionally promoted to reusable template
+6. optionally_promoted
 
-### Promotion rule
+## 5.4 角色晋升规则
 
-A generated role should only become a reusable template if:
+生成角色只有在满足以下条件时才允许晋升为模板：
 
-- it performs repeatedly well
-- its capability set is safe and understandable
-- its outputs are predictable enough
-- its audit trail is strong enough to justify reuse
-
-This prevents the platform from becoming an ungoverned pile of emergent personas.
+- 多次表现稳定
+- capability 使用边界清晰
+- 失败模式可解释
+- audit / replay / eval 证据充分
+- 与现有 fixed roles 不重复或明显更优
 
 ---
 
-## 8. Automated orchestration system
+## 6. 自动化流程编排方案
 
-The future orchestration engine should compile work into explicit graph nodes.
+## 6.1 通用 graph engine
 
-## 8.1 Required node types
+未来编排必须建立在正式的 graph engine 上，而不是继续扩特例 flow。
 
-At minimum, the engine should support:
+建议正式对象：
+
+- `ExecutionGraph`
+- `NodeSpec`
+- `EdgeSpec`
+- `BarrierSpec`
+- `ReducerSpec`
+- `ApprovalGateSpec`
+- `RetryPolicy`
+- `WatchdogPolicy`
+
+## 6.2 必备 node type
+
+至少应支持：
 
 - `AgentNode`
 - `ToolNode`
@@ -487,72 +425,66 @@ At minimum, the engine should support:
 - `ScheduleNode`
 - `BranchDecisionNode`
 
-## 8.2 Graph compilation path
+## 6.3 graph 来源
 
-The graph compiler should support three sources:
+未来 graph 应支持三种来源：
 
-### Source A — fixed templates
-
-For stable flows like:
-
+### 固定模板 graph
+适用于：
 - feature delivery
 - guarded delivery
-- project delivery
 - release prep
 - incident investigation
 
-### Source B — plan-derived compilation
+### planner 推导 graph
+planner 输出 plan draft，compiler 变成 graph
 
-A planner outputs a structured draft; the compiler turns it into an explicit execution graph.
+### hybrid graph
+从固定模板出发，运行中注入 generated role / dynamic branch
 
-### Source C — dynamic hybrid graph
+## 6.4 graph 运行时控制
 
-The graph starts from a template, then injects generated roles or branches based on runtime conditions.
+编排引擎要显式区分：
 
-## 8.3 Scheduling and control
-
-The orchestration engine should separate:
-
-- graph compilation
-- graph scheduling
-- node execution
+- graph compile
+- graph validate
+- graph persist
+- graph schedule
+- node execute
 - graph supervision
 - graph repair
 
-That makes it possible to add:
+这样后续加：
 
-- background execution
-- distributed workers
-- queue-based execution
-- canary execution
-- replay and re-fork
+- queue
+- schedule
+- remote worker
+- human gate
+- automation controller
 
-without redesigning the graph language each time.
+不会再导致 graph 模型反复变形。
 
 ---
 
-## 9. General external capability integration
+## 7. 通用外部能力接入方案
 
-The platform should treat all external execution capabilities as members of one governed family.
+## 7.1 未来 capability runtime 应统一覆盖的能力类型
 
-## 9.1 Integration categories
+1. built-in tools  
+2. MCP tools / resources / prompts  
+3. local process adapters  
+4. external worker pools  
+5. sessionful external runtimes  
+6. hosted model/provider runtimes  
+7. IDE / repo / browser / CI connectors  
+8. long-running background job backends  
 
-The system should support at least these categories:
+## 7.2 统一 capability contract
 
-1. built-in tools
-2. MCP tools/resources/prompts
-3. local process adapters
-4. external worker pools
-5. sessionful external runtimes
-6. hosted model/provider runtimes
-7. IDE / repo / browser / CI connectors
-8. long-running background jobs
-
-## 9.2 Unified capability contract
-
-Every integration should project into the same logical structure:
+所有外部能力都应投影到同一套结构：
 
 - identity
+- provider kind
 - transport
 - auth mode
 - trust tier
@@ -561,24 +493,27 @@ Every integration should project into the same logical structure:
 - timeout budget
 - review requirement
 - evidence schema
-- observability hooks
 - sandbox profile
+- runtime health state
+- tracing hooks
 
-## 9.3 MCP’s role in the future architecture
+## 7.3 MCP 的定位
 
-MCP should be used for what it is good at:
+MCP 非常重要，但不能误用。
 
-- standardizing tool exposure
-- standardizing resources and prompts
-- reducing connector fragmentation
+未来应把 MCP 看成：
 
-But the platform should **not** reduce all execution architecture to MCP alone.
+- 一个非常强的标准化 capability boundary
+- 特别适合 tools / resources / prompts 统一暴露
 
-MCP is one excellent boundary. It is not the whole platform.
+但不应该把整个系统都“缩成 MCP”。
 
-## 9.4 Capability SDK / registration path
+MCP 是能力接入协议之一，  
+不是 lifecycle、governance、automation、orchestration 的全部替代物。
 
-The future platform should offer a clean registration model for capabilities, for example:
+## 7.4 capability SDK
+
+建议未来提供正式注册入口：
 
 - `register_tool_capability()`
 - `register_worker_pool()`
@@ -586,354 +521,295 @@ The future platform should offer a clean registration model for capabilities, fo
 - `register_mcp_profile()`
 - `register_role_pack_capabilities()`
 
-This will make ecosystem expansion sane later.
+这样后续生态扩展才不会变成直接改核心代码。
 
 ---
 
-## 10. Natural-language human-computer interaction
+## 8. 自然语言人机交互方案
 
-The future platform needs a **true NL interaction plane**, not just goal-to-run launch helpers.
+## 8.1 interaction plane 目标
 
-## 10.1 The NL flow should be stateful
+未来系统真正面向人的主入口，应是一套有状态工作台，而不是只靠 operator console + launch endpoint。
 
-The ideal interaction loop is:
+建议核心对象：
 
-1. user states goal
-2. system clarifies ambiguity
-3. system proposes plan / graph / risk / capability assumptions
-4. user approves, edits, or narrows scope
-5. system launches execution
-6. system streams progress, evidence, and issues
-7. user issues follow-up instructions in natural language
-8. system maps them to structured changes or new graph branches
+- `IntentSession`
+- `IntentPacket`
+- `ClarificationState`
+- `PlanDraft`
+- `LaunchDecision`
+- `ConversationTurn`
+- `RunFollowupRequest`
 
-## 10.2 Conversation state vs execution state
+## 8.2 标准交互流程
 
-These must remain separate.
+未来标准流应是：
 
-- **conversation state** is for interaction continuity
-- **execution state** is for run truth and replay
+1. 用户提出目标  
+2. 系统识别歧义并做澄清  
+3. 系统输出 plan / graph / risk / capability preview  
+4. 用户批准 / 修改 / 缩小范围  
+5. 系统执行  
+6. 系统流式回传状态 / 证据 / 问题  
+7. 用户追加 follow-up  
+8. 系统把 follow-up 映射到 graph change / reroute / branch / review request  
 
-They should reference each other, but not collapse into one object.
+## 8.3 conversation state 与 execution state 分离
 
-## 10.3 Product surface modes
+必须坚持：
 
-The future UI should offer at least three modes:
+- conversation state 用于交互连续性
+- execution state 用于 run truth / replay / audit
+- 二者可以关联，但不能混在一起
 
-### Mode A — Simple goal mode
+这是未来 workbench 成功与否的关键。
 
-For users who want:
+## 8.4 三层易用性模式
 
-- “do this task”
-- minimal planning overhead
-- strong defaults
+### 模式 A：Simple Goal
+面向普通用户：
+- 目标输入
+- 默认安全配置
+- 简单进度反馈
 
-### Mode B — Guided project mode
+### 模式 B：Guided Project
+面向 builder：
+- plan graph
+- role breakdown
+- capability preview
+- explicit review gate
 
-For users who want:
-
-- plan preview
-- role visibility
-- capability choice visibility
-- explicit human gates
-
-### Mode C — Operator mode
-
-For advanced users who want:
-
-- run explorer
-- claims and lease detail
-- scheduler topology
-- repair / reconcile actions
-- audit and replay tools
-
-This layered UX approach preserves ease of use without sacrificing depth.
+### 模式 C：Operator Mode
+面向高级用户：
+- claims / leases / attempts / snapshots
+- repair / reconcile
+- cluster / scheduler / replay / audit
 
 ---
 
-## 11. Memory and knowledge architecture
+## 9. 通用记忆与知识方案
 
-The current memory system should evolve into a layered model.
+## 9.1 记忆分层
 
-## 11.1 Memory layers
+### Session Memory
+面向对话连续性与用户偏好
 
-### Layer 1 — Session memory
+### Run Memory
+面向某次执行过程中的事实、决策、失败与证据
 
-- tracks user preferences, recent conversation context, active objectives
-- used for workbench continuity
+### Artifact Memory
+面向产物、实现模式、输出模板
 
-### Layer 2 — Run memory
+### Skill Memory
+面向流程 know-how、角色模板、策略经验
 
-- tied to one execution run or graph
-- stores useful facts, retrieved evidence summaries, failures, decisions, checkpoints
+### Policy / Failure Memory
+面向历史风险、升级记录、回归签名、典型故障
 
-### Layer 3 — Artifact memory
+## 9.2 记忆访问策略
 
-- stores reusable implementation patterns, outputs, generated documents, change reports
-
-### Layer 4 — Skill memory
-
-- stores reusable procedural know-how, role templates, domain-specific strategies
-
-### Layer 5 — Policy/failure memory
-
-- stores prior risk findings, policy escalations, repeated failure motifs, regression signatures
-
-## 11.2 Memory access rules
-
-Memory retrieval should be constrained by:
+访问必须受以下因素约束：
 
 - role
-- capability trust tier
-- run risk level
-- user/session scope
-- repo or project boundary
+- trust tier
+- task risk
+- repo / project scope
+- user/session boundary
 - review requirement
 
-This turns memory from “context stuffing” into a governed system primitive.
+否则 memory 会很快从“优势”变成“污染上下文”。
 
 ---
 
-## 12. Self-iteration and self-upgrade
+## 10. 自我迭代升级方案
 
-The platform should support self-improvement, but only through a controlled loop.
+## 10.1 目标
+让系统具备**受控演进能力**，而不是“无限自我修改”。
 
-## 12.1 What self-improvement should mean
+## 10.2 升级闭环
 
-It should mean:
+建议统一对象：
 
-- the system can detect repeated friction
-- propose improvements
-- run bounded experiments
-- evaluate changes
-- ask for approval where appropriate
-- safely adopt good changes
+- `EvalScenario`
+- `EvalReport`
+- `RepairPlan`
+- `UpgradeProposal`
+- `CanaryPolicy`
+- `PromotionDecision`
 
-It should **not** mean:
+统一流程：
 
-- unconstrained auto-refactoring on mainline
-- self-modification without eval
-- auto-promotion of unreviewed role packs or capabilities
+1. 发现 friction / regression / repeated manual intervention
+2. 生成 `UpgradeProposal`
+3. 编译 bounded change plan
+4. 在隔离 workspace / branch / sandbox 中执行
+5. 运行 eval / benchmark / regression
+6. 生成 diff + report + risk summary
+7. human 或 policy gate 决定是否推进
+8. promote / reject / rerun
 
-## 12.2 Proposed self-improvement loop
+## 10.3 自我升级边界
 
-1. detect friction / regression / repeated operator interventions
-2. generate `UpgradeProposal`
-3. compile bounded change plan
-4. execute in isolated branch/workspace/sandbox
-5. run benchmark/eval suite
-6. generate report and diff summary
-7. request human approval if needed
-8. promote / reject / re-run
+未来任何自我升级都必须遵循：
 
-This is where the current repo’s mutation contract, audit, replay, repair, and snapshot model can become a powerful advantage.
+- 不直接改主线
+- 不跳过评估
+- 不跳过可追溯性
+- 高风险 mutation 必须有人类或强 policy gate
+- 每次升级都必须留下 replay-grade lineage
 
 ---
 
-## 13. Arbitrary engineering development path
+## 11. 任意工程开发方案
 
-This project clearly wants to support “任意工程开发” rather than only prompt-style flows.
+## 11.1 目标
+把“任意工程开发”从当前 repo mutation baseline，升级成正式平台任务族。
 
-The future architecture should lean into that explicitly.
+## 11.2 工程任务正式对象
 
-## 13.1 Engineering task should become a first-class task family
-
-The future system should formalize an `EngineeringTaskSpec` that can cover:
+建议引入 `EngineeringTaskSpec`，统一表达：
 
 - code changes
 - docs changes
 - config changes
-- test additions
+- tests
 - infra changes
-- data migration changes
-- repo analysis and remediation
-- release preparation
+- migrations
+- repo analysis / remediation
+- release prep
 
-## 13.2 Engineering contract fields
+## 11.3 工程任务关键字段
 
-Example fields:
-
-- repo/workspace target
+- repo / workspace target
 - branch / session target
 - read set
 - write set
 - mutation mode
 - test plan
 - rollback rule
-- reviewer requirements
+- reviewer requirement
 - packaging / PR rule
 - acceptance criteria
+- security / risk tier
 
-## 13.3 Engineering execution modes
+## 11.4 工程执行模式
 
-Support should include:
+未来至少支持：
 
 - local shell path
 - opencode patch path
 - sessionful collaborative path
 - external worker path
-- mixed path (research + mutation + verification)
+- research + mutation + verification 混合路径
 
-This is a highly differentiated product direction if it stays bounded and well governed.
-
----
-
-## 14. Ease-of-use strategy
-
-The future system should be easy in layers, not easy by hiding everything.
-
-## 14.1 Ease of use for beginners
-
-- presets
-- guided templates
-- natural language launch
-- safe defaults
-- simple progress narrative
-
-## 14.2 Ease of use for builders
-
-- plan graph visibility
-- role breakdown
-- capability assumptions
-- memory preview
-- artifact and diff visibility
-
-## 14.3 Ease of use for operators
-
-- full detail when needed
-- replay/audit packets
-- repair actions
-- cluster and lease visibility
-- background job control
-
-This layered usability model is better than either extreme:
-
-- too abstract to trust
-- too low-level to use
+这条线应成为平台最具差异化的能力之一。
 
 ---
 
-## 15. Recommended implementation phases
+## 12. M32~M36 推荐里程碑
 
-## Phase M31 — Platform hardening
+## M32：平台契约化与 graph engine 完成
+重点：
+- graph engine 正式上线
+- role registry v1
+- capability invocation contract v1
+- authority model 语义收口完成
 
-Focus:
+## M33：workbench 与 fixed-role runtime
+重点：
+- interaction plane v1
+- workbench UI v1
+- fixed role runtime
+- specialists-as-tools / manager-as-code 双拓扑
 
-- kernel boundary split
-- orchestration graph substrate
-- interaction API v1
-- background controller v1
-- unified capability runtime contract
+## M34：generated role + automation plane
+重点：
+- `RoleFactory`
+- generated role lifecycle
+- watchdog / monitor
+- background `AutomationController`
+- schedule / event-driven orchestration
 
-## Phase M32 — Role system and workbench
-
-Focus:
-
-- fixed role registry
-- dynamic role factory
-- workbench UX
-- role-level evaluation rubrics
-- monitor/watchdog subsystem
-
-## Phase M33 — Capability ecosystem and pack model
-
-Focus:
-
+## M35：通用 capability 生态 + 任意工程开发
+重点：
 - capability SDK
-- role packs
-- skill packs
-- domain-pack evolution
-- validation/publishing pipeline
+- MCP / worker / session / connector 统一接入
+- `EngineeringTaskSpec`
+- more serious product-grade engineering workflows
 
-## Phase M34 — Distributed and long-running runtime maturity
-
-Focus:
-
-- robust external worker topology
-- richer scheduler-authority paths
-- remote queues / long-running jobs
-- optional enterprise automation backends
-
-## Phase M35 — Controlled self-improvement
-
-Focus:
-
-- eval-driven upgrade proposals
-- canary infrastructure
-- improvement reports
-- promotion/rejection workflow
-
-## Phase M36 — Product broadening
-
-Focus:
-
-- domain-specific packaged experiences
-- stronger hosted surfaces if desired
-- richer third-party ecosystem
-- marketplace or private pack registries if justified
+## M36：受控自我升级 + 产品化收口
+重点：
+- eval / canary / promotion 系统
+- upgrade proposal loop
+- stable product surfaces
+- pack ecosystem 与产品边界收口
 
 ---
 
-## 16. External framework adoption strategy
+## 13. 吸收外部框架的原则
 
-The platform should deliberately use external ecosystems by **role**, not by surrender.
+未来方案不应整体重写到某个外部框架里，而应“吸收模式、保留内核”。
 
-### Use LangGraph for
+### OpenAI Agents SDK 值得吸收的部分
+- agents-as-tools
+- handoffs
+- guardrails
+- tracing
+- hosted MCP
+- 受控 sandbox / 长任务工作空间思路
 
-- optional durable agent lanes
-- graph-runtime experiments
-- checkpoint semantics reference
+### LangGraph 值得吸收的部分
+- durable execution
+- persistence / checkpoint
+- interrupt / human-in-the-loop
+- orchestrator-worker / evaluator-optimizer pattern
 
-### Use OpenAI Agents SDK patterns for
+### AutoGen 值得吸收的部分
+- message-protocol 驱动的多 agent 运行时
+- group chat manager
+- team runtime / routed collaboration
 
-- specialists-as-tools
-- handoff semantics
-- tracing and multi-agent interaction design
+### CrewAI 值得吸收的部分
+- crew / flow 分层
+- event-driven flow UX
+- 任务编排的可读性表达
 
-### Use AutoGen patterns for
+### MCP 值得吸收的部分
+- tools / resources / prompts 三种标准原语
+- 标准化上下文接入边界
+- 结构化工具输出与审批能力
 
-- distributed role runtime ideas
-- actor-like async messaging patterns
-
-### Use CrewAI ideas for
-
-- flow authoring ergonomics
-- team/workflow packaging UX
-
-### Use MCP for
-
-- standardized external tool/resource/prompt integration
-
-### Use Temporal / Prefect / Trigger.dev ideas for
-
-- background automation plane
-- managed scheduling / long-running job control
-- live operational status models
-
-The rule should be:
-
-> adopt patterns and optional runtimes where they strengthen the platform; do not replace the platform’s core state/governance model with someone else’s abstractions.
+### Temporal / Prefect / Trigger.dev 值得吸收的部分
+- durable workflow
+- background job control
+- event / schedule automations
+- queue / work pool / retry / monitoring 模型
 
 ---
 
-## 17. Final architecture recommendation
+## 14. 最终方案的一句话概括
 
-The strongest future version of `universalworkflow` is not a clone of any existing framework.
+如果把未来 M36 的理想形态压成一句话：
 
-It is a hybrid system with a very specific shape:
+> **它应该成为一个以控制平面为真相内核、以 graph orchestration 为工作骨架、以角色系统为多 agent 运行时、以 capability runtime 为外部执行统一边界、以 workbench 为人类主入口、以 eval/promotion 为自我演进闭环的本地优先平台。**
 
-- **kernel like a workflow control plane**
-- **interaction like a serious AI workbench**
-- **orchestration like a graph compiler**
-- **roles like a governed multi-agent runtime**
-- **capabilities like a unified integration platform**
-- **evolution like an eval-driven engineering loop**
+---
 
-If built this way, the project can become unusually strong in exactly the areas that matter most for serious agentic systems:
+## 15. 最终建议
 
-- not just generation
-- not just orchestration
-- not just product UX
-- but the union of **execution, governance, usability, and extensibility**
+未来实现方案不应理解成“继续堆更多功能”，而应理解成：
 
-That is the future direction I recommend.
+- 先把平台对象立起来
+- 再把协同拓扑立起来
+- 再把交互层和自动化层立起来
+- 最后才扩生态、扩能力、扩自主性
+
+这样才能同时得到：
+
+- 最优架构
+- 最高效率
+- 最强可用性与易用性
+- 最好稳定性
+- 最好可扩展性
+
+这才是从当前仓库走向 M36 的正确路径。
