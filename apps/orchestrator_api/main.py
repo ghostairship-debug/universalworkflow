@@ -316,6 +316,14 @@ def create_app(
     def preview_goal_plan_graph(payload: GoalPlanRequest) -> dict:
         return service.preview_orchestration_plan_graph(goal=payload.goal, preset_id=payload.preset_id)
 
+    @app.post("/runs/policy-preview")
+    def preview_goal_policy(payload: GoalPlanRequest) -> dict:
+        return service.preview_capability_policy(goal=payload.goal, preset_id=payload.preset_id)
+
+    @app.post("/runs/goal-packet")
+    def preview_goal_packet(payload: GoalPlanRequest) -> dict:
+        return service.preview_goal_packet(goal=payload.goal, preset_id=payload.preset_id)
+
     @app.post("/runs/launch")
     def launch_goal(payload: LaunchGoalRequest) -> dict:
         return service.launch_goal(goal=payload.goal, preset_id=payload.preset_id, execute=payload.execute)
@@ -436,6 +444,14 @@ def create_app(
     @app.get("/runs/{run_id}/plan-graph")
     def get_run_plan_graph(run_id: str) -> dict:
         return service.get_run_orchestration_plan_graph(run_id)
+
+    @app.get("/runs/{run_id}/policy-preview")
+    def get_run_policy_preview(run_id: str) -> dict:
+        return service.get_run_capability_policy_preview(run_id)
+
+    @app.get("/runs/{run_id}/operator-packet")
+    def get_run_operator_packet(run_id: str) -> dict:
+        return service.get_run_operator_packet(run_id)
 
     @app.get("/runs/{run_id}/status-detail")
     def get_run_status_detail(run_id: str) -> dict:

@@ -227,6 +227,34 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     plan_payload = json.loads(plan_result.stdout)
     assert plan_payload["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
 
+    policy_result = _invoke(
+        tmp_path,
+        "run",
+        "policy-preview",
+        "--goal",
+        "Coordinate a multi-role delivery slice",
+        "--preset",
+        "project_delivery",
+    )
+    assert policy_result.exit_code == 0
+    policy_payload = json.loads(policy_result.stdout)
+    assert policy_payload["policy_preview"]["recommended_operator_mode"] == "human_visible"
+    assert policy_payload["policy_preview"]["review_node_count"] == 1
+
+    goal_packet_result = _invoke(
+        tmp_path,
+        "run",
+        "goal-packet",
+        "--goal",
+        "Coordinate a multi-role delivery slice",
+        "--preset",
+        "project_delivery",
+    )
+    assert goal_packet_result.exit_code == 0
+    goal_packet_payload = json.loads(goal_packet_result.stdout)
+    assert goal_packet_payload["capability_policy_preview"]["recommended_operator_mode"] == "human_visible"
+    assert len(goal_packet_payload["matched_capability_descriptors"]) >= 1
+
     launch_result = _invoke(
         tmp_path,
         "run",
@@ -240,12 +268,25 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     assert launch_result.exit_code == 0
     launch_payload = json.loads(launch_result.stdout)
     assert launch_payload["selected_preset_id"] == "project_delivery"
+    assert launch_payload["capability_policy_preview"]["recommended_operator_mode"] == "human_visible"
 
     plan_status_result = _invoke(tmp_path, "run", "plan-graph-status", launch_payload["run"]["run_id"])
     assert plan_status_result.exit_code == 0
     plan_status_payload = json.loads(plan_status_result.stdout)
     assert plan_status_payload["enabled"] is True
     assert len(plan_status_payload["plan_graph"]["nodes"]) == 4
+
+    policy_status_result = _invoke(tmp_path, "run", "policy-preview-status", launch_payload["run"]["run_id"])
+    assert policy_status_result.exit_code == 0
+    policy_status_payload = json.loads(policy_status_result.stdout)
+    assert policy_status_payload["enabled"] is True
+    assert policy_status_payload["policy_preview"]["recommended_operator_mode"] == "human_visible"
+
+    operator_packet_result = _invoke(tmp_path, "run", "operator-packet", launch_payload["run"]["run_id"])
+    assert operator_packet_result.exit_code == 0
+    operator_packet_payload = json.loads(operator_packet_result.stdout)
+    assert operator_packet_payload["operator_projection"]["recommended_operator_mode"] == "human_visible"
+    assert operator_packet_payload["capability_policy_preview"]["enabled"] is True
 
 
 def test_cli_config_show_reads_workflow_toml_and_worker_pools(tmp_path: Path, monkeypatch) -> None:

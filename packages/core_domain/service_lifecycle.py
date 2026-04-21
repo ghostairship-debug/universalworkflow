@@ -142,6 +142,8 @@ class LifecycleServiceMixin:
             goal=run.goal,
             preset_id=preset.preset_id,
             run_id=run.run_id,
+            adapter_name=capability_route.adapter_name if capability_route is not None else selected_adapter,
+            task_kind=resolved_task_kind,
         )
         snapshot.task_packet = TaskPacket.model_validate(
             {

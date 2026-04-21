@@ -267,6 +267,7 @@ def test_dashboard_snapshot_projects_recent_runs_and_focus_detail(tmp_path: Path
     assert snapshot["run_count"] == 2
     assert snapshot["selected_run_id"] == first_run.run_id
     assert snapshot["focus_detail"]["run"]["run_id"] == first_run.run_id
+    assert snapshot["focus_operator_packet"]["run"]["run_id"] == first_run.run_id
     assert snapshot["runs"][0]["run_id"] == first_run.run_id
     assert snapshot["runs"][1]["run_id"] == second_run.run_id
 
@@ -1301,6 +1302,45 @@ def test_research_spike_reviewable_can_run_through_sessionful_external_agent_lan
     assert detail["trace_context"]["external_session_id"] == "sess_exec_123"
     assert detail["trace_context"]["external_session_url"] == "https://example.com/session/exec-123"
     assert detail["trace_context"]["session_export_ref"].endswith(".json")
+
+
+def test_operator_projections_include_policy_preview_and_session_refs(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            OpenCodeAdapter(runner=_fake_opencode_runner),
+            OpenCodeSessionAdapter(runner=_fake_session_runner),
+            NoopAdapter(),
+        ]
+    )
+    service = OrchestratorService(db_path, worker_router=router)
+
+    run = service.create_run("Collaborative sessionful research", "research_spike_reviewable")
+    service.compile_run(run.run_id, adapter_name="opencode_session")
+    service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    if detail["run"]["status"] == "awaiting_review":
+        service.approve_run_review(run.run_id)
+        detail = service.get_status_detail(run.run_id)
+
+    inspection = service.inspect_run_state(run.run_id)
+    audit = service.get_run_audit_report(run.run_id)
+    replay = service.get_run_replay_packet(run.run_id)
+    operator_packet = service.get_run_operator_packet(run.run_id)
+    operator_view = service.get_operator_view(run.run_id)
+
+    assert detail["capability_policy_preview"]["enabled"] is True
+    assert detail["capability_policy_preview"]["policy_preview"]["sessionful_node_count"] == 1
+    assert detail["operator_projection"]["recommended_operator_mode"] == "human_visible"
+    assert detail["operator_projection"]["session_ref"]["external_session_id"] == "sess_exec_123"
+    assert inspection["operator_projection"]["capability_health_summary"]["descriptor_count"] >= 1
+    assert audit["operator_projection"]["session_ref"]["external_session_id"] == "sess_exec_123"
+    assert replay["capability_policy_preview"]["policy_preview"]["sessionful_node_count"] == 1
+    assert operator_packet["operator_projection"]["session_ref"]["external_session_id"] == "sess_exec_123"
+    assert operator_view["operator_projection"]["recommended_operator_mode"] == "human_visible"
 
 
 def test_project_delivery_runs_multi_role_orchestration(tmp_path: Path) -> None:

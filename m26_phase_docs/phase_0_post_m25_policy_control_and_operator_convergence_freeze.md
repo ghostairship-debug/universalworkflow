@@ -1,6 +1,6 @@
 # M26 Phase 0 - Post-M25 Policy Control And Operator Convergence Freeze
 
-Status: active
+Status: completed
 Opened: 2026-04-21
 Milestone: M26
 
@@ -39,3 +39,18 @@ Open the next bounded cycle after the `M25` beta freeze. This phase exists to tu
 - capability policy preview exists as an explicit operator surface
 - operator projections clearly expose capability descriptors, health, plan graphs, and session refs
 - `M26` closeout states what remains for `M27-M30`
+
+## Outcome
+
+- explicit capability-policy preview landed for goal planning and run inspection
+- operator-facing projections now expose policy mode, capability health, plan graphs, and external session refs together
+- compile-time adapter overrides now round-trip into stored orchestration plan graphs, preventing lane drift between planning and execution
+
+## Validation
+
+- `python -m pytest tests/test_cli.py tests/test_api.py tests/test_execution_loop.py -q -k "policy_preview or plan_graph_and_launch or sessionful_external_agent_lane_projects_session_refs or operator_projections_include_policy_preview_and_session_refs"` passed
+- `python -m pytest tests/test_cli.py tests/test_api.py tests/test_execution_loop.py -q -k "plan_graph_and_launch or operator_projections_include_policy_preview_and_session_refs or dashboard_snapshot_projects_recent_runs_and_focus_detail"` passed
+
+## Closeout
+
+See [docs/reviews/m26-policy-control-freeze-review.md](../docs/reviews/m26-policy-control-freeze-review.md).

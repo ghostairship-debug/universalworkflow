@@ -363,6 +363,38 @@ def run_plan_graph(
     )
 
 
+@run_app.command("policy-preview")
+def run_policy_preview(
+    ctx: typer.Context,
+    goal: str = typer.Option(..., "--goal"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).preview_capability_policy(
+                goal=goal,
+                preset_id=preset,
+            )
+        )
+    )
+
+
+@run_app.command("goal-packet")
+def run_goal_packet(
+    ctx: typer.Context,
+    goal: str = typer.Option(..., "--goal"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).preview_goal_packet(
+                goal=goal,
+                preset_id=preset,
+            )
+        )
+    )
+
+
 @run_app.command("launch")
 def run_launch(
     ctx: typer.Context,
@@ -566,6 +598,8 @@ def run_status(ctx: typer.Context, run_id: str) -> None:
     payload["mutation_result"] = detail["mutation_result"]
     payload["orchestration"] = detail["orchestration"]
     payload["orchestration_plan_graph"] = detail["orchestration_plan_graph"]
+    payload["capability_policy_preview"] = detail["capability_policy_preview"]
+    payload["operator_projection"] = detail["operator_projection"]
     payload["effective_review_state"] = detail["effective_review_state"]
     payload["domain_pack"] = detail["domain_pack"]
     payload["capability_resolution"] = detail["capability_resolution"]
@@ -634,6 +668,16 @@ def run_orchestration(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("plan-graph-status")
 def run_plan_graph_status(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_orchestration_plan_graph(run_id)))
+
+
+@run_app.command("policy-preview-status")
+def run_policy_preview_status(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_capability_policy_preview(run_id)))
+
+
+@run_app.command("operator-packet")
+def run_operator_packet(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_operator_packet(run_id)))
 
 
 @run_app.command("memory-candidates")

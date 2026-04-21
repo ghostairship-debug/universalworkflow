@@ -253,6 +253,21 @@ def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     assert plan_response.status_code == 200
     assert plan_response.json()["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
 
+    policy_response = client.post(
+        "/runs/policy-preview",
+        json={"goal": "Coordinate a multi-role delivery slice", "preset_id": "project_delivery"},
+    )
+    assert policy_response.status_code == 200
+    assert policy_response.json()["policy_preview"]["recommended_operator_mode"] == "human_visible"
+
+    goal_packet_response = client.post(
+        "/runs/goal-packet",
+        json={"goal": "Coordinate a multi-role delivery slice", "preset_id": "project_delivery"},
+    )
+    assert goal_packet_response.status_code == 200
+    assert goal_packet_response.json()["capability_policy_preview"]["recommended_operator_mode"] == "human_visible"
+    assert len(goal_packet_response.json()["matched_capability_descriptors"]) >= 1
+
     launch_response = client.post(
         "/runs/launch",
         json={"goal": "Coordinate a multi-role delivery slice", "preset_id": "project_delivery", "execute": True},
@@ -261,11 +276,22 @@ def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     launch_payload = launch_response.json()
     assert launch_payload["selected_preset_id"] == "project_delivery"
     assert launch_payload["plan_graph"]["preset_id"] == "project_delivery"
+    assert launch_payload["capability_policy_preview"]["recommended_operator_mode"] == "human_visible"
 
     plan_status_response = client.get(f"/runs/{launch_payload['run']['run_id']}/plan-graph")
     assert plan_status_response.status_code == 200
     assert plan_status_response.json()["enabled"] is True
     assert len(plan_status_response.json()["plan_graph"]["nodes"]) == 4
+
+    policy_status_response = client.get(f"/runs/{launch_payload['run']['run_id']}/policy-preview")
+    assert policy_status_response.status_code == 200
+    assert policy_status_response.json()["enabled"] is True
+    assert policy_status_response.json()["policy_preview"]["recommended_operator_mode"] == "human_visible"
+
+    operator_packet_response = client.get(f"/runs/{launch_payload['run']['run_id']}/operator-packet")
+    assert operator_packet_response.status_code == 200
+    assert operator_packet_response.json()["operator_projection"]["recommended_operator_mode"] == "human_visible"
+    assert operator_packet_response.json()["capability_policy_preview"]["enabled"] is True
 
 
 def test_api_sessionful_external_agent_lane_projects_session_refs(tmp_path: Path, monkeypatch) -> None:

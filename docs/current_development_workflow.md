@@ -6,8 +6,8 @@ This document is the canonical living guide for what the repository should do ne
 
 Use these in priority order when deciding what is current:
 
-1. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
-2. [docs/reviews/m25-beta-freeze-review.md](reviews/m25-beta-freeze-review.md)
+1. [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
+2. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
 3. [docs/tech-debt-registry.md](tech-debt-registry.md)
 4. [README.md](../README.md)
 
@@ -18,33 +18,30 @@ Older milestone plans, route syntheses, phase reviews, governance side docs, and
 The repository has now completed:
 
 - `M8` through `M20`
-- `M21` through `M25`
+- `M21` through `M30`
 - the runtime, governance, orchestration, Web operator UI, remote worker productization, repo-mutation baseline, and multi-control-plane consensus closure
 - retirement of `TD-021`
-- capability descriptors / health surfaces, sessionful external-agent lane, orchestration plan graphs, and natural-language launch surfaces
+- capability descriptors / health surfaces, sessionful external-agent lane, orchestration plan graphs, natural-language launch surfaces, capability policy preview, operator packets, goal packets, and dashboard operator convergence
 
 Current status:
 
 - the mainline product is `v1 core complete`
-- the active bounded work is `M26 Phase 0 - Post-M25 Policy Control And Operator Convergence Freeze`
-- current phase assets live at:
-  - [m26_phase_docs/phase_0_post_m25_policy_control_and_operator_convergence_freeze.md](../m26_phase_docs/phase_0_post_m25_policy_control_and_operator_convergence_freeze.md)
-  - [docs/task_cards/m26_phase_0_task_cards.md](task_cards/m26_phase_0_task_cards.md)
+- the latest accepted freeze is `M30 Operator Control Freeze`
+- there is no new active post-`M30` phase open in the working tree yet
+- the built-in Web UI and TUI remain operator surfaces rather than chat-style natural-language workbenches
+- natural-language goal planning and launch exist today through CLI/API surfaces, not through a front-end conversational shell
 
 ## 3. What Must Happen Next
 
-`M26 Phase 0` is now open. The repository should not auto-start any new breadth beyond the active phase task cards.
+No new post-`M30` phase is open. The repository should not auto-start new breadth until the next bounded phase is explicitly opened.
 
-The active cycle must continue by:
+The next cycle must begin by:
 
-1. reading [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
-2. reading [docs/reviews/m25-beta-freeze-review.md](reviews/m25-beta-freeze-review.md)
+1. reading [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
+2. reading [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
 3. reading [docs/tech-debt-registry.md](tech-debt-registry.md)
-4. executing the active `M26 Phase 0` task cards
-4. deferring any breadth decision until the phase closeout can justify the next track:
-   - workflow autonomy
-   - selective ecosystem expansion
-   - multimodal / provider breadth
+4. opening a new bounded phase doc and task-card pack only after the intended next track is justified
+5. deferring breadth decisions until that next phase explicitly names them
 
 ## 4. Task-Card Protocol
 
@@ -104,4 +101,4 @@ Keep the working tree small.
 
 ## 8. Current One-Line Instruction
 
-Follow the task-card protocol, treat `M25` as the latest beta freeze baseline, and execute only the active `M26 Phase 0 - Post-M25 Policy Control And Operator Convergence Freeze` work until its closeout says otherwise.
+Treat `M30` as the latest operator-control freeze baseline, and do not open the next phase until its bounded scope is explicitly justified from the freeze review.

@@ -178,6 +178,8 @@ class MemorySimulationServiceMixin:
         preset_id: str,
         run_id: str | None = None,
         recommended_preset_id: str | None = None,
+        adapter_name: str | None = None,
+        task_kind: TaskKind | str | None = None,
     ) -> OrchestrationPlanGraph:
         if preset_id == "project_delivery":
             plan = self._default_project_delivery_plan(run_id or "preview_run")
@@ -231,9 +233,9 @@ class MemorySimulationServiceMixin:
         preset = self.preset_repo.get(preset_id)
         if preset is None:
             raise PresetNotFoundError(f"preset not found: {preset_id}")
-        resolved_task_kind = self._resolve_task_kind(preset, None)
+        resolved_task_kind = self._resolve_task_kind(preset, task_kind)
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        selected_adapter = self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
+        selected_adapter = adapter_name or self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
         capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
         lane_type = self._resolve_execution_lane(
             preset=preset,
@@ -299,6 +301,8 @@ class MemorySimulationServiceMixin:
         execute: bool = False,
     ) -> dict[str, Any]:
         preview = self.preview_orchestration_plan_graph(goal=goal, preset_id=preset_id)
+        policy_preview = self.preview_capability_policy(goal=goal, preset_id=preset_id)
+        goal_packet = self.preview_goal_packet(goal=goal, preset_id=preset_id)
         selected_preset_id = str(preview["selected_preset_id"])
         run = self.create_run(goal=goal, preset_id=selected_preset_id)
         prepared = self.compile_run(run.run_id)
@@ -306,6 +310,8 @@ class MemorySimulationServiceMixin:
             "goal": goal,
             "selected_preset_id": selected_preset_id,
             "plan_graph": preview["plan_graph"],
+            "capability_policy_preview": policy_preview["policy_preview"],
+            "goal_packet": goal_packet,
             "suggestions": preview["suggestions"],
             "run": prepared.run.model_dump(mode="json"),
             "runtime_task_id": prepared.task_packet.runtime_task_id,
@@ -324,6 +330,119 @@ class MemorySimulationServiceMixin:
                 executed.review_verdict.decision if executed.review_verdict is not None else None
             )
         return payload
+
+    def _descriptor_matches_graph_node(self, descriptor: dict[str, Any], node: dict[str, Any]) -> bool:
+        adapter_name = descriptor.get("adapter_name")
+        preferred_adapter = node.get("preferred_adapter")
+        if adapter_name and preferred_adapter and adapter_name == preferred_adapter:
+            return True
+        descriptor_scopes = {str(item) for item in descriptor.get("scopes", [])}
+        if descriptor_scopes & {str(item) for item in node.get("required_capabilities", [])}:
+            return True
+        descriptor_task_kinds = {str(item) for item in descriptor.get("allowed_task_kinds", [])}
+        if descriptor_task_kinds & {str(item) for item in node.get("required_capabilities", [])}:
+            return True
+        return False
+
+    def _recommended_operator_mode(self, node_policies: list[dict[str, Any]], execution_mode: str) -> str:
+        if any(item["review_gate"] not in {"none", None} for item in node_policies):
+            return "human_visible"
+        if any(item["side_effect_level"] in {"repo_mutation_controlled", "session_read_write"} for item in node_policies):
+            return "human_visible"
+        if execution_mode != "single_path":
+            return "operator_observe"
+        return "auto_ok"
+
+    def _capability_policy_preview_for_plan_graph(self, plan_graph: dict[str, Any]) -> dict[str, Any]:
+        descriptors = self.list_capability_descriptors()
+        node_policies: list[dict[str, Any]] = []
+        for node in plan_graph.get("nodes", []):
+            matched = [item for item in descriptors if self._descriptor_matches_graph_node(item, node)]
+            node_policies.append(
+                {
+                    "node_id": node.get("node_id"),
+                    "role": node.get("role"),
+                    "goal": node.get("goal"),
+                    "review_gate": node.get("review_gate"),
+                    "side_effect_level": node.get("side_effect_level"),
+                    "required_capabilities": list(node.get("required_capabilities", [])),
+                    "matched_descriptor_ids": [item["capability_id"] for item in matched],
+                    "matched_provider_kinds": sorted({str(item["provider_kind"]) for item in matched}),
+                    "descriptor_coverage_count": len(matched),
+                }
+            )
+        sessionful_nodes = [item for item in node_policies if item["side_effect_level"] == "session_read_write"]
+        repo_mutation_nodes = [item for item in node_policies if item["side_effect_level"] == "repo_mutation_controlled"]
+        review_nodes = [item for item in node_policies if item["review_gate"] not in {"none", None}]
+        execution_mode = str(plan_graph.get("execution_mode") or "single_path")
+        return {
+            "policy_version": "m26_phase_0_v1",
+            "selected_preset_id": plan_graph.get("preset_id"),
+            "execution_mode": execution_mode,
+            "recommended_operator_mode": self._recommended_operator_mode(node_policies, execution_mode),
+            "requires_human_checkpoint": bool(review_nodes),
+            "sessionful_node_count": len(sessionful_nodes),
+            "repo_mutation_node_count": len(repo_mutation_nodes),
+            "review_node_count": len(review_nodes),
+            "node_policies": node_policies,
+        }
+
+    def preview_capability_policy(
+        self,
+        *,
+        goal: str,
+        preset_id: str | None = None,
+    ) -> dict[str, Any]:
+        preview = self.preview_orchestration_plan_graph(goal=goal, preset_id=preset_id)
+        return {
+            "goal": goal,
+            "selected_preset_id": preview["selected_preset_id"],
+            "suggestions": preview["suggestions"],
+            "plan_graph": preview["plan_graph"],
+            "policy_preview": self._capability_policy_preview_for_plan_graph(preview["plan_graph"]),
+        }
+
+    def preview_goal_packet(
+        self,
+        *,
+        goal: str,
+        preset_id: str | None = None,
+    ) -> dict[str, Any]:
+        policy_preview = self.preview_capability_policy(goal=goal, preset_id=preset_id)
+        capability_descriptors = self.list_capability_descriptors()
+        capability_health = self.list_capability_health()
+        matched_descriptor_ids = {
+            descriptor_id
+            for node in policy_preview["policy_preview"]["node_policies"]
+            for descriptor_id in node.get("matched_descriptor_ids", [])
+        }
+        return {
+            "goal": goal,
+            "selected_preset_id": policy_preview["selected_preset_id"],
+            "suggestions": policy_preview["suggestions"],
+            "plan_graph": policy_preview["plan_graph"],
+            "capability_policy_preview": policy_preview["policy_preview"],
+            "matched_capability_descriptors": [
+                item for item in capability_descriptors if item["capability_id"] in matched_descriptor_ids
+            ],
+            "matched_capability_health": [
+                item
+                for item in capability_health
+                if isinstance(item.get("descriptor"), dict)
+                and item["descriptor"]["capability_id"] in matched_descriptor_ids
+            ],
+        }
+
+    def get_run_capability_policy_preview(self, run_id: str) -> dict[str, Any]:
+        plan_graph_payload = self.get_run_orchestration_plan_graph(run_id)
+        if not plan_graph_payload["enabled"] or plan_graph_payload["plan_graph"] is None:
+            return {"run_id": run_id, "enabled": False, "policy_preview": None}
+        return {
+            "run_id": run_id,
+            "enabled": True,
+            "plan_graph": plan_graph_payload["plan_graph"],
+            "policy_preview": self._capability_policy_preview_for_plan_graph(plan_graph_payload["plan_graph"]),
+        }
 
     def runtime_gateway_status(self) -> dict[str, Any]:
         return self.runtime_gateway.describe()

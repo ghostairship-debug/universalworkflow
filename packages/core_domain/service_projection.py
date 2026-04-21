@@ -31,6 +31,85 @@ class ProjectionServiceMixin:
             return None
         return last_evidence.result_envelope.model_dump(mode="json")
 
+    def _session_ref_projection(
+        self,
+        trace_context: dict[str, Any] | None,
+        result_envelope: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if isinstance(result_envelope, dict) and isinstance(result_envelope.get("session_ref"), dict):
+            return dict(result_envelope["session_ref"])
+        if not isinstance(trace_context, dict):
+            return None
+        if not any(
+            trace_context.get(key) is not None
+            for key in ("external_session_id", "external_session_url", "session_export_ref")
+        ):
+            return None
+        return {
+            "external_session_id": trace_context.get("external_session_id"),
+            "external_session_url": trace_context.get("external_session_url"),
+            "session_export_ref": trace_context.get("session_export_ref"),
+        }
+
+    def _capability_health_summary(self) -> dict[str, Any]:
+        health_items = self.list_capability_health()
+        status_counts = Counter(str(item.get("status")) for item in health_items)
+        return {
+            "descriptor_count": len(health_items),
+            "status_counts": dict(status_counts),
+            "provider_kinds": sorted(
+                {
+                    str(item["descriptor"]["provider_kind"])
+                    for item in health_items
+                    if isinstance(item.get("descriptor"), dict) and item["descriptor"].get("provider_kind") is not None
+                }
+            ),
+            "non_ready_descriptor_ids": [
+                item["descriptor"]["capability_id"]
+                for item in health_items
+                if isinstance(item.get("descriptor"), dict) and item.get("status") != "ready"
+            ],
+        }
+
+    def _capability_policy_preview_payload(
+        self,
+        *,
+        run_id: str,
+        orchestration_plan_graph: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if orchestration_plan_graph is None:
+            return {"run_id": run_id, "enabled": False, "policy_preview": None}
+        return {
+            "run_id": run_id,
+            "enabled": True,
+            "plan_graph": orchestration_plan_graph,
+            "policy_preview": self._capability_policy_preview_for_plan_graph(orchestration_plan_graph),
+        }
+
+    def _operator_projection_for(
+        self,
+        *,
+        capability_policy_preview: dict[str, Any],
+        trace_context: dict[str, Any] | None,
+        result_envelope: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        policy_preview = (
+            capability_policy_preview.get("policy_preview")
+            if isinstance(capability_policy_preview, dict)
+            else None
+        )
+        return {
+            "policy_preview_enabled": bool(capability_policy_preview.get("enabled")),
+            "recommended_operator_mode": (
+                policy_preview.get("recommended_operator_mode") if isinstance(policy_preview, dict) else None
+            ),
+            "requires_human_checkpoint": (
+                bool(policy_preview.get("requires_human_checkpoint")) if isinstance(policy_preview, dict) else False
+            ),
+            "session_ref": self._session_ref_projection(trace_context, result_envelope),
+            "capability_health_summary": self._capability_health_summary(),
+        }
+
     def _execution_target_for(
         self,
         last_runtime_state: RuntimeStateRef | None,
@@ -659,6 +738,11 @@ class ProjectionServiceMixin:
                 "next_action": detail["next_action"],
                 "recoverability_hint": detail["recoverability_hint"],
                 "inspection_problem_count": inspection["problem_count"],
+                "recommended_operator_mode": (
+                    detail["operator_projection"]["recommended_operator_mode"]
+                    if detail.get("operator_projection") is not None
+                    else None
+                ),
             },
             "trace_context": detail["trace_context"],
         }
@@ -766,6 +850,8 @@ class ProjectionServiceMixin:
             "result_envelope": detail["result_envelope"],
             "trace_exporter": detail["trace_exporter"],
             "orchestration_plan_graph": detail["orchestration_plan_graph"],
+            "capability_policy_preview": detail["capability_policy_preview"],
+            "operator_projection": detail["operator_projection"],
             "mutation_packet": {
                 "contract": detail["mutation_contract"],
                 "result": detail["mutation_result"],
@@ -808,6 +894,8 @@ class ProjectionServiceMixin:
             "execution_profile": summary["execution_profile"],
             "metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
+            "capability_policy_preview": detail["capability_policy_preview"],
+            "operator_projection": detail["operator_projection"],
             "execution_target": detail["execution_target"],
             "lease_renewals": detail["lease_renewals"],
             "mutation_contract": detail["mutation_contract"],
@@ -889,6 +977,15 @@ class ProjectionServiceMixin:
             latest_evidence=last_evidence,
         )
         result_envelope = self._result_envelope_for(last_evidence)
+        capability_policy_preview = self._capability_policy_preview_payload(
+            run_id=run_id,
+            orchestration_plan_graph=orchestration_plan_graph,
+        )
+        operator_projection = self._operator_projection_for(
+            capability_policy_preview=capability_policy_preview,
+            trace_context=trace_context,
+            result_envelope=result_envelope,
+        )
         run_metrics = self._run_metrics_for_context(
             context,
             timeline,
@@ -920,6 +1017,8 @@ class ProjectionServiceMixin:
             "scheduler_authority": scheduler_authority,
             "orchestration": orchestration,
             "orchestration_plan_graph": orchestration_plan_graph,
+            "capability_policy_preview": capability_policy_preview,
+            "operator_projection": operator_projection,
             "trace_context": trace_context,
             "result_envelope": result_envelope,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
@@ -1009,6 +1108,16 @@ class ProjectionServiceMixin:
             last_runtime_state=last_runtime_state,
             latest_attempt=latest_attempt,
         )
+        result_envelope = self._result_envelope_for(self._last_evidence(context))
+        capability_policy_preview = self._capability_policy_preview_payload(
+            run_id=run_id,
+            orchestration_plan_graph=orchestration_plan_graph,
+        )
+        operator_projection = self._operator_projection_for(
+            capability_policy_preview=capability_policy_preview,
+            trace_context=trace_context,
+            result_envelope=result_envelope,
+        )
         run_metrics = self._run_metrics_for_context(
             context,
             timeline,
@@ -1040,7 +1149,10 @@ class ProjectionServiceMixin:
             "scheduler_authority": scheduler_authority,
             "orchestration": orchestration,
             "orchestration_plan_graph": orchestration_plan_graph,
+            "capability_policy_preview": capability_policy_preview,
+            "operator_projection": operator_projection,
             "trace_context": trace_context,
+            "result_envelope": result_envelope,
             "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
             "run_metrics": run_metrics,
             "simulation_policy": simulation_policy.model_dump(mode="json"),
@@ -1116,6 +1228,8 @@ class ProjectionServiceMixin:
             "worker_lease_projection": detail["worker_lease_projection"],
             "runtime_attempt_projection": detail["runtime_attempt_projection"],
             "trace_context": detail["trace_context"],
+            "capability_policy_preview": detail["capability_policy_preview"],
+            "operator_projection": detail["operator_projection"],
             "run_metrics": detail["run_metrics"],
             "budget_projection": detail["budget_projection"],
             "latest_snapshot": detail["latest_snapshot"],
@@ -1148,6 +1262,29 @@ class ProjectionServiceMixin:
             for row in rows
         ]
 
+    def get_run_operator_packet(self, run_id: str) -> dict[str, Any]:
+        detail = self.get_status_detail(run_id)
+        summary = self.get_run_summary(run_id)
+        inspection = self.inspect_run_state(run_id)
+        return {
+            "packet_version": "m27_phase_0_v1",
+            "generated_at": self._utc_now().isoformat(),
+            "run": detail["run"],
+            "headline": summary["headline"],
+            "next_action": summary["next_action"],
+            "recoverability_hint": summary["recoverability_hint"],
+            "inspection_summary": summary["inspection_summary"],
+            "review_summary": summary["review_summary"],
+            "capability_policy_preview": detail["capability_policy_preview"],
+            "operator_projection": detail["operator_projection"],
+            "orchestration_plan_graph": detail["orchestration_plan_graph"],
+            "trace_context": detail["trace_context"],
+            "result_envelope": detail["result_envelope"],
+            "execution_profile": summary["execution_profile"],
+            "inspection_problem_count": inspection["problem_count"],
+            "inspection_recommended_action": inspection["recommended_action"],
+        }
+
     def get_operator_view(self, run_id: str) -> dict[str, Any]:
         detail = self.get_status_detail(run_id)
         summary = self.get_run_summary(run_id)
@@ -1157,6 +1294,7 @@ class ProjectionServiceMixin:
         return {
             "run": detail["run"],
             "summary": summary,
+            "operator_packet": self.get_run_operator_packet(run_id),
             "status_detail": detail,
             "inspection": inspection,
             "timeline": timeline,
@@ -1168,6 +1306,8 @@ class ProjectionServiceMixin:
                 "execution_profile": replay_packet["execution_profile"],
             },
             "orchestration": detail["orchestration"],
+            "capability_policy_preview": detail["capability_policy_preview"],
+            "operator_projection": detail["operator_projection"],
             "mutation_report": self.get_run_mutation_report(run_id),
             "scheduler_authority": detail["scheduler_authority"],
             "cluster_overview": (
@@ -1187,6 +1327,8 @@ class ProjectionServiceMixin:
             "mutation_contract": detail["mutation_contract"],
             "mutation_result": detail["mutation_result"],
             "result_envelope": detail["result_envelope"],
+            "capability_policy_preview": detail["capability_policy_preview"],
+            "operator_projection": detail["operator_projection"],
             "inspection_problem_count": inspection["problem_count"],
             "recommended_action": inspection["recommended_action"],
         }
@@ -1215,12 +1357,18 @@ class ProjectionServiceMixin:
                         if detail["capability_resolution"] is not None
                         else None
                     ),
+                    "recommended_operator_mode": (
+                        detail["operator_projection"]["recommended_operator_mode"]
+                        if detail.get("operator_projection") is not None
+                        else None
+                    ),
                 }
             )
 
         selected_run_id = focus_run_id or (run_rows[0]["run_id"] if run_rows else None)
         focus_detail = self.get_status_detail(selected_run_id) if selected_run_id is not None else None
         focus_summary = self.get_run_summary(selected_run_id) if selected_run_id is not None else None
+        focus_operator_packet = self.get_run_operator_packet(selected_run_id) if selected_run_id is not None else None
         timeline_tail = (
             [event.model_dump(mode="json") for event in self.get_timeline(selected_run_id)[-8:]]
             if selected_run_id is not None
@@ -1237,5 +1385,6 @@ class ProjectionServiceMixin:
             "runs": run_rows,
             "focus_detail": focus_detail,
             "focus_summary": focus_summary,
+            "focus_operator_packet": focus_operator_packet,
             "timeline_tail": timeline_tail,
         }

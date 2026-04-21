@@ -12,9 +12,7 @@ DEFAULT_LIVING_DOCS = [
     Path("docs/current_development_workflow.md"),
     Path("docs/tech-debt-registry.md"),
     Path("docs/reviews/m20-freeze-review.md"),
-    Path("docs/reviews/m25-beta-freeze-review.md"),
-    Path("m26_phase_docs/phase_0_post_m25_policy_control_and_operator_convergence_freeze.md"),
-    Path("docs/task_cards/m26_phase_0_task_cards.md"),
+    Path("docs/reviews/m30-operator-control-freeze-review.md"),
 ]
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 

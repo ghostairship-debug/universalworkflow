@@ -41,7 +41,9 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 ## Current repository status
 
-- Milestone baseline: through `M20`, complete
+- Chinese overview:
+  - [README.zh-CN.md](README.zh-CN.md)
+- Milestone baseline: through `M30`, complete
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
@@ -49,6 +51,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - native deterministic, borrowed agent, durable-pilot, and orchestration-aware execution lanes
   - `shell`, `opencode`, `noop`, and feature-flagged `agent` adapter routing
   - router-first capability plane with built-in capability projection and local stdio MCP pilot support
+  - capability descriptors / health, capability policy preview, and operator-facing packetized read models
   - unified `workflow.toml` + env + explicit override config precedence
   - productized worker-pool boundary with local/loopback and real remote HTTP dispatch support
   - OTel-first trace-export abstraction with an optional Langfuse sink
@@ -57,48 +60,21 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - deterministic local `Simulation` baseline with persisted records and selected lifecycle hooks
   - durable pilot checkpoint snapshots in `state/durable`
   - `project_delivery` planner -> parallel worker -> reviewer orchestration baseline
+  - orchestration plan graphs plus natural-language `plan-graph` / `policy-preview` / `goal-packet` / `launch` surfaces
+  - sessionful external-agent lane with projected external session refs
   - controlled repo mutation through explicit write-sets, patch apply, and bounded test/fix loops
   - majority-quorum scheduler-authority peers, committed cross-control-plane lease ownership, and fenced takeover lineage
   - Agent Skill-compatible domain-pack export
+  - built-in FastAPI Web operator console and terminal TUI dashboard
   - `v1 core complete` mainline product status
 - Current planning position:
-  - `M8` is complete
-  - `M9` is complete
-  - `M10` is complete
-  - `M11` is complete
-  - `M12` is complete
-  - `M13` is complete
-  - `M14` is complete
-  - `M15` is complete
-  - `M16` is complete
-  - `M17` is complete
-  - `M18` is complete
-  - `M19` is complete
-  - `M20` is complete
-  - `M8 Phase 0` through `M8 Phase 7` are complete
-  - `M9 Phase 0` through `M9 Phase 5` are complete
-  - `M10 Phase 0 - Post-M9 Rebaseline And Scope Freeze` is complete
-  - `M10 Phase 1 - Ownership Topology And Claim Domain Freeze` is complete
-  - `M10 Phase 2 - Local Barrier And Parallel Batch Execution` is complete
-  - the next approved work is `M21 Phase 0 - Post-M20 Rebaseline And Expansion Freeze`
-  - the current integrated route synthesis is [docs/reviews/post-m20-integrated-technical-roadmap.md](docs/reviews/post-m20-integrated-technical-roadmap.md)
-  - the integrated root-level `M8` development plan is [universal_agentic_workflow_os_M8_phase_plan_v1_0.md](universal_agentic_workflow_os_M8_phase_plan_v1_0.md)
-  - the GPT-Pro-driven reassessment of the `M8` plan is [docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md](docs/reviews/m8-gpt-pro-reassessment-and-plan-update.md)
+  - `M8-M30` are complete
+  - the latest accepted freeze is [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
+  - there is no active post-`M30` phase open in the working tree yet
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
-  - the controlling shipped-baseline closeout record is [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
-  - the `M10` reassessment record is [docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md](docs/reviews/m10-phase-0-post-m9-rebaseline-and-scope-freeze-review.md)
-  - the `M10` feature-phase reviews are [docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md](docs/reviews/m10-phase-1-ownership-topology-and-claim-domain-freeze-review.md) and [docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md](docs/reviews/m10-phase-2-local-barrier-and-parallel-batch-execution-review.md)
-  - the `M11-M20` closeout records are [docs/reviews/m11-freeze-review.md](docs/reviews/m11-freeze-review.md), [docs/reviews/m12-freeze-review.md](docs/reviews/m12-freeze-review.md), [docs/reviews/m13-freeze-review.md](docs/reviews/m13-freeze-review.md), [docs/reviews/m14-freeze-review.md](docs/reviews/m14-freeze-review.md), [docs/reviews/m15-freeze-review.md](docs/reviews/m15-freeze-review.md), [docs/reviews/m16-freeze-review.md](docs/reviews/m16-freeze-review.md), [docs/reviews/m17-freeze-review.md](docs/reviews/m17-freeze-review.md), [docs/reviews/m18-freeze-review.md](docs/reviews/m18-freeze-review.md), [docs/reviews/m19-freeze-review.md](docs/reviews/m19-freeze-review.md), and [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
-  - the current `M8` ecosystem reuse assessment is [docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md](docs/reviews/m8-ecosystem-reuse-and-wheel-reinvention-assessment.md)
-  - the current external-integration vs continued-self-build strategy is [docs/reviews/m8-external-tool-integration-and-self-build-plan.md](docs/reviews/m8-external-tool-integration-and-self-build-plan.md)
-  - the current "do we need another optimization round before M8?" assessment is [docs/reviews/m8-pre-entry-extra-optimization-assessment.md](docs/reviews/m8-pre-entry-extra-optimization-assessment.md)
-  - the M8 implementation records now live under `m8_phase_docs/`, `docs/task_cards/m8_phase_*`, and `docs/reviews/m8-phase-*`
-  - the completed hardening plan remains [docs/reviews/m7-gemini-opus-pre-m8-synthesis.md](docs/reviews/m7-gemini-opus-pre-m8-synthesis.md)
-  - documentation trust and source-package rules now live in [docs/documentation_governance.md](docs/documentation_governance.md) and [docs/source_package_export_policy.md](docs/source_package_export_policy.md)
-  - local subprocess trust assumptions now live in [docs/architecture/local_execution_trust_boundary.md](docs/architecture/local_execution_trust_boundary.md)
-  - service decomposition evidence now lives in [docs/reviews/pm8-phase-c-service-decomposition-review.md](docs/reviews/pm8-phase-c-service-decomposition-review.md)
-  - structured governance sources now live in [docs/governance/README.md](docs/governance/README.md)
-  - dependency/version policy now lives in [docs/dependency_locking_policy.md](docs/dependency_locking_policy.md)
+  - the deep core-complete baseline remains [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
+  - the latest local full-suite validation on the current worktree is `python -m pytest -q` -> `273 passed`
+  - older milestone plans, route syntheses, phase reviews, task-card packs, and reassessment drafts have been intentionally pruned from the working tree; use git history if you need deep archaeology
 
 ## Offline validation
 
@@ -274,7 +250,7 @@ Inspect the effective config with:
 workflowctl config show
 ```
 
-The Web operator surface is now built in:
+The Web operator surface is now built in as an operator console:
 
 ```powershell
 python -m infra.scripts.manage --db-path state/workflow.db dev --host 127.0.0.1 --port 8000
@@ -285,6 +261,47 @@ Then open:
 - `http://127.0.0.1:8000/ui`
 - `http://127.0.0.1:8000/ui/runs`
 - `http://127.0.0.1:8000/ui/reviews`
+- `http://127.0.0.1:8000/ui/governance`
+- `http://127.0.0.1:8000/ui/config`
+
+Current Web UI scope:
+
+- browse runs, focus detail, review queues, governance, and effective config
+- trigger lifecycle actions such as `resume`, `approve`, `reject`, `reconcile`, `cancel`, and `batch-resume`
+- inspect packetized operator state through the existing run detail views
+
+Current Web UI non-goals:
+
+- it is not yet a chat-style natural-language workbench
+- it does not yet expose streaming conversation, inline replanning, or free-form operator chat with the model
+
+## Natural-language launch surfaces
+
+The repository now has natural-language goal entry points, but they currently live in CLI/API rather than the Web UI or TUI.
+
+CLI:
+
+```powershell
+workflowctl --db-path state/workflow.db run suggest-presets --goal "Research runtime strategy"
+workflowctl --db-path state/workflow.db run plan-graph --goal "Ship a guarded delivery slice"
+workflowctl --db-path state/workflow.db run policy-preview --goal "Ship a guarded delivery slice"
+workflowctl --db-path state/workflow.db run goal-packet --goal "Ship a guarded delivery slice"
+workflowctl --db-path state/workflow.db run launch --goal "Ship a guarded delivery slice" --execute
+workflowctl --db-path state/workflow.db run operator-packet <run_id>
+```
+
+API:
+
+- `POST /runs/plan-graph`
+- `POST /runs/policy-preview`
+- `POST /runs/goal-packet`
+- `POST /runs/launch`
+- `GET /runs/{run_id}/operator-packet`
+
+Important boundary:
+
+- the backend can already plan and launch from a natural-language goal
+- the built-in Web UI and TUI remain operator surfaces, not full natural-language interaction terminals
 
 Remote worker productization and scheduler-authority peers are both built in for the shipped multi-control-plane core-complete path:
 
@@ -401,7 +418,6 @@ Local trust boundary notes:
 - subprocess-backed adapters now enforce declared timeout budgets
 - subprocess-backed adapters inherit an allowlisted subset of the parent environment plus explicit workflow packet values
 - compile-generated Python commands use the current interpreter via `sys.executable`
-- see [docs/architecture/local_execution_trust_boundary.md](docs/architecture/local_execution_trust_boundary.md)
 
 ## Operator TUI
 
@@ -423,6 +439,18 @@ Useful flags:
 - `--limit <n>` to change the recent-run list size
 - `--refresh-seconds <seconds>` to slow down or speed up watch mode
 - `--cycles <n>` to auto-stop after a fixed number of refreshes
+
+Current TUI scope:
+
+- recent runs
+- focus detail
+- runtime-gateway snapshot
+- timeline tail
+
+Current TUI non-goals:
+
+- it is not yet a full interactive operator shell
+- it is not yet a natural-language chat console or workbench
 
 On Windows terminals with a non-UTF-8 code page, run `chcp 65001` first if the dashboard border or table text looks garbled.
 
@@ -665,4 +693,3 @@ The current routes are:
 - Snapshot semantics are recovery-oriented projections. They improve checkpoint visibility, but they are not a full replay engine.
 - Durable pilot snapshots now persist under `state/durable`, but repository truth still remains canonical.
 - Smoke clears known LLM API key variables before execution and restores them afterward.
-- See [docs/smoke/m1-smoke.md](docs/smoke/m1-smoke.md) for the M1 acceptance flow.
