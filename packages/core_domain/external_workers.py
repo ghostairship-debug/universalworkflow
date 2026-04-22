@@ -105,6 +105,8 @@ class ExternalWorkerGateway:
         execution_result = launch_local(packet)
         renewed_at = _utc_now()
         lease_expires_at = renewed_at + timedelta(seconds=profile.lease_ttl_seconds)
+        authority_term_no = (scheduler_context or {}).get("authority_term_no") or (scheduler_context or {}).get("term_no")
+        decision_index = (scheduler_context or {}).get("decision_index") or (scheduler_context or {}).get("commit_index")
         execution_target = ExecutionTargetRef(
             target_kind=ExecutionTargetKind.external_worker_pool,
             worker_pool_id=profile.worker_pool_id,
@@ -122,7 +124,9 @@ class ExternalWorkerGateway:
             committed_lease_id=(scheduler_context or {}).get("committed_lease_id"),
             fencing_token=(scheduler_context or {}).get("fencing_token"),
             term_no=(scheduler_context or {}).get("term_no"),
+            authority_term_no=authority_term_no,
             commit_index=(scheduler_context or {}).get("commit_index"),
+            decision_index=decision_index,
         )
         renewal = LeaseRenewalRecord(
             run_id=packet.run_id,
@@ -138,7 +142,9 @@ class ExternalWorkerGateway:
             committed_lease_id=(scheduler_context or {}).get("committed_lease_id"),
             fencing_token=(scheduler_context or {}).get("fencing_token"),
             term_no=(scheduler_context or {}).get("term_no"),
+            authority_term_no=authority_term_no,
             commit_index=(scheduler_context or {}).get("commit_index"),
+            decision_index=decision_index,
         )
         return ExternalDispatchResult(
             execution_result=ExecutionResult(

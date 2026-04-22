@@ -1178,6 +1178,10 @@ def test_feature_delivery_can_dispatch_through_external_worker_pool(tmp_path: Pa
     assert detail["execution_target"]["worker_pool_id"] == "mock_remote_shell"
     assert detail["execution_target"]["target_kind"] == "external_worker_pool"
     assert detail["lease_renewals"][0]["status"] == "renewed"
+    assert detail["execution_target"]["authority_term_no"] == detail["execution_target"]["term_no"]
+    assert detail["execution_target"]["decision_index"] == detail["execution_target"]["commit_index"]
+    assert detail["lease_renewals"][0]["authority_term_no"] == detail["lease_renewals"][0]["term_no"]
+    assert detail["lease_renewals"][0]["decision_index"] == detail["lease_renewals"][0]["commit_index"]
 
 
 def test_durable_pilot_refs_stay_in_diagnostics_and_can_resume_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

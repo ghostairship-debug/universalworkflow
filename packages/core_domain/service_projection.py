@@ -168,15 +168,10 @@ class ProjectionServiceMixin:
         context: RunDiagnosticContext,
         last_runtime_state: RuntimeStateRef | None,
     ) -> dict[str, Any] | None:
-        payload = (
-            dict(last_runtime_state.state_payload.get("scheduler_authority"))
-            if last_runtime_state is not None
-            and isinstance(last_runtime_state.state_payload.get("scheduler_authority"), dict)
-            else {}
-        )
+        payload = self._scheduler_authority_payload(last_runtime_state) if last_runtime_state is not None else {}
         runtime_task = self._runtime_task_for_context(context)
         live_cluster = self.scheduler_authority_cluster.cluster_snapshot()
-        payload["cluster_summary"] = live_cluster
+        payload["cluster_summary"] = self._cluster_summary_payload(cluster=live_cluster) or live_cluster
         payload["local_control_plane_id"] = self.control_plane_identity.control_plane_id
         if runtime_task is not None:
             active_committed = self.scheduler_authority_cluster.get_active_committed_lease_for_domain(
@@ -184,11 +179,13 @@ class ProjectionServiceMixin:
                 domain_key=runtime_task.runtime_task_id,
             )
             if active_committed is not None:
-                payload["active_committed_lease"] = active_committed.model_dump(mode="json")
+                payload["active_committed_lease"] = (
+                    self._scheduler_committed_lease_payload(active_committed) or active_committed.model_dump(mode="json")
+                )
         handoff_history = payload.get("handoff_history")
         handoff_items = [dict(item) for item in handoff_history if isinstance(item, dict)] if isinstance(handoff_history, list) else []
         for handoff in context.handoffs:
-            serialized = handoff.model_dump(mode="json")
+            serialized = self._scheduler_handoff_envelope_payload(handoff) or handoff.model_dump(mode="json")
             if not any(item.get("envelope_id") == serialized["envelope_id"] for item in handoff_items):
                 handoff_items.append(serialized)
         if handoff_items:

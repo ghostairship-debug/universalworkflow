@@ -97,6 +97,12 @@ def create_app(
         started_at = _utc_now()
         heartbeat_at = _utc_now()
         lease_expires_at = heartbeat_at + timedelta(seconds=profile.lease_ttl_seconds)
+        authority_term_no = (payload.scheduler_context or {}).get("authority_term_no") or (
+            payload.scheduler_context or {}
+        ).get("term_no")
+        decision_index = (payload.scheduler_context or {}).get("decision_index") or (
+            payload.scheduler_context or {}
+        ).get("commit_index")
         execution_target = ExecutionTargetRef(
             target_kind=ExecutionTargetKind.external_worker_pool,
             worker_pool_id=profile.worker_pool_id,
@@ -114,7 +120,9 @@ def create_app(
             committed_lease_id=(payload.scheduler_context or {}).get("committed_lease_id"),
             fencing_token=(payload.scheduler_context or {}).get("fencing_token"),
             term_no=(payload.scheduler_context or {}).get("term_no"),
+            authority_term_no=authority_term_no,
             commit_index=(payload.scheduler_context or {}).get("commit_index"),
+            decision_index=decision_index,
         )
         renewal = LeaseRenewalRecord(
             run_id=packet.run_id,
@@ -131,7 +139,9 @@ def create_app(
             committed_lease_id=(payload.scheduler_context or {}).get("committed_lease_id"),
             fencing_token=(payload.scheduler_context or {}).get("fencing_token"),
             term_no=(payload.scheduler_context or {}).get("term_no"),
+            authority_term_no=authority_term_no,
             commit_index=(payload.scheduler_context or {}).get("commit_index"),
+            decision_index=decision_index,
         )
 
         callback_headers = {"X-Workflow-Shared-Secret": x_workflow_shared_secret} if x_workflow_shared_secret else {}

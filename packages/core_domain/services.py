@@ -491,6 +491,18 @@ class OrchestratorService(
     ) -> dict[str, Any] | None:
         return self.scheduler_authority_support.scheduler_context_for_dispatch(committed_lease)
 
+    def _scheduler_committed_lease_payload(
+        self,
+        committed_lease: SchedulerCommittedLease | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        return self.scheduler_authority_support.committed_lease_payload(committed_lease)
+
+    def _scheduler_handoff_envelope_payload(
+        self,
+        handoff_envelope: ControlPlaneHandoffEnvelope | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        return self.scheduler_authority_support.handoff_envelope_payload(handoff_envelope)
+
     def _scheduler_arbitration_updates(
         self,
         state_ref: RuntimeStateRef | None,
@@ -605,7 +617,7 @@ class OrchestratorService(
                 committed_lease=SchedulerCommittedLease.model_validate(current),
                 connection=connection,
             )
-            result["handoff_envelope"] = handoff_envelope.model_dump(mode="json")
+            result["handoff_envelope"] = self._scheduler_handoff_envelope_payload(handoff_envelope)
         return result, handoff_envelope
 
     def _validate_callback_scheduler_context(
@@ -2208,7 +2220,11 @@ class OrchestratorService(
                         "committed_lease_id": active_committed.get("committed_lease_id"),
                         "fencing_token": active_committed.get("fencing_token"),
                         "term_no": active_committed.get("term_no"),
+                        "authority_term_no": active_committed.get("authority_term_no")
+                        or active_committed.get("term_no"),
                         "commit_index": active_committed.get("commit_index"),
+                        "decision_index": active_committed.get("decision_index")
+                        or active_committed.get("commit_index"),
                     },
                 )
             )
@@ -3103,6 +3119,7 @@ class OrchestratorService(
                 for item in result.get("votes", [])
                 if isinstance(item, dict)
             ]
+            handoff_envelope_payload = result.get("handoff_envelope") if isinstance(result.get("handoff_envelope"), dict) else None
             handoff_envelope = (
                 ControlPlaneHandoffEnvelope.model_validate(result["handoff_envelope"])
                 if isinstance(result.get("handoff_envelope"), dict)
@@ -3117,7 +3134,7 @@ class OrchestratorService(
                     committed_lease=committed_lease,
                     term=term,
                     votes=votes,
-                    handoff_envelope=handoff_envelope,
+                    handoff_envelope=handoff_envelope_payload or handoff_envelope,
                     cluster=result.get("cluster"),
                     conflict=result.get("conflict"),
                 )
@@ -3326,7 +3343,7 @@ class OrchestratorService(
                     **execution_target,
                     "last_callback_at": heartbeat_at,
                 }
-                payload_updates["committed_scheduler_lease"] = committed_lease.model_dump(mode="json")
+                payload_updates["committed_scheduler_lease"] = self._scheduler_committed_lease_payload(committed_lease)
             updated_state = self._append_worker_callback(
                 self._state_ref_with_payload_updates(state_ref, payload_updates),
                 callback_type="heartbeat",
@@ -3390,7 +3407,7 @@ class OrchestratorService(
                     **execution_target,
                     "last_callback_at": self._utc_now().isoformat(),
                 },
-                "committed_scheduler_lease": committed_lease.model_dump(mode="json"),
+                "committed_scheduler_lease": self._scheduler_committed_lease_payload(committed_lease),
             }
             if lease_renewals is not None:
                 merged_renewals = self._lease_renewals_for(state_ref, None)

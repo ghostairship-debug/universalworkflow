@@ -60,8 +60,20 @@ def test_remote_worker_dispatch_and_callbacks_roundtrip(tmp_path: Path, monkeypa
     detail = detail_response.json()
     assert detail["execution_target"]["dispatch_mode"] == "remote_http"
     assert detail["execution_target"]["worker_pool_id"] == "remote_http_shell"
+    assert detail["execution_target"]["authority_term_no"] == detail["execution_target"]["term_no"]
+    assert detail["execution_target"]["decision_index"] == detail["execution_target"]["commit_index"]
     assert detail["worker_lease_projection"]["latest_worker_name"] == "Remote HTTP Shell Pool"
     assert len(detail["lease_renewals"]) >= 1
+    assert detail["lease_renewals"][0]["authority_term_no"] == detail["lease_renewals"][0]["term_no"]
+    assert detail["lease_renewals"][0]["decision_index"] == detail["lease_renewals"][0]["commit_index"]
+    assert (
+        detail["last_runtime_state"]["state_payload"]["committed_scheduler_lease"]["authority_term_no"]
+        == detail["last_runtime_state"]["state_payload"]["committed_scheduler_lease"]["term_no"]
+    )
+    assert (
+        detail["last_runtime_state"]["state_payload"]["committed_scheduler_lease"]["decision_index"]
+        == detail["last_runtime_state"]["state_payload"]["committed_scheduler_lease"]["commit_index"]
+    )
     assert detail["last_runtime_state"]["state_payload"]["worker_callbacks"]["heartbeat"]
     assert detail["last_runtime_state"]["state_payload"]["worker_callbacks"]["completion"]
     assert timeline_response.status_code == 200
@@ -193,7 +205,9 @@ def test_remote_worker_callback_rejects_stale_control_plane_after_takeover(tmp_p
                 "committed_lease_id": alpha_proposal["committed_lease"]["committed_lease_id"],
                 "fencing_token": alpha_proposal["committed_lease"]["fencing_token"],
                 "term_no": alpha_proposal["committed_lease"]["term_no"],
+                "authority_term_no": alpha_proposal["committed_lease"]["authority_term_no"],
                 "commit_index": alpha_proposal["committed_lease"]["commit_index"],
+                "decision_index": alpha_proposal["committed_lease"]["decision_index"],
             },
             "lease_renewals": [],
             "execution_result": {"return_code": 0},

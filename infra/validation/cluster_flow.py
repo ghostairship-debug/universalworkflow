@@ -164,7 +164,9 @@ def run_cluster_cutover_demo(db_path: Path) -> dict[str, Any]:
                     "committed_lease_id": alpha_proposal["committed_lease"]["committed_lease_id"],
                     "fencing_token": alpha_proposal["committed_lease"]["fencing_token"],
                     "term_no": alpha_proposal["committed_lease"]["term_no"],
+                    "authority_term_no": alpha_proposal["committed_lease"]["authority_term_no"],
                     "commit_index": alpha_proposal["committed_lease"]["commit_index"],
+                    "decision_index": alpha_proposal["committed_lease"]["decision_index"],
                 },
                 "lease_renewals": [],
                 "execution_result": {"return_code": 0},
@@ -193,7 +195,11 @@ def run_cluster_cutover_demo(db_path: Path) -> dict[str, Any]:
             "control_plane_id"
         ],
         "operator_handoff_count": len(operator_view.get("handoffs") or []),
-        "operator_cluster_topology_nodes": len((operator_view.get("cluster_overview") or {}).get("nodes") or []),
+        "operator_cluster_topology_nodes": len(
+            ((operator_view.get("cluster_overview") or {}).get("cluster") or {}).get("nodes")
+            or (operator_view.get("cluster_overview") or {}).get("nodes")
+            or []
+        ),
         "operator_cluster_topology_leader": (operator_view.get("cluster_overview") or {}).get("leader_node_id"),
     }
     result["passed"] = all(

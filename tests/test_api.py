@@ -836,6 +836,14 @@ def test_api_scheduler_authority_grants_and_projects_first_slice(tmp_path: Path)
     assert lease_response.json()["active"] is True
     assert detail_response.status_code == 200
     assert detail_response.json()["scheduler_authority"]["active_decision"]["lease_id"] == payload["decision"]["lease_id"]
+    assert (
+        detail_response.json()["scheduler_authority"]["active_committed_lease"]["authority_term_no"]
+        == detail_response.json()["scheduler_authority"]["active_committed_lease"]["term_no"]
+    )
+    assert (
+        detail_response.json()["scheduler_authority"]["active_committed_lease"]["decision_index"]
+        == detail_response.json()["scheduler_authority"]["active_committed_lease"]["commit_index"]
+    )
     assert replay_response.status_code == 200
     assert replay_response.json()["scheduler_authority"]["latest_decision"]["decision_id"] == payload["decision"]["decision_id"]
 
@@ -1007,6 +1015,14 @@ def test_api_scheduler_cluster_and_operator_view_expose_cluster_topology(tmp_pat
     assert (
         operator_payload["scheduler_authority"]["active_committed_lease"]["control_plane_id"]
         == "control_plane_alpha"
+    )
+    assert (
+        operator_payload["scheduler_authority"]["active_committed_lease"]["authority_term_no"]
+        == operator_payload["scheduler_authority"]["active_committed_lease"]["term_no"]
+    )
+    assert (
+        operator_payload["scheduler_authority"]["active_committed_lease"]["decision_index"]
+        == operator_payload["scheduler_authority"]["active_committed_lease"]["commit_index"]
     )
     assert "Authority Topology" in dashboard_html
     assert "Authority Topology" in governance_html

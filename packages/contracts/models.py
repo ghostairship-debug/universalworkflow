@@ -453,7 +453,9 @@ class CapabilityExecutionReceipt(ContractModel):
     committed_lease_id: str | None = None
     fencing_token: str | None = None
     term_no: int | None = None
+    authority_term_no: int | None = None
     commit_index: int | None = None
+    decision_index: int | None = None
 
 
 class LeaseRenewalRecord(ContractModel):
@@ -472,7 +474,9 @@ class LeaseRenewalRecord(ContractModel):
     committed_lease_id: str | None = None
     fencing_token: str | None = None
     term_no: int | None = None
+    authority_term_no: int | None = None
     commit_index: int | None = None
+    decision_index: int | None = None
 
 
 class TraceContext(ContractModel):

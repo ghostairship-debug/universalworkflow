@@ -1,7 +1,8 @@
 # M34 Phase 0: Facade Reduction / Authority Interior Cleanup
 
-Status: active  
-Opened: 2026-04-22  
+Status: completed
+Opened: 2026-04-22
+Closed: 2026-04-22
 Baseline: accepted `M33 Phase 0`
 
 ## Purpose
@@ -108,11 +109,12 @@ Closeout for this phase must include:
 
 ## Outcome
 
-`M34 Phase 0` is now the active bounded phase.
+`M34 Phase 0` is complete as a bounded cleanup phase.
 
-Its immediate focus is:
+Its net result is:
 
-- continue repaying `TD-STRUCT-001`
-- continue repaying `TD-STRUCT-003`
+- `TD-STRUCT-001` further partially repaid through another bounded scheduler-authority support seam extracted out of `OrchestratorService`
+- `TD-STRUCT-003` further partially repaid through safe internal authority-oriented helper renames and additive alias propagation across committed-lease, projection, dispatch, and worker diagnostic payloads
+- `TD-STRUCT-005` and `TD-STRUCT-006` remain deferred to a post-`M34` bounded follow-on
 
-Do not open later breadth work until this bounded cleanup line is closed honestly.
+No post-`M34` bounded phase is open yet. Do not resume later breadth work until the next bounded phase is explicitly opened.

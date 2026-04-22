@@ -31,8 +31,20 @@ class SchedulerAuthoritySupportService:
         )
         if state_ref is None:
             return payload
+        active_committed_payload = self.committed_lease_payload(payload.get("active_committed_lease"))
+        if active_committed_payload is not None:
+            payload["active_committed_lease"] = active_committed_payload
+        cluster_summary = payload.get("cluster_summary")
+        if isinstance(cluster_summary, dict):
+            payload["cluster_summary"] = self.cluster_summary_payload(
+                cluster=cluster_summary.get("cluster") if isinstance(cluster_summary.get("cluster"), dict) else cluster_summary,
+                term=cluster_summary.get("term") if isinstance(cluster_summary.get("term"), dict) else None,
+            ) or cluster_summary
+        payload["handoff_history"] = [
+            self.handoff_envelope_payload(item) or dict(item)
+            for item in self.handoff_history(payload)
+        ]
         payload["local_control_plane_id"] = self._facade.control_plane_identity.control_plane_id
-        active_committed_payload = payload.get("active_committed_lease")
         active_owner = (
             str(active_committed_payload.get("control_plane_id"))
             if isinstance(active_committed_payload, dict) and active_committed_payload.get("control_plane_id") is not None
@@ -65,6 +77,40 @@ class SchedulerAuthoritySupportService:
         handoffs = payload.get("handoff_history")
         return [dict(item) for item in handoffs if isinstance(item, dict)] if isinstance(handoffs, list) else []
 
+    def with_authority_aliases(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+        aliased = dict(payload)
+        if aliased.get("authority_node_id") is None and aliased.get("leader_node_id") is not None:
+            aliased["authority_node_id"] = aliased.get("leader_node_id")
+        if aliased.get("authority_term_no") is None and aliased.get("term_no") is not None:
+            aliased["authority_term_no"] = aliased.get("term_no")
+        if aliased.get("decision_index") is None and aliased.get("commit_index") is not None:
+            aliased["decision_index"] = aliased.get("commit_index")
+        return aliased
+
+    def committed_lease_payload(
+        self,
+        committed_lease: SchedulerCommittedLease | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        payload = (
+            committed_lease.model_dump(mode="json")
+            if isinstance(committed_lease, SchedulerCommittedLease)
+            else (dict(committed_lease) if isinstance(committed_lease, dict) else None)
+        )
+        return self.with_authority_aliases(payload)
+
+    def handoff_envelope_payload(
+        self,
+        handoff_envelope: ControlPlaneHandoffEnvelope | dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        payload = (
+            handoff_envelope.model_dump(mode="json")
+            if isinstance(handoff_envelope, ControlPlaneHandoffEnvelope)
+            else (dict(handoff_envelope) if isinstance(handoff_envelope, dict) else None)
+        )
+        return self.with_authority_aliases(payload)
+
     def cluster_summary_payload(
         self,
         *,
@@ -78,7 +124,8 @@ class SchedulerAuthoritySupportService:
             if isinstance(term, SchedulerConsensusTerm)
             else (dict(term) if isinstance(term, dict) else None)
         )
-        cluster_payload = dict(cluster) if isinstance(cluster, dict) else {}
+        term_payload = self.with_authority_aliases(term_payload)
+        cluster_payload = self.with_authority_aliases(dict(cluster) if isinstance(cluster, dict) else {}) or {}
         return {
             "mode": self._facade.effective_config["scheduler_authority"]["mode"],
             "authority_mode": self._facade.effective_config["scheduler_authority"]["authority_mode"],
@@ -106,15 +153,18 @@ class SchedulerAuthoritySupportService:
         }
 
     def scheduler_context_for_dispatch(self, committed_lease: dict[str, Any] | None) -> dict[str, Any] | None:
-        if not isinstance(committed_lease, dict):
+        committed_payload = self.committed_lease_payload(committed_lease)
+        if committed_payload is None:
             return None
         return {
-            "control_plane_id": committed_lease.get("control_plane_id"),
-            "committed_lease_id": committed_lease.get("committed_lease_id"),
-            "fencing_token": committed_lease.get("fencing_token"),
-            "term_no": committed_lease.get("term_no"),
-            "commit_index": committed_lease.get("commit_index"),
-            "lease_epoch": committed_lease.get("lease_epoch"),
+            "control_plane_id": committed_payload.get("control_plane_id"),
+            "committed_lease_id": committed_payload.get("committed_lease_id"),
+            "fencing_token": committed_payload.get("fencing_token"),
+            "term_no": committed_payload.get("term_no"),
+            "authority_term_no": committed_payload.get("authority_term_no"),
+            "commit_index": committed_payload.get("commit_index"),
+            "decision_index": committed_payload.get("decision_index"),
+            "lease_epoch": committed_payload.get("lease_epoch"),
         }
 
     def arbitration_updates(
@@ -141,21 +191,17 @@ class SchedulerAuthoritySupportService:
         if conflict is not None:
             conflicts.append(conflict)
         if handoff_envelope is not None:
-            handoff_history.append(
-                handoff_envelope.model_dump(mode="json")
-                if isinstance(handoff_envelope, ControlPlaneHandoffEnvelope)
-                else dict(handoff_envelope)
-            )
+            payload = self.handoff_envelope_payload(handoff_envelope)
+            if payload is not None:
+                handoff_history.append(payload)
         current_active = current.get("active_decision") if isinstance(current.get("active_decision"), dict) else None
         if decision is not None:
             if decision.decision == "granted" and decision.released_at is None:
                 current_active = decision.model_dump(mode="json")
             elif current_active is not None and current_active.get("lease_id") == decision.lease_id:
                 current_active = None
-        committed_payload = (
-            committed_lease.model_dump(mode="json")
-            if isinstance(committed_lease, SchedulerCommittedLease)
-            else (dict(committed_lease) if isinstance(committed_lease, dict) else current.get("active_committed_lease"))
+        committed_payload = self.committed_lease_payload(committed_lease) or self.with_authority_aliases(
+            current.get("active_committed_lease") if isinstance(current.get("active_committed_lease"), dict) else None
         )
         updates: dict[str, Any] = {
             "control_plane_id": control_plane_id,
@@ -197,6 +243,10 @@ class SchedulerAuthoritySupportService:
                 "committed_lease_id": committed_payload.get("committed_lease_id") if isinstance(committed_payload, dict) else None,
                 "fencing_token": committed_payload.get("fencing_token") if isinstance(committed_payload, dict) else None,
                 "term_no": committed_payload.get("term_no") if isinstance(committed_payload, dict) else None,
+                "authority_term_no": (
+                    committed_payload.get("authority_term_no") if isinstance(committed_payload, dict) else None
+                ),
                 "commit_index": committed_payload.get("commit_index") if isinstance(committed_payload, dict) else None,
+                "decision_index": committed_payload.get("decision_index") if isinstance(committed_payload, dict) else None,
             }
         return updates

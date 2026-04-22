@@ -173,19 +173,19 @@ class SchedulerAuthorityClusterService:
         ).fetchall()
         return [self._row_to_node(row) for row in rows]
 
-    def _latest_term(self, connection: sqlite3.Connection) -> SchedulerConsensusTerm | None:
+    def _latest_authority_term(self, connection: sqlite3.Connection) -> SchedulerConsensusTerm | None:
         row = connection.execute(
             "SELECT * FROM scheduler_consensus_terms ORDER BY term_no DESC LIMIT 1"
         ).fetchone()
         return self._row_to_term(row) if row is not None else None
 
-    def _active_term(self, connection: sqlite3.Connection) -> SchedulerConsensusTerm | None:
+    def _active_authority_term(self, connection: sqlite3.Connection) -> SchedulerConsensusTerm | None:
         row = connection.execute(
             "SELECT * FROM scheduler_consensus_terms WHERE status = 'active' ORDER BY term_no DESC LIMIT 1"
         ).fetchone()
         return self._row_to_term(row) if row is not None else None
 
-    def _close_term(
+    def _close_authority_term(
         self,
         connection: sqlite3.Connection,
         term: SchedulerConsensusTerm,
@@ -210,7 +210,7 @@ class SchedulerAuthorityClusterService:
             }
         )
 
-    def _create_term(
+    def _open_authority_term(
         self,
         connection: sqlite3.Connection,
         *,
@@ -278,7 +278,7 @@ class SchedulerAuthorityClusterService:
         leader_candidates = sorted(node.node_id for node in active_nodes) or [self.node_id]
         desired_leader = leader_candidates[0]
         quorum_size = self._effective_quorum_size(len(active_nodes))
-        current = self._active_term(connection)
+        current = self._active_authority_term(connection)
         if current is not None and current.leader_node_id == desired_leader:
             connection.execute(
                 """
@@ -295,11 +295,11 @@ class SchedulerAuthorityClusterService:
                     "last_heartbeat_at": observed_at,
                 }
             )
-        latest = current or self._latest_term(connection)
+        latest = current or self._latest_authority_term(connection)
         if current is not None:
-            self._close_term(connection, current, reason="leader_rotated_or_expired")
+            self._close_authority_term(connection, current, reason="leader_rotated_or_expired")
         next_term_no = (latest.term_no + 1) if latest is not None else 1
-        return self._create_term(
+        return self._open_authority_term(
             connection,
             term_no=next_term_no,
             leader_node_id=desired_leader,
@@ -648,7 +648,7 @@ class SchedulerAuthorityClusterService:
         observed_at = now or _utc_now()
         nodes = self._list_nodes(connection)
         active_ids = {node.node_id for node in self._active_nodes(connection, now=observed_at)}
-        term = current_term or self._active_term(connection) or self._latest_term(connection)
+        term = current_term or self._active_authority_term(connection) or self._latest_authority_term(connection)
         return {
             "mode": "quorum",
             "authority_mode": "single_store_quorum",
@@ -676,11 +676,34 @@ class SchedulerAuthorityClusterService:
         with unit_of_work(self.db_path) as owned:
             return self._cluster_snapshot(owned, current_term=self._ensure_active_term(owned))
 
-    def _term_payload(self, term: SchedulerConsensusTerm) -> dict[str, Any]:
+    def _authority_term_payload(self, term: SchedulerConsensusTerm) -> dict[str, Any]:
         payload = term.model_dump(mode="json")
         payload["authority_node_id"] = payload.get("leader_node_id")
         payload["authority_term_no"] = payload.get("term_no")
         payload["decision_index"] = payload.get("commit_index")
+        return payload
+
+    def _authority_index_fields(
+        self,
+        *,
+        term_no: int | None,
+        commit_index: int | None,
+    ) -> dict[str, int | None]:
+        return {
+            "term_no": term_no,
+            "authority_term_no": term_no,
+            "commit_index": commit_index,
+            "decision_index": commit_index,
+        }
+
+    def _committed_lease_payload(self, committed_lease: SchedulerCommittedLease) -> dict[str, Any]:
+        payload = committed_lease.model_dump(mode="json")
+        payload.update(
+            self._authority_index_fields(
+                term_no=committed_lease.term_no,
+                commit_index=committed_lease.commit_index,
+            )
+        )
         return payload
 
     def submit_proposal(
@@ -798,13 +821,15 @@ class SchedulerAuthorityClusterService:
                 return {
                     "proposal": proposal.model_dump(mode="json"),
                     "decision": latest_decision.model_dump(mode="json") if latest_decision is not None else None,
-                    "committed_lease": active_committed.model_dump(mode="json"),
+                    "committed_lease": self._committed_lease_payload(active_committed),
                     "duplicate": True,
                     "granted": True,
                     "votes": [vote.model_dump(mode="json") for vote in self._votes_for_proposal(connection, proposal.proposal_id)],
-                    "term": self._term_payload(term),
+                    "term": self._authority_term_payload(term),
                     "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
-                    "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
+                    "previous_committed_lease": (
+                        self._committed_lease_payload(latest_committed) if latest_committed is not None else None
+                    ),
                 }
 
             conflict = {
@@ -815,7 +840,9 @@ class SchedulerAuthorityClusterService:
                 "lease_id": active_committed.lease_id,
                 "fencing_token": active_committed.fencing_token,
                 "term_no": active_committed.term_no,
+                "authority_term_no": active_committed.term_no,
                 "commit_index": active_committed.commit_index,
+                "decision_index": active_committed.commit_index,
                 "lease_epoch": active_committed.lease_epoch,
                 "lease_expires_at": active_committed.lease_expires_at.isoformat(),
             }
@@ -843,9 +870,11 @@ class SchedulerAuthorityClusterService:
                 "granted": False,
                 "conflict": conflict,
                 "votes": [],
-                "term": self._term_payload(term),
+                "term": self._authority_term_payload(term),
                 "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
-                "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
+                "previous_committed_lease": (
+                    self._committed_lease_payload(latest_committed) if latest_committed is not None else None
+                ),
             }
 
         if authority_node_id != term.leader_node_id:
@@ -872,10 +901,12 @@ class SchedulerAuthorityClusterService:
                 "duplicate": False,
                 "granted": False,
                 "votes": [],
-                "term": self._term_payload(term),
+                "term": self._authority_term_payload(term),
                 "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
                 "stale_leader": True,
-                "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
+                "previous_committed_lease": (
+                    self._committed_lease_payload(latest_committed) if latest_committed is not None else None
+                ),
             }
 
         active_nodes = self._active_nodes(connection, now=now)
@@ -915,9 +946,11 @@ class SchedulerAuthorityClusterService:
                 "duplicate": False,
                 "granted": False,
                 "votes": [vote.model_dump(mode="json") for vote in votes],
-                "term": self._term_payload(term),
+                "term": self._authority_term_payload(term),
                 "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
-                "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
+                "previous_committed_lease": (
+                    self._committed_lease_payload(latest_committed) if latest_committed is not None else None
+                ),
             }
 
         if latest_committed is not None and latest_committed.released_at is None and latest_committed.lease_expires_at <= now:
@@ -970,13 +1003,15 @@ class SchedulerAuthorityClusterService:
         return {
             "proposal": proposal.model_dump(mode="json"),
             "decision": decision.model_dump(mode="json"),
-            "committed_lease": committed_lease.model_dump(mode="json"),
+            "committed_lease": self._committed_lease_payload(committed_lease),
             "duplicate": False,
             "granted": True,
             "votes": [vote.model_dump(mode="json") for vote in votes],
-            "term": self._term_payload(granted_term),
+            "term": self._authority_term_payload(granted_term),
             "cluster": self._cluster_snapshot(connection, current_term=granted_term, now=now),
-            "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
+            "previous_committed_lease": (
+                self._committed_lease_payload(latest_committed) if latest_committed is not None else None
+            ),
         }
 
     def release_lease(
@@ -1009,7 +1044,7 @@ class SchedulerAuthorityClusterService:
             connection=connection,
         )
         return {
-            "committed_lease": committed_lease.model_dump(mode="json"),
+            "committed_lease": self._committed_lease_payload(committed_lease),
             "decision": decision.model_dump(mode="json") if decision is not None else None,
             "cluster": self._cluster_snapshot(connection),
         }
@@ -1041,7 +1076,7 @@ class SchedulerAuthorityClusterService:
             "lease_id": lease_id,
             "proposal": proposal.model_dump(mode="json") if proposal is not None else None,
             "decision": decision.model_dump(mode="json") if decision is not None else None,
-            "committed_lease": committed_lease.model_dump(mode="json"),
+            "committed_lease": self._committed_lease_payload(committed_lease),
             "votes": [vote.model_dump(mode="json") for vote in votes],
             "cluster": self._cluster_snapshot(connection),
             "active": committed_lease.status == "active" and committed_lease.released_at is None and committed_lease.lease_expires_at > _utc_now(),
