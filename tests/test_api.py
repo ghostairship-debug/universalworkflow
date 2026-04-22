@@ -35,7 +35,6 @@ class _FakeApiClient:
 
 OPEN_DEBT_IDS = [
     "TD-STRUCT-001",
-    "TD-STRUCT-002",
     "TD-STRUCT-003",
     "TD-STRUCT-004",
     "TD-STRUCT-005",
@@ -589,9 +588,9 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     response = client.get("/governance/tech-debt")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["open_debt_count"] == 6
+    assert payload["open_debt_count"] == 5
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"M32": 6}
+    assert payload["planned_phase_counts"] == {"Next bounded phase (post-`M32`)": 5}
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:

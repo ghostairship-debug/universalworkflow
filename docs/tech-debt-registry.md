@@ -44,6 +44,7 @@
 | TD-020 | the full operator web UI and human control surface were still missing beyond CLI/API and the read-mostly TUI | M5-M13 | M14 | Added a built-in FastAPI web operator surface with dashboard, run explorer, pending-review console, governance/config pages, and controller-owned human action routes |
 | TD-019 | hosted remote worker pools and multi-node scheduling were still not productized beyond the shipped local-first / loopback external-worker baseline | M10 | M15 | Added single-control-plane remote HTTP worker pools, callback-driven lease renewal/completion recording, remote worker bootstrap packaging, and remote worker recovery coverage while keeping repository truth in the control plane |
 | TD-021 | a centralized scheduler-authority first slice existed for multi-control-plane identity, lease proposal, and arbitration provenance, but true distributed scheduler consensus and cross-control-plane failover were still incomplete | M15 | M20 | Added a single-store quorum-style scheduler-authority layer, committed cross-control-plane lease ownership, fencing-token enforced remote callbacks, takeover handoff lineage, cluster operator surfaces, and offline cutover validation while keeping repository truth inside the control planes |
+| TD-STRUCT-002 | post-`M31 Phase 0` truth was still partially duplicated across freeze reviews, the current workflow guide, retained phase/task-card artifacts, and root rebaseline bundles until the opening material was fully absorbed and pruned | M31 | M32 Phase 0 | Absorbed the opening-bundle and backup-workspace truth into accepted freeze reviews and archive notes, then cleaned the repository back to one primary worktree |
 
 ---
 
@@ -51,12 +52,11 @@
 
 | ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-STRUCT-001 | `OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface | M31 | M32 | partially_repaid | blocks honest service-boundary claims and safe follow-on extraction |
-| TD-STRUCT-002 | post-`M31 Phase 0` truth is still partially duplicated across freeze reviews, the current workflow guide, retained phase/task-card artifacts, and root rebaseline bundles until the opening material is fully absorbed and pruned | M31 | M32 | partially_repaid | blocks clean doc governance and phase-close convergence |
-| TD-STRUCT-003 | scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee | M20-M31 | M32 | active | blocks semantic honesty and operator comprehension |
-| TD-STRUCT-004 | orchestration logic still carries `project_delivery`-shaped assumptions even after the first shared graph substrate extraction | M30-M31 | M32 | active | blocks safer orchestration expansion beyond the initial presets |
-| TD-STRUCT-005 | capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane | M30-M31 | M32 | active | blocks fully trustworthy capability readiness and routing decisions |
-| TD-STRUCT-006 | future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts | M31 | M32 | active | blocks safe promotion of M32+ platform objects into the mainline type system |
+| TD-STRUCT-001 | `OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface | M31 | Next bounded phase (post-`M32`) | partially_repaid | blocks honest service-boundary claims and safe follow-on extraction |
+| TD-STRUCT-003 | scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee | M20-M31 | Next bounded phase (post-`M32`) | active | blocks semantic honesty and operator comprehension |
+| TD-STRUCT-004 | orchestration logic still carries `project_delivery`-shaped assumptions even after the first shared graph substrate extraction | M30-M31 | Next bounded phase (post-`M32`) | partially_repaid | blocks safer orchestration expansion beyond the initial presets |
+| TD-STRUCT-005 | capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane | M30-M31 | Next bounded phase (post-`M32`) | active | blocks fully trustworthy capability readiness and routing decisions |
+| TD-STRUCT-006 | future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts | M31 | Next bounded phase (post-`M32`) | partially_repaid | blocks safe promotion of M32+ platform objects into the mainline type system |
 
 ---
 

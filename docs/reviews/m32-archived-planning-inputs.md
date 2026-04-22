@@ -8,7 +8,7 @@ Source worktree: `D:\Universal Agentic workflow` on `codex/main-pre-m32-20260422
 
 This document preserves the useful planning direction from the pre-merge backup workspace without restoring those root-level files as active truth.
 
-It exists so the repository can keep the roadmap and execution rationale that helped shape `M32`, while still treating the active phase doc, task cards, accepted freeze reviews, and living debt registry as the authoritative sources.
+It exists so the repository can keep the roadmap and execution rationale that helped shape `M32`, while still treating the accepted freeze reviews, living workflow guide, and debt registry as the authoritative sources.
 
 ## Source Documents
 
@@ -16,7 +16,7 @@ The preserved material came primarily from:
 
 - `NEXT_DEVELOPMENT_PLAN.md`
 - `LOCAL_WORKTREE_WORKFLOW_PARALLEL_PLAN.md`
-- `领域特化_Agent_集群架构说明与开发方案_重新导出.md`
+- the archived domain-specialized cluster proposal exported from the pre-merge workspace
 
 Those files remain part of the backup workspace history and should not be restored to the repository root as parallel planning truth.
 
@@ -30,7 +30,7 @@ The post-`M31` expansion line should remain interaction-first:
 - keep automation-plane breadth deferred
 - avoid opening later product planes until the active bounded phase closes honestly
 
-This is already reflected in the active `M32 Phase 0` materials and remains the correct sequencing rule.
+This is already reflected in the accepted `M32 Phase 0` closeout and remains the correct sequencing rule.
 
 ### 2. Public Role + Profile + Cluster Direction
 
@@ -98,7 +98,7 @@ The following ideas remain intentionally non-authoritative:
 - restoring `NEXT_DEVELOPMENT_PLAN.md` at the repository root as a second master plan
 - restoring closed `M31` phase/task-card packs as active guidance
 - promoting vision/reference material from later bundles without explicit bounded-phase justification
-- using the old planning files to override the current `M32` phase doc, task cards, or living workflow guide
+- using the old planning files to override the accepted `M32` freeze review, living workflow guide, or debt registry
 
 ## Relationship To Active Truth
 
@@ -106,8 +106,7 @@ Use this document only for historical planning context and future roadmap recall
 
 For current repository truth, continue to use:
 
-1. `m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md`
-2. `docs/task_cards/m32_phase_0_task_cards.md`
-3. `docs/current_development_workflow.md`
-4. accepted freeze reviews
-5. `docs/tech-debt-registry.md`
+1. `docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md`
+2. `docs/current_development_workflow.md`
+3. accepted freeze reviews
+4. `docs/tech-debt-registry.md`

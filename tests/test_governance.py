@@ -211,7 +211,6 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert report["remaining_gaps"] == []
     assert report["open_debt_ids"] == [
         "TD-STRUCT-001",
-        "TD-STRUCT-002",
         "TD-STRUCT-003",
         "TD-STRUCT-004",
         "TD-STRUCT-005",
@@ -280,7 +279,6 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
     assert report["metrics_version"] == "m20_core_complete_v1"
     assert report["tech_debt"]["open_debt_ids"] == [
         "TD-STRUCT-001",
-        "TD-STRUCT-002",
         "TD-STRUCT-003",
         "TD-STRUCT-004",
         "TD-STRUCT-005",

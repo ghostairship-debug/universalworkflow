@@ -18,7 +18,6 @@ from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 runner = CliRunner()
 OPEN_DEBT_IDS = [
     "TD-STRUCT-001",
-    "TD-STRUCT-002",
     "TD-STRUCT-003",
     "TD-STRUCT-004",
     "TD-STRUCT-005",
@@ -420,9 +419,9 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "governance", "tech-debt")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["open_debt_count"] == 6
+    assert payload["open_debt_count"] == 5
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"M32": 6}
+    assert payload["planned_phase_counts"] == {"Next bounded phase (post-`M32`)": 5}
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:

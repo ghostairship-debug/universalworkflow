@@ -147,6 +147,13 @@
       "introduced_in": "M15",
       "repaid_in": "M20",
       "result": "Added a single-store quorum-style scheduler-authority layer, committed cross-control-plane lease ownership, fencing-token enforced remote callbacks, takeover handoff lineage, cluster operator surfaces, and offline cutover validation while keeping repository truth inside the control planes"
+    },
+    {
+      "debt_id": "TD-STRUCT-002",
+      "description": "post-`M31 Phase 0` truth was still partially duplicated across freeze reviews, the current workflow guide, retained phase/task-card artifacts, and root rebaseline bundles until the opening material was fully absorbed and pruned",
+      "introduced_in": "M31",
+      "repaid_in": "M32 Phase 0",
+      "result": "Absorbed the opening-bundle and backup-workspace truth into accepted freeze reviews and archive notes, then cleaned the repository back to one primary worktree"
     }
   ],
   "open_items": [
@@ -154,23 +161,15 @@
       "debt_id": "TD-STRUCT-001",
       "description": "`OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface",
       "introduced_in": "M31",
-      "planned_repayment_phase": "M32",
+      "planned_repayment_phase": "Next bounded phase (post-`M32`)",
       "current_status": "partially_repaid",
       "blocking_impact": "blocks honest service-boundary claims and safe follow-on extraction"
-    },
-    {
-      "debt_id": "TD-STRUCT-002",
-      "description": "post-`M31 Phase 0` truth is still partially duplicated across freeze reviews, the current workflow guide, retained phase/task-card artifacts, and root rebaseline bundles until the opening material is fully absorbed and pruned",
-      "introduced_in": "M31",
-      "planned_repayment_phase": "M32",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks clean doc governance and phase-close convergence"
     },
     {
       "debt_id": "TD-STRUCT-003",
       "description": "scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee",
       "introduced_in": "M20-M31",
-      "planned_repayment_phase": "M32",
+      "planned_repayment_phase": "Next bounded phase (post-`M32`)",
       "current_status": "active",
       "blocking_impact": "blocks semantic honesty and operator comprehension"
     },
@@ -178,15 +177,15 @@
       "debt_id": "TD-STRUCT-004",
       "description": "orchestration logic still carries `project_delivery`-shaped assumptions even after the first shared graph substrate extraction",
       "introduced_in": "M30-M31",
-      "planned_repayment_phase": "M32",
-      "current_status": "active",
+      "planned_repayment_phase": "Next bounded phase (post-`M32`)",
+      "current_status": "partially_repaid",
       "blocking_impact": "blocks safer orchestration expansion beyond the initial presets"
     },
     {
       "debt_id": "TD-STRUCT-005",
       "description": "capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane",
       "introduced_in": "M30-M31",
-      "planned_repayment_phase": "M32",
+      "planned_repayment_phase": "Next bounded phase (post-`M32`)",
       "current_status": "active",
       "blocking_impact": "blocks fully trustworthy capability readiness and routing decisions"
     },
@@ -194,8 +193,8 @@
       "debt_id": "TD-STRUCT-006",
       "description": "future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts",
       "introduced_in": "M31",
-      "planned_repayment_phase": "M32",
-      "current_status": "active",
+      "planned_repayment_phase": "Next bounded phase (post-`M32`)",
+      "current_status": "partially_repaid",
       "blocking_impact": "blocks safe promotion of M32+ platform objects into the mainline type system"
     }
   ],

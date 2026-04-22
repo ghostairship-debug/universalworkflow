@@ -49,7 +49,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 - Chinese overview:
   - [README.zh-CN.md](README.zh-CN.md)
-- Milestone baseline: through accepted `M31 Phase 0`, complete
+- Milestone baseline: through accepted `M32 Phase 0`, complete
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
@@ -74,16 +74,16 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - built-in FastAPI Web operator console and terminal TUI dashboard
   - `v1 core complete` mainline product status
 - Current planning position:
-  - `M8-M30` and accepted `M31 Phase 0` are complete
-  - the latest accepted freeze is [docs/reviews/m31-boundary-contraction-freeze-review.md](docs/reviews/m31-boundary-contraction-freeze-review.md)
-  - `M32 Phase 0` is the active bounded phase now open in this worktree
-  - the active phase is interaction-first, role-profile-aware, and cluster-ready
+  - `M8-M30`, accepted `M31 Phase 0`, and accepted `M32 Phase 0` are complete
+  - the latest accepted freeze is [docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md](docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md)
+  - no post-`M32` bounded phase is currently open in this worktree
+  - the latest accepted foundation is interaction-first, role-profile-aware, and cluster-aware
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
   - archived planning context from the pre-merge workspace is retained as reference-only in [docs/reviews/m32-archived-planning-inputs.md](docs/reviews/m32-archived-planning-inputs.md)
+  - the previous bounded expansion freeze remains [docs/reviews/m31-boundary-contraction-freeze-review.md](docs/reviews/m31-boundary-contraction-freeze-review.md)
   - the previous milestone freeze remains [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
   - the deep core-complete baseline remains [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
-  - the latest recorded local full-suite validation for the accepted `M31 Phase 0` closeout is `python -m pytest -q` -> `278 passed`
-  - retained `M31` opening/closeout artifacts remain temporary carry-forward material while `TD-STRUCT-002` is still open
+  - the latest recorded local full-suite validation for the accepted `M32 Phase 0` closeout is `python -m pytest -q` -> `281 passed`
 
 ## Offline validation
 

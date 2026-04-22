@@ -1,6 +1,6 @@
 # M32-0C Role / Profile / Cluster Template Contracts
 
-Status: pending
+Status: completed
 
 ## Goal
 
@@ -19,3 +19,11 @@ Establish the two-layer execution model of stable public roles plus profiles, th
 - add `ClusterReviewRubric`
 - add cluster routing support
 - define first templates: `DevCluster` and `ResearchCluster`
+
+## Result
+
+- kept public governance roles stable
+- added profile contracts, generated-profile support, and registry surfaces
+- added first-class execution-cluster template contracts and routing helpers
+- defined `DevCluster` and `ResearchCluster` as the first platform templates
+- preserved the rule that specialist execution semantics live in profiles/templates rather than a large public role enum

@@ -1,7 +1,8 @@
 # M32 Phase 0: Interaction / Profile / Cluster Foundation
 
-Status: active  
+Status: completed  
 Opened: 2026-04-22  
+Closed: 2026-04-22  
 Baseline: accepted `M31 Phase 0`
 
 ## Purpose
@@ -34,7 +35,7 @@ The accepted `M31 Phase 0` closeout left six structural debts open:
 This phase includes:
 
 - `M32-0` opening/governance and reference absorption inventory
-- `M32-A` interaction contracts and minimum service façade
+- `M32-A` interaction contracts and minimum service facade
 - `M32-B` public role plus profile contracts
 - `M32-C` execution-cluster template contracts
 - `M32-D` cluster-aware graph and packet integration
@@ -50,7 +51,7 @@ This phase explicitly does not include:
 
 ## Execution Model
 
-Development for this phase runs through five local worktrees:
+Development for this phase ran through five local worktrees:
 
 - `codex/m32-integration`
 - `codex/m32-contracts`
@@ -60,11 +61,11 @@ Development for this phase runs through five local worktrees:
 
 Rules:
 
-- `integration` owns phase truth, task cards, merges, and closeout
-- `contracts` freezes the public objects before broad implementation parallelism begins
-- `runtime-routing`, `projection-workbench`, and `tests-governance` may proceed in parallel only after the relevant contract slice is frozen
-- every worktree uses an isolated workspace-scoped DB path
-- bug-first is mandatory: if a real workflow/runtime regression appears, repair it before continuing feature scope
+- `integration` owned phase truth, task cards, merges, and closeout
+- `contracts` froze the public objects before broad implementation parallelism began
+- `runtime-routing`, `projection-workbench`, and `tests-governance` proceeded in parallel only after the relevant contract slice was frozen
+- every worktree used an isolated workspace-scoped DB path
+- bug-first remained mandatory: if a real workflow/runtime regression appeared, it was repaired before feature scope continued
 
 ## Workstreams
 
@@ -72,13 +73,13 @@ Rules:
 
 - open `M32` formally
 - create the task-card pack
-- inventory the current dirty reference workspace and classify candidate `M31` carry-forward deltas
-- update living docs so the repository truth no longer claims there is no open post-`M31` phase
+- inventory the dirty reference workspace and classify candidate `M31` carry-forward deltas
+- update living docs so repository truth no longer claims there is no open post-`M31` phase
 
 ### Workstream A: Interaction Plane
 
 - add `IntentSession`, `IntentPacket`, `ClarificationState`, `PlanDraft`, `LaunchDecision`, `FollowupRequest`
-- add a minimum interaction service façade
+- add a minimum interaction service facade
 - keep interaction state separate from execution truth
 
 ### Workstream B: Role / Profile Layer
@@ -107,12 +108,12 @@ Rules:
 
 ## Entry Criteria
 
-To remain in-bounds, the phase must preserve these assumptions:
+To remain in-bounds, the phase preserved these assumptions:
 
-- accepted `M31 Phase 0` remains the last completed freeze baseline
-- the dirty primary workspace is reference-only, not execution truth
-- `project_delivery` compatibility must remain intact while `TD-STRUCT-004` is repaid
-- no automation-plane behavior is introduced under interaction-plane naming
+- accepted `M31 Phase 0` remained the last completed freeze baseline
+- the dirty primary workspace stayed reference-only, not execution truth
+- `project_delivery` compatibility remained intact while `TD-STRUCT-004` was being repaid
+- no automation-plane behavior was introduced under interaction-plane naming
 
 ## Exit Criteria
 
@@ -134,3 +135,18 @@ Closeout for this phase must include:
 - targeted contract/service/API/UI validation
 - workflow dogfood through `project_delivery`, `guarded_project_delivery`, and `DevCluster`
 - explicit note of any carried debt that remains open after `M32 Phase 0`
+
+## Outcome
+
+`M32 Phase 0` is complete as a bounded foundation phase.
+
+The phase landed:
+
+- interaction-session contracts and service seams
+- public-role plus profile layering
+- first execution-cluster templates (`DevCluster`, `ResearchCluster`)
+- cluster-aware graph and packet surfaces
+- a minimum interaction-first workbench preview
+- governed absorption of the dirty primary workspace back into one clean main worktree
+
+See [docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md](../docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md) for the accepted closeout and carried debt judgment.
