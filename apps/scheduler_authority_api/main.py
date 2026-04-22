@@ -80,7 +80,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"ok": True, "mode": effective_config["scheduler_authority"]["mode"]}
+        return {
+            "ok": True,
+            "mode": effective_config["scheduler_authority"]["mode"],
+            "authority_mode": effective_config["scheduler_authority"]["authority_mode"],
+        }
 
     @app.post("/authority/heartbeats", status_code=status.HTTP_201_CREATED)
     def heartbeat_authority(payload: AuthorityHeartbeatRequest) -> dict:

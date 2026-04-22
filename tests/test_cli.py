@@ -16,6 +16,14 @@ from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 
 
 runner = CliRunner()
+OPEN_DEBT_IDS = [
+    "TD-STRUCT-001",
+    "TD-STRUCT-002",
+    "TD-STRUCT-003",
+    "TD-STRUCT-004",
+    "TD-STRUCT-005",
+    "TD-STRUCT-006",
+]
 
 
 def _invoke(tmp_path: Path, *args: str, env: dict[str, str] | None = None):
@@ -63,6 +71,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
         "guarded_delivery",
         "research_spike_reviewable",
         "project_delivery",
+        "guarded_project_delivery",
     ]
 
     preset_result = _invoke(tmp_path, "preset", "list", "--json")
@@ -76,6 +85,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
         "advisory_delivery",
         "guarded_delivery",
         "project_delivery",
+        "guarded_project_delivery",
     }
 
     domain_pack_result = _invoke(tmp_path, "domain-pack", "list", "--json")
@@ -194,6 +204,63 @@ def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     ]
 
 
+def test_cli_interaction_profiles_clusters_and_session_flow(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+
+    profiles_result = _invoke(tmp_path, "interaction", "profiles")
+    clusters_result = _invoke(tmp_path, "interaction", "clusters")
+    create_result = _invoke(
+        tmp_path,
+        "interaction",
+        "create-session",
+        "--goal",
+        "Coordinate a multi-role project delivery slice",
+        "--preset",
+        "project_delivery",
+        "--cluster",
+        "dev_cluster",
+    )
+
+    assert profiles_result.exit_code == 0
+    assert clusters_result.exit_code == 0
+    assert any(item["profile_id"] == "planner_architect" for item in json.loads(profiles_result.stdout)["profiles"])
+    assert json.loads(profiles_result.stdout)["generated_profiles"] == []
+    assert any(item["template_id"] == "dev_cluster" for item in json.loads(clusters_result.stdout))
+
+    create_payload = json.loads(create_result.stdout)
+    session_id = create_payload["session"]["session_id"]
+    assert create_result.exit_code == 0
+    assert create_payload["session"]["status"] == "ready_to_launch"
+    assert create_payload["plan_draft"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert create_payload["goal_packet"]["selected_clusters"][0]["template_id"] == "dev_cluster"
+
+    get_result = _invoke(tmp_path, "interaction", "get-session", session_id)
+    launch_result = _invoke(
+        tmp_path,
+        "interaction",
+        "launch",
+        session_id,
+        "--preset",
+        "project_delivery",
+        "--cluster",
+        "dev_cluster",
+        "--rationale",
+        "ready to launch",
+    )
+
+    assert get_result.exit_code == 0
+    assert launch_result.exit_code == 0
+    get_payload = json.loads(get_result.stdout)
+    launch_payload = json.loads(launch_result.stdout)
+    assert get_payload["session"]["latest_plan_draft_id"] == create_payload["plan_draft"]["draft_id"]
+    assert launch_payload["session"]["status"] == "launched"
+    assert launch_payload["session"]["active_run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
+    assert launch_payload["launch_decision"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert launch_payload["launch_payload"]["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert launch_payload["launch_payload"]["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert launch_payload["launch_payload"]["run"]["status"] == "prepared"
+
+
 def test_cli_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
     _invoke(tmp_path, "db", "reset")
 
@@ -209,6 +276,7 @@ def test_cli_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
     health_payload = json.loads(health_result.stdout)
     assert any(item["descriptor"]["provider_kind"] == "runtime_gateway" for item in health_payload)
     assert all("recent_call_summary" in item for item in health_payload)
+    assert all("runtime_probe_status" in item for item in health_payload)
 
 
 def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
@@ -226,6 +294,9 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     assert plan_result.exit_code == 0
     plan_payload = json.loads(plan_result.stdout)
     assert plan_payload["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
+    assert len(plan_payload["plan_graph"]["edges"]) >= 1
+    assert len(plan_payload["plan_graph"]["barriers"]) == 1
+    assert len(plan_payload["plan_graph"]["retry_policies"]) == 1
 
     policy_result = _invoke(
         tmp_path,
@@ -263,7 +334,6 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
         "Coordinate a multi-role delivery slice",
         "--preset",
         "project_delivery",
-        "--execute",
     )
     assert launch_result.exit_code == 0
     launch_payload = json.loads(launch_result.stdout)
@@ -275,6 +345,8 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     plan_status_payload = json.loads(plan_status_result.stdout)
     assert plan_status_payload["enabled"] is True
     assert len(plan_status_payload["plan_graph"]["nodes"]) == 4
+    assert len(plan_status_payload["plan_graph"]["edges"]) >= 1
+    assert plan_status_payload["plan_graph"]["cluster_template_ids"] == ["dev_cluster"]
 
     policy_status_result = _invoke(tmp_path, "run", "policy-preview-status", launch_payload["run"]["run_id"])
     assert policy_status_result.exit_code == 0
@@ -287,6 +359,8 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     operator_packet_payload = json.loads(operator_packet_result.stdout)
     assert operator_packet_payload["operator_projection"]["recommended_operator_mode"] == "human_visible"
     assert operator_packet_payload["capability_policy_preview"]["enabled"] is True
+    assert operator_packet_payload["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert operator_packet_payload["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
 
 
 def test_cli_config_show_reads_workflow_toml_and_worker_pools(tmp_path: Path, monkeypatch) -> None:
@@ -346,10 +420,9 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "governance", "tech-debt")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["open_debt_count"] == 0
-    assert payload["open_items"] == []
-    assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"] == {}
+    assert payload["open_debt_count"] == 6
+    assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
+    assert payload["planned_phase_counts"] == {"M32": 6}
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
@@ -405,6 +478,7 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
     assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
     assert payload["remaining_gaps"] == []
+    assert payload["governance_alerts"]["overall_status"] == "degraded"
 
 
 def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -443,13 +517,14 @@ def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
 
     assert metrics_result.exit_code == 0
     metrics_payload = json.loads(metrics_result.stdout)
+    assert metrics_payload["tech_debt"]["open_debt_ids"] == OPEN_DEBT_IDS
     assert metrics_payload["review_policy"]["supported_policy_count"] == 5
     assert metrics_payload["automation"]["governance_alerts_available"] is True
 
     assert alerts_result.exit_code == 0
     alerts_payload = json.loads(alerts_result.stdout)
-    assert alerts_payload["overall_status"] == "clear"
-    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
+    assert alerts_payload["overall_status"] == "degraded"
+    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
 
 
 def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(tmp_path: Path) -> None:

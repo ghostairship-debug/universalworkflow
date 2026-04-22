@@ -9,6 +9,9 @@ from packages.contracts import (
     AgentRoleType,
     AuthorityNodeIdentity,
     BudgetLedger,
+    CapabilityDescriptor,
+    CapabilityExecutionReceipt,
+    CapabilityInvocationEnvelope,
     CapabilityRoute,
     ControlPlaneIdentity,
     ControlPlaneHandoffEnvelope,
@@ -120,6 +123,7 @@ from packages.core_domain.repositories import (
     EventRepository,
     EvidenceRepository,
     HandoffRepository,
+    IntentSessionRepository,
     MemoryItemRepository,
     PresetRepository,
     ReviewRepository,
@@ -137,6 +141,7 @@ from packages.core_domain.repositories import (
 )
 from packages.core_domain.resolver import PresetResolver
 from packages.core_domain.service_lifecycle import LifecycleServiceMixin
+from packages.core_domain.service_interaction import InteractionServiceMixin
 from packages.core_domain.service_memory_simulation import MemorySimulationServiceMixin
 from packages.core_domain.service_projection import ProjectionServiceMixin
 from packages.core_domain.service_types import (
@@ -172,12 +177,17 @@ from packages.core_domain.m8_flags import (
     is_skill_export_enabled,
 )
 from packages.core_domain.observability import NullTraceExporter, TraceExporter, TraceRecord, build_trace_exporter_from_env
+from packages.core_domain.orchestration_engine import OrchestrationEngine
 from packages.runtime_langgraph.durable_pilot import (
     DurableRuntimePilot,
     NullDurableRuntimePilot,
     build_durable_runtime_pilot_from_env,
 )
+from packages.core_domain.service_audit_replay import AuditReplayService
 from packages.runtime_langgraph.gateway import build_runtime_gateway_from_env
+from packages.core_domain.service_ownership_lease import OwnershipLeaseService
+from packages.core_domain.service_review_policy import ReviewPolicyService
+from packages.core_domain.service_run_lifecycle import RunLifecycleService
 from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.base import ExecutionResult
 from packages.worker_adapters.noop_adapter import NoopAdapter
@@ -190,6 +200,7 @@ from packages.worker_adapters.shell_adapter import ShellAdapter
 class OrchestratorService(
     LifecycleServiceMixin,
     MemorySimulationServiceMixin,
+    InteractionServiceMixin,
     ProjectionServiceMixin,
 ):
     CLAIM_LEASE_SECONDS = 300
@@ -244,6 +255,7 @@ class OrchestratorService(
         self.scheduler_peer_heartbeat_repo = SchedulerPeerHeartbeatRepository(self.db_path)
         self.snapshot_repo = RunSnapshotRepository(self.db_path)
         self.memory_item_repo = MemoryItemRepository(self.db_path)
+        self.intent_session_repo = IntentSessionRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
         self.runtime_gateway = runtime_gateway or build_runtime_gateway_from_env()
         self.capability_plane = capability_plane or CapabilityPlane(workspace_root=self._workspace_root())
@@ -265,6 +277,7 @@ class OrchestratorService(
         self.trace_exporter = trace_exporter or build_trace_exporter_from_env()
         self.durable_runtime_pilot = durable_runtime_pilot or build_durable_runtime_pilot_from_env()
         self.external_worker_gateway = external_worker_gateway or ExternalWorkerGateway()
+        self.orchestration_engine = OrchestrationEngine()
         self.worker_pool_profiles = load_worker_pool_profiles(self.effective_config["worker_pools"]["seed_path"])
         control_plane_id = self.effective_config["control_plane"]["id"]
         self.control_plane_identity = ControlPlaneIdentity(
@@ -282,6 +295,12 @@ class OrchestratorService(
             election_timeout_ms=self.effective_config["scheduler_authority"]["election_timeout_ms"],
             heartbeat_interval_ms=self.effective_config["scheduler_authority"]["heartbeat_interval_ms"],
         )
+        if not self.preset_repo.list():
+            self.preset_repo.seed_defaults()
+        self.run_lifecycle_service = RunLifecycleService(self)
+        self.review_policy_service = ReviewPolicyService(self)
+        self.audit_replay_service = AuditReplayService(self)
+        self.ownership_lease_service = OwnershipLeaseService(self)
 
     def _resolver(self) -> PresetResolver:
         return PresetResolver(self.preset_repo.list())
@@ -496,6 +515,7 @@ class OrchestratorService(
         cluster_payload = dict(cluster) if isinstance(cluster, dict) else {}
         return {
             "mode": self.effective_config["scheduler_authority"]["mode"],
+            "authority_mode": self.effective_config["scheduler_authority"]["authority_mode"],
             "node_id": self.effective_config["scheduler_authority"]["node_id"],
             "bind_url": self.effective_config["scheduler_authority"]["bind_url"],
             "quorum_size": cluster_payload.get("quorum_size"),
@@ -565,6 +585,7 @@ class OrchestratorService(
             "control_plane_id": control_plane_id,
             "scheduler_authority": {
                 "authority_control_plane_id": self.control_plane_identity.control_plane_id,
+                "authority_mode": self.effective_config["scheduler_authority"]["authority_mode"],
                 "latest_proposal": proposal.model_dump(mode="json") if proposal is not None else current.get("latest_proposal"),
                 "latest_decision": decision.model_dump(mode="json") if decision is not None else current.get("latest_decision"),
                 "active_decision": current_active,
@@ -753,18 +774,62 @@ class OrchestratorService(
             run_id=run_id,
             preset_id="project_delivery",
             review_policy=ReviewPolicy.recommended,
+            cluster_template_ids=["dev_cluster"],
             roles=[
-                {"role": AgentRoleType.planner, "preset_id": "optional_delivery", "preferred_adapter": "agent", "fallback_adapter": "shell"},
-                {"role": AgentRoleType.coder, "preset_id": "feature_delivery", "preferred_adapter": "opencode", "fallback_adapter": "shell"},
-                {"role": AgentRoleType.researcher, "preset_id": "optional_delivery", "preferred_adapter": "agent", "fallback_adapter": "shell"},
-                {"role": AgentRoleType.reviewer, "preset_id": "advisory_delivery", "preferred_adapter": "agent", "fallback_adapter": "shell"},
-                {"role": AgentRoleType.operator, "preset_id": "guarded_delivery", "preferred_adapter": None, "fallback_adapter": None},
+                {
+                    "role": AgentRoleType.planner,
+                    "preset_id": "optional_delivery",
+                    "agent_profile_id": "planner_architect",
+                    "cluster_template_id": "dev_cluster",
+                    "role_label": "architect",
+                    "preferred_adapter": "agent",
+                    "fallback_adapter": "shell",
+                },
+                {
+                    "role": AgentRoleType.coder,
+                    "preset_id": "feature_delivery",
+                    "agent_profile_id": "coder_implementer",
+                    "cluster_template_id": "dev_cluster",
+                    "role_label": "implementer",
+                    "preferred_adapter": "opencode",
+                    "fallback_adapter": "shell",
+                },
+                {
+                    "role": AgentRoleType.researcher,
+                    "preset_id": "optional_delivery",
+                    "agent_profile_id": "researcher_risk_mapper",
+                    "cluster_template_id": "dev_cluster",
+                    "role_label": "risk_mapper",
+                    "preferred_adapter": "agent",
+                    "fallback_adapter": "shell",
+                },
+                {
+                    "role": AgentRoleType.reviewer,
+                    "preset_id": "advisory_delivery",
+                    "agent_profile_id": "reviewer_quality_gate",
+                    "cluster_template_id": "dev_cluster",
+                    "role_label": "quality_gate",
+                    "preferred_adapter": "agent",
+                    "fallback_adapter": "shell",
+                },
+                {
+                    "role": AgentRoleType.operator,
+                    "preset_id": "guarded_delivery",
+                    "agent_profile_id": "operator_launch_guard",
+                    "cluster_template_id": "dev_cluster",
+                    "role_label": "launch_guard",
+                    "preferred_adapter": None,
+                    "fallback_adapter": None,
+                },
             ],
             steps=[
                 OrchestrationStep(
                     role=AgentRoleType.planner,
                     title="Generate work breakdown",
                     preset_id="optional_delivery",
+                    agent_profile_id="planner_architect",
+                    cluster_template_id="dev_cluster",
+                    role_label="architect",
                     preferred_adapter="agent",
                     fallback_adapter="shell",
                     sequence_no=1,
@@ -774,6 +839,9 @@ class OrchestratorService(
                     role=AgentRoleType.coder,
                     title="Implement primary delivery slice",
                     preset_id="feature_delivery",
+                    agent_profile_id="coder_implementer",
+                    cluster_template_id="dev_cluster",
+                    role_label="implementer",
                     preferred_adapter="opencode",
                     fallback_adapter="shell",
                     barrier_id=barrier.barrier_id,
@@ -784,6 +852,9 @@ class OrchestratorService(
                     role=AgentRoleType.researcher,
                     title="Research risks and supporting evidence",
                     preset_id="optional_delivery",
+                    agent_profile_id="researcher_risk_mapper",
+                    cluster_template_id="dev_cluster",
+                    role_label="risk_mapper",
                     preferred_adapter="agent",
                     fallback_adapter="shell",
                     barrier_id=barrier.barrier_id,
@@ -794,6 +865,9 @@ class OrchestratorService(
                     role=AgentRoleType.reviewer,
                     title="Review implementation and research evidence",
                     preset_id="advisory_delivery",
+                    agent_profile_id="reviewer_quality_gate",
+                    cluster_template_id="dev_cluster",
+                    role_label="quality_gate",
                     preferred_adapter="agent",
                     fallback_adapter="shell",
                     sequence_no=3,
@@ -801,6 +875,152 @@ class OrchestratorService(
                 ),
             ],
             barriers=[barrier],
+        )
+
+    def _default_guarded_project_delivery_plan(self, run_id: str) -> OrchestrationPlan:
+        plan = self._default_project_delivery_plan(run_id)
+        reviewer_step = next(step for step in plan.steps if step.role == AgentRoleType.reviewer)
+        reviewer_step.preset_id = "guarded_delivery"
+        reviewer_step.preferred_adapter = "agent"
+        reviewer_step.fallback_adapter = "shell"
+        plan.preset_id = "guarded_project_delivery"
+        plan.review_policy = ReviewPolicy.mandatory
+        return plan
+
+    def _default_orchestration_plan_for_preset(self, preset_id: str, run_id: str) -> OrchestrationPlan | None:
+        if preset_id == "project_delivery":
+            return self._default_project_delivery_plan(run_id)
+        if preset_id == "guarded_project_delivery":
+            return self._default_guarded_project_delivery_plan(run_id)
+        return None
+
+    def _capability_descriptor_index(self) -> dict[str, CapabilityDescriptor]:
+        descriptors = self.capability_plane.list_capability_descriptors(
+            worker_pool_profiles=self.worker_pool_profiles,
+            runtime_gateway_description=self.runtime_gateway.describe(),
+            capability_routes=self.list_capability_routes(),
+            default_worker_pool_id=self.effective_config["worker_pools"]["default_pool_id"],
+        )
+        return {descriptor.capability_id: descriptor for descriptor in descriptors}
+
+    def _capability_descriptor_for_snapshot(
+        self,
+        snapshot: CompileSnapshot,
+    ) -> CapabilityDescriptor:
+        descriptors = self._capability_descriptor_index()
+        worker_pool_id = snapshot.task_packet.env.get("WORKFLOW_WORKER_POOL_ID")
+        if isinstance(worker_pool_id, str) and worker_pool_id:
+            descriptor = descriptors.get(f"worker_pool:{worker_pool_id}")
+            if descriptor is not None:
+                return descriptor
+        if snapshot.capability_route is not None:
+            descriptor = descriptors.get(
+                f"adapter_route:{snapshot.runtime_task.task_kind}:{snapshot.capability_route.adapter_name}"
+            )
+            if descriptor is not None:
+                return descriptor
+        return descriptors.get("built_in:local") or CapabilityDescriptor(
+            capability_id="built_in:local",
+            provider_kind="built_in",
+            transport="local",
+            scopes=["fallback_local"],
+            allowed_task_kinds=[TaskKind(snapshot.runtime_task.task_kind)],
+        )
+
+    def _capability_invocation_envelope_for_snapshot(
+        self,
+        *,
+        run: Run,
+        preset: PresetDefinition,
+        snapshot: CompileSnapshot,
+    ) -> CapabilityInvocationEnvelope:
+        worker_pool_id = snapshot.task_packet.env.get("WORKFLOW_WORKER_POOL_ID")
+        return CapabilityInvocationEnvelope(
+            run_id=run.run_id,
+            runtime_task_id=snapshot.runtime_task.runtime_task_id,
+            preset_id=preset.preset_id,
+            task_kind=snapshot.runtime_task.task_kind,
+            lane_type=snapshot.execution_lane,
+            review_policy=preset.default_review_policy,
+            authority_mode=self.effective_config["scheduler_authority"]["authority_mode"],
+            descriptor=self._capability_descriptor_for_snapshot(snapshot),
+            worker_pool_id=worker_pool_id if isinstance(worker_pool_id, str) else None,
+            tool_projection_id=(
+                snapshot.tool_projection_manifest.projection_id if snapshot.tool_projection_manifest is not None else None
+            ),
+            mutation_mode=(
+                snapshot.task_packet.mutation_contract.mutation_mode
+                if snapshot.task_packet.mutation_contract is not None
+                else None
+            ),
+        )
+
+    def _capability_invocation_envelope_from_state(
+        self,
+        state_ref: RuntimeStateRef | None,
+    ) -> CapabilityInvocationEnvelope | None:
+        if state_ref is None:
+            return None
+        payload = state_ref.state_payload.get("capability_invocation_envelope")
+        if not isinstance(payload, dict):
+            return None
+        return CapabilityInvocationEnvelope.model_validate(payload)
+
+    def _capability_execution_receipt_from_state(
+        self,
+        state_ref: RuntimeStateRef | None,
+        evidence: Evidence | None,
+    ) -> CapabilityExecutionReceipt | None:
+        if state_ref is not None:
+            payload = state_ref.state_payload.get("capability_execution_receipt")
+            if isinstance(payload, dict):
+                return CapabilityExecutionReceipt.model_validate(payload)
+        if evidence is not None:
+            payload = evidence.raw_execution.get("metadata", {}).get("capability_execution_receipt")
+            if isinstance(payload, dict):
+                return CapabilityExecutionReceipt.model_validate(payload)
+        return None
+
+    def _capability_failure_class_for_result(
+        self,
+        descriptor: CapabilityDescriptor,
+        execution_result: ExecutionResult,
+    ) -> str | None:
+        if execution_result.return_code == 0:
+            return None
+        mapping = {
+            "mcp_profile": "call_timeout",
+            "worker_pool": "dispatch_failed",
+            "runtime_gateway": "provider_call_failed",
+            "adapter_route": "execution_failed",
+        }
+        return mapping.get(descriptor.provider_kind, "execution_failed")
+
+    def _capability_execution_receipt_for_result(
+        self,
+        *,
+        state_ref: RuntimeStateRef | None,
+        execution_result: ExecutionResult,
+    ) -> CapabilityExecutionReceipt | None:
+        envelope = self._capability_invocation_envelope_from_state(state_ref)
+        if envelope is None:
+            return None
+        execution_target = execution_result.metadata.get("execution_target")
+        return CapabilityExecutionReceipt(
+            envelope=envelope,
+            status="completed" if execution_result.return_code == 0 else "failed",
+            adapter_name=execution_result.adapter_name,
+            return_code=execution_result.return_code,
+            started_at=execution_result.started_at,
+            finished_at=execution_result.finished_at,
+            duration_ms=execution_result.duration_ms,
+            artifact_paths=list(execution_result.artifact_paths),
+            failure_class=self._capability_failure_class_for_result(envelope.descriptor, execution_result),
+            execution_target=dict(execution_target) if isinstance(execution_target, dict) else None,
+            metadata={
+                "tool_projection_id": envelope.tool_projection_id,
+                "worker_pool_id": envelope.worker_pool_id,
+            },
         )
 
     def _orchestration_from_context(self, context: RunDiagnosticContext) -> dict[str, Any] | None:
@@ -1132,10 +1352,11 @@ class OrchestratorService(
 
         started_at = utc_now()
         orchestration_payload = packet.env.get("WORKFLOW_ORCHESTRATION_PLAN")
+        preset_id = str(packet.env.get("WORKFLOW_PRESET_ID") or "project_delivery")
         orchestration = (
             OrchestrationPlan.model_validate(json.loads(orchestration_payload))
             if orchestration_payload
-            else self._default_project_delivery_plan(packet.run_id)
+            else (self._default_orchestration_plan_for_preset(preset_id, packet.run_id) or self._default_project_delivery_plan(packet.run_id))
         )
         parent_goal = packet.env.get("WORKFLOW_RUN_GOAL", "")
         parent_mutation_contract = packet.mutation_contract
@@ -3027,6 +3248,11 @@ class OrchestratorService(
             "mutation_contract": (
                 snapshot.task_packet.mutation_contract.model_dump(mode="json")
                 if snapshot.task_packet.mutation_contract is not None
+                else None
+            ),
+            "capability_invocation_envelope": (
+                json.loads(snapshot.task_packet.env["WORKFLOW_CAPABILITY_INVOCATION_ENVELOPE"])
+                if snapshot.task_packet.env.get("WORKFLOW_CAPABILITY_INVOCATION_ENVELOPE")
                 else None
             ),
             "orchestration_plan_graph": (

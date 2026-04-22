@@ -1,6 +1,6 @@
 # Universal Agentic Workflow OS
 
-This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, unified `workflow.toml`-backed configuration, real remote HTTP worker-pool productization, real durable checkpoint snapshots, a formal `project_delivery` orchestration baseline, bounded repo-mutation contracts for semi-automatic workflow-driven development, majority-quorum scheduler-authority peers with committed cross-control-plane lease ownership and takeover lineage, an opt-in OpenAI-backed `RuntimeGateway`, a built-in FastAPI Web operator UI, the existing terminal TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
+This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, unified `workflow.toml`-backed configuration, real remote HTTP worker-pool productization, real durable checkpoint snapshots, a shared `project_delivery` / `guarded_project_delivery` orchestration substrate, bounded repo-mutation contracts for semi-automatic workflow-driven development, a single-store quorum-style scheduler-authority layer with committed cross-control-plane lease ownership and takeover lineage, an opt-in OpenAI-backed `RuntimeGateway`, a built-in FastAPI Web operator UI, the existing terminal TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
 
 ## Environment
 
@@ -20,6 +20,12 @@ If you also want the test toolchain:
 
 ```bash
 pip install -e ".[dev]"
+```
+
+If you also want the optional MCP pilot support:
+
+```bash
+pip install -e ".[mcp]"
 ```
 
 ## Quick start
@@ -43,7 +49,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 - Chinese overview:
   - [README.zh-CN.md](README.zh-CN.md)
-- Milestone baseline: through `M30`, complete
+- Milestone baseline: through accepted `M31 Phase 0`, complete
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
@@ -51,7 +57,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - native deterministic, borrowed agent, durable-pilot, and orchestration-aware execution lanes
   - `shell`, `opencode`, `noop`, and feature-flagged `agent` adapter routing
   - router-first capability plane with built-in capability projection and local stdio MCP pilot support
-  - capability descriptors / health, capability policy preview, and operator-facing packetized read models
+  - capability descriptors / health, additive capability invocation / receipt surfaces, capability policy preview, and operator-facing packetized read models
   - unified `workflow.toml` + env + explicit override config precedence
   - productized worker-pool boundary with local/loopback and real remote HTTP dispatch support
   - OTel-first trace-export abstraction with an optional Langfuse sink
@@ -59,22 +65,24 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - persisted `Memory` baseline with retrieval preview and compile-time injection
   - deterministic local `Simulation` baseline with persisted records and selected lifecycle hooks
   - durable pilot checkpoint snapshots in `state/durable`
-  - `project_delivery` planner -> parallel worker -> reviewer orchestration baseline
+  - shared orchestration graph substrate with `project_delivery` and `guarded_project_delivery`
   - orchestration plan graphs plus natural-language `plan-graph` / `policy-preview` / `goal-packet` / `launch` surfaces
   - sessionful external-agent lane with projected external session refs
   - controlled repo mutation through explicit write-sets, patch apply, and bounded test/fix loops
-  - majority-quorum scheduler-authority peers, committed cross-control-plane lease ownership, and fenced takeover lineage
+  - a single-store quorum-style scheduler-authority layer, committed cross-control-plane lease ownership, and fenced takeover lineage
   - Agent Skill-compatible domain-pack export
   - built-in FastAPI Web operator console and terminal TUI dashboard
   - `v1 core complete` mainline product status
 - Current planning position:
-  - `M8-M30` are complete
-  - the latest accepted freeze is [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
-  - there is no active post-`M30` phase open in the working tree yet
+  - `M8-M30` and accepted `M31 Phase 0` are complete
+  - the latest accepted freeze is [docs/reviews/m31-boundary-contraction-freeze-review.md](docs/reviews/m31-boundary-contraction-freeze-review.md)
+  - `M32 Phase 0` is the active bounded phase now open in this worktree
+  - the active phase is interaction-first, role-profile-aware, and cluster-ready
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
+  - the previous milestone freeze remains [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
   - the deep core-complete baseline remains [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
-  - the latest local full-suite validation on the current worktree is `python -m pytest -q` -> `273 passed`
-  - older milestone plans, route syntheses, phase reviews, task-card packs, and reassessment drafts have been intentionally pruned from the working tree; use git history if you need deep archaeology
+  - the latest recorded local full-suite validation for the accepted `M31 Phase 0` closeout is `python -m pytest -q` -> `278 passed`
+  - retained `M31` opening/closeout artifacts remain temporary carry-forward material while `TD-STRUCT-002` is still open
 
 ## Offline validation
 

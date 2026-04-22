@@ -98,5 +98,19 @@
       "timeout_seconds": 240
     },
     "requires_manual_approval": false
+  },
+  {
+    "preset_id": "guarded_project_delivery",
+    "name": "Guarded Project Delivery",
+    "description": "Drive the multi-role project-delivery orchestration through the same shared graph substrate while keeping the review path on mandatory human sign-off.",
+    "allowed_task_kinds": [
+      "shell_exec"
+    ],
+    "default_review_policy": "mandatory",
+    "default_budget_policy": {
+      "max_retries": 1,
+      "timeout_seconds": 240
+    },
+    "requires_manual_approval": true
   }
 ]

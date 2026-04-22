@@ -12,6 +12,7 @@ from packages.contracts import (
     ControlPlaneIdentity,
     Evidence,
     HandoffLite,
+    IntentSession,
     MemoryItem,
     Phase,
     PresetDefinition,
@@ -178,6 +179,57 @@ class PresetRepository(RepositoryBase):
         data["default_budget_policy"] = _json_load(data.pop("default_budget_policy_json"))
         data["requires_manual_approval"] = bool(data["requires_manual_approval"])
         return PresetDefinition.model_validate(data)
+
+
+class IntentSessionRepository(RepositoryBase):
+    def upsert(self, session: IntentSession, connection: sqlite3.Connection | None = None) -> IntentSession:
+        payload = session.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO intent_sessions (
+                  session_id, goal, status, active_run_id, payload_json, schema_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    session.intent_packet.goal,
+                    str(session.status),
+                    session.active_run_id,
+                    _json_dump(payload),
+                    session.schema_version,
+                    session.created_at.isoformat(),
+                    _utc_now_iso(),
+                ),
+            )
+        return session
+
+    def get(self, session_id: str, connection: sqlite3.Connection | None = None) -> IntentSession | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT payload_json FROM intent_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        if row is None:
+            return None
+        return IntentSession.model_validate(_json_load(row["payload_json"]))
+
+    def list(
+        self,
+        *,
+        limit: int | None = None,
+        status: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[IntentSession]:
+        query = "SELECT payload_json FROM intent_sessions"
+        params: list[Any] = []
+        if status is not None:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC, session_id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [IntentSession.model_validate(_json_load(row["payload_json"])) for row in rows]
 
 
 class TaskRepository(RepositoryBase):

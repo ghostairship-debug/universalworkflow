@@ -6,12 +6,33 @@ import pytest
 from pydantic import ValidationError
 
 from packages.contracts import (
+    AgentRoleType,
+    AgentProfileDefinition,
+    AgentProfileRegistry,
     BudgetLedger,
+    CapabilityDescriptor,
+    CapabilityExecutionReceipt,
+    CapabilityHealth,
+    CapabilityInvocationEnvelope,
     CapabilityRoute,
+    CapabilitySourceType,
     ControlPlaneIdentity,
+    BarrierSpec,
+    ClarificationState,
     DomainPackResolution,
     DomainPackDefinition,
+    ClusterExecutionMode,
+    ClusterExecutionPlan,
+    ClusterHandoffPacket,
+    ClusterMemberSpec,
+    ClusterOutputPacket,
+    ClusterReviewRubric,
+    ExecutionClusterTemplate,
+    EdgeSpec,
     Evidence,
+    ExecutionLaneType,
+    GeneratedAgentProfile,
+    GeneratedProfileSource,
     HandoffLite,
     MemoryCandidate,
     MemoryItem,
@@ -19,17 +40,26 @@ from packages.contracts import (
     MemoryRetrievalPreview,
     MutationContract,
     MutationMode,
+    IntentPacket,
+    IntentSession,
+    IntentSessionStatus,
     NON_TERMINAL_RUNTIME_GRAPH_STEPS,
     Phase,
     PresetSuggestion,
     PresetDefinition,
+    PlanDraft,
+    PlanDraftStatus,
+    ProfileVisibility,
     ResultEnvelope,
     ResultProvenance,
     ResultRawRef,
     ResultVerification,
     ReviewDecision,
     ReviewVerdict,
+    ReviewPolicy,
+    RoleEvaluationRubric,
     Run,
+    RetryPolicy,
     RunSnapshot,
     RunSnapshotStage,
     RuntimeAttempt,
@@ -49,12 +79,16 @@ from packages.contracts import (
     RuntimeClaim,
     RuntimeClaimStatus,
     RuntimeGraphStep,
+    OrchestrationGraphNode,
+    OrchestrationPlanGraph,
     TERMINAL_RUNTIME_GRAPH_STEPS,
     RuntimeStateRef,
     RuntimeTask,
     TaskCard,
     TaskKind,
     TaskPacket,
+    LaunchDecision,
+    TerminationRule,
     WorkerLease,
     WorkerLeaseStatus,
     allowed_run_status_transitions,
@@ -499,10 +533,239 @@ def test_preset_seed_file_parses() -> None:
         "advisory_delivery",
         "guarded_delivery",
         "project_delivery",
+        "guarded_project_delivery",
     }
     for preset in presets:
         assert isinstance(preset, PresetDefinition)
         assert preset.default_budget_policy.timeout_seconds > 0
+
+
+def test_m31_graph_and_capability_contracts_round_trip() -> None:
+    run = Run(goal="Validate M31 additive contracts", preset_id="guarded_project_delivery")
+    descriptor = CapabilityDescriptor(
+        capability_id="adapter_route:shell_exec:shell",
+        provider_kind="adapter_route",
+        transport="local_cli",
+        auth_mode="local_process",
+        scopes=["ShellAdapter"],
+        allowed_task_kinds=[TaskKind.shell_exec],
+        display_name="shell route",
+        source_type=CapabilitySourceType.built_in,
+        adapter_name="shell",
+    )
+    health = CapabilityHealth(
+        descriptor=descriptor,
+        status="ready",
+        runtime_probe_status="runtime_ready",
+        runtime_probe_detail={"adapter_name": "shell"},
+    )
+    envelope = CapabilityInvocationEnvelope(
+        run_id=run.run_id,
+        runtime_task_id="task_demo",
+        preset_id=run.preset_id,
+        task_kind=TaskKind.shell_exec,
+        lane_type=ExecutionLaneType.repo_change_controlled,
+        review_policy="mandatory",
+        authority_mode="single_store_quorum",
+        descriptor=descriptor,
+        tool_projection_id="projection_demo",
+        mutation_mode=MutationMode.patch_apply,
+    )
+    receipt = CapabilityExecutionReceipt(
+        envelope=envelope,
+        adapter_name="shell",
+        return_code=0,
+        started_at=run.created_at,
+        finished_at=run.created_at,
+        artifact_paths=["state/artifacts/demo.md"],
+        metadata={"source": "test"},
+        control_plane_id="control_plane_local",
+    )
+    planner = OrchestrationGraphNode(
+        node_id="node_planner",
+        role=AgentRoleType.planner,
+        goal="decompose goal",
+        required_capabilities=["planner"],
+    )
+    reviewer = OrchestrationGraphNode(
+        node_id="node_reviewer",
+        role=AgentRoleType.reviewer,
+        goal="review result",
+        required_capabilities=["reviewer"],
+        dependencies=["node_planner"],
+        barrier_id="barrier_review",
+        retry_policy_id="retry_default",
+        review_gate="advisory_review",
+    )
+    graph = OrchestrationPlanGraph(
+        run_id=run.run_id,
+        preset_id=run.preset_id,
+        goal=run.goal,
+        execution_mode="planner_generated_graph_with_parallel_children",
+        nodes=[planner, reviewer],
+        edges=[
+            EdgeSpec(
+                from_node_id="node_planner",
+                to_node_id="node_reviewer",
+                description="planner_to_reviewer",
+            )
+        ],
+        barriers=[
+            BarrierSpec(
+                barrier_id="barrier_review",
+                label="wait_for_parallel_children",
+                member_node_ids=["node_reviewer"],
+            )
+        ],
+        retry_policies=[RetryPolicy(policy_id="retry_default", target_node_ids=["node_reviewer"], max_attempts=2)],
+    )
+
+    for model in [descriptor, health, envelope, receipt, graph]:
+        dumped = model.model_dump(mode="json")
+        restored = type(model).model_validate(dumped)
+        assert restored.model_dump(mode="json") == dumped
+
+    assert health.runtime_probe_status == "runtime_ready"
+    assert envelope.authority_mode == "single_store_quorum"
+    assert graph.engine_version == "m31_v1"
+    assert graph.barriers[0].member_node_ids == ["node_reviewer"]
+
+
+def test_m32_interaction_and_cluster_contracts_round_trip() -> None:
+    profile_registry = AgentProfileRegistry(
+        profiles=[
+            AgentProfileDefinition(
+                profile_id="planner_architect",
+                name="Planner Architect",
+                description="Decomposes broad goals into bounded workstreams.",
+                public_role=AgentRoleType.planner,
+                role_label="architect",
+                capability_tags=["planning", "decomposition"],
+                repo_scope_paths=["docs/"],
+                capability_scope_tags=["plan_graph"],
+                visibility=ProfileVisibility.public,
+                system_brief="Prefer explicit handoffs and bounded scope.",
+                termination_rule=TerminationRule(
+                    max_turns=8,
+                    completion_signals=["handoff graph published"],
+                ),
+                evaluation_rubric=RoleEvaluationRubric(
+                    criteria=["work is decomposed", "handoffs are explicit"],
+                    required_artifacts=["plan_graph"],
+                    minimum_confidence=0.75,
+                ),
+            )
+        ],
+        generated_profiles=[
+            GeneratedAgentProfile(
+                base_profile_id="planner_architect",
+                source_type=GeneratedProfileSource.interaction_generated,
+                public_role=AgentRoleType.planner,
+                role_label="architect",
+                session_id="intent_session_123",
+                cluster_template_id="dev_cluster",
+            )
+        ],
+    )
+    intent_packet = IntentPacket(
+        goal="Coordinate a multi-role project delivery slice",
+        constraints=["keep operator checkpoints visible"],
+        assumptions=["workspace is clean"],
+        preferred_preset_id="project_delivery",
+        preferred_cluster_template_ids=["dev_cluster"],
+    )
+    clarification_state = ClarificationState()
+    session = IntentSession(intent_packet=intent_packet, clarification_state=clarification_state)
+    assert session.status == IntentSessionStatus.open
+    plan_draft = PlanDraft(
+        session_id=session.session_id,
+        status=PlanDraftStatus.ready,
+        summary="Launch the dev cluster path.",
+        selected_preset_id="project_delivery",
+        selected_cluster_template_ids=["dev_cluster"],
+        plan_graph={"cluster_template_ids": ["dev_cluster"]},
+        policy_preview={"recommended_operator_mode": "human_visible"},
+        capability_preview={"selected_clusters": [{"template_id": "dev_cluster"}]},
+    )
+    launch_decision = LaunchDecision(
+        session_id=session.session_id,
+        approved=True,
+        execute=False,
+        selected_preset_id="project_delivery",
+        selected_cluster_template_ids=["dev_cluster"],
+        rationale="ready to launch",
+    )
+    cluster_template = ExecutionClusterTemplate(
+        template_id="dev_cluster",
+        name="DevCluster",
+        description="Planner-led delivery cluster with a guarded operator lane.",
+        domain_tags=["software_delivery", "project_delivery"],
+        primary_public_role=AgentRoleType.operator,
+        member_specs=[
+            ClusterMemberSpec(
+                member_id="dev_cluster_architect",
+                public_role=AgentRoleType.planner,
+                agent_profile_id="planner_architect",
+                role_label="architect",
+                responsibilities=["decompose scope"],
+            ),
+            ClusterMemberSpec(
+                member_id="dev_cluster_implementer",
+                public_role=AgentRoleType.coder,
+                agent_profile_id="coder_implementer",
+                role_label="implementer",
+                responsibilities=["apply bounded repo changes"],
+                parallel_group="delivery_parallel",
+            ),
+        ],
+        default_review_policy=ReviewPolicy.recommended,
+        execution_mode=ClusterExecutionMode.parallel,
+        review_rubric=ClusterReviewRubric(
+            name="DevCluster Review Rubric",
+            criteria=["implementation is bounded", "launch visibility remains intact"],
+            required_artifacts=["plan_graph", "code_diff"],
+            escalation_conditions=["missing review evidence"],
+        ),
+    )
+    cluster_plan = ClusterExecutionPlan(
+        cluster_template_id=cluster_template.template_id,
+        run_id="run_123",
+        session_id=session.session_id,
+        objective=intent_packet.goal,
+        selected_member_ids=["dev_cluster_architect", "dev_cluster_implementer"],
+        handoff_points=["architect -> implementer"],
+        success_criteria=["delivery completes without blocking escalations"],
+    )
+    cluster_handoff = ClusterHandoffPacket(
+        cluster_template_id=cluster_template.template_id,
+        from_member_id="dev_cluster_architect",
+        to_member_id="dev_cluster_implementer",
+        handoff_summary="architect hands execution to implementer",
+        artifact_refs=["run:run_123"],
+    )
+    cluster_output = ClusterOutputPacket(
+        cluster_template_id=cluster_template.template_id,
+        run_id="run_123",
+        objective=intent_packet.goal,
+        summary="cluster output summary",
+        handoff_packets=[cluster_handoff],
+    )
+
+    models = [
+        profile_registry,
+        intent_packet,
+        session,
+        plan_draft,
+        launch_decision,
+        cluster_template,
+        cluster_plan,
+        cluster_handoff,
+        cluster_output,
+    ]
+    for model in models:
+        dumped = model.model_dump(mode="json")
+        restored = type(model).model_validate(dumped)
+        assert restored.model_dump(mode="json") == dumped
 
 
 def test_memory_namespace_seed_file_parses() -> None:
@@ -655,6 +918,7 @@ def test_preset_suggestions_are_deterministic_and_explained() -> None:
         "guarded_delivery",
         "research_spike_reviewable",
         "project_delivery",
+        "guarded_project_delivery",
     ]
     assert all(item.reason for item in fallback)
 

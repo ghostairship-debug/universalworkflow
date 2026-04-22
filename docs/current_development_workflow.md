@@ -6,12 +6,15 @@ This document is the canonical living guide for what the repository should do ne
 
 Use these in priority order when deciding what is current:
 
-1. [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
-2. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
-3. [docs/tech-debt-registry.md](tech-debt-registry.md)
-4. [README.md](../README.md)
+1. [m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md](../m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md)
+2. [docs/task_cards/m32_phase_0_task_cards.md](task_cards/m32_phase_0_task_cards.md)
+3. [docs/reviews/m31-boundary-contraction-freeze-review.md](reviews/m31-boundary-contraction-freeze-review.md)
+4. [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
+5. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
+6. [docs/tech-debt-registry.md](tech-debt-registry.md)
+7. [README.md](../README.md)
 
-Older milestone plans, route syntheses, phase reviews, governance side docs, and task-card packs have been intentionally pruned from the working tree. Use git history rather than the current checkout when you need deep historical detail.
+The repository is now in an active `M32 Phase 0` line. Older plans and retained reference bundles remain secondary to the active phase doc, task cards, accepted `M31` freeze review, and living debt registry.
 
 ## 2. Current Repository Position
 
@@ -19,29 +22,33 @@ The repository has now completed:
 
 - `M8` through `M20`
 - `M21` through `M30`
-- the runtime, governance, orchestration, Web operator UI, remote worker productization, repo-mutation baseline, and multi-control-plane consensus closure
+- accepted `M31 Phase 0`
+- the runtime, governance, orchestration, Web operator UI, remote worker productization, repo-mutation baseline, and single-store quorum-style scheduler-authority closure
 - retirement of `TD-021`
 - capability descriptors / health surfaces, sessionful external-agent lane, orchestration plan graphs, natural-language launch surfaces, capability policy preview, operator packets, goal packets, and dashboard operator convergence
 
 Current status:
 
 - the mainline product is `v1 core complete`
-- the latest accepted freeze is `M30 Operator Control Freeze`
-- there is no new active post-`M30` phase open in the working tree yet
+- the latest accepted freeze is `M31 Boundary Contraction And Semantic Honesty Freeze`
+- `M32 Phase 0` is the active bounded phase now open in the working tree
+- the current phase is interaction-first, role-profile-aware, and cluster-ready
+- automation-plane breadth remains deferred
 - the built-in Web UI and TUI remain operator surfaces rather than chat-style natural-language workbenches
 - natural-language goal planning and launch exist today through CLI/API surfaces, not through a front-end conversational shell
 
 ## 3. What Must Happen Next
 
-No new post-`M30` phase is open. The repository should not auto-start new breadth until the next bounded phase is explicitly opened.
+`M32 Phase 0` is open. The repository should execute only the current task-card pack and should not expand into automation-plane or later breadth until a later bounded phase explicitly opens that work.
 
-The next cycle must begin by:
+The current cycle proceeds by:
 
-1. reading [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
-2. reading [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
-3. reading [docs/tech-debt-registry.md](tech-debt-registry.md)
-4. opening a new bounded phase doc and task-card pack only after the intended next track is justified
-5. deferring breadth decisions until that next phase explicitly names them
+1. reading [m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md](../m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md)
+2. reading [docs/task_cards/m32_phase_0_task_cards.md](task_cards/m32_phase_0_task_cards.md)
+3. reading [docs/reviews/m31-boundary-contraction-freeze-review.md](reviews/m31-boundary-contraction-freeze-review.md)
+4. carrying `TD-STRUCT-*` items into the active `M32` work
+5. executing bug-first: repair real workflow/runtime regressions before continuing feature scope
+6. keeping automation-plane and later breadth deferred
 
 ## 4. Task-Card Protocol
 
@@ -73,7 +80,7 @@ Default collaboration remains:
 
 Keep the working tree small.
 
-- prefer keeping only the current README, current workflow guide, controlling freeze review, and living debt registry
+- prefer keeping only the active phase doc, active task-card pack, current README, current workflow guide, controlling freeze review, and living debt registry as the active truth set
 - treat other plans, phase docs, task-card packs, and historical review bundles as disposable once their conclusions are absorbed
 - if historical detail is needed later, use git history instead of restoring large doc packs by default
 
@@ -101,4 +108,4 @@ Keep the working tree small.
 
 ## 8. Current One-Line Instruction
 
-Treat `M30` as the latest operator-control freeze baseline, and do not open the next phase until its bounded scope is explicitly justified from the freeze review.
+Treat accepted `M31 Phase 0` as the last completed freeze baseline, treat `M32 Phase 0` as the active bounded implementation line, and execute only the current `M32` task-card pack while keeping bug-first and deferred automation-plane rules in force.

@@ -848,6 +848,8 @@ class ProjectionServiceMixin:
             "run_metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
             "result_envelope": detail["result_envelope"],
+            "capability_invocation_envelope": detail["capability_invocation_envelope"],
+            "capability_execution_receipt": detail["capability_execution_receipt"],
             "trace_exporter": detail["trace_exporter"],
             "orchestration_plan_graph": detail["orchestration_plan_graph"],
             "capability_policy_preview": detail["capability_policy_preview"],
@@ -877,6 +879,15 @@ class ProjectionServiceMixin:
         detail = self.get_status_detail(run_id)
         inspection = self.inspect_run_state(run_id)
         summary = self.get_run_summary(run_id)
+        cluster_runtime_bundle = self._cluster_runtime_bundle(
+            goal=str(detail["run"]["goal"]),
+            run_id=run_id,
+            run_status=str(detail["run"]["status"]),
+            selected_preset_id=str(detail["run"]["preset_id"]),
+            plan_graph=detail["orchestration_plan_graph"],
+            orchestration=detail["orchestration"],
+            summary_text=summary["headline"],
+        )
         event_inspection = self.get_event_inspection(run_id)
         simulation_report = self._simulation_report_for(detail, inspection)
         timeline = self.get_timeline(run_id)
@@ -895,6 +906,15 @@ class ProjectionServiceMixin:
             "metrics": detail["run_metrics"],
             "trace_context": detail["trace_context"],
             "capability_policy_preview": detail["capability_policy_preview"],
+            "selected_clusters": [
+                template.model_dump(mode="json") for template in cluster_runtime_bundle["selected_clusters"]
+            ],
+            "cluster_graph": cluster_runtime_bundle["cluster_graph"],
+            "cluster_policy_preview": cluster_runtime_bundle["cluster_policy_preview"],
+            "cluster_progress": cluster_runtime_bundle["cluster_progress"],
+            "cluster_packets": cluster_runtime_bundle["cluster_packets"],
+            "cluster_handoffs": cluster_runtime_bundle["cluster_handoffs"],
+            "cluster_execution_lineage": cluster_runtime_bundle["cluster_execution_lineage"],
             "operator_projection": detail["operator_projection"],
             "execution_target": detail["execution_target"],
             "lease_renewals": detail["lease_renewals"],
@@ -961,6 +981,18 @@ class ProjectionServiceMixin:
         inspection_problems = self._inspect_context(context)
         context_budget = self._context_budget_from_state_ref(last_runtime_state)
         parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
+        capability_invocation_envelope = self._capability_invocation_envelope_from_state(last_runtime_state)
+        capability_execution_receipt = self._capability_execution_receipt_from_state(last_runtime_state, last_evidence)
+        capability_invocation_envelope_payload = (
+            capability_invocation_envelope.model_dump(mode="json")
+            if capability_invocation_envelope is not None
+            else None
+        )
+        capability_execution_receipt_payload = (
+            capability_execution_receipt.model_dump(mode="json")
+            if capability_execution_receipt is not None
+            else None
+        )
         execution_target = self._execution_target_for(last_runtime_state, last_evidence)
         lease_renewals = self._lease_renewals_for(last_runtime_state, last_evidence)
         mutation_contract = self._mutation_contract_for(context, last_runtime_state)
@@ -980,6 +1012,15 @@ class ProjectionServiceMixin:
         capability_policy_preview = self._capability_policy_preview_payload(
             run_id=run_id,
             orchestration_plan_graph=orchestration_plan_graph,
+        )
+        cluster_runtime_bundle = self._cluster_runtime_bundle(
+            goal=context.run.goal,
+            run_id=run_id,
+            run_status=str(context.run.status),
+            selected_preset_id=str(context.run.preset_id),
+            plan_graph=orchestration_plan_graph,
+            orchestration=orchestration,
+            summary_text=context.run.goal,
         )
         operator_projection = self._operator_projection_for(
             capability_policy_preview=capability_policy_preview,
@@ -1010,6 +1051,8 @@ class ProjectionServiceMixin:
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
             "context_budget": context_budget,
             "parallel_batch": parallel_batch,
+            "capability_invocation_envelope": capability_invocation_envelope_payload,
+            "capability_execution_receipt": capability_execution_receipt_payload,
             "execution_target": execution_target,
             "lease_renewals": lease_renewals,
             "mutation_contract": mutation_contract,
@@ -1018,6 +1061,18 @@ class ProjectionServiceMixin:
             "orchestration": orchestration,
             "orchestration_plan_graph": orchestration_plan_graph,
             "capability_policy_preview": capability_policy_preview,
+            "selected_clusters": [
+                template.model_dump(mode="json") for template in cluster_runtime_bundle["selected_clusters"]
+            ],
+            "cluster_graph": cluster_runtime_bundle["cluster_graph"],
+            "cluster_policy_preview": cluster_runtime_bundle["cluster_policy_preview"],
+            "cluster_execution_plans": [
+                plan.model_dump(mode="json") for plan in cluster_runtime_bundle["cluster_execution_plans"]
+            ],
+            "cluster_progress": cluster_runtime_bundle["cluster_progress"],
+            "cluster_packets": cluster_runtime_bundle["cluster_packets"],
+            "cluster_handoffs": cluster_runtime_bundle["cluster_handoffs"],
+            "cluster_execution_lineage": cluster_runtime_bundle["cluster_execution_lineage"],
             "operator_projection": operator_projection,
             "trace_context": trace_context,
             "result_envelope": result_envelope,
@@ -1094,10 +1149,23 @@ class ProjectionServiceMixin:
         repairable_problem_count = sum(1 for problem in problems if problem["repairable"])
         context_budget = self._context_budget_from_state_ref(last_runtime_state)
         parallel_batch = self._parallel_batch_from_state_ref(last_runtime_state)
-        execution_target = self._execution_target_for(last_runtime_state, self._last_evidence(context))
-        lease_renewals = self._lease_renewals_for(last_runtime_state, self._last_evidence(context))
+        last_evidence = self._last_evidence(context)
+        capability_invocation_envelope = self._capability_invocation_envelope_from_state(last_runtime_state)
+        capability_execution_receipt = self._capability_execution_receipt_from_state(last_runtime_state, last_evidence)
+        capability_invocation_envelope_payload = (
+            capability_invocation_envelope.model_dump(mode="json")
+            if capability_invocation_envelope is not None
+            else None
+        )
+        capability_execution_receipt_payload = (
+            capability_execution_receipt.model_dump(mode="json")
+            if capability_execution_receipt is not None
+            else None
+        )
+        execution_target = self._execution_target_for(last_runtime_state, last_evidence)
+        lease_renewals = self._lease_renewals_for(last_runtime_state, last_evidence)
         mutation_contract = self._mutation_contract_for(context, last_runtime_state)
-        mutation_result = self._mutation_result_for(last_runtime_state, self._last_evidence(context))
+        mutation_result = self._mutation_result_for(last_runtime_state, last_evidence)
         scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
         orchestration_plan_graph = self._orchestration_plan_graph_from_context(context)
@@ -1108,10 +1176,19 @@ class ProjectionServiceMixin:
             last_runtime_state=last_runtime_state,
             latest_attempt=latest_attempt,
         )
-        result_envelope = self._result_envelope_for(self._last_evidence(context))
+        result_envelope = self._result_envelope_for(last_evidence)
         capability_policy_preview = self._capability_policy_preview_payload(
             run_id=run_id,
             orchestration_plan_graph=orchestration_plan_graph,
+        )
+        cluster_runtime_bundle = self._cluster_runtime_bundle(
+            goal=context.run.goal,
+            run_id=run_id,
+            run_status=str(context.run.status),
+            selected_preset_id=str(context.run.preset_id),
+            plan_graph=orchestration_plan_graph,
+            orchestration=orchestration,
+            summary_text=context.run.goal,
         )
         operator_projection = self._operator_projection_for(
             capability_policy_preview=capability_policy_preview,
@@ -1123,7 +1200,7 @@ class ProjectionServiceMixin:
             timeline,
             budget_ledger=budget_ledger,
             last_runtime_state=last_runtime_state,
-            last_evidence=self._last_evidence(context),
+            last_evidence=last_evidence,
             latest_snapshot=latest_snapshot,
         )
         return {
@@ -1142,6 +1219,8 @@ class ProjectionServiceMixin:
             "memory_retrieval_preview": memory_preview.model_dump(mode="json") if memory_preview is not None else None,
             "context_budget": context_budget,
             "parallel_batch": parallel_batch,
+            "capability_invocation_envelope": capability_invocation_envelope_payload,
+            "capability_execution_receipt": capability_execution_receipt_payload,
             "execution_target": execution_target,
             "lease_renewals": lease_renewals,
             "mutation_contract": mutation_contract,
@@ -1150,6 +1229,18 @@ class ProjectionServiceMixin:
             "orchestration": orchestration,
             "orchestration_plan_graph": orchestration_plan_graph,
             "capability_policy_preview": capability_policy_preview,
+            "selected_clusters": [
+                template.model_dump(mode="json") for template in cluster_runtime_bundle["selected_clusters"]
+            ],
+            "cluster_graph": cluster_runtime_bundle["cluster_graph"],
+            "cluster_policy_preview": cluster_runtime_bundle["cluster_policy_preview"],
+            "cluster_execution_plans": [
+                plan.model_dump(mode="json") for plan in cluster_runtime_bundle["cluster_execution_plans"]
+            ],
+            "cluster_progress": cluster_runtime_bundle["cluster_progress"],
+            "cluster_packets": cluster_runtime_bundle["cluster_packets"],
+            "cluster_handoffs": cluster_runtime_bundle["cluster_handoffs"],
+            "cluster_execution_lineage": cluster_runtime_bundle["cluster_execution_lineage"],
             "operator_projection": operator_projection,
             "trace_context": trace_context,
             "result_envelope": result_envelope,
@@ -1266,6 +1357,15 @@ class ProjectionServiceMixin:
         detail = self.get_status_detail(run_id)
         summary = self.get_run_summary(run_id)
         inspection = self.inspect_run_state(run_id)
+        cluster_runtime_bundle = self._cluster_runtime_bundle(
+            goal=str(detail["run"]["goal"]),
+            run_id=run_id,
+            run_status=str(detail["run"]["status"]),
+            selected_preset_id=str(detail["run"]["preset_id"]),
+            plan_graph=detail["orchestration_plan_graph"],
+            orchestration=detail["orchestration"],
+            summary_text=summary["headline"],
+        )
         return {
             "packet_version": "m27_phase_0_v1",
             "generated_at": self._utc_now().isoformat(),
@@ -1276,6 +1376,14 @@ class ProjectionServiceMixin:
             "inspection_summary": summary["inspection_summary"],
             "review_summary": summary["review_summary"],
             "capability_policy_preview": detail["capability_policy_preview"],
+            "selected_clusters": [
+                template.model_dump(mode="json") for template in cluster_runtime_bundle["selected_clusters"]
+            ],
+            "cluster_graph": cluster_runtime_bundle["cluster_graph"],
+            "cluster_policy_preview": cluster_runtime_bundle["cluster_policy_preview"],
+            "cluster_progress": cluster_runtime_bundle["cluster_progress"],
+            "cluster_packets": cluster_runtime_bundle["cluster_packets"],
+            "cluster_handoffs": cluster_runtime_bundle["cluster_handoffs"],
             "operator_projection": detail["operator_projection"],
             "orchestration_plan_graph": detail["orchestration_plan_graph"],
             "trace_context": detail["trace_context"],
@@ -1307,6 +1415,13 @@ class ProjectionServiceMixin:
             },
             "orchestration": detail["orchestration"],
             "capability_policy_preview": detail["capability_policy_preview"],
+            "selected_clusters": detail["selected_clusters"],
+            "cluster_graph": detail["cluster_graph"],
+            "cluster_policy_preview": detail["cluster_policy_preview"],
+            "cluster_progress": detail["cluster_progress"],
+            "cluster_packets": replay_packet["cluster_packets"],
+            "cluster_handoffs": replay_packet["cluster_handoffs"],
+            "cluster_execution_lineage": replay_packet["cluster_execution_lineage"],
             "operator_projection": detail["operator_projection"],
             "mutation_report": self.get_run_mutation_report(run_id),
             "scheduler_authority": detail["scheduler_authority"],

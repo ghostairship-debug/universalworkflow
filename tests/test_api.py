@@ -33,6 +33,16 @@ class _FakeApiClient:
         self.responses = _FakeApiResponses()
 
 
+OPEN_DEBT_IDS = [
+    "TD-STRUCT-001",
+    "TD-STRUCT-002",
+    "TD-STRUCT-003",
+    "TD-STRUCT-004",
+    "TD-STRUCT-005",
+    "TD-STRUCT-006",
+]
+
+
 def build_client(db_path: Path, runtime_gateway: RuntimeGateway | None = None) -> TestClient:
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
@@ -147,6 +157,7 @@ def test_api_lists_seeded_presets(tmp_path: Path) -> None:
         "advisory_delivery",
         "guarded_delivery",
         "project_delivery",
+        "guarded_project_delivery",
     }
 
 
@@ -227,6 +238,64 @@ def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path
     assert "mcp_list_workspace_files" in tool_names
 
 
+def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    profiles_response = client.get("/interaction/agent-profiles")
+    registry_response = client.get("/interaction/agent-profiles/registry")
+    clusters_response = client.get("/interaction/clusters/templates")
+    create_response = client.post(
+        "/interaction/sessions",
+        json={
+            "goal": "Coordinate a multi-role project delivery slice",
+            "preferred_preset_id": "project_delivery",
+            "preferred_cluster_template_ids": ["dev_cluster"],
+            "constraints": ["keep operator checkpoints visible"],
+            "assumptions": ["workspace is clean"],
+        },
+    )
+
+    assert profiles_response.status_code == 200
+    assert registry_response.status_code == 200
+    assert clusters_response.status_code == 200
+    assert any(profile["profile_id"] == "planner_architect" for profile in profiles_response.json())
+    assert registry_response.json()["generated_profiles"] == []
+    assert clusters_response.json()[0]["template_id"] == "dev_cluster"
+
+    create_payload = create_response.json()
+    session_id = create_payload["session"]["session_id"]
+    assert create_response.status_code == 201
+    assert create_payload["session"]["status"] == "ready_to_launch"
+    assert create_payload["plan_draft"]["selected_preset_id"] == "project_delivery"
+    assert create_payload["plan_draft"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert create_payload["goal_packet"]["selected_clusters"][0]["template_id"] == "dev_cluster"
+
+    get_response = client.get(f"/interaction/sessions/{session_id}")
+    assert get_response.status_code == 200
+    get_payload = get_response.json()
+    assert get_payload["session"]["latest_plan_draft_id"] == create_payload["plan_draft"]["draft_id"]
+    assert get_payload["available_cluster_templates"][0]["template_id"] == "dev_cluster"
+
+    launch_response = client.post(
+        f"/interaction/sessions/{session_id}/launch",
+        json={
+            "execute": False,
+            "rationale": "ready to launch",
+            "selected_preset_id": "project_delivery",
+            "selected_cluster_template_ids": ["dev_cluster"],
+        },
+    )
+    assert launch_response.status_code == 200
+    launch_payload = launch_response.json()
+    assert launch_payload["session"]["status"] == "launched"
+    assert launch_payload["session"]["active_run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
+    assert launch_payload["launch_decision"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert launch_payload["launch_payload"]["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert launch_payload["launch_payload"]["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert launch_payload["launch_payload"]["run"]["status"] == "prepared"
+
+
 def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
@@ -240,6 +309,7 @@ def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
     assert health_response.status_code == 200
     assert any(item["descriptor"]["provider_kind"] == "runtime_gateway" for item in health_response.json())
     assert all("recent_call_summary" in item for item in health_response.json())
+    assert all("runtime_probe_status" in item for item in health_response.json())
 
 
 def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
@@ -252,6 +322,9 @@ def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     )
     assert plan_response.status_code == 200
     assert plan_response.json()["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
+    assert len(plan_response.json()["plan_graph"]["edges"]) >= 1
+    assert len(plan_response.json()["plan_graph"]["barriers"]) == 1
+    assert len(plan_response.json()["plan_graph"]["retry_policies"]) == 1
 
     policy_response = client.post(
         "/runs/policy-preview",
@@ -282,6 +355,7 @@ def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     assert plan_status_response.status_code == 200
     assert plan_status_response.json()["enabled"] is True
     assert len(plan_status_response.json()["plan_graph"]["nodes"]) == 4
+    assert len(plan_status_response.json()["plan_graph"]["edges"]) >= 1
 
     policy_status_response = client.get(f"/runs/{launch_payload['run']['run_id']}/policy-preview")
     assert policy_status_response.status_code == 200
@@ -460,15 +534,25 @@ def test_api_exposes_project_delivery_orchestration(tmp_path: Path) -> None:
 
     run = client.post("/runs", json={"goal": "Project delivery API path", "preset_id": "project_delivery"}).json()
     client.post(f"/runs/{run['run_id']}/compile")
-    resume_response = client.post(f"/runs/{run['run_id']}/resume")
     orchestration_response = client.get(f"/runs/{run['run_id']}/orchestration")
     detail_response = client.get(f"/runs/{run['run_id']}/status-detail")
+    operator_packet_response = client.get(f"/runs/{run['run_id']}/operator-packet")
+    replay_packet_response = client.get(f"/runs/{run['run_id']}/replay-packet")
 
-    assert resume_response.status_code == 200
     assert orchestration_response.status_code == 200
+    assert operator_packet_response.status_code == 200
+    assert replay_packet_response.status_code == 200
     assert orchestration_response.json()["enabled"] is True
-    assert orchestration_response.json()["orchestration"]["role_progress"]["planner"]["status"] == "completed"
-    assert detail_response.json()["orchestration"]["parallel_batch"]["member_count"] == 2
+    assert orchestration_response.json()["orchestration"]["cluster_template_ids"] == ["dev_cluster"]
+    assert detail_response.json()["orchestration"]["cluster_template_ids"] == ["dev_cluster"]
+    assert detail_response.json()["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert detail_response.json()["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert detail_response.json()["cluster_packets"][0]["cluster_template_id"] == "dev_cluster"
+    assert operator_packet_response.json()["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert operator_packet_response.json()["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert replay_packet_response.json()["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert replay_packet_response.json()["cluster_execution_lineage"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert replay_packet_response.json()["cluster_packets"][0]["cluster_template_id"] == "dev_cluster"
 
 
 def test_api_can_record_and_list_simulation_records(tmp_path: Path) -> None:
@@ -505,10 +589,9 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     response = client.get("/governance/tech-debt")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["open_debt_count"] == 0
-    assert payload["open_items"] == []
-    assert "Pre-M8" not in payload["planned_phase_counts"]
-    assert payload["planned_phase_counts"] == {}
+    assert payload["open_debt_count"] == 6
+    assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
+    assert payload["planned_phase_counts"] == {"M32": 6}
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
@@ -561,6 +644,7 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
     assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
     assert payload["remaining_gaps"] == []
+    assert payload["governance_alerts"]["overall_status"] == "degraded"
 
 
 def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -587,12 +671,13 @@ def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> No
     alerts_response = client.get("/governance/alerts", params={"validation_report_path": str(validation_report_path)})
 
     assert metrics_response.status_code == 200
+    assert metrics_response.json()["tech_debt"]["open_debt_ids"] == OPEN_DEBT_IDS
     assert metrics_response.json()["review_policy"]["supported_policy_count"] == 5
     assert metrics_response.json()["automation"]["governance_metrics_available"] is True
 
     assert alerts_response.status_code == 200
-    assert alerts_response.json()["overall_status"] == "clear"
-    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
+    assert alerts_response.json()["overall_status"] == "degraded"
+    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
 
 
 def test_api_exposes_governance_domain_pack_platform_report(tmp_path: Path) -> None:

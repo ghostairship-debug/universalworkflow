@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Single-store quorum-style scheduler authority for the local-first control plane.
+
+The current implementation models quorum, takeover lineage, and lease commitment inside one
+SQLite-backed authority context. It improves arbitration visibility and failover semantics,
+but it is not a peer-replicated distributed consensus system.
+"""
+
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -644,6 +651,7 @@ class SchedulerAuthorityClusterService:
         term = current_term or self._active_term(connection) or self._latest_term(connection)
         return {
             "mode": "quorum",
+            "authority_mode": "single_store_quorum",
             "node_count": len(nodes),
             "active_node_count": len(active_ids),
             "quorum_size": term.quorum_size if term is not None else self._effective_quorum_size(len(active_ids) or 1),

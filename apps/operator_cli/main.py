@@ -24,6 +24,7 @@ from packages.core_domain.services import OrchestratorService
 
 app = typer.Typer(help="Workflow operator CLI.")
 run_app = typer.Typer(help="Run lifecycle commands.")
+interaction_app = typer.Typer(help="Interaction-plane session, profile, and cluster commands.")
 task_app = typer.Typer(help="Task inspection commands.")
 preset_app = typer.Typer(help="Preset inspection commands.")
 domain_pack_app = typer.Typer(help="Domain pack inspection commands.")
@@ -39,6 +40,7 @@ governance_app = typer.Typer(help="Governance and debt visibility commands.")
 config_app = typer.Typer(help="Unified configuration inspection commands.")
 
 app.add_typer(run_app, name="run")
+app.add_typer(interaction_app, name="interaction")
 app.add_typer(task_app, name="task")
 app.add_typer(preset_app, name="preset")
 app.add_typer(domain_pack_app, name="domain-pack")
@@ -80,6 +82,19 @@ def _run_workflow_action(action: Callable[[], T]) -> T:
     except WorkflowError as exc:
         _emit_json(_workflow_error_payload(exc))
         raise typer.Exit(code=1) from exc
+
+
+def _parse_key_value_pairs(values: Optional[list[str]]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for raw in values or []:
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            parsed[key] = value
+    return parsed
 
 
 @app.callback()
@@ -408,6 +423,123 @@ def run_launch(
                 goal=goal,
                 preset_id=preset,
                 execute=execute,
+            )
+        )
+    )
+
+
+@interaction_app.command("profiles")
+def interaction_profiles(ctx: typer.Context) -> None:
+    registry = _run_workflow_action(lambda: _service(ctx).get_agent_profile_registry())
+    _emit_json(registry.model_dump(mode="json"))
+
+
+@interaction_app.command("clusters")
+def interaction_clusters(ctx: typer.Context) -> None:
+    templates = _run_workflow_action(lambda: _service(ctx).list_cluster_templates())
+    _emit_json([template.model_dump(mode="json") for template in templates])
+
+
+@interaction_app.command("create-session")
+def interaction_create_session(
+    ctx: typer.Context,
+    goal: str = typer.Option(..., "--goal"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    cluster: Optional[str] = typer.Option(None, "--cluster"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).create_intent_session(
+                goal=goal,
+                preferred_preset_id=preset,
+                preferred_cluster_template_ids=[cluster] if cluster else None,
+            )
+        )
+    )
+
+
+@interaction_app.command("get-session")
+def interaction_get_session(ctx: typer.Context, session_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_intent_session_payload(session_id)))
+
+
+@interaction_app.command("clarify")
+def interaction_clarify(
+    ctx: typer.Context,
+    session_id: str,
+    answer: Optional[list[str]] = typer.Option(None, "--answer", help="prompt_id=value"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    cluster: Optional[str] = typer.Option(None, "--cluster"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).continue_intent_session(
+                session_id,
+                answers=_parse_key_value_pairs(answer),
+                preferred_preset_id=preset,
+                preferred_cluster_template_ids=[cluster] if cluster else None,
+            )
+        )
+    )
+
+
+@interaction_app.command("plan-draft")
+def interaction_plan_draft(
+    ctx: typer.Context,
+    session_id: str,
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    cluster: Optional[str] = typer.Option(None, "--cluster"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).create_intent_plan_draft(
+                session_id,
+                preferred_preset_id=preset,
+                preferred_cluster_template_ids=[cluster] if cluster else None,
+            )
+        )
+    )
+
+
+@interaction_app.command("launch")
+def interaction_launch(
+    ctx: typer.Context,
+    session_id: str,
+    execute: bool = typer.Option(False, "--execute"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    cluster: Optional[str] = typer.Option(None, "--cluster"),
+    rationale: Optional[str] = typer.Option(None, "--rationale"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).launch_intent_session(
+                session_id,
+                execute=execute,
+                rationale=rationale,
+                selected_preset_id=preset,
+                selected_cluster_template_ids=[cluster] if cluster else None,
+            )
+        )
+    )
+
+
+@interaction_app.command("followup")
+def interaction_followup(
+    ctx: typer.Context,
+    session_id: str,
+    instruction: str = typer.Option(..., "--instruction"),
+    intent: str = typer.Option("continue", "--intent"),
+    blocking: bool = typer.Option(False, "--blocking"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).create_followup_request(
+                session_id,
+                instruction=instruction,
+                intent=intent,
+                blocking=blocking,
+                run_id=run_id,
             )
         )
     )

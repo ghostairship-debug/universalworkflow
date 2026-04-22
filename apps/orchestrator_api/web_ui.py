@@ -21,6 +21,7 @@ def _nav() -> str:
     links = [
         ('/ui', 'Dashboard'),
         ('/ui/runs', 'Runs'),
+        ('/ui/workbench', 'Workbench'),
         ('/ui/reviews', 'Reviews'),
         ('/ui/governance', 'Governance'),
         ('/ui/config', 'Config'),
@@ -194,7 +195,7 @@ def _layout(title: str, body: str, *, notice: str | None = None) -> str:
     button.secondary, .button.secondary {{ background: #7c857f; }}
     button.warn, .button.warn {{ background: var(--warm); }}
     button.danger, .button.danger {{ background: var(--danger); }}
-    input, select {{
+    input, select, textarea {{
       padding: 10px 12px;
       border-radius: 12px;
       border: 1px solid var(--line);
@@ -588,6 +589,115 @@ def render_governance(*, reports: dict[str, Any], cluster_overview: dict[str, An
     </div>
     """
     return _layout("Governance", body, notice=notice)
+
+
+def render_workbench(
+    *,
+    session_payload: dict[str, Any] | None,
+    presets: list[dict[str, Any]],
+    cluster_templates: list[dict[str, Any]],
+    notice: str | None = None,
+) -> str:
+    preset_options = "".join(
+        f'<option value="{_escape(item["preset_id"])}">{_escape(item["preset_id"])}</option>'
+        for item in presets
+    )
+    cluster_options = "".join(
+        f'<option value="{_escape(item["template_id"])}">{_escape(item["name"])}</option>'
+        for item in cluster_templates
+    )
+    preview_form = f"""
+    <section class="panel">
+      <h2>Interaction-First Workbench</h2>
+      <p class="muted">Create an intent session, inspect the goal packet and cluster preview, then launch into the existing operator surface.</p>
+      <form method="post" action="/ui/workbench/preview">
+        <div class="kv">
+          <div class="kv-item"><strong>Goal</strong><textarea name="goal" rows="4" style="width:100%;" placeholder="Describe the objective, artifact, or decision you want this run to produce."></textarea></div>
+          <div class="kv-item"><strong>Preferred Preset</strong><select name="preset_id"><option value="">auto</option>{preset_options}</select></div>
+          <div class="kv-item"><strong>Preferred Cluster</strong><select name="cluster_template_id"><option value="">auto</option>{cluster_options}</select></div>
+        </div>
+        <div style="margin-top:14px;"><button type="submit">Preview Goal Packet</button></div>
+      </form>
+    </section>
+    """
+    if session_payload is None:
+        return _layout("Interaction Workbench", preview_form, notice=notice)
+
+    session = session_payload["session"]
+    clarification_state = session.get("clarification_state") or {}
+    plan_draft = session_payload.get("plan_draft")
+    goal_packet = session_payload.get("goal_packet") or {}
+    selected_clusters = goal_packet.get("selected_clusters", [])
+    clarification_prompts = clarification_state.get("prompts") or []
+    clarification_inputs = "".join(
+        f"""
+        <label class="kv-item">
+          <strong>{_escape(prompt.get('question', 'Clarification'))}</strong>
+          <input type="text" name="answer_{_escape(prompt.get('prompt_id', ''))}" value="{_escape(prompt.get('answer') or '')}">
+        </label>
+        """
+        for prompt in clarification_prompts
+    ) or '<div class="kv-item"><strong>Clarifications</strong>No blocking clarification prompts.</div>'
+    selected_cluster_labels = ", ".join(item["name"] for item in selected_clusters) or "single-path preset"
+    active_run_link = (
+        f'<a href="/ui/runs/{_escape(session["active_run_id"])}">{_escape(session["active_run_id"])}</a>'
+        if session.get("active_run_id")
+        else "-"
+    )
+    launch_block = (
+        f"""
+        <form class="inline" method="post" action="/ui/workbench/{_escape(session['session_id'])}/launch">
+          <label><input type="checkbox" name="execute" value="true"> execute immediately</label>
+          <button type="submit">Launch</button>
+        </form>
+        """
+        if plan_draft is not None
+        else "<span class='muted'>Launch becomes available once the session has a plan draft.</span>"
+    )
+    body = f"""
+    {preview_form}
+    <div class="split" style="margin-top:16px;">
+      <section class="panel">
+        <h2>Session</h2>
+        <div class="kv">
+          <div class="kv-item"><strong>Session ID</strong>{_escape(session['session_id'])}</div>
+          <div class="kv-item"><strong>Status</strong>{_escape(session['status'])}</div>
+          <div class="kv-item"><strong>Selected Cluster Path</strong>{_escape(selected_cluster_labels)}</div>
+          <div class="kv-item"><strong>Active Run</strong>{active_run_link}</div>
+        </div>
+        <form method="post" action="/ui/workbench/{_escape(session['session_id'])}/clarify" style="margin-top:16px;">
+          <div class="kv">{clarification_inputs}</div>
+          <div class="actions" style="margin-top:14px;"><button type="submit">Refresh Plan Draft</button></div>
+        </form>
+        <div class="actions">{launch_block}</div>
+      </section>
+      <section class="panel">
+        <h2>Plan Draft</h2>
+        {_json_block(plan_draft)}
+      </section>
+    </div>
+    <div class="split" style="margin-top:16px;">
+      <section class="panel">
+        <h2>Goal Packet</h2>
+        {_json_block(goal_packet)}
+      </section>
+      <section class="panel">
+        <h2>Cluster Graph</h2>
+        {_json_block(goal_packet.get('cluster_graph'))}
+      </section>
+    </div>
+    <div class="split" style="margin-top:16px;">
+      <section class="panel">
+        <h2>Policy Preview</h2>
+        {_json_block(goal_packet.get('capability_policy_preview'))}
+      </section>
+      <section class="panel">
+        <h2>Cluster Policy Preview</h2>
+        {_json_block(goal_packet.get('cluster_policy_preview'))}
+      </section>
+    </div>
+    """
+    return _layout("Interaction Workbench", body, notice=notice)
 
 
 def render_config(*, effective_config: dict[str, Any], notice: str | None = None) -> str:

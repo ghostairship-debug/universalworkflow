@@ -52,6 +52,13 @@ class PresetResolver:
                 "risk",
                 "compliance",
             },
+            "guarded_project_delivery": {
+                "guarded",
+                "project",
+                "approval",
+                "multi-role",
+                "orchestration",
+            },
         }
 
     def list_presets(self) -> list[PresetDefinition]:

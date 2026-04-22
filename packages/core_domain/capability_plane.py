@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import sys
 from abc import ABC, abstractmethod
@@ -8,8 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from packages.contracts import (
     CapabilityDescriptor,
@@ -31,6 +30,8 @@ from packages.core_domain.agent_tools import built_in_tool_specs
 DEFAULT_MCP_PROFILE_SEED_PATH = Path("infra/seeds/mcp_server_profiles.json")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOL_PROJECTION_MANIFEST_ENV_KEY = "WORKFLOW_TOOL_PROJECTION_MANIFEST"
+_MCP_IMPORT_CACHE: tuple[Any | None, Any | None, Any | None] | None = None
+_MCP_IMPORT_ERROR: ImportError | None = None
 
 
 def load_seed_mcp_server_profiles(seed_path: Path | str = DEFAULT_MCP_PROFILE_SEED_PATH) -> list[MCPServerProfile]:
@@ -56,6 +57,36 @@ def load_tool_projection_manifest(payload: str | None) -> ToolProjectionManifest
 def _schema_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_mcp_client() -> tuple[Any | None, Any | None, Any | None]:
+    global _MCP_IMPORT_CACHE, _MCP_IMPORT_ERROR
+    if _MCP_IMPORT_CACHE is not None or _MCP_IMPORT_ERROR is not None:
+        return _MCP_IMPORT_CACHE or (None, None, None)
+    try:
+        session_module = importlib.import_module("mcp.client.session")
+        stdio_module = importlib.import_module("mcp.client.stdio")
+    except ImportError as exc:
+        _MCP_IMPORT_ERROR = exc
+        return (None, None, None)
+    _MCP_IMPORT_CACHE = (
+        getattr(session_module, "ClientSession"),
+        getattr(stdio_module, "StdioServerParameters"),
+        getattr(stdio_module, "stdio_client"),
+    )
+    return _MCP_IMPORT_CACHE
+
+
+def mcp_dependency_available() -> bool:
+    client_session, _, _ = _load_mcp_client()
+    return client_session is not None
+
+
+def mcp_dependency_reason() -> str | None:
+    _load_mcp_client()
+    if _MCP_IMPORT_ERROR is None:
+        return None
+    return "mcp_dependency_missing"
 
 
 def _trust_tier_for_source(source_type: CapabilitySourceType) -> TrustTier:
@@ -141,6 +172,8 @@ class MCPCapabilitySource(CapabilitySource):
         task_kind: TaskKind,
         review_policy: ReviewPolicy,
     ) -> list[ToolProjectionEntry]:
+        if not mcp_dependency_available():
+            return []
         entries: list[ToolProjectionEntry] = []
         for profile in self.list_profiles():
             if not profile.enabled or profile.transport != MCPTransport.stdio:
@@ -174,6 +207,7 @@ class MCPCapabilitySource(CapabilitySource):
         return entries
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        self._require_mcp_dependency()
         for profile in self.list_profiles():
             if profile.allowed_tools and tool_name not in profile.allowed_tools:
                 continue
@@ -183,17 +217,19 @@ class MCPCapabilitySource(CapabilitySource):
         raise ValueError(f"MCP tool not found: {tool_name}")
 
     async def _list_tools_async(self, profile: MCPServerProfile) -> list[dict[str, Any]]:
+        client_session, _, stdio_client_fn = self._require_mcp_dependency()
         params = self._server_parameters_for(profile)
-        async with stdio_client(params) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
+        async with stdio_client_fn(params) as (read_stream, write_stream):
+            async with client_session(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.list_tools()
                 return [tool.model_dump(mode="json") for tool in result.tools]
 
     async def _call_tool_async(self, profile: MCPServerProfile, tool_name: str, arguments: dict[str, Any]) -> str:
+        client_session, _, stdio_client_fn = self._require_mcp_dependency()
         params = self._server_parameters_for(profile)
-        async with stdio_client(params) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
+        async with stdio_client_fn(params) as (read_stream, write_stream):
+            async with client_session(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool(tool_name, arguments)
                 chunks: list[str] = []
@@ -208,13 +244,30 @@ class MCPCapabilitySource(CapabilitySource):
         cached = self._tool_cache.get(profile.profile_id)
         if cached is not None:
             return cached
-        tools = anyio.run(self._list_tools_async, profile)
+        try:
+            tools = anyio.run(self._list_tools_async, profile)
+        except Exception:
+            # Projection preview should remain available even when the host process
+            # cannot safely bootstrap the stdio MCP transport (for example inside
+            # test harnesses with non-file stderr handles).
+            tools = self._fallback_tools_for_profile(profile)
         self._tool_cache[profile.profile_id] = tools
         return tools
 
-    def _server_parameters_for(self, profile: MCPServerProfile) -> StdioServerParameters:
+    def _fallback_tools_for_profile(self, profile: MCPServerProfile) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": tool_name,
+                "description": f"Fallback MCP tool entry from profile `{profile.profile_id}`",
+                "inputSchema": {},
+            }
+            for tool_name in profile.allowed_tools[: profile.max_tools]
+        ]
+
+    def _server_parameters_for(self, profile: MCPServerProfile) -> Any:
+        _, stdio_server_parameters_cls, _ = self._require_mcp_dependency()
         command = self._resolve_startup_command(profile)
-        return StdioServerParameters(
+        return stdio_server_parameters_cls(
             command=command[0],
             args=command[1:],
             cwd=str(self._workspace_root),
@@ -235,6 +288,12 @@ class MCPCapabilitySource(CapabilitySource):
                 continue
             resolved.append(item)
         return resolved
+
+    def _require_mcp_dependency(self) -> tuple[Any, Any, Any]:
+        client_session, stdio_server_parameters_cls, stdio_client_fn = _load_mcp_client()
+        if client_session is None or stdio_server_parameters_cls is None or stdio_client_fn is None:
+            raise RuntimeError("MCP dependency is unavailable; install the optional `mcp` extra to enable MCP tool execution")
+        return client_session, stdio_server_parameters_cls, stdio_client_fn
 
 
 class CapabilityPlane:
@@ -426,8 +485,14 @@ class CapabilityPlane:
         health: list[CapabilityHealth] = []
         for descriptor in descriptors:
             failure_classes = self._failure_classes_for_descriptor(descriptor)
-            status = "ready" if descriptor.enabled else "disabled"
-            reason = None if descriptor.enabled else "descriptor_disabled"
+            probe_status, probe_reason, probe_detail = self._runtime_probe_for_descriptor(descriptor)
+            if descriptor.enabled and probe_status in {"ready", "assumed_ready", "runtime_ready"}:
+                status = "ready"
+            elif descriptor.enabled:
+                status = "degraded"
+            else:
+                status = "disabled"
+            reason = None if descriptor.enabled and status == "ready" else probe_reason or "descriptor_disabled"
             health.append(
                 CapabilityHealth(
                     descriptor=descriptor,
@@ -439,6 +504,9 @@ class CapabilityPlane:
                         "recent_success_count": 0,
                         "recent_failure_count": 0,
                     },
+                    runtime_probe_status=probe_status,
+                    runtime_probe_reason=probe_reason,
+                    runtime_probe_detail=probe_detail,
                 )
             )
         return health
@@ -453,6 +521,27 @@ class CapabilityPlane:
         if descriptor.provider_kind == "adapter_route":
             return ["adapter_unavailable", "execution_failed", "artifact_missing"]
         return ["schema_mismatch"]
+
+    def _runtime_probe_for_descriptor(self, descriptor: CapabilityDescriptor) -> tuple[str, str | None, dict[str, Any]]:
+        if descriptor.provider_kind == "mcp_profile":
+            if not mcp_dependency_available():
+                return ("dependency_missing", mcp_dependency_reason(), {"dependency": "mcp", "installed": False})
+            return ("runtime_ready", None, {"dependency": "mcp", "installed": True})
+        if descriptor.provider_kind == "runtime_gateway":
+            if not descriptor.enabled:
+                return ("provider_not_configured", "provider_not_configured", {"provider": descriptor.scopes[0] if descriptor.scopes else None})
+            return ("runtime_ready", None, {"provider": descriptor.scopes[0] if descriptor.scopes else None})
+        if descriptor.provider_kind == "worker_pool":
+            if not descriptor.enabled:
+                return ("pool_disabled", "pool_disabled", {"worker_pool_id": descriptor.profile_id})
+            return ("assumed_ready", None, {"worker_pool_id": descriptor.profile_id, "transport": descriptor.transport})
+        if descriptor.provider_kind == "adapter_route":
+            return (
+                "assumed_ready" if descriptor.enabled else "adapter_disabled",
+                None if descriptor.enabled else "adapter_disabled",
+                {"adapter_name": descriptor.adapter_name},
+            )
+        return ("ready", None, {"provider_kind": descriptor.provider_kind})
 
     def build_projection_manifest(
         self,

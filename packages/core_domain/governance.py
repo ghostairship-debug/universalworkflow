@@ -153,6 +153,7 @@ def _build_tech_debt_report_payload(
         or m14_focus_items
         or m15_focus_items
         or next_cycle_focus_items
+        or open_items
     )
     return {
         "source_path": source_path.as_posix(),
@@ -802,7 +803,7 @@ def build_release_readiness_report(
         "remaining_gaps": remaining_gaps,
         "governance_metrics": governance_metrics,
         "governance_alerts": governance_alerts,
-        "recommended_next_step": "treat the mainline product as core complete and open M21 Phase 0 only when autonomy or ecosystem breadth is ready for a fresh rebaseline",
+        "recommended_next_step": "use the accepted M31 Phase 0 freeze as the baseline, carry the remaining TD-STRUCT items into M32, and explicitly open an interaction-first M32 phase before new breadth work",
         "source_paths": {
             "validation_report": validation_evidence["source_path"],
             "tech_debt_registry": tech_debt["source_path"],

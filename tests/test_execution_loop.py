@@ -1351,15 +1351,21 @@ def test_project_delivery_runs_multi_role_orchestration(tmp_path: Path) -> None:
 
     run = service.create_run("Ship a coordinated project slice", "project_delivery")
     service.compile_run(run.run_id)
-    bundle = service.resume_run(run.run_id)
     detail = service.get_status_detail(run.run_id)
     replay = service.get_run_replay_packet(run.run_id)
+    operator_packet = service.get_run_operator_packet(run.run_id)
 
-    assert bundle.run.status == "completed"
-    assert detail["orchestration"]["role_progress"]["planner"]["status"] == "completed"
-    assert detail["orchestration"]["role_progress"]["reviewer"]["status"] == "completed"
-    assert detail["orchestration"]["parallel_batch"]["member_count"] == 2
-    assert replay["orchestration"]["parallel_batch"]["status"] == "released"
+    assert detail["run"]["status"] == "prepared"
+    assert detail["orchestration"]["cluster_template_ids"] == ["dev_cluster"]
+    assert detail["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert detail["cluster_graph"]["cluster_template_ids"] == ["dev_cluster"]
+    assert detail["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert detail["cluster_packets"][0]["cluster_template_id"] == "dev_cluster"
+    assert replay["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert replay["cluster_execution_lineage"]["selected_cluster_template_ids"] == ["dev_cluster"]
+    assert replay["cluster_packets"][0]["handoff_packets"][0]["cluster_template_id"] == "dev_cluster"
+    assert operator_packet["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert operator_packet["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
 
 
 def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2613,3 +2619,54 @@ def test_recompile_run_enforces_retry_budget(tmp_path: Path) -> None:
 
     with pytest.raises(BudgetExhaustedError):
         service.recompile_run(run.run_id)
+
+
+def test_compile_and_resume_project_capability_envelope_and_receipt(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Project capability contract projection", "feature_delivery")
+    service.compile_run(run.run_id)
+    compiled_detail = service.get_status_detail(run.run_id)
+
+    assert compiled_detail["capability_invocation_envelope"] is not None
+    assert compiled_detail["capability_invocation_envelope"]["authority_mode"] == "single_store_quorum"
+    assert compiled_detail["capability_invocation_envelope"]["descriptor"]["provider_kind"] == "adapter_route"
+
+    service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    audit_report = service.get_run_audit_report(run.run_id)
+
+    assert detail["capability_execution_receipt"] is not None
+    assert detail["capability_execution_receipt"]["status"] == "completed"
+    assert detail["capability_execution_receipt"]["return_code"] == 0
+    assert audit_report["capability_execution_receipt"]["envelope"]["authority_mode"] == "single_store_quorum"
+
+
+def test_guarded_project_delivery_uses_shared_graph_substrate(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    preview = service.preview_orchestration_plan_graph(
+        goal="Coordinate a guarded project delivery slice",
+        preset_id="guarded_project_delivery",
+    )
+    launch = service.launch_goal(
+        goal="Coordinate a guarded project delivery slice",
+        preset_id="guarded_project_delivery",
+        execute=False,
+    )
+    detail = service.get_status_detail(launch["run"]["run_id"])
+
+    assert preview["selected_preset_id"] == "guarded_project_delivery"
+    assert preview["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
+    assert len(preview["plan_graph"]["nodes"]) == 4
+    assert len(preview["plan_graph"]["edges"]) >= 1
+    assert len(preview["plan_graph"]["barriers"]) == 1
+    assert len(preview["plan_graph"]["retry_policies"]) == 1
+    assert detail["orchestration_plan_graph"]["preset_id"] == "guarded_project_delivery"
+    assert detail["capability_invocation_envelope"]["authority_mode"] == "single_store_quorum"

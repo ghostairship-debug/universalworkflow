@@ -148,6 +148,7 @@ class MemorySimulationServiceMixin:
             "optional_delivery": AgentRoleType.planner,
             "advisory_delivery": AgentRoleType.reviewer,
             "guarded_delivery": AgentRoleType.operator,
+            "guarded_project_delivery": AgentRoleType.operator,
             "project_delivery": AgentRoleType.operator,
         }
         return mapping.get(preset_id, AgentRoleType.operator)
@@ -181,53 +182,32 @@ class MemorySimulationServiceMixin:
         adapter_name: str | None = None,
         task_kind: TaskKind | str | None = None,
     ) -> OrchestrationPlanGraph:
-        if preset_id == "project_delivery":
-            plan = self._default_project_delivery_plan(run_id or "preview_run")
-            planner_node_id: str | None = None
-            coder_node_id: str | None = None
-            researcher_node_id: str | None = None
-            nodes: list[OrchestrationGraphNode] = []
-            for step in sorted(plan.steps, key=lambda item: (item.sequence_no, str(item.role), item.step_id)):
-                dependencies: list[str] = []
-                if step.role in {AgentRoleType.coder, AgentRoleType.researcher} and planner_node_id is not None:
-                    dependencies.append(planner_node_id)
-                if step.role == AgentRoleType.reviewer:
-                    dependencies.extend([item for item in (coder_node_id, researcher_node_id) if item is not None])
-                node = OrchestrationGraphNode(
-                    role=step.role,
-                    goal=self._role_goal_for(goal, step.role),
-                    required_capabilities=[step.preset_id, *( [step.preferred_adapter] if step.preferred_adapter else [] )],
-                    dependencies=dependencies,
-                    review_gate="advisory_review" if step.role == AgentRoleType.reviewer else "none",
-                    side_effect_level=self._side_effect_level_for_adapter(step.preferred_adapter),
-                    fallback_path=[
-                        adapter
-                        for adapter in (step.preferred_adapter, step.fallback_adapter)
-                        if adapter is not None
-                    ],
-                    preset_id=step.preset_id,
-                    preferred_adapter=step.preferred_adapter,
-                )
-                nodes.append(node)
-                if step.role == AgentRoleType.planner:
-                    planner_node_id = node.node_id
-                elif step.role == AgentRoleType.coder:
-                    coder_node_id = node.node_id
-                elif step.role == AgentRoleType.researcher:
-                    researcher_node_id = node.node_id
-            return OrchestrationPlanGraph(
+        if preset_id in {"project_delivery", "guarded_project_delivery"}:
+            plan = self._default_orchestration_plan_for_preset(preset_id, run_id or "preview_run")
+            if plan is None:
+                raise WorkflowError("orchestration plan was not available", {"preset_id": preset_id})
+            summary = (
+                "Planner decomposes the goal, coder and researcher run in parallel, reviewer closes the loop."
+                if preset_id == "project_delivery"
+                else "Planner decomposes the goal, coder and researcher run in parallel, and guarded review enforces mandatory sign-off."
+            )
+            risk_summary = [
+                "parallel child runs require barrier release before review",
+                "repo mutation stays isolated to the coder lane",
+                "human intervention may still be required when review policy escalates",
+            ]
+            if preset_id == "guarded_project_delivery":
+                risk_summary.append("guarded review keeps the orchestration on the human-signoff path")
+            return self.orchestration_engine.build_graph_from_plan(
                 run_id=run_id,
                 preset_id=preset_id,
                 goal=goal,
-                execution_mode="planner_generated_graph_with_parallel_children",
-                summary="Planner decomposes the goal, coder and researcher run in parallel, reviewer closes the loop.",
-                risk_summary=[
-                    "parallel child runs require barrier release before review",
-                    "repo mutation stays isolated to the coder lane",
-                    "human intervention may still be required when review policy escalates",
-                ],
-                nodes=nodes,
+                plan=plan,
+                role_goal_for=lambda parent_goal, role: self._role_goal_for(parent_goal, role),
+                side_effect_level_for_adapter=self._side_effect_level_for_adapter,
                 recommended_preset_id=recommended_preset_id or preset_id,
+                summary=summary,
+                risk_summary=risk_summary,
             )
 
         preset = self.preset_repo.get(preset_id)
@@ -262,14 +242,13 @@ class MemorySimulationServiceMixin:
             risk_summary.append(f"review policy `{preset.default_review_policy}` may insert a human approval step")
         if lane_type == ExecutionLaneType.sessionful_external_agent:
             risk_summary.append("sessionful external lane must stay outside default repo mutation flow")
-        return OrchestrationPlanGraph(
+        return self.orchestration_engine.build_single_path_graph(
             run_id=run_id,
             preset_id=preset_id,
             goal=goal,
-            execution_mode="single_path",
             summary=f"Single-path execution through `{preset_id}` with `{resolved_task_kind}`.",
+            node=node,
             risk_summary=risk_summary,
-            nodes=[node],
             recommended_preset_id=recommended_preset_id or preset_id,
         )
 
@@ -278,6 +257,7 @@ class MemorySimulationServiceMixin:
         *,
         goal: str,
         preset_id: str | None = None,
+        preferred_cluster_template_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         suggestions = [item.model_dump(mode="json") for item in self.suggest_presets(goal)]
         selected_preset_id = preset_id or (suggestions[0]["preset_id"] if suggestions else "feature_delivery")
@@ -285,6 +265,12 @@ class MemorySimulationServiceMixin:
             goal=goal,
             preset_id=selected_preset_id,
             recommended_preset_id=suggestions[0]["preset_id"] if suggestions else selected_preset_id,
+        )
+        graph.cluster_template_ids = self._selected_cluster_template_ids(
+            goal=goal,
+            preset_id=selected_preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+            plan_graph=graph.model_dump(mode="json"),
         )
         return {
             "goal": goal,
@@ -298,11 +284,24 @@ class MemorySimulationServiceMixin:
         *,
         goal: str,
         preset_id: str | None = None,
+        preferred_cluster_template_ids: list[str] | None = None,
         execute: bool = False,
     ) -> dict[str, Any]:
-        preview = self.preview_orchestration_plan_graph(goal=goal, preset_id=preset_id)
-        policy_preview = self.preview_capability_policy(goal=goal, preset_id=preset_id)
-        goal_packet = self.preview_goal_packet(goal=goal, preset_id=preset_id)
+        preview = self.preview_orchestration_plan_graph(
+            goal=goal,
+            preset_id=preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
+        policy_preview = self.preview_capability_policy(
+            goal=goal,
+            preset_id=preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
+        goal_packet = self.preview_goal_packet(
+            goal=goal,
+            preset_id=preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
         selected_preset_id = str(preview["selected_preset_id"])
         run = self.create_run(goal=goal, preset_id=selected_preset_id)
         prepared = self.compile_run(run.run_id)
@@ -311,6 +310,9 @@ class MemorySimulationServiceMixin:
             "selected_preset_id": selected_preset_id,
             "plan_graph": preview["plan_graph"],
             "capability_policy_preview": policy_preview["policy_preview"],
+            "selected_clusters": goal_packet["selected_clusters"],
+            "cluster_graph": goal_packet["cluster_graph"],
+            "cluster_policy_preview": goal_packet["cluster_policy_preview"],
             "goal_packet": goal_packet,
             "suggestions": preview["suggestions"],
             "run": prepared.run.model_dump(mode="json"),
@@ -392,8 +394,13 @@ class MemorySimulationServiceMixin:
         *,
         goal: str,
         preset_id: str | None = None,
+        preferred_cluster_template_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        preview = self.preview_orchestration_plan_graph(goal=goal, preset_id=preset_id)
+        preview = self.preview_orchestration_plan_graph(
+            goal=goal,
+            preset_id=preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
         return {
             "goal": goal,
             "selected_preset_id": preview["selected_preset_id"],
@@ -407,8 +414,13 @@ class MemorySimulationServiceMixin:
         *,
         goal: str,
         preset_id: str | None = None,
+        preferred_cluster_template_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        policy_preview = self.preview_capability_policy(goal=goal, preset_id=preset_id)
+        policy_preview = self.preview_capability_policy(
+            goal=goal,
+            preset_id=preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
         capability_descriptors = self.list_capability_descriptors()
         capability_health = self.list_capability_health()
         matched_descriptor_ids = {
@@ -416,12 +428,26 @@ class MemorySimulationServiceMixin:
             for node in policy_preview["policy_preview"]["node_policies"]
             for descriptor_id in node.get("matched_descriptor_ids", [])
         }
+        cluster_bundle = self._cluster_preview_bundle(
+            goal=goal,
+            selected_preset_id=policy_preview["selected_preset_id"],
+            plan_graph=policy_preview["plan_graph"],
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
         return {
             "goal": goal,
             "selected_preset_id": policy_preview["selected_preset_id"],
             "suggestions": policy_preview["suggestions"],
             "plan_graph": policy_preview["plan_graph"],
             "capability_policy_preview": policy_preview["policy_preview"],
+            "selected_clusters": [
+                template.model_dump(mode="json") for template in cluster_bundle["selected_clusters"]
+            ],
+            "cluster_graph": cluster_bundle["cluster_graph"],
+            "cluster_policy_preview": cluster_bundle["cluster_policy_preview"],
+            "cluster_execution_plans": [
+                plan.model_dump(mode="json") for plan in cluster_bundle["cluster_execution_plans"]
+            ],
             "matched_capability_descriptors": [
                 item for item in capability_descriptors if item["capability_id"] in matched_descriptor_ids
             ],

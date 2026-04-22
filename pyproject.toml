@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
   "fastapi>=0.135.2,<1.0.0",
-  "mcp>=1.18.0,<2.0.0",
   "openai>=2.26.0,<3.0.0",
   "pydantic>=2.12.5,<3.0.0",
   "rich>=13.0.0,<15.0.0",
@@ -16,12 +15,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.3.4,<9.0.0"
+  "pytest>=8.3.4,<9.0.0",
+  "pytest-cov>=6.0.0,<7.0.0"
 ]
 m8 = [
   "langchain>=1.0.0,<2.0.0",
   "langchain-openai>=1.0.0,<2.0.0",
   "langgraph>=1.0.0,<2.0.0"
+]
+mcp = [
+  "mcp>=1.18.0,<2.0.0"
 ]
 
 [project.scripts]
@@ -41,7 +44,7 @@ namespaces = true
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--basetemp=state/.pytest-tmp"
+addopts = "--basetemp=state/.pytest-tmp --cov=packages --cov=apps --cov-report=term-missing --cov-fail-under=70"
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]

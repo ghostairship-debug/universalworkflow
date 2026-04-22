@@ -381,6 +381,14 @@ def build_effective_config(
                 default="quorum",
                 coerce=lambda item: str(item).strip().lower(),
             ),
+            "authority_mode": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_SCHEDULER_AUTHORITY_AUTHORITY_MODE",
+                config=raw_config,
+                config_key="scheduler_authority.authority_mode",
+                default="single_store_quorum",
+                coerce=lambda item: str(item).strip().lower(),
+            ),
             "node_id": _resolve_value(
                 env=environment,
                 env_key="WORKFLOW_SCHEDULER_AUTHORITY_NODE_ID",
@@ -500,6 +508,8 @@ def build_effective_config(
         "scheduler_authority": {
             "mode": config_values["scheduler_authority"]["mode"].value,
             "mode_source": config_values["scheduler_authority"]["mode"].source,
+            "authority_mode": config_values["scheduler_authority"]["authority_mode"].value,
+            "authority_mode_source": config_values["scheduler_authority"]["authority_mode"].source,
             "node_id": config_values["scheduler_authority"]["node_id"].value,
             "node_id_source": config_values["scheduler_authority"]["node_id"].source,
             "bind_url": config_values["scheduler_authority"]["bind_url"].value,

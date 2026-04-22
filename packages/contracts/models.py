@@ -129,6 +129,41 @@ class AgentRoleType(StrEnum):
     operator = "operator"
 
 
+class IntentSessionStatus(StrEnum):
+    open = "open"
+    clarifying = "clarifying"
+    planning = "planning"
+    ready_to_launch = "ready_to_launch"
+    launched = "launched"
+    closed = "closed"
+
+
+class PlanDraftStatus(StrEnum):
+    draft = "draft"
+    needs_clarification = "needs_clarification"
+    ready = "ready"
+    approved = "approved"
+    launched = "launched"
+
+
+class ProfileVisibility(StrEnum):
+    public = "public"
+    internal = "internal"
+    ephemeral = "ephemeral"
+
+
+class GeneratedProfileSource(StrEnum):
+    template_clone = "template_clone"
+    interaction_generated = "interaction_generated"
+    cluster_generated = "cluster_generated"
+
+
+class ClusterExecutionMode(StrEnum):
+    sequential = "sequential"
+    parallel = "parallel"
+    mixed = "mixed"
+
+
 class ControlPlaneIdentity(PersistedContractModel):
     control_plane_id: str
     name: str
@@ -349,6 +384,9 @@ class CapabilityHealth(ContractModel):
     tool_count: int = Field(default=0, ge=0)
     failure_classes: list[str] = Field(default_factory=list)
     recent_call_summary: dict[str, Any] = Field(default_factory=dict)
+    runtime_probe_status: str = "not_probed"
+    runtime_probe_reason: str | None = None
+    runtime_probe_detail: dict[str, Any] = Field(default_factory=dict)
     checked_at: datetime = Field(default_factory=utc_now)
 
 
@@ -378,6 +416,36 @@ class ExecutionTargetRef(ContractModel):
     dispatched_at: str | None = None
     dispatch_id: str | None = None
     base_url: str | None = None
+
+
+class CapabilityInvocationEnvelope(ContractModel):
+    envelope_id: str = Field(default_factory=lambda: new_id("capenv"))
+    run_id: str | None = None
+    runtime_task_id: str | None = None
+    preset_id: str | None = None
+    task_kind: TaskKind | str
+    lane_type: ExecutionLaneType | None = None
+    review_policy: ReviewPolicy | str | None = None
+    authority_mode: str | None = None
+    descriptor: CapabilityDescriptor
+    worker_pool_id: str | None = None
+    tool_projection_id: str | None = None
+    mutation_mode: MutationMode | None = None
+
+
+class CapabilityExecutionReceipt(ContractModel):
+    receipt_id: str = Field(default_factory=lambda: new_id("capreceipt"))
+    envelope: CapabilityInvocationEnvelope
+    status: str = "completed"
+    adapter_name: str | None = None
+    return_code: int
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: int = Field(default=0, ge=0)
+    artifact_paths: list[str] = Field(default_factory=list)
+    failure_class: str | None = None
+    execution_target: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     callback_base_url: str | None = None
     auth_mode: str | None = None
     last_callback_at: str | None = None
@@ -719,6 +787,148 @@ class DomainPackResolution(ContractModel):
     runtime_projection: DomainPackRuntimeProjection = Field(default_factory=DomainPackRuntimeProjection)
 
 
+class ClarificationPrompt(ContractModel):
+    prompt_id: str = Field(default_factory=lambda: new_id("clarify"))
+    question: str
+    answer: str | None = None
+    required: bool = True
+    source: str = "system"
+    status: str = "pending"
+
+    @model_validator(mode="after")
+    def sync_status_from_answer(self) -> "ClarificationPrompt":
+        if self.answer:
+            self.status = "answered"
+        elif self.required and self.status == "not_needed":
+            self.status = "pending"
+        return self
+
+
+class ClarificationState(ContractModel):
+    status: str = "not_needed"
+    prompts: list[ClarificationPrompt] = Field(default_factory=list)
+    required_count: int = Field(default=0, ge=0)
+    answered_count: int = Field(default=0, ge=0)
+    blocking: bool = False
+
+    @model_validator(mode="after")
+    def sync_counts(self) -> "ClarificationState":
+        self.required_count = sum(1 for prompt in self.prompts if prompt.required)
+        self.answered_count = sum(1 for prompt in self.prompts if prompt.answer)
+        self.blocking = self.required_count > self.answered_count
+        if self.prompts and self.answered_count < self.required_count:
+            self.status = "awaiting_answers"
+        elif self.prompts:
+            self.status = "resolved"
+        return self
+
+
+class IntentPacket(ContractModel):
+    goal: str
+    constraints: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    preferred_preset_id: str | None = None
+    preferred_cluster_template_ids: list[str] = Field(default_factory=list)
+    referenced_artifact_paths: list[str] = Field(default_factory=list)
+    followup_context: list[str] = Field(default_factory=list)
+
+
+class IntentSession(PersistedContractModel):
+    session_id: str = Field(default_factory=lambda: new_id("intent_session"))
+    status: IntentSessionStatus = IntentSessionStatus.open
+    intent_packet: IntentPacket
+    clarification_state: ClarificationState = Field(default_factory=ClarificationState)
+    latest_plan_draft_id: str | None = None
+    active_run_id: str | None = None
+
+
+class PlanDraft(PersistedContractModel):
+    draft_id: str = Field(default_factory=lambda: new_id("plan_draft"))
+    session_id: str
+    status: PlanDraftStatus = PlanDraftStatus.draft
+    summary: str
+    selected_preset_id: str | None = None
+    selected_cluster_template_ids: list[str] = Field(default_factory=list)
+    plan_graph: dict[str, Any] | None = None
+    policy_preview: dict[str, Any] | None = None
+    capability_preview: dict[str, Any] | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+class LaunchDecision(PersistedContractModel):
+    decision_id: str = Field(default_factory=lambda: new_id("launch_decision"))
+    session_id: str
+    approved: bool = False
+    execute: bool = False
+    selected_preset_id: str | None = None
+    selected_cluster_template_ids: list[str] = Field(default_factory=list)
+    rationale: str | None = None
+    target_run_id: str | None = None
+
+
+class FollowupRequest(PersistedContractModel):
+    request_id: str = Field(default_factory=lambda: new_id("followup"))
+    session_id: str
+    run_id: str | None = None
+    instruction: str
+    intent: str = "continue"
+    blocking: bool = False
+    status: str = "pending"
+
+
+class TerminationRule(ContractModel):
+    max_turns: int | None = Field(default=None, ge=1)
+    max_runtime_minutes: int | None = Field(default=None, ge=1)
+    completion_signals: list[str] = Field(default_factory=list)
+    escalate_on: list[str] = Field(default_factory=list)
+
+
+class RoleEvaluationRubric(ContractModel):
+    rubric_id: str = Field(default_factory=lambda: new_id("role_rubric"))
+    criteria: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+    minimum_confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class AgentProfileDefinition(PersistedContractModel):
+    profile_id: str
+    name: str
+    description: str
+    public_role: AgentRoleType
+    role_label: str
+    capability_tags: list[str] = Field(default_factory=list)
+    repo_scope_paths: list[str] = Field(default_factory=list)
+    capability_scope_tags: list[str] = Field(default_factory=list)
+    visibility: ProfileVisibility = ProfileVisibility.internal
+    temporary: bool = False
+    cluster_only: bool = False
+    system_brief: str | None = None
+    termination_rule: TerminationRule = Field(default_factory=TerminationRule)
+    evaluation_rubric: RoleEvaluationRubric | None = None
+
+
+class GeneratedAgentProfile(PersistedContractModel):
+    generated_profile_id: str = Field(default_factory=lambda: new_id("gen_profile"))
+    base_profile_id: str | None = None
+    source_type: GeneratedProfileSource = GeneratedProfileSource.interaction_generated
+    public_role: AgentRoleType
+    role_label: str
+    session_id: str | None = None
+    run_id: str | None = None
+    cluster_template_id: str | None = None
+    repo_scope_paths: list[str] = Field(default_factory=list)
+    capability_scope_tags: list[str] = Field(default_factory=list)
+    system_brief: str | None = None
+    termination_rule: TerminationRule = Field(default_factory=TerminationRule)
+    evaluation_rubric: RoleEvaluationRubric | None = None
+
+
+class AgentProfileRegistry(PersistedContractModel):
+    registry_id: str = Field(default_factory=lambda: new_id("profile_registry"))
+    profiles: list[AgentProfileDefinition] = Field(default_factory=list)
+    generated_profiles: list[GeneratedAgentProfile] = Field(default_factory=list)
+
+
 class MemoryNamespace(PersistedContractModel):
     namespace_id: str
     name: str
@@ -764,6 +974,9 @@ class MemoryRetrievalPreview(ContractModel):
 class RoleAssignment(ContractModel):
     role: AgentRoleType
     preset_id: str
+    agent_profile_id: str | None = None
+    cluster_template_id: str | None = None
+    role_label: str | None = None
     preferred_adapter: str | None = None
     fallback_adapter: str | None = None
     review_policy: ReviewPolicy | None = None
@@ -775,6 +988,9 @@ class OrchestrationStep(ContractModel):
     title: str
     run_id: str | None = None
     preset_id: str
+    agent_profile_id: str | None = None
+    cluster_template_id: str | None = None
+    role_label: str | None = None
     preferred_adapter: str | None = None
     fallback_adapter: str | None = None
     barrier_id: str | None = None
@@ -795,23 +1011,124 @@ class OrchestrationPlan(PersistedContractModel):
     run_id: str | None = None
     preset_id: str
     review_policy: ReviewPolicy
+    cluster_template_ids: list[str] = Field(default_factory=list)
     roles: list[RoleAssignment] = Field(default_factory=list)
     steps: list[OrchestrationStep] = Field(default_factory=list)
     barriers: list[OrchestrationBarrier] = Field(default_factory=list)
     execution_mode: str = "planner_parallel_reviewer"
 
 
+class ClusterMemberSpec(ContractModel):
+    member_id: str = Field(default_factory=lambda: new_id("cluster_member"))
+    public_role: AgentRoleType
+    agent_profile_id: str | None = None
+    role_label: str
+    responsibilities: list[str] = Field(default_factory=list)
+    parallel_group: str | None = None
+    required: bool = True
+
+
+class ClusterReviewRubric(PersistedContractModel):
+    rubric_id: str = Field(default_factory=lambda: new_id("cluster_rubric"))
+    name: str
+    criteria: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+    escalation_conditions: list[str] = Field(default_factory=list)
+    quality_bar: str = "default"
+
+
+class ExecutionClusterTemplate(PersistedContractModel):
+    template_id: str
+    name: str
+    description: str
+    domain_tags: list[str] = Field(default_factory=list)
+    primary_public_role: AgentRoleType = AgentRoleType.operator
+    member_specs: list[ClusterMemberSpec] = Field(default_factory=list)
+    default_review_policy: ReviewPolicy = ReviewPolicy.auto_only
+    execution_mode: ClusterExecutionMode = ClusterExecutionMode.mixed
+    output_contract_name: str = "cluster_output_packet"
+    review_rubric: ClusterReviewRubric | None = None
+
+
+class ClusterExecutionPlan(PersistedContractModel):
+    cluster_plan_id: str = Field(default_factory=lambda: new_id("cluster_plan"))
+    cluster_template_id: str
+    run_id: str | None = None
+    session_id: str | None = None
+    objective: str
+    selected_member_ids: list[str] = Field(default_factory=list)
+    handoff_points: list[str] = Field(default_factory=list)
+    success_criteria: list[str] = Field(default_factory=list)
+    status: str = "planned"
+
+
+class ClusterHandoffPacket(PersistedContractModel):
+    cluster_handoff_id: str = Field(default_factory=lambda: new_id("cluster_handoff"))
+    cluster_template_id: str
+    from_member_id: str | None = None
+    to_member_id: str | None = None
+    handoff_summary: str
+    artifact_refs: list[str] = Field(default_factory=list)
+    blocking_risks: list[str] = Field(default_factory=list)
+    escalation_flags: list[str] = Field(default_factory=list)
+
+
+class ClusterOutputPacket(PersistedContractModel):
+    cluster_output_id: str = Field(default_factory=lambda: new_id("cluster_output"))
+    cluster_template_id: str
+    run_id: str | None = None
+    objective: str
+    summary: str
+    assumptions: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    quality_verdict: str = "pending"
+    escalation_flags: list[str] = Field(default_factory=list)
+    followup_requests: list[str] = Field(default_factory=list)
+    handoff_packets: list[ClusterHandoffPacket] = Field(default_factory=list)
+
+
 class OrchestrationGraphNode(ContractModel):
     node_id: str = Field(default_factory=lambda: new_id("graphnode"))
     role: AgentRoleType
     goal: str
+    agent_profile_id: str | None = None
+    cluster_template_id: str | None = None
+    role_label: str | None = None
     required_capabilities: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
+    barrier_id: str | None = None
     review_gate: str = "none"
     side_effect_level: str = "read_only"
     fallback_path: list[str] = Field(default_factory=list)
     preset_id: str | None = None
     preferred_adapter: str | None = None
+    retry_policy_id: str | None = None
+
+
+class EdgeSpec(ContractModel):
+    edge_id: str = Field(default_factory=lambda: new_id("graphedge"))
+    from_node_id: str
+    to_node_id: str
+    edge_type: str = "depends_on"
+    required: bool = True
+    description: str | None = None
+
+
+class BarrierSpec(ContractModel):
+    barrier_id: str = Field(default_factory=lambda: new_id("graphbarrier"))
+    label: str
+    member_node_ids: list[str] = Field(default_factory=list)
+    release_condition: str = "all_success"
+    status: str = "pending"
+
+
+class RetryPolicy(ContractModel):
+    policy_id: str = Field(default_factory=lambda: new_id("retry"))
+    target_node_ids: list[str] = Field(default_factory=list)
+    max_attempts: int = Field(default=1, ge=1)
+    strategy: str = "reuse_budget"
+    backoff_seconds: int = Field(default=0, ge=0)
 
 
 class OrchestrationPlanGraph(PersistedContractModel):
@@ -819,10 +1136,15 @@ class OrchestrationPlanGraph(PersistedContractModel):
     run_id: str | None = None
     preset_id: str
     goal: str
+    cluster_template_ids: list[str] = Field(default_factory=list)
     execution_mode: str = "single_path"
     summary: str | None = None
     risk_summary: list[str] = Field(default_factory=list)
     nodes: list[OrchestrationGraphNode] = Field(default_factory=list)
+    edges: list[EdgeSpec] = Field(default_factory=list)
+    barriers: list[BarrierSpec] = Field(default_factory=list)
+    retry_policies: list[RetryPolicy] = Field(default_factory=list)
+    engine_version: str = "m31_v1"
     recommended_preset_id: str | None = None
 
 

@@ -150,7 +150,7 @@ class LifecycleServiceMixin:
                 **snapshot.task_packet.model_dump(mode="json"),
                 "env": {
                     **snapshot.task_packet.env,
-                    "WORKFLOW_ORCHESTRATION_PLAN_GRAPH": json.dumps(plan_graph.model_dump(mode="json"), ensure_ascii=False),
+                    "WORKFLOW_ORCHESTRATION_PLAN_GRAPH": self.orchestration_engine.persist_payload(plan_graph),
                 },
             }
         )
@@ -166,8 +166,8 @@ class LifecycleServiceMixin:
                     },
                 }
             )
-        if preset.preset_id == "project_delivery":
-            orchestration_plan = self._default_project_delivery_plan(run.run_id)
+        orchestration_plan = self._default_orchestration_plan_for_preset(preset.preset_id, run.run_id)
+        if orchestration_plan is not None:
             snapshot.task_packet = TaskPacket.model_validate(
                 {
                     **snapshot.task_packet.model_dump(mode="json"),
@@ -177,6 +177,23 @@ class LifecycleServiceMixin:
                     },
                 }
             )
+        invocation_envelope = self._capability_invocation_envelope_for_snapshot(
+            run=run,
+            preset=preset,
+            snapshot=snapshot,
+        )
+        snapshot.task_packet = TaskPacket.model_validate(
+            {
+                **snapshot.task_packet.model_dump(mode="json"),
+                "env": {
+                    **snapshot.task_packet.env,
+                    "WORKFLOW_CAPABILITY_INVOCATION_ENVELOPE": json.dumps(
+                        invocation_envelope.model_dump(mode="json"),
+                        ensure_ascii=False,
+                    ),
+                },
+            }
+        )
         return snapshot
 
     def _prepared_run_bundle(
@@ -914,7 +931,7 @@ class LifecycleServiceMixin:
                     connection=connection,
                 )
                 connection.commit()
-            if preset.preset_id == "project_delivery":
+            if self._default_orchestration_plan_for_preset(preset.preset_id, run.run_id) is not None:
                 connection.commit()
                 execution_result = self._execute_project_delivery_orchestration(execution_packet)
             elif worker_pool_profile is not None:
@@ -973,6 +990,16 @@ class LifecycleServiceMixin:
                         "mutation_contract": execution_result.metadata.get("mutation_contract"),
                         "mutation_result": execution_result.metadata["mutation_result"],
                     },
+                )
+            capability_receipt = self._capability_execution_receipt_for_result(
+                state_ref=resumed_state,
+                execution_result=execution_result,
+            )
+            if capability_receipt is not None:
+                execution_result.metadata["capability_execution_receipt"] = capability_receipt.model_dump(mode="json")
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {"capability_execution_receipt": capability_receipt.model_dump(mode="json")},
                 )
             session_payload = {
                 key: execution_result.metadata[key]
