@@ -16,6 +16,8 @@ Use these in priority order when deciding what is current:
 
 The repository is now in an active `M32 Phase 0` line. Older plans and retained reference bundles remain secondary to the active phase doc, task cards, accepted `M31` freeze review, and living debt registry.
 
+Archived planning context from the pre-merge backup workspace is summarized in [docs/reviews/m32-archived-planning-inputs.md](reviews/m32-archived-planning-inputs.md). Treat it as reference-only, not as parallel execution truth.
+
 ## 2. Current Repository Position
 
 The repository has now completed:
@@ -81,6 +83,7 @@ Default collaboration remains:
 Keep the working tree small.
 
 - prefer keeping only the active phase doc, active task-card pack, current README, current workflow guide, controlling freeze review, and living debt registry as the active truth set
+- if useful long-horizon planning rationale must be retained, collapse it into one clearly non-authoritative archive note instead of restoring multiple root-level plans
 - treat other plans, phase docs, task-card packs, and historical review bundles as disposable once their conclusions are absorbed
 - if historical detail is needed later, use git history instead of restoring large doc packs by default
 

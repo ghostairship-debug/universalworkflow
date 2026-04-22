@@ -79,6 +79,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - `M32 Phase 0` is the active bounded phase now open in this worktree
   - the active phase is interaction-first, role-profile-aware, and cluster-ready
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
+  - archived planning context from the pre-merge workspace is retained as reference-only in [docs/reviews/m32-archived-planning-inputs.md](docs/reviews/m32-archived-planning-inputs.md)
   - the previous milestone freeze remains [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
   - the deep core-complete baseline remains [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
   - the latest recorded local full-suite validation for the accepted `M31 Phase 0` closeout is `python -m pytest -q` -> `278 passed`
