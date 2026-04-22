@@ -63,6 +63,9 @@ def test_scheduler_authority_api_grants_quorum_committed_lease_and_releases_it(
     assert proposal_payload["cluster"]["node_count"] >= 3
     assert proposal_payload["cluster"]["quorum_size"] == 2
     assert proposal_payload["term"]["leader_node_id"] == "authority-a"
+    assert proposal_payload["term"]["authority_node_id"] == "authority-a"
+    assert proposal_payload["term"]["authority_term_no"] == proposal_payload["term"]["term_no"]
+    assert proposal_payload["term"]["decision_index"] == proposal_payload["term"]["commit_index"]
     assert len(proposal_payload["votes"]) >= 2
     assert proposal_payload["committed_lease"]["control_plane_id"] == "control_plane_alpha"
     assert proposal_payload["committed_lease"]["lease_epoch"] >= 2
@@ -70,6 +73,9 @@ def test_scheduler_authority_api_grants_quorum_committed_lease_and_releases_it(
     assert lease_response.json()["active"] is True
     assert cluster_response.status_code == 200
     assert cluster_response.json()["leader_node_id"] == "authority-a"
+    assert cluster_response.json()["authority_node_id"] == "authority-a"
+    assert cluster_response.json()["authority_term_no"] == cluster_response.json()["term_no"]
+    assert cluster_response.json()["decision_index"] == cluster_response.json()["commit_index"]
     assert release_response.status_code == 200
     assert release_response.json()["committed_lease"]["status"] == "released"
 
@@ -87,3 +93,6 @@ def test_scheduler_authority_api_health_and_cluster_are_semantically_honest(tmp_
     assert cluster_response.status_code == 200
     assert cluster_response.json()["mode"] == "quorum"
     assert cluster_response.json()["authority_mode"] == "single_store_quorum"
+    assert cluster_response.json()["authority_node_id"] == cluster_response.json()["leader_node_id"]
+    assert cluster_response.json()["authority_term_no"] == cluster_response.json()["term_no"]
+    assert cluster_response.json()["decision_index"] == cluster_response.json()["commit_index"]

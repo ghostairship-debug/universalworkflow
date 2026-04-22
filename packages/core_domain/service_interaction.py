@@ -150,74 +150,11 @@ class InteractionServiceMixin:
         selected_preset_id: str | None = None,
         run_id: str | None = None,
     ) -> OrchestrationPlan:
-        barriers: list[OrchestrationBarrier] = []
-        barrier_id_by_group: dict[str, str] = {}
-        for member in template.member_specs:
-            if member.parallel_group and member.parallel_group not in barrier_id_by_group:
-                grouped = [item for item in template.member_specs if item.parallel_group == member.parallel_group]
-                if len(grouped) > 1:
-                    barrier = OrchestrationBarrier(
-                        barrier_id=f"{template.template_id}_{member.parallel_group}",
-                        label=member.parallel_group,
-                        role_ids=[item.public_role for item in grouped],
-                        status="pending",
-                        member_count=len(grouped),
-                    )
-                    barriers.append(barrier)
-                    barrier_id_by_group[member.parallel_group] = barrier.barrier_id
-
-        roles: list[RoleAssignment] = []
-        steps: list[OrchestrationStep] = []
-        default_preset_id = selected_preset_id or default_preset_id_for_cluster_template(template.template_id)
-        for member in template.member_specs:
-            preset_id = member_preset_id(template.template_id, member.role_label, member.public_role)
-            if member.public_role == template.primary_public_role and default_preset_id is not None:
-                preset_id = default_preset_id
-            preferred_adapter = preferred_adapter_for_cluster_member(member.public_role)
-            fallback_adapter = fallback_adapter_for_cluster_member(member.public_role)
-            roles.append(
-                RoleAssignment(
-                    role=member.public_role,
-                    preset_id=preset_id,
-                    agent_profile_id=member.agent_profile_id,
-                    cluster_template_id=template.template_id,
-                    role_label=member.role_label,
-                    preferred_adapter=preferred_adapter,
-                    fallback_adapter=fallback_adapter,
-                    review_policy=template.default_review_policy,
-                )
-            )
-            steps.append(
-                OrchestrationStep(
-                    step_id=f"{template.template_id}_{member.member_id}",
-                    role=member.public_role,
-                    title=f"{member.role_label.replace('_', ' ').title()} lane",
-                    run_id=None,
-                    preset_id=preset_id,
-                    agent_profile_id=member.agent_profile_id,
-                    cluster_template_id=template.template_id,
-                    role_label=member.role_label,
-                    preferred_adapter=preferred_adapter,
-                    fallback_adapter=fallback_adapter,
-                    barrier_id=barrier_id_by_group.get(member.parallel_group or ""),
-                    sequence_no=sequence_no_for_cluster_member(
-                        template.template_id,
-                        member.role_label,
-                        member.public_role,
-                    ),
-                    status="pending",
-                )
-            )
-        return OrchestrationPlan(
-            orchestration_id=f"{template.template_id}_preview_orchestration",
+        return self.orchestration_service.build_cluster_orchestration_plan(
+            template=template,
+            selected_preset_id=selected_preset_id,
             run_id=run_id,
-            preset_id=selected_preset_id or default_preset_id or template.template_id,
-            review_policy=template.default_review_policy,
-            cluster_template_ids=[template.template_id],
-            roles=roles,
-            steps=steps,
-            barriers=barriers,
-            execution_mode=f"cluster_{template.execution_mode}",
+            include_operator_step=False,
         )
 
     def _preview_cluster_graph(

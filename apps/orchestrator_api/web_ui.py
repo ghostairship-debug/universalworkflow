@@ -382,14 +382,14 @@ def render_dashboard(
       </section>
     </div>
     <section class="panel" style="margin-top:16px;">
-      <h2>Cluster Topology</h2>
+      <h2>Authority Topology</h2>
       <div class="kv">
         <div class="kv-item"><strong>Mode</strong>{_escape(cluster.get('mode', '-'))}</div>
-        <div class="kv-item"><strong>Leader</strong>{_escape(cluster.get('leader_node_id', '-'))}</div>
-        <div class="kv-item"><strong>Term</strong>{_escape(cluster.get('term_no', '-'))}</div>
+        <div class="kv-item"><strong>Authority Node</strong>{_escape(cluster.get('authority_node_id', cluster.get('leader_node_id', '-')))}</div>
+        <div class="kv-item"><strong>Authority Term</strong>{_escape(cluster.get('authority_term_no', cluster.get('term_no', '-')))}</div>
         <div class="kv-item"><strong>Quorum</strong>{_escape(cluster.get('quorum_size', '-'))}</div>
         <div class="kv-item"><strong>Active Nodes</strong>{_escape(cluster.get('active_node_count', '-'))}</div>
-        <div class="kv-item"><strong>Commit Index</strong>{_escape(cluster.get('commit_index', '-'))}</div>
+        <div class="kv-item"><strong>Decision Index</strong>{_escape(cluster.get('decision_index', cluster.get('commit_index', '-')))}</div>
       </div>
     </section>
     """
@@ -495,12 +495,12 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
     </div>
     <div class="split" style="margin-top:16px;">
       <section class="panel">
-        <h3>Cluster Topology</h3>
+        <h3>Authority Topology</h3>
         <div class="kv">
-          <div class="kv-item"><strong>Leader</strong>{_escape(cluster_overview.get('leader_node_id', '-'))}</div>
-          <div class="kv-item"><strong>Term</strong>{_escape(cluster_overview.get('term_no', '-'))}</div>
+          <div class="kv-item"><strong>Authority Node</strong>{_escape(cluster_overview.get('authority_node_id', cluster_overview.get('leader_node_id', '-')))}</div>
+          <div class="kv-item"><strong>Authority Term</strong>{_escape(cluster_overview.get('authority_term_no', cluster_overview.get('term_no', '-')))}</div>
           <div class="kv-item"><strong>Quorum</strong>{_escape(cluster_overview.get('quorum_size', '-'))}</div>
-          <div class="kv-item"><strong>Commit Index</strong>{_escape(cluster_overview.get('commit_index', '-'))}</div>
+          <div class="kv-item"><strong>Decision Index</strong>{_escape(cluster_overview.get('decision_index', cluster_overview.get('commit_index', '-')))}</div>
           <div class="kv-item"><strong>Active Nodes</strong>{_escape(cluster_overview.get('active_node_count', '-'))}</div>
           <div class="kv-item"><strong>Stale Plane</strong>{_escape(scheduler_authority.get('stale_plane_detected', False))}</div>
         </div>
@@ -585,7 +585,7 @@ def render_governance(*, reports: dict[str, Any], cluster_overview: dict[str, An
       <section class="panel"><h2>Alerts</h2>{_json_block(reports['alerts'])}</section>
       <section class="panel"><h2>Release Readiness</h2>{_json_block(reports['release_readiness'])}</section>
       <section class="panel"><h2>Domain Packs</h2>{_json_block(reports['domain_packs'])}</section>
-      <section class="panel"><h2>Cluster Topology</h2>{_json_block(cluster)}</section>
+      <section class="panel"><h2>Authority Topology</h2>{_json_block(cluster)}</section>
     </div>
     """
     return _layout("Governance", body, notice=notice)

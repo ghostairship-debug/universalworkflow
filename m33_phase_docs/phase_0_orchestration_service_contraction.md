@@ -1,7 +1,8 @@
 # M33 Phase 0: Orchestration / Service Contraction
 
-Status: active  
+Status: completed  
 Opened: 2026-04-22  
+Closed: 2026-04-22  
 Baseline: accepted `M32 Phase 0`
 
 ## Purpose
@@ -127,12 +128,12 @@ Closeout for this phase must include:
 
 ## Outcome
 
-`M33 Phase 0` is now the active bounded phase.
+`M33 Phase 0` is complete as a bounded contraction phase.
 
-Its immediate focus is:
+Its net result is:
 
-- repay `TD-STRUCT-004`
-- continue repaying `TD-STRUCT-001`
-- continue repaying `TD-STRUCT-003`
+- `TD-STRUCT-004` repaid through a shared orchestration-plan and execution delegate
+- `TD-STRUCT-001` partially repaid through bounded `OrchestrationExecutionService` extraction
+- `TD-STRUCT-003` partially repaid through additive authority aliases and more honest operator wording
 
-Do not open later breadth work until this bounded contraction line is closed honestly.
+No post-`M33` bounded phase is open yet. Do not open later breadth work until the next bounded phase is explicitly opened.

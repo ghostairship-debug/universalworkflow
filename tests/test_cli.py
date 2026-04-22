@@ -19,7 +19,6 @@ runner = CliRunner()
 OPEN_DEBT_IDS = [
     "TD-STRUCT-001",
     "TD-STRUCT-003",
-    "TD-STRUCT-004",
     "TD-STRUCT-005",
     "TD-STRUCT-006",
 ]
@@ -419,9 +418,9 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "governance", "tech-debt")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["open_debt_count"] == 5
+    assert payload["open_debt_count"] == 4
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"M33 Phase 0": 3, "Post-M33 bounded phase": 2}
+    assert payload["planned_phase_counts"] == {"Post-M33 bounded phase": 4}
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
@@ -1102,6 +1101,9 @@ def test_cli_scheduler_cluster_exposes_quorum_snapshot(tmp_path: Path) -> None:
     payload = json.loads(cluster_result.stdout)
     assert payload["mode"] == "quorum"
     assert payload["leader_node_id"] is not None
+    assert payload["authority_node_id"] == payload["leader_node_id"]
+    assert payload["authority_term_no"] == payload["term_no"]
+    assert payload["decision_index"] == payload["commit_index"]
     assert payload["quorum_size"] >= 1
 
 

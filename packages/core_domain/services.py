@@ -143,6 +143,7 @@ from packages.core_domain.resolver import PresetResolver
 from packages.core_domain.service_lifecycle import LifecycleServiceMixin
 from packages.core_domain.service_interaction import InteractionServiceMixin
 from packages.core_domain.service_memory_simulation import MemorySimulationServiceMixin
+from packages.core_domain.service_orchestration import OrchestrationExecutionService
 from packages.core_domain.service_projection import ProjectionServiceMixin
 from packages.core_domain.service_types import (
     ExecutedRunBundle,
@@ -297,6 +298,7 @@ class OrchestratorService(
         )
         if not self.preset_repo.list():
             self.preset_repo.seed_defaults()
+        self.orchestration_service = OrchestrationExecutionService(self)
         self.run_lifecycle_service = RunLifecycleService(self)
         self.review_policy_service = ReviewPolicyService(self)
         self.audit_replay_service = AuditReplayService(self)
@@ -520,8 +522,21 @@ class OrchestratorService(
             "bind_url": self.effective_config["scheduler_authority"]["bind_url"],
             "quorum_size": cluster_payload.get("quorum_size"),
             "leader_node_id": cluster_payload.get("leader_node_id"),
+            "authority_node_id": cluster_payload.get("authority_node_id") or cluster_payload.get("leader_node_id"),
             "term_no": cluster_payload.get("term_no") or (term_payload or {}).get("term_no"),
+            "authority_term_no": (
+                cluster_payload.get("authority_term_no")
+                or cluster_payload.get("term_no")
+                or (term_payload or {}).get("authority_term_no")
+                or (term_payload or {}).get("term_no")
+            ),
             "commit_index": cluster_payload.get("commit_index") or (term_payload or {}).get("commit_index"),
+            "decision_index": (
+                cluster_payload.get("decision_index")
+                or cluster_payload.get("commit_index")
+                or (term_payload or {}).get("decision_index")
+                or (term_payload or {}).get("commit_index")
+            ),
             "cluster": cluster_payload,
             "term": term_payload,
         }
@@ -764,135 +779,22 @@ class OrchestratorService(
         return current_committed
 
     def _default_project_delivery_plan(self, run_id: str) -> OrchestrationPlan:
-        barrier = OrchestrationBarrier(
-            label="coder_researcher_parallel",
-            role_ids=[AgentRoleType.coder, AgentRoleType.researcher],
-            status="pending",
-            member_count=2,
-        )
-        return OrchestrationPlan(
-            run_id=run_id,
-            preset_id="project_delivery",
-            review_policy=ReviewPolicy.recommended,
-            cluster_template_ids=["dev_cluster"],
-            roles=[
-                {
-                    "role": AgentRoleType.planner,
-                    "preset_id": "optional_delivery",
-                    "agent_profile_id": "planner_architect",
-                    "cluster_template_id": "dev_cluster",
-                    "role_label": "architect",
-                    "preferred_adapter": "agent",
-                    "fallback_adapter": "shell",
-                },
-                {
-                    "role": AgentRoleType.coder,
-                    "preset_id": "feature_delivery",
-                    "agent_profile_id": "coder_implementer",
-                    "cluster_template_id": "dev_cluster",
-                    "role_label": "implementer",
-                    "preferred_adapter": "opencode",
-                    "fallback_adapter": "shell",
-                },
-                {
-                    "role": AgentRoleType.researcher,
-                    "preset_id": "optional_delivery",
-                    "agent_profile_id": "researcher_risk_mapper",
-                    "cluster_template_id": "dev_cluster",
-                    "role_label": "risk_mapper",
-                    "preferred_adapter": "agent",
-                    "fallback_adapter": "shell",
-                },
-                {
-                    "role": AgentRoleType.reviewer,
-                    "preset_id": "advisory_delivery",
-                    "agent_profile_id": "reviewer_quality_gate",
-                    "cluster_template_id": "dev_cluster",
-                    "role_label": "quality_gate",
-                    "preferred_adapter": "agent",
-                    "fallback_adapter": "shell",
-                },
-                {
-                    "role": AgentRoleType.operator,
-                    "preset_id": "guarded_delivery",
-                    "agent_profile_id": "operator_launch_guard",
-                    "cluster_template_id": "dev_cluster",
-                    "role_label": "launch_guard",
-                    "preferred_adapter": None,
-                    "fallback_adapter": None,
-                },
-            ],
-            steps=[
-                OrchestrationStep(
-                    role=AgentRoleType.planner,
-                    title="Generate work breakdown",
-                    preset_id="optional_delivery",
-                    agent_profile_id="planner_architect",
-                    cluster_template_id="dev_cluster",
-                    role_label="architect",
-                    preferred_adapter="agent",
-                    fallback_adapter="shell",
-                    sequence_no=1,
-                    status="pending",
-                ),
-                OrchestrationStep(
-                    role=AgentRoleType.coder,
-                    title="Implement primary delivery slice",
-                    preset_id="feature_delivery",
-                    agent_profile_id="coder_implementer",
-                    cluster_template_id="dev_cluster",
-                    role_label="implementer",
-                    preferred_adapter="opencode",
-                    fallback_adapter="shell",
-                    barrier_id=barrier.barrier_id,
-                    sequence_no=2,
-                    status="pending",
-                ),
-                OrchestrationStep(
-                    role=AgentRoleType.researcher,
-                    title="Research risks and supporting evidence",
-                    preset_id="optional_delivery",
-                    agent_profile_id="researcher_risk_mapper",
-                    cluster_template_id="dev_cluster",
-                    role_label="risk_mapper",
-                    preferred_adapter="agent",
-                    fallback_adapter="shell",
-                    barrier_id=barrier.barrier_id,
-                    sequence_no=2,
-                    status="pending",
-                ),
-                OrchestrationStep(
-                    role=AgentRoleType.reviewer,
-                    title="Review implementation and research evidence",
-                    preset_id="advisory_delivery",
-                    agent_profile_id="reviewer_quality_gate",
-                    cluster_template_id="dev_cluster",
-                    role_label="quality_gate",
-                    preferred_adapter="agent",
-                    fallback_adapter="shell",
-                    sequence_no=3,
-                    status="pending",
-                ),
-            ],
-            barriers=[barrier],
-        )
+        plan = self.orchestration_service.default_orchestration_plan_for_preset("project_delivery", run_id)
+        if plan is None:
+            raise WorkflowError("default orchestration plan was not available", {"preset_id": "project_delivery"})
+        return plan
 
     def _default_guarded_project_delivery_plan(self, run_id: str) -> OrchestrationPlan:
-        plan = self._default_project_delivery_plan(run_id)
-        reviewer_step = next(step for step in plan.steps if step.role == AgentRoleType.reviewer)
-        reviewer_step.preset_id = "guarded_delivery"
-        reviewer_step.preferred_adapter = "agent"
-        reviewer_step.fallback_adapter = "shell"
-        plan.preset_id = "guarded_project_delivery"
-        plan.review_policy = ReviewPolicy.mandatory
+        plan = self.orchestration_service.default_orchestration_plan_for_preset("guarded_project_delivery", run_id)
+        if plan is None:
+            raise WorkflowError(
+                "default orchestration plan was not available",
+                {"preset_id": "guarded_project_delivery"},
+            )
         return plan
 
     def _default_orchestration_plan_for_preset(self, preset_id: str, run_id: str) -> OrchestrationPlan | None:
-        if preset_id == "project_delivery":
-            return self._default_project_delivery_plan(run_id)
-        if preset_id == "guarded_project_delivery":
-            return self._default_guarded_project_delivery_plan(run_id)
-        return None
+        return self.orchestration_service.default_orchestration_plan_for_preset(preset_id, run_id)
 
     def _capability_descriptor_index(self) -> dict[str, CapabilityDescriptor]:
         descriptors = self.capability_plane.list_capability_descriptors(
@@ -1075,38 +977,15 @@ class OrchestratorService(
         fallback_adapter: str | None,
         mutation_contract: MutationContract | None = None,
     ) -> PreparedRunBundle:
-        adapter_candidates = [preferred_adapter, fallback_adapter, None]
-        seen: set[str | None] = set()
-        for adapter_name in adapter_candidates:
-            if adapter_name in seen:
-                continue
-            seen.add(adapter_name)
-            try:
-                return self.compile_run(
-                    run_id,
-                    adapter_name=adapter_name,
-                    task_card_ref=mutation_contract.task_card_ref if mutation_contract is not None else None,
-                    task_card_path=mutation_contract.task_card_path if mutation_contract is not None else None,
-                    write_set=mutation_contract.write_set if mutation_contract is not None else None,
-                    read_set=mutation_contract.read_set if mutation_contract is not None else None,
-                    test_commands=mutation_contract.test_commands if mutation_contract is not None else None,
-                    max_fix_iterations=mutation_contract.max_fix_iterations if mutation_contract is not None else 0,
-                    mutation_mode=mutation_contract.mutation_mode if mutation_contract is not None else None,
-                )
-            except (
-                CapabilityAdapterNotFoundError,
-                ExecutionLaneNotAllowedError,
-                TaskKindNotAllowedError,
-                UnsupportedTaskKindError,
-            ):
-                continue
-        return self.compile_run(run_id)
+        return self.orchestration_service.compile_child_run_with_fallback(
+            run_id,
+            preferred_adapter=preferred_adapter,
+            fallback_adapter=fallback_adapter,
+            mutation_contract=mutation_contract,
+        )
 
     def _finalize_child_run_if_waiting(self, run_id: str) -> Run:
-        run = self.get_run(run_id)
-        if str(run.status) != RunStatus.awaiting_review:
-            return run
-        return self.approve_run_review(run_id).run
+        return self.orchestration_service.finalize_child_run_if_waiting(run_id)
 
     def _role_goal_for(self, parent_goal: str, role: AgentRoleType, *, parallel_run_ids: list[str] | None = None) -> str:
         if role == AgentRoleType.planner:
@@ -1121,14 +1000,7 @@ class OrchestratorService(
         return parent_goal
 
     def _write_orchestration_artifact(self, packet: TaskPacket, content: str) -> list[str]:
-        artifact = packet.expected_artifacts[0] if packet.expected_artifacts else "state/artifacts/project_delivery.md"
-        path = Path(artifact)
-        if not path.is_absolute():
-            path = Path(packet.working_directory) / path
-        resolved = path.resolve()
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding="utf-8")
-        return [resolved.as_posix()]
+        return self.orchestration_service.write_orchestration_artifact(packet, content)
 
     def _task_card_content_for_mutation(self, contract: MutationContract | None, *, working_directory: str) -> str | None:
         if contract is None or not contract.task_card_path:
@@ -1348,196 +1220,7 @@ class OrchestratorService(
         )
 
     def _execute_project_delivery_orchestration(self, packet: TaskPacket) -> ExecutionResult:
-        from packages.worker_adapters.base import utc_now
-
-        started_at = utc_now()
-        orchestration_payload = packet.env.get("WORKFLOW_ORCHESTRATION_PLAN")
-        preset_id = str(packet.env.get("WORKFLOW_PRESET_ID") or "project_delivery")
-        orchestration = (
-            OrchestrationPlan.model_validate(json.loads(orchestration_payload))
-            if orchestration_payload
-            else (self._default_orchestration_plan_for_preset(preset_id, packet.run_id) or self._default_project_delivery_plan(packet.run_id))
-        )
-        parent_goal = packet.env.get("WORKFLOW_RUN_GOAL", "")
-        parent_mutation_contract = packet.mutation_contract
-        child_runs: list[dict[str, Any]] = []
-        role_progress: dict[str, dict[str, Any]] = {}
-
-        planner_step = next(step for step in orchestration.steps if step.role == AgentRoleType.planner)
-        planner_run = self.create_run(self._role_goal_for(parent_goal, AgentRoleType.planner), planner_step.preset_id)
-        planner_bundle = self._compile_child_run_with_fallback(
-            planner_run.run_id,
-            preferred_adapter=planner_step.preferred_adapter,
-            fallback_adapter=planner_step.fallback_adapter,
-        )
-        self.resume_run(planner_run.run_id)
-        planner_final = self._finalize_child_run_if_waiting(planner_run.run_id)
-        if str(planner_final.status) != "completed" and planner_step.fallback_adapter and planner_step.fallback_adapter != planner_step.preferred_adapter:
-            planner_run = self.create_run(self._role_goal_for(parent_goal, AgentRoleType.planner), planner_step.preset_id)
-            planner_bundle = self._compile_child_run_with_fallback(
-                planner_run.run_id,
-                preferred_adapter=planner_step.fallback_adapter,
-                fallback_adapter=None,
-            )
-            self.resume_run(planner_run.run_id)
-            planner_final = self._finalize_child_run_if_waiting(planner_run.run_id)
-        planner_step.run_id = planner_run.run_id
-        planner_step.status = str(planner_final.status)
-        child_runs.append(
-            {
-                "role": str(AgentRoleType.planner),
-                "run_id": planner_run.run_id,
-                "status": str(planner_final.status),
-                "runtime_task_id": planner_bundle.task_packet.runtime_task_id,
-            }
-        )
-        role_progress[str(AgentRoleType.planner)] = {"status": str(planner_final.status), "run_id": planner_run.run_id}
-
-        parallel_steps = [step for step in orchestration.steps if step.role in {AgentRoleType.coder, AgentRoleType.researcher}]
-        parallel_run_ids: list[str] = []
-        for step in parallel_steps:
-            mutation_contract = (
-                parent_mutation_contract
-                if step.role == AgentRoleType.coder
-                and parent_mutation_contract is not None
-                and parent_mutation_contract.mutation_mode == MutationMode.patch_apply
-                else None
-            )
-            child_run = self.create_run(self._role_goal_for(parent_goal, step.role), step.preset_id)
-            prepared = self._compile_child_run_with_fallback(
-                child_run.run_id,
-                preferred_adapter=step.preferred_adapter,
-                fallback_adapter=step.fallback_adapter,
-                mutation_contract=mutation_contract,
-            )
-            step.run_id = child_run.run_id
-            step.status = "prepared"
-            parallel_run_ids.append(child_run.run_id)
-            child_runs.append(
-                {
-                    "role": str(step.role),
-                    "run_id": child_run.run_id,
-                    "status": "prepared",
-                    "runtime_task_id": prepared.task_packet.runtime_task_id,
-                    "barrier_id": step.barrier_id,
-                    "mutation_contract": (
-                        prepared.task_packet.mutation_contract.model_dump(mode="json")
-                        if prepared.task_packet.mutation_contract is not None
-                        else None
-                    ),
-                }
-            )
-        parallel_result = self.resume_runs_parallel(parallel_run_ids, max_workers=2) if parallel_run_ids else {"results": []}
-        for step in parallel_steps:
-            finalized = self._finalize_child_run_if_waiting(step.run_id or "")
-            if str(finalized.status) != "completed" and step.fallback_adapter and step.fallback_adapter != step.preferred_adapter:
-                recovered_run = self.create_run(self._role_goal_for(parent_goal, step.role), step.preset_id)
-                recovered_bundle = self._compile_child_run_with_fallback(
-                    recovered_run.run_id,
-                    preferred_adapter=step.fallback_adapter,
-                    fallback_adapter=None,
-                    mutation_contract=mutation_contract if step.role == AgentRoleType.coder else None,
-                )
-                self.resume_run(recovered_run.run_id)
-                finalized = self._finalize_child_run_if_waiting(recovered_run.run_id)
-                step.run_id = recovered_run.run_id
-                for child in child_runs:
-                    if child["role"] == str(step.role):
-                        child["run_id"] = recovered_run.run_id
-                        child["runtime_task_id"] = recovered_bundle.task_packet.runtime_task_id
-            step.status = str(finalized.status)
-            mutation_report = (
-                self.get_run_mutation_report(step.run_id)
-                if step.role == AgentRoleType.coder and step.run_id is not None
-                else None
-            )
-            role_progress[str(step.role)] = {
-                "status": str(finalized.status),
-                "run_id": step.run_id,
-                "barrier_id": step.barrier_id,
-                "mutation_report": mutation_report,
-            }
-            for child in child_runs:
-                if child["run_id"] == step.run_id:
-                    child["status"] = str(finalized.status)
-                    if mutation_report is not None:
-                        child["mutation_report"] = mutation_report
-        for barrier in orchestration.barriers:
-            barrier.status = "released" if parallel_run_ids else "skipped"
-
-        reviewer_step = next(step for step in orchestration.steps if step.role == AgentRoleType.reviewer)
-        reviewer_run = self.create_run(
-            self._role_goal_for(parent_goal, AgentRoleType.reviewer, parallel_run_ids=parallel_run_ids),
-            reviewer_step.preset_id,
-        )
-        reviewer_bundle = self._compile_child_run_with_fallback(
-            reviewer_run.run_id,
-            preferred_adapter=reviewer_step.preferred_adapter,
-            fallback_adapter=reviewer_step.fallback_adapter,
-        )
-        self.resume_run(reviewer_run.run_id)
-        reviewer_final = self._finalize_child_run_if_waiting(reviewer_run.run_id)
-        if str(reviewer_final.status) != "completed" and reviewer_step.fallback_adapter and reviewer_step.fallback_adapter != reviewer_step.preferred_adapter:
-            reviewer_run = self.create_run(
-                self._role_goal_for(parent_goal, AgentRoleType.reviewer, parallel_run_ids=parallel_run_ids),
-                reviewer_step.preset_id,
-            )
-            reviewer_bundle = self._compile_child_run_with_fallback(
-                reviewer_run.run_id,
-                preferred_adapter=reviewer_step.fallback_adapter,
-                fallback_adapter=None,
-            )
-            self.resume_run(reviewer_run.run_id)
-            reviewer_final = self._finalize_child_run_if_waiting(reviewer_run.run_id)
-        reviewer_step.run_id = reviewer_run.run_id
-        reviewer_step.status = str(reviewer_final.status)
-        child_runs.append(
-            {
-                "role": str(AgentRoleType.reviewer),
-                "run_id": reviewer_run.run_id,
-                "status": str(reviewer_final.status),
-                "runtime_task_id": reviewer_bundle.task_packet.runtime_task_id,
-            }
-        )
-        role_progress[str(AgentRoleType.reviewer)] = {"status": str(reviewer_final.status), "run_id": reviewer_run.run_id}
-
-        orchestration_summary = {
-            "orchestration_id": orchestration.orchestration_id,
-            "execution_mode": orchestration.execution_mode,
-            "plan": orchestration.model_dump(mode="json"),
-            "child_runs": child_runs,
-            "parallel_batch": {
-                "barrier_id": orchestration.barriers[0].barrier_id if orchestration.barriers else None,
-                "member_count": len(parallel_run_ids),
-                "status": orchestration.barriers[0].status if orchestration.barriers else "skipped",
-                "results": parallel_result.get("results", []),
-            },
-            "role_progress": role_progress,
-        }
-        content_lines = [
-            "# Project Delivery Orchestration",
-            "",
-            f"goal: {parent_goal}",
-            f"orchestration_id: {orchestration.orchestration_id}",
-            "roles:",
-        ]
-        for item in child_runs:
-            content_lines.append(f"- {item['role']}: {item['run_id']} status={item['status']}")
-        artifact_paths = self._write_orchestration_artifact(packet, "\n".join(content_lines) + "\n")
-        finished_at = utc_now()
-        return_code = 0 if all(item["status"] == "completed" for item in child_runs) else 1
-        return ExecutionResult(
-            runtime_task_id=packet.runtime_task_id,
-            return_code=return_code,
-            stdout=json.dumps(orchestration_summary, ensure_ascii=False),
-            stderr="" if return_code == 0 else "one or more orchestration child runs did not complete successfully",
-            started_at=started_at,
-            finished_at=finished_at,
-            duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
-            artifact_paths=artifact_paths,
-            adapter_name="shell",
-            metadata={"orchestration": orchestration_summary},
-        )
+        return self.orchestration_service.execute_orchestration_packet(packet)
 
     def _default_adapter_for_preset(
         self,

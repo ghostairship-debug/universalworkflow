@@ -36,7 +36,6 @@ class _FakeApiClient:
 OPEN_DEBT_IDS = [
     "TD-STRUCT-001",
     "TD-STRUCT-003",
-    "TD-STRUCT-004",
     "TD-STRUCT-005",
     "TD-STRUCT-006",
 ]
@@ -588,9 +587,9 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     response = client.get("/governance/tech-debt")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["open_debt_count"] == 5
+    assert payload["open_debt_count"] == 4
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"M33 Phase 0": 3, "Post-M33 bounded phase": 2}
+    assert payload["planned_phase_counts"] == {"Post-M33 bounded phase": 4}
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
@@ -998,13 +997,19 @@ def test_api_scheduler_cluster_and_operator_view_expose_cluster_topology(tmp_pat
     operator_payload = operator_view.json()
     assert cluster_payload["mode"] == "quorum"
     assert cluster_payload["leader_node_id"] is not None
+    assert cluster_payload["authority_node_id"] == cluster_payload["leader_node_id"]
+    assert cluster_payload["authority_term_no"] == cluster_payload["term_no"]
+    assert cluster_payload["decision_index"] == cluster_payload["commit_index"]
     assert operator_payload["cluster_overview"]["leader_node_id"] == cluster_payload["leader_node_id"]
+    assert operator_payload["cluster_overview"]["authority_node_id"] == cluster_payload["authority_node_id"]
+    assert operator_payload["cluster_overview"]["authority_term_no"] == cluster_payload["authority_term_no"]
+    assert operator_payload["cluster_overview"]["decision_index"] == cluster_payload["decision_index"]
     assert (
         operator_payload["scheduler_authority"]["active_committed_lease"]["control_plane_id"]
         == "control_plane_alpha"
     )
-    assert "Cluster Topology" in dashboard_html
-    assert "Cluster Topology" in governance_html
+    assert "Authority Topology" in dashboard_html
+    assert "Authority Topology" in governance_html
 
 
 def test_api_exposes_run_replay_packet(tmp_path: Path) -> None:

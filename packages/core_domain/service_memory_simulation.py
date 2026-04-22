@@ -182,31 +182,27 @@ class MemorySimulationServiceMixin:
         adapter_name: str | None = None,
         task_kind: TaskKind | str | None = None,
     ) -> OrchestrationPlanGraph:
-        if preset_id in {"project_delivery", "guarded_project_delivery"}:
-            plan = self._default_orchestration_plan_for_preset(preset_id, run_id or "preview_run")
-            if plan is None:
-                raise WorkflowError("orchestration plan was not available", {"preset_id": preset_id})
-            summary = (
-                "Planner decomposes the goal, coder and researcher run in parallel, reviewer closes the loop."
-                if preset_id == "project_delivery"
-                else "Planner decomposes the goal, coder and researcher run in parallel, and guarded review enforces mandatory sign-off."
-            )
-            risk_summary = [
-                "parallel child runs require barrier release before review",
-                "repo mutation stays isolated to the coder lane",
-                "human intervention may still be required when review policy escalates",
-            ]
-            if preset_id == "guarded_project_delivery":
+        orchestration_plan = self._default_orchestration_plan_for_preset(preset_id, run_id or "preview_run")
+        if orchestration_plan is not None:
+            risk_summary = []
+            if orchestration_plan.barriers:
+                risk_summary.append("parallel child runs require barrier release before later review")
+            if any(step.role == AgentRoleType.coder for step in orchestration_plan.steps):
+                risk_summary.append("repo mutation stays isolated to coder lanes")
+            if str(orchestration_plan.review_policy) != str(ReviewPolicy.auto_only):
+                risk_summary.append("human intervention may still be required when review policy escalates")
+            if str(orchestration_plan.review_policy) == str(ReviewPolicy.mandatory):
                 risk_summary.append("guarded review keeps the orchestration on the human-signoff path")
+            cluster_line = ", ".join(orchestration_plan.cluster_template_ids) or "shared_orchestration"
             return self.orchestration_engine.build_graph_from_plan(
                 run_id=run_id,
                 preset_id=preset_id,
                 goal=goal,
-                plan=plan,
+                plan=orchestration_plan,
                 role_goal_for=lambda parent_goal, role: self._role_goal_for(parent_goal, role),
                 side_effect_level_for_adapter=self._side_effect_level_for_adapter,
                 recommended_preset_id=recommended_preset_id or preset_id,
-                summary=summary,
+                summary=f"Shared orchestration plan for `{preset_id}` through `{cluster_line}`.",
                 risk_summary=risk_summary,
             )
 

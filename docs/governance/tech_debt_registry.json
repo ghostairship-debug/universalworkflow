@@ -154,6 +154,13 @@
       "introduced_in": "M31",
       "repaid_in": "M32 Phase 0",
       "result": "Absorbed the opening-bundle and backup-workspace truth into accepted freeze reviews and archive notes, then cleaned the repository back to one primary worktree"
+    },
+    {
+      "debt_id": "TD-STRUCT-004",
+      "description": "orchestration logic still carried `project_delivery`-shaped assumptions even after the first shared graph substrate extraction",
+      "introduced_in": "M30-M31",
+      "repaid_in": "M33 Phase 0",
+      "result": "Contracted default planning, preview, and execution onto a shared orchestration service and canonical plan builder for the shipped multi-role presets"
     }
   ],
   "open_items": [
@@ -161,7 +168,7 @@
       "debt_id": "TD-STRUCT-001",
       "description": "`OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface",
       "introduced_in": "M31",
-      "planned_repayment_phase": "M33 Phase 0",
+      "planned_repayment_phase": "Post-M33 bounded phase",
       "current_status": "partially_repaid",
       "blocking_impact": "blocks honest service-boundary claims and safe follow-on extraction"
     },
@@ -169,17 +176,9 @@
       "debt_id": "TD-STRUCT-003",
       "description": "scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee",
       "introduced_in": "M20-M31",
-      "planned_repayment_phase": "M33 Phase 0",
-      "current_status": "active",
-      "blocking_impact": "blocks semantic honesty and operator comprehension"
-    },
-    {
-      "debt_id": "TD-STRUCT-004",
-      "description": "orchestration logic still carries `project_delivery`-shaped assumptions even after the first shared graph substrate extraction",
-      "introduced_in": "M30-M31",
-      "planned_repayment_phase": "M33 Phase 0",
+      "planned_repayment_phase": "Post-M33 bounded phase",
       "current_status": "partially_repaid",
-      "blocking_impact": "blocks safer orchestration expansion beyond the initial presets"
+      "blocking_impact": "blocks semantic honesty and operator comprehension"
     },
     {
       "debt_id": "TD-STRUCT-005",

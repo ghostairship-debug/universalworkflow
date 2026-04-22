@@ -2670,3 +2670,26 @@ def test_guarded_project_delivery_uses_shared_graph_substrate(tmp_path: Path) ->
     assert len(preview["plan_graph"]["retry_policies"]) == 1
     assert detail["orchestration_plan_graph"]["preset_id"] == "guarded_project_delivery"
     assert detail["capability_invocation_envelope"]["authority_mode"] == "single_store_quorum"
+
+
+def test_guarded_project_delivery_uses_shared_orchestration_plan_defaults(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    plan = service._default_orchestration_plan_for_preset("guarded_project_delivery", "preview_run")
+
+    assert plan is not None
+    assert plan.cluster_template_ids == ["dev_cluster"]
+    assert str(plan.review_policy) == "mandatory"
+    assert [step.role_label for step in plan.steps] == [
+        "architect",
+        "implementer",
+        "risk_mapper",
+        "quality_gate",
+    ]
+    assert "launch_guard" in [role.role_label for role in plan.roles]
+    assert "launch_guard" not in [step.role_label for step in plan.steps]
+    reviewer_step = next(step for step in plan.steps if step.role_label == "quality_gate")
+    assert reviewer_step.preset_id == "guarded_delivery"

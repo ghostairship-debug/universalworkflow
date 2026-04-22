@@ -1,6 +1,6 @@
 # M33-0C OrchestratorService Seam Extraction
 
-Status: pending
+Status: completed
 
 ## Goal
 
@@ -16,3 +16,9 @@ Continue shrinking the cross-plane helper concentration inside `OrchestratorServ
 ## Notes
 
 - this card depends on the `M33-0B` contraction direction being clear enough to avoid extracting the wrong abstraction first
+
+## Result
+
+- extracted orchestration compile, fallback, artifact-writing, and runtime execution helpers behind `OrchestrationExecutionService`
+- kept existing CLI, API, and `OrchestratorService` public entry points stable by converting the old methods into facade-level delegates
+- narrowed the `OrchestratorService` orchestration seam without deleting the current composition root or renaming public surfaces

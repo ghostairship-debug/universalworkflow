@@ -656,8 +656,11 @@ class SchedulerAuthorityClusterService:
             "active_node_count": len(active_ids),
             "quorum_size": term.quorum_size if term is not None else self._effective_quorum_size(len(active_ids) or 1),
             "leader_node_id": term.leader_node_id if term is not None else None,
+            "authority_node_id": term.leader_node_id if term is not None else None,
             "term_no": term.term_no if term is not None else None,
+            "authority_term_no": term.term_no if term is not None else None,
             "commit_index": term.commit_index if term is not None else 0,
+            "decision_index": term.commit_index if term is not None else 0,
             "nodes": [
                 {
                     **node.model_dump(mode="json"),
@@ -672,6 +675,13 @@ class SchedulerAuthorityClusterService:
             return self._cluster_snapshot(connection, current_term=self._ensure_active_term(connection))
         with unit_of_work(self.db_path) as owned:
             return self._cluster_snapshot(owned, current_term=self._ensure_active_term(owned))
+
+    def _term_payload(self, term: SchedulerConsensusTerm) -> dict[str, Any]:
+        payload = term.model_dump(mode="json")
+        payload["authority_node_id"] = payload.get("leader_node_id")
+        payload["authority_term_no"] = payload.get("term_no")
+        payload["decision_index"] = payload.get("commit_index")
+        return payload
 
     def submit_proposal(
         self,
@@ -792,7 +802,7 @@ class SchedulerAuthorityClusterService:
                     "duplicate": True,
                     "granted": True,
                     "votes": [vote.model_dump(mode="json") for vote in self._votes_for_proposal(connection, proposal.proposal_id)],
-                    "term": term.model_dump(mode="json"),
+                    "term": self._term_payload(term),
                     "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
                     "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
                 }
@@ -833,7 +843,7 @@ class SchedulerAuthorityClusterService:
                 "granted": False,
                 "conflict": conflict,
                 "votes": [],
-                "term": term.model_dump(mode="json"),
+                "term": self._term_payload(term),
                 "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
                 "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
             }
@@ -862,7 +872,7 @@ class SchedulerAuthorityClusterService:
                 "duplicate": False,
                 "granted": False,
                 "votes": [],
-                "term": term.model_dump(mode="json"),
+                "term": self._term_payload(term),
                 "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
                 "stale_leader": True,
                 "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
@@ -905,7 +915,7 @@ class SchedulerAuthorityClusterService:
                 "duplicate": False,
                 "granted": False,
                 "votes": [vote.model_dump(mode="json") for vote in votes],
-                "term": term.model_dump(mode="json"),
+                "term": self._term_payload(term),
                 "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
                 "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
             }
@@ -951,6 +961,12 @@ class SchedulerAuthorityClusterService:
             lease_epoch=lease_epoch,
         )
         proposal = self.scheduler_proposal_repo.update_status(proposal.proposal_id, "granted", connection=connection) or proposal
+        granted_term = SchedulerConsensusTerm.model_validate(
+            {
+                **term.model_dump(mode="json"),
+                "commit_index": commit_index,
+            }
+        )
         return {
             "proposal": proposal.model_dump(mode="json"),
             "decision": decision.model_dump(mode="json"),
@@ -958,13 +974,8 @@ class SchedulerAuthorityClusterService:
             "duplicate": False,
             "granted": True,
             "votes": [vote.model_dump(mode="json") for vote in votes],
-            "term": SchedulerConsensusTerm.model_validate(
-                {
-                    **term.model_dump(mode="json"),
-                    "commit_index": commit_index,
-                }
-            ).model_dump(mode="json"),
-            "cluster": self._cluster_snapshot(connection, current_term=term, now=now),
+            "term": self._term_payload(granted_term),
+            "cluster": self._cluster_snapshot(connection, current_term=granted_term, now=now),
             "previous_committed_lease": latest_committed.model_dump(mode="json") if latest_committed is not None else None,
         }
 

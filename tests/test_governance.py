@@ -212,7 +212,6 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert report["open_debt_ids"] == [
         "TD-STRUCT-001",
         "TD-STRUCT-003",
-        "TD-STRUCT-004",
         "TD-STRUCT-005",
         "TD-STRUCT-006",
     ]
@@ -280,7 +279,6 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
     assert report["tech_debt"]["open_debt_ids"] == [
         "TD-STRUCT-001",
         "TD-STRUCT-003",
-        "TD-STRUCT-004",
         "TD-STRUCT-005",
         "TD-STRUCT-006",
     ]
