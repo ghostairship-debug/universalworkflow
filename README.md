@@ -75,8 +75,11 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - `v1 core complete` mainline product status
 - Current planning position:
   - `M8-M30`, accepted `M31 Phase 0`, and accepted `M32 Phase 0` are complete
+  - the active bounded phase is [m33_phase_docs/phase_0_orchestration_service_contraction.md](m33_phase_docs/phase_0_orchestration_service_contraction.md)
+  - the active task-card pack is [docs/task_cards/m33_phase_0_task_cards.md](docs/task_cards/m33_phase_0_task_cards.md)
   - the latest accepted freeze is [docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md](docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md)
-  - no post-`M32` bounded phase is currently open in this worktree
+  - the current bounded debt focus is `TD-STRUCT-004`, `TD-STRUCT-001`, and `TD-STRUCT-003`
+  - `TD-STRUCT-005` and `TD-STRUCT-006` remain deferred to a post-`M33 Phase 0` bounded follow-on
   - the latest accepted foundation is interaction-first, role-profile-aware, and cluster-aware
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
   - archived planning context from the pre-merge workspace is retained as reference-only in [docs/reviews/m32-archived-planning-inputs.md](docs/reviews/m32-archived-planning-inputs.md)

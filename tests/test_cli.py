@@ -421,7 +421,7 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["open_debt_count"] == 5
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"Next bounded phase (post-`M32`)": 5}
+    assert payload["planned_phase_counts"] == {"M33 Phase 0": 3, "Post-M33 bounded phase": 2}
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:

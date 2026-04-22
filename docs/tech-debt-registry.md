@@ -52,11 +52,11 @@
 
 | ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
 | --- | --- | --- | --- | --- | --- |
-| TD-STRUCT-001 | `OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface | M31 | Next bounded phase (post-`M32`) | partially_repaid | blocks honest service-boundary claims and safe follow-on extraction |
-| TD-STRUCT-003 | scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee | M20-M31 | Next bounded phase (post-`M32`) | active | blocks semantic honesty and operator comprehension |
-| TD-STRUCT-004 | orchestration logic still carries `project_delivery`-shaped assumptions even after the first shared graph substrate extraction | M30-M31 | Next bounded phase (post-`M32`) | partially_repaid | blocks safer orchestration expansion beyond the initial presets |
-| TD-STRUCT-005 | capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane | M30-M31 | Next bounded phase (post-`M32`) | active | blocks fully trustworthy capability readiness and routing decisions |
-| TD-STRUCT-006 | future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts | M31 | Next bounded phase (post-`M32`) | partially_repaid | blocks safe promotion of M32+ platform objects into the mainline type system |
+| TD-STRUCT-001 | `OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface | M31 | M33 Phase 0 | partially_repaid | blocks honest service-boundary claims and safe follow-on extraction |
+| TD-STRUCT-003 | scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee | M20-M31 | M33 Phase 0 | active | blocks semantic honesty and operator comprehension |
+| TD-STRUCT-004 | orchestration logic still carries `project_delivery`-shaped assumptions even after the first shared graph substrate extraction | M30-M31 | M33 Phase 0 | partially_repaid | blocks safer orchestration expansion beyond the initial presets |
+| TD-STRUCT-005 | capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane | M30-M31 | Post-M33 bounded phase | active | blocks fully trustworthy capability readiness and routing decisions |
+| TD-STRUCT-006 | future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts | M31 | Post-M33 bounded phase | partially_repaid | blocks safe promotion of M32+ platform objects into the mainline type system |
 
 ---
 

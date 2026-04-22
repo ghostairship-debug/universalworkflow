@@ -6,16 +6,16 @@ This document is the canonical living guide for what the repository should do ne
 
 Use these in priority order when deciding what is current:
 
-1. [docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md](reviews/m32-interaction-profile-cluster-foundation-freeze-review.md)
-2. [docs/tech-debt-registry.md](tech-debt-registry.md)
-3. [README.md](../README.md)
-4. [docs/reviews/m31-boundary-contraction-freeze-review.md](reviews/m31-boundary-contraction-freeze-review.md)
-5. [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
-6. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
-7. [m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md](../m32_phase_docs/phase_0_interaction_profile_cluster_foundation.md)
-8. [docs/task_cards/m32_phase_0_task_cards.md](task_cards/m32_phase_0_task_cards.md)
+1. [m33_phase_docs/phase_0_orchestration_service_contraction.md](../m33_phase_docs/phase_0_orchestration_service_contraction.md)
+2. [docs/task_cards/m33_phase_0_task_cards.md](task_cards/m33_phase_0_task_cards.md)
+3. [docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md](reviews/m32-interaction-profile-cluster-foundation-freeze-review.md)
+4. [docs/tech-debt-registry.md](tech-debt-registry.md)
+5. [README.md](../README.md)
+6. [docs/reviews/m31-boundary-contraction-freeze-review.md](reviews/m31-boundary-contraction-freeze-review.md)
+7. [docs/reviews/m30-operator-control-freeze-review.md](reviews/m30-operator-control-freeze-review.md)
+8. [docs/reviews/m20-freeze-review.md](reviews/m20-freeze-review.md)
 
-The repository is no longer in an active `M32 Phase 0` line. `M32 Phase 0` is now an accepted bounded baseline, and no post-`M32` bounded phase is open yet.
+The repository is now in active `M33 Phase 0` work. Accepted `M32 Phase 0` remains the latest completed bounded baseline.
 
 Archived planning context from the pre-merge backup workspace is summarized in [docs/reviews/m32-archived-planning-inputs.md](reviews/m32-archived-planning-inputs.md). Treat it as reference-only, not as parallel execution truth.
 
@@ -35,7 +35,9 @@ Current status:
 
 - the mainline product is `v1 core complete`
 - the latest accepted freeze is `M32 Interaction / Profile / Cluster Foundation Freeze`
-- no post-`M32` bounded phase is currently open in the working tree
+- the active bounded phase is `M33 Phase 0: Orchestration / Service Contraction`
+- the current bounded debt focus is `TD-STRUCT-004`, `TD-STRUCT-001`, and `TD-STRUCT-003`
+- `TD-STRUCT-005` and `TD-STRUCT-006` remain deferred to a post-`M33 Phase 0` bounded follow-on
 - the latest accepted foundation is interaction-first, role-profile-aware, and cluster-aware
 - automation-plane breadth remains deferred
 - the built-in Web UI and TUI remain operator surfaces rather than chat-style natural-language workbenches
@@ -43,16 +45,16 @@ Current status:
 
 ## 3. What Must Happen Next
 
-There is no active post-`M32` bounded phase. The repository should not expand into later breadth work until the next bounded phase is opened explicitly.
+The next cycle is now active as `M33 Phase 0`. The repository should execute that bounded contraction line before opening later breadth work.
 
-The next cycle should proceed by:
+`M33 Phase 0` should proceed by:
 
-1. reading [docs/reviews/m32-interaction-profile-cluster-foundation-freeze-review.md](reviews/m32-interaction-profile-cluster-foundation-freeze-review.md)
-2. reading [docs/tech-debt-registry.md](tech-debt-registry.md)
-3. explicitly opening the next bounded phase before new breadth work begins
-4. carrying the remaining `TD-STRUCT-*` items forward explicitly
-5. executing bug-first: repair real workflow/runtime regressions before continuing feature scope
-6. keeping automation-plane and later breadth deferred until that next bounded phase says otherwise
+1. using [m33_phase_docs/phase_0_orchestration_service_contraction.md](../m33_phase_docs/phase_0_orchestration_service_contraction.md) as the active phase truth
+2. using [docs/task_cards/m33_phase_0_task_cards.md](task_cards/m33_phase_0_task_cards.md) as the execution index
+3. keeping accepted `M32 Phase 0` as the latest completed freeze baseline
+4. executing bug-first: repair real workflow/runtime regressions before continuing refactor scope
+5. focusing on `TD-STRUCT-004`, `TD-STRUCT-001`, and `TD-STRUCT-003`
+6. keeping automation-plane breadth plus `TD-STRUCT-005` / `TD-STRUCT-006` expansion deferred until a later bounded follow-on says otherwise
 
 ## 4. Task-Card Protocol
 
@@ -113,4 +115,4 @@ Keep the working tree small.
 
 ## 8. Current One-Line Instruction
 
-Treat accepted `M32 Phase 0` as the latest completed freeze baseline, keep bug-first in force, and do not start new breadth work until the next bounded phase is opened explicitly.
+Treat accepted `M32 Phase 0` as the latest completed freeze baseline, execute active `M33 Phase 0` bug-first, and do not open later breadth work until this bounded contraction phase closes honestly.
