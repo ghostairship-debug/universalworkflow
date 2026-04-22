@@ -16,6 +16,7 @@
   - what it blocks
 - Historical debt may be moved into the repaid section, but should not disappear without review evidence.
 - Cross-milestone structural debt belongs here even if it spans several cycles.
+- When no future bounded phase is formally open yet, a planned repayment label may remain generic (for example, `Post-M34 bounded phase`) until the next milestone is explicitly opened.
 
 ---
 

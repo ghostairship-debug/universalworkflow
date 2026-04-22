@@ -77,6 +77,9 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - `M8-M30`, accepted `M31 Phase 0`, accepted `M32 Phase 0`, accepted `M33 Phase 0`, and accepted `M34 Phase 0` are complete
   - the latest accepted freeze is [docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md](docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md)
   - no post-`M34` bounded phase is open yet
+  - the rebuilt post-`M34` roadmap is [POST_M34_MULTIPHASE_ROADMAP.md](POST_M34_MULTIPHASE_ROADMAP.md), and it remains reference-only until `M35` is formally opened
+  - the honest rebaseline is that the older platform-product target now likely requires `M35-M39`; if domain-grade design and multimodal visual verification are in scope, `M40` is likely needed
+  - a known pre-open bug-first gate remains: two governance tech-debt report expectation regressions should be repaired before `M35` opens
   - the last bounded debt focus was `TD-STRUCT-001` and `TD-STRUCT-003`, both now carried forward as partial repayments
   - `TD-STRUCT-004` remains repaid
   - `TD-STRUCT-005` and `TD-STRUCT-006` remain deferred to a post-`M34` bounded follow-on
@@ -120,14 +123,18 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 - API reconcile / repair path passes
 - cluster cutover flow passes
 
-The latest validated `M20` closeout baseline is:
+The latest accepted `M34 Phase 0` closeout baseline is:
 
-- `pytest -q`
-  - `264 passed`
+- `python -m pytest -q --basetemp state/.pytest-final-<pid>`
+  - `282 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
   - `overall_passed=true`
 - `python -m infra.scripts.check_doc_links`
   - `passed=true`
+
+Known post-closeout pre-open gate:
+
+- two governance tech-debt report expectation regressions remain to repair before `M35` is opened
 
 ## Common commands
 
@@ -286,6 +293,7 @@ Current Web UI non-goals:
 
 - it is not yet a chat-style natural-language workbench
 - it does not yet expose streaming conversation, inline replanning, or free-form operator chat with the model
+- the rebuilt roadmap treats a real natural-language workbench v1 as post-`M34` productization work rather than a shipped `M34` capability
 
 ## Natural-language launch surfaces
 
@@ -314,6 +322,7 @@ Important boundary:
 
 - the backend can already plan and launch from a natural-language goal
 - the built-in Web UI and TUI remain operator surfaces, not full natural-language interaction terminals
+- the rebuilt roadmap currently places product-grade workbench completion on the `M36` line, not in the accepted `M34` baseline
 
 Remote worker productization and scheduler-authority peers are both built in for the shipped multi-control-plane core-complete path:
 

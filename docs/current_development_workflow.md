@@ -21,6 +21,8 @@ The repository has now accepted `M34 Phase 0`. No post-`M34` bounded phase is op
 
 Archived planning context from the pre-merge backup workspace is summarized in [docs/reviews/m32-archived-planning-inputs.md](reviews/m32-archived-planning-inputs.md). Treat it as reference-only, not as parallel execution truth.
 
+The rebuilt post-`M34` roadmap is summarized in [POST_M34_MULTIPHASE_ROADMAP.md](../POST_M34_MULTIPHASE_ROADMAP.md). Treat it as reference-only until the next bounded phase is formally opened.
+
 ## 2. Current Repository Position
 
 The repository has now completed:
@@ -47,18 +49,21 @@ Current status:
 - automation-plane breadth remains deferred
 - the built-in Web UI and TUI remain operator surfaces rather than chat-style natural-language workbenches
 - natural-language goal planning and launch exist today through CLI/API plus the minimum workbench preview, not through a front-end conversational shell
+- the rebuilt post-`M34` roadmap restores a meaningful multi-phase shape for future product milestones, but it is not active execution truth yet
+- a known pre-open bug-first gate remains: the current governance tech-debt report expectations need to be repaired before `M35` opens
 
 ## 3. What Must Happen Next
 
-The next step is to open the next bounded post-`M34` phase before resuming later breadth work.
+The next step is to clear the known pre-open gate and then open the next bounded post-`M34` phase before resuming later breadth work.
 
 The repository should proceed by:
 
 1. treating accepted [docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md](reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md) as the latest completed bounded baseline
-2. opening the next bounded phase explicitly before resuming new structural or breadth work
-3. executing bug-first: repair real workflow/runtime regressions before continuing new scope
-4. using [docs/tech-debt-registry.md](tech-debt-registry.md) to choose the next bounded debt target honestly
-5. keeping automation-plane breadth plus `TD-STRUCT-005` / `TD-STRUCT-006` expansion deferred until a later bounded follow-on says otherwise
+2. repairing the known governance tech-debt report regressions before opening `M35`
+3. opening the next bounded phase explicitly before resuming new structural or breadth work
+4. executing bug-first: repair real workflow/runtime regressions before continuing new scope
+5. using [docs/tech-debt-registry.md](tech-debt-registry.md) together with [POST_M34_MULTIPHASE_ROADMAP.md](../POST_M34_MULTIPHASE_ROADMAP.md) to choose the next bounded product milestone honestly
+6. keeping automation-plane breadth plus `TD-STRUCT-005` / `TD-STRUCT-006` expansion deferred until a later bounded follow-on says otherwise
 
 ## 4. Task-Card Protocol
 
@@ -77,6 +82,7 @@ Rules:
 - do not pre-generate future phase task-card packs
 - closed task-card packs are not retained by default; once their conclusions are absorbed into freeze reviews and integrated roadmaps, prefer pruning them
 - complex phases require standalone detailed cards for every task
+- post-`M34` product milestones should normally use meaningful multi-phase progression; a single `Phase 0` is only the default when the milestone is intentionally debt-bounded
 
 ## 5. Collaboration Mode
 
@@ -91,7 +97,7 @@ Default collaboration remains:
 Keep the working tree small.
 
 - prefer keeping only the latest accepted freeze review, current README, current workflow guide, living debt registry, and any currently active phase materials as the active truth set
-- if useful long-horizon planning rationale must be retained, collapse it into one clearly non-authoritative archive note instead of restoring multiple root-level plans
+- if useful long-horizon planning rationale must be retained, collapse it into one clearly non-authoritative root roadmap or archive note instead of restoring multiple competing plans
 - treat other plans, phase docs, task-card packs, and historical review bundles as disposable once their conclusions are absorbed
 - if historical detail is needed later, use git history instead of restoring large doc packs by default
 
@@ -119,4 +125,4 @@ Keep the working tree small.
 
 ## 8. Current One-Line Instruction
 
-Treat accepted `M34 Phase 0` as the latest completed freeze baseline, keep bug-first active, and do not resume later breadth work until the next bounded phase is explicitly opened.
+Treat accepted `M34 Phase 0` as the latest completed freeze baseline, clear the known pre-open bug-first gate, keep later productization planning reference-only, and do not resume later breadth work until the next bounded phase is explicitly opened.
