@@ -72,3 +72,18 @@ def test_scheduler_authority_api_grants_quorum_committed_lease_and_releases_it(
     assert cluster_response.json()["leader_node_id"] == "authority-a"
     assert release_response.status_code == 200
     assert release_response.json()["committed_lease"]["status"] == "released"
+
+
+def test_scheduler_authority_api_health_and_cluster_are_semantically_honest(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = _build_client(db_path)
+
+    health_response = client.get("/healthz")
+    cluster_response = client.get("/authority/cluster")
+
+    assert health_response.status_code == 200
+    assert health_response.json()["mode"] == "quorum"
+    assert health_response.json()["authority_mode"] == "single_store_quorum"
+    assert cluster_response.status_code == 200
+    assert cluster_response.json()["mode"] == "quorum"
+    assert cluster_response.json()["authority_mode"] == "single_store_quorum"

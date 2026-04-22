@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 from packages.contracts import RuntimeStateRef
+import packages.core_domain.capability_plane as capability_plane_module
 from packages.core_domain.errors import RuntimeGatewayExecutionError
 from packages.runtime_langgraph.gateway import NullRuntimeGateway, OpenAIRuntimeGateway
 
@@ -104,3 +105,30 @@ def test_openai_runtime_gateway_rejects_over_budget_runtime_brief_prompt() -> No
         assert exc.details["context_budget"]["over_budget"] is True
     else:
         raise AssertionError("expected runtime gateway to reject an over-budget prompt")
+
+
+def test_capability_plane_degrades_cleanly_when_mcp_dependency_is_missing(monkeypatch) -> None:
+    original_import = capability_plane_module.importlib.import_module
+
+    def _fake_import(name: str, package=None):
+        if name.startswith("mcp.client"):
+            raise ImportError("mcp not installed")
+        return original_import(name, package)
+
+    monkeypatch.setattr(capability_plane_module, "_MCP_IMPORT_CACHE", None)
+    monkeypatch.setattr(capability_plane_module, "_MCP_IMPORT_ERROR", None)
+    monkeypatch.setattr(capability_plane_module.importlib, "import_module", _fake_import)
+
+    plane = capability_plane_module.CapabilityPlane()
+    health = plane.list_capability_health(
+        worker_pool_profiles=[],
+        runtime_gateway_description={"provider": "null"},
+        capability_routes=[],
+        default_worker_pool_id=None,
+    )
+
+    assert capability_plane_module.mcp_dependency_available() is False
+    mcp_health = [item for item in health if item.descriptor.provider_kind == "mcp_profile"]
+    assert mcp_health
+    assert all(item.runtime_probe_status == "dependency_missing" for item in mcp_health)
+    assert all(item.status == "degraded" for item in mcp_health)

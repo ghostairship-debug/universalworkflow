@@ -6,7 +6,7 @@
 
 ## Completed Scope
 
-- completed majority-quorum scheduler-authority peers, committed lease fencing, and cross-control-plane takeover lineage
+- completed a single-store quorum-style scheduler-authority layer, committed lease fencing, and cross-control-plane takeover lineage
 - bound worker dispatch, heartbeat, completion, and renewal writes to quorum-committed lease ownership
 - rejected stale-plane and stale-callback writes fail-closed while preserving conflict diagnostics and replay evidence
 - exposed cluster topology, leadership, committed leases, takeover history, and stale-plane evidence through CLI, API, and Web operator surfaces
@@ -31,7 +31,7 @@
 ## Notes
 
 - `TD-021` is retired in this freeze review; no open structural debt remains on the mainline product path.
-- The repository can now honestly claim majority-quorum authority, multi-control-plane failover, committed cross-plane lease ownership, and fenced remote-worker callbacks while still keeping repository truth inside the control planes.
+- The repository can now honestly claim a single-store quorum-style authority model, multi-control-plane failover, committed cross-plane lease ownership, and fenced remote-worker callbacks while still keeping repository truth inside the control planes.
 - `M21+` is no longer needed for core control-plane completion. Any later milestone should start from a fresh post-`M20` rebaseline and focus only on autonomy, ecosystem, multimodal, or other breadth work.
 
 ## Next Approved Work
