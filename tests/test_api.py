@@ -174,6 +174,7 @@ def test_api_lists_domain_packs_and_capability_routes(tmp_path: Path) -> None:
     assert capability_response.json() == [
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+        {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
 
@@ -232,6 +233,8 @@ def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path
     assert projection_response.status_code == 200
     assert projection_response.json()["execution_lane"] == "standard_agent"
     assert projection_response.json()["capability_resolution"]["adapter_name"] == "agent"
+    assert projection_response.json()["resolved_execution"]["adapter_name"] == "agent"
+    assert projection_response.json()["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "preset"
     tool_names = [item["tool_name"] for item in projection_response.json()["tool_projection_manifest"]["tools"]]
     assert "mcp_list_workspace_files" in tool_names
 
@@ -414,6 +417,8 @@ default_pool_id = "mock_remote_shell"
     assert config_response.status_code == 200
     assert config_response.json()["feature_flags"]["external_worker_pools"]["enabled"] is True
     assert config_response.json()["worker_pools"]["default_pool_id"] == "mock_remote_shell"
+    assert config_response.json()["execution_defaults"]["worker_pool_id"]["value"] == "mock_remote_shell"
+    assert config_response.json()["execution_defaults"]["worker_pool_id"]["source"] == "toml:worker_pools.default_pool_id"
     assert worker_pools_response.status_code == 200
     assert {item["worker_pool_id"] for item in worker_pools_response.json()} >= {
         "local_loopback",
@@ -587,9 +592,12 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     response = client.get("/governance/tech-debt")
     assert response.status_code == 200
     payload = response.json()
+    assert payload["source_contract"] == "structured_json"
     assert payload["open_debt_count"] == 4
+    assert payload["status_counts"] == {"partially_repaid": 3, "active": 1}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"M34 Phase 0": 2, "Post-M34 bounded phase": 2}
+    assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
+    assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
 
 
 def test_api_exposes_governance_review_policy_report(tmp_path: Path) -> None:
@@ -723,6 +731,7 @@ def test_api_compile_and_status_detail_are_public_in_m1(tmp_path: Path) -> None:
     assert compile_payload["run"]["status"] == "prepared"
     assert compile_payload["domain_pack_id"] == "software_delivery_pack"
     assert compile_payload["capability_adapter"] == "shell"
+    assert compile_payload["resolved_execution"]["adapter_name"] == "shell"
 
     status_detail = client.get(f"/runs/{run_id}/status-detail")
     assert status_detail.status_code == 200
@@ -736,6 +745,8 @@ def test_api_compile_and_status_detail_are_public_in_m1(tmp_path: Path) -> None:
     assert detail_payload["domain_pack"]["domain_pack_id"] == "software_delivery_pack"
     assert detail_payload["domain_pack"]["compile_projection"]["artifact_label"] == "software_delivery"
     assert detail_payload["capability_resolution"]["adapter_name"] == "shell"
+    assert detail_payload["resolved_execution"]["adapter_name"] == "shell"
+    assert detail_payload["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "compatibility_fallback"
     assert detail_payload["recoverability_hint"] == "resume_run"
     assert detail_payload["handoffs"]
     assert detail_payload["runtime_state_refs"]
@@ -1062,6 +1073,27 @@ def test_api_compile_can_pin_opencode_adapter(tmp_path: Path) -> None:
     assert detail_response.json()["capability_resolution"]["adapter_name"] == "opencode"
 
 
+def test_api_compile_can_pin_codex_adapter(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post("/runs", json={"goal": "Compile via codex adapter", "preset_id": "feature_delivery"})
+    run_id = create_response.json()["run_id"]
+
+    compile_response = client.post(
+        f"/runs/{run_id}/compile",
+        json={"adapter_name": "codex", "codex_model": "gpt-5.1-codex-max"},
+    )
+    assert compile_response.status_code == 200
+    compile_payload = compile_response.json()
+    assert compile_payload["capability_adapter"] == "codex"
+    assert compile_payload["resolved_execution"]["selected_model"] == "gpt-5.1-codex-max"
+
+    detail_response = client.get(f"/runs/{run_id}/status-detail")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["capability_resolution"]["adapter_name"] == "codex"
+
+
 def test_api_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
@@ -1073,7 +1105,7 @@ def test_api_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     assert compile_response.status_code == 422
     error = compile_response.json()["error"]
     assert error["code"] == "capability_adapter_not_found"
-    assert error["details"]["available_adapters"] == ["shell", "opencode"]
+    assert error["details"]["available_adapters"] == ["shell", "codex", "opencode"]
 
 
 def test_api_status_detail_projects_runtime_gateway_brief_when_openai_gateway_is_active(tmp_path: Path) -> None:

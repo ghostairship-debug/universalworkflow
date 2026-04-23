@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -274,6 +275,7 @@ class MCPCapabilitySource(CapabilitySource):
             env={
                 "PYTHONUTF8": "1",
                 "WORKSPACE_ROOT": self._workspace_root.as_posix(),
+                **self._resolve_startup_env(profile),
             },
         )
 
@@ -287,6 +289,22 @@ class MCPCapabilitySource(CapabilitySource):
                 resolved.append(self._workspace_root.as_posix())
                 continue
             resolved.append(item)
+        return resolved
+
+    def _resolve_startup_env(self, profile: MCPServerProfile) -> dict[str, str]:
+        resolved: dict[str, str] = {}
+        for name, value in profile.startup_env.items():
+            token = str(value)
+            if token.startswith("${ENV:") and token.endswith("}"):
+                source_name = token.removeprefix("${ENV:").removesuffix("}")
+                source_value = os.getenv(source_name)
+                if source_value:
+                    resolved[name] = source_value
+                continue
+            if token == "${WORKSPACE_ROOT}":
+                resolved[name] = self._workspace_root.as_posix()
+                continue
+            resolved[name] = token
         return resolved
 
     def _require_mcp_dependency(self) -> tuple[Any, Any, Any]:
@@ -393,7 +411,7 @@ class CapabilityPlane:
             adapter_name = str(route.get("adapter_name") or "")
             if not capability or not adapter_name:
                 continue
-            side_effect_level = "repo_mutation_controlled" if adapter_name == "opencode" else "artifact_only"
+            side_effect_level = "repo_mutation_controlled" if adapter_name in {"codex", "opencode"} else "artifact_only"
             if adapter_name in {"agent", "opencode_session"}:
                 side_effect_level = "session_read_write"
             descriptors.append(

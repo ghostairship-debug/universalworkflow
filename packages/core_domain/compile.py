@@ -15,6 +15,7 @@ from packages.contracts import (
     MutationMode,
     Phase,
     PresetDefinition,
+    ResolvedExecutionProfile,
     RuntimeTask,
     TaskCard,
     TaskKind,
@@ -144,6 +145,7 @@ class CompileSnapshot:
     capability_route: CapabilityRoute | None
     memory_preview: MemoryRetrievalPreview | None
     execution_lane: ExecutionLaneType
+    resolved_execution: ResolvedExecutionProfile
     tool_projection_manifest: ToolProjectionManifest | None
     mcp_server_profiles: list[MCPServerProfile]
 
@@ -158,6 +160,7 @@ def compile_run(
     capability_route: CapabilityRoute | None = None,
     memory_preview: MemoryRetrievalPreview | None = None,
     execution_lane: ExecutionLaneType = ExecutionLaneType.native_deterministic,
+    resolved_execution: ResolvedExecutionProfile | None = None,
     tool_projection_manifest: ToolProjectionManifest | None = None,
     mcp_server_profiles: list[MCPServerProfile] | None = None,
     mutation_contract: MutationContract | None = None,
@@ -226,6 +229,26 @@ def compile_run(
                 "WORKFLOW_MUTATION_MODE": (
                     str(mutation_contract.mutation_mode) if mutation_contract is not None else str(MutationMode.artifact_only)
                 ),
+                "WORKFLOW_RUNTIME_GATEWAY_PROVIDER": (
+                    (resolved_execution.runtime_gateway_provider or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_RUNTIME_GATEWAY_MODEL": (
+                    (resolved_execution.runtime_gateway_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_RUNTIME_REASONING_EFFORT": (
+                    (resolved_execution.runtime_reasoning_effort or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_AGENT_MODEL": (resolved_execution.agent_model or "") if resolved_execution is not None else "",
+                "WORKFLOW_CODEX_MODEL": (resolved_execution.codex_model or "") if resolved_execution is not None else "",
+                "WORKFLOW_CODEX_REASONING_EFFORT": (
+                    (resolved_execution.codex_reasoning_effort or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_OPENCODE_MODEL": (
+                    (resolved_execution.opencode_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_OPENCODE_VARIANT": (
+                    (resolved_execution.opencode_variant or "") if resolved_execution is not None else ""
+                ),
                 "WORKFLOW_DOMAIN_PACK_ID": domain_pack.domain_pack_id,
                 DOMAIN_PACK_RESOLUTION_ENV_KEY: dump_domain_pack_resolution(domain_pack),
                 "WORKFLOW_CAPABILITY_ADAPTER": capability_route.adapter_name if capability_route is not None else "",
@@ -240,6 +263,26 @@ def compile_run(
                 "WORKFLOW_EXECUTION_LANE": str(execution_lane),
                 "WORKFLOW_MUTATION_MODE": (
                     str(mutation_contract.mutation_mode) if mutation_contract is not None else str(MutationMode.artifact_only)
+                ),
+                "WORKFLOW_RUNTIME_GATEWAY_PROVIDER": (
+                    (resolved_execution.runtime_gateway_provider or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_RUNTIME_GATEWAY_MODEL": (
+                    (resolved_execution.runtime_gateway_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_RUNTIME_REASONING_EFFORT": (
+                    (resolved_execution.runtime_reasoning_effort or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_AGENT_MODEL": (resolved_execution.agent_model or "") if resolved_execution is not None else "",
+                "WORKFLOW_CODEX_MODEL": (resolved_execution.codex_model or "") if resolved_execution is not None else "",
+                "WORKFLOW_CODEX_REASONING_EFFORT": (
+                    (resolved_execution.codex_reasoning_effort or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_OPENCODE_MODEL": (
+                    (resolved_execution.opencode_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_OPENCODE_VARIANT": (
+                    (resolved_execution.opencode_variant or "") if resolved_execution is not None else ""
                 ),
                 "WORKFLOW_CAPABILITY_ADAPTER": capability_route.adapter_name if capability_route is not None else "",
                 TOOL_PROJECTION_MANIFEST_ENV_KEY: dump_tool_projection_manifest(tool_projection_manifest),
@@ -266,6 +309,7 @@ def compile_run(
         capability_route=capability_route,
         memory_preview=memory_preview,
         execution_lane=execution_lane,
+        resolved_execution=resolved_execution or ResolvedExecutionProfile(),
         tool_projection_manifest=tool_projection_manifest,
         mcp_server_profiles=list(mcp_server_profiles or []),
     )

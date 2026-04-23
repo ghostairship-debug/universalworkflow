@@ -59,6 +59,14 @@ class LifecycleServiceMixin:
         preset: PresetDefinition,
         requested_task_kind: TaskKind | str | None = None,
         requested_adapter: str | None = None,
+        requested_agent_model: str | None = None,
+        requested_codex_model: str | None = None,
+        requested_opencode_model: str | None = None,
+        requested_opencode_variant: str | None = None,
+        requested_runtime_gateway_provider: str | None = None,
+        requested_runtime_gateway_model: str | None = None,
+        requested_runtime_reasoning_effort: str | None = None,
+        requested_worker_pool_id: str | None = None,
         memory_item_ids: list[str] | None = None,
         task_card_ref: str | None = None,
         task_card_path: str | None = None,
@@ -67,6 +75,11 @@ class LifecycleServiceMixin:
         test_commands: list[str] | None = None,
         max_fix_iterations: int = 0,
         mutation_mode: MutationMode | str | None = None,
+        agent_profile_id: str | None = None,
+        cluster_template_id: str | None = None,
+        cluster_member_id: str | None = None,
+        public_role: str | None = None,
+        role_label: str | None = None,
     ) -> CompileSnapshot:
         resolved_task_kind = self._resolve_task_kind(preset, requested_task_kind)
         resolved_mutation_mode = MutationMode(mutation_mode) if mutation_mode is not None else MutationMode.artifact_only
@@ -91,28 +104,60 @@ class LifecycleServiceMixin:
             else None
         )
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        default_adapter = self._default_adapter_for_preset(
-            preset,
-            resolved_task_kind,
-            domain_pack,
+        resolved_execution = self._resolve_execution_profile_for_run(
+            preset=preset,
+            task_kind=resolved_task_kind,
+            domain_pack=domain_pack,
+            mutation_contract=mutation_contract,
+            requested_adapter=requested_adapter,
+            requested_agent_model=requested_agent_model,
+            requested_codex_model=requested_codex_model,
+            requested_opencode_model=requested_opencode_model,
+            requested_opencode_variant=requested_opencode_variant,
+            requested_runtime_gateway_provider=requested_runtime_gateway_provider,
+            requested_runtime_gateway_model=requested_runtime_gateway_model,
+            requested_runtime_reasoning_effort=requested_runtime_reasoning_effort,
+            requested_worker_pool_id=requested_worker_pool_id,
+            agent_profile_id=agent_profile_id,
+            cluster_template_id=cluster_template_id,
+            cluster_member_id=cluster_member_id,
+            public_role=public_role,
+            role_label=role_label,
         )
-        selected_adapter = requested_adapter or (
-            "opencode"
-            if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply
-            else default_adapter
-        )
-        if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply and selected_adapter != "opencode":
+        if (
+            mutation_contract is not None
+            and mutation_contract.mutation_mode == MutationMode.patch_apply
+            and requested_adapter is None
+            and not self._adapter_supports_mutation_mode(resolved_execution.adapter_name, MutationMode.patch_apply)
+        ):
+            source_map = dict(resolved_execution.source_map)
+            source_map["adapter_name"] = {
+                "scope": "mutation_contract",
+                "source": "patch_apply_enforcement",
+                "value": "opencode",
+            }
+            resolved_execution = type(resolved_execution).model_validate(
+                {
+                    **resolved_execution.model_dump(mode="json"),
+                    "adapter_name": "opencode",
+                    "selected_model": resolved_execution.opencode_model,
+                    "selected_model_kind": "opencode_model",
+                    "model_variant": resolved_execution.opencode_variant,
+                    "source_map": source_map,
+                }
+            )
+        selected_adapter = resolved_execution.adapter_name
+        if (
+            mutation_contract is not None
+            and mutation_contract.mutation_mode == MutationMode.patch_apply
+            and not self._adapter_supports_mutation_mode(selected_adapter, MutationMode.patch_apply)
+        ):
             raise MutationContractError(
-                "patch_apply mutation contracts require the opencode adapter",
+                "patch_apply mutation contracts require a patch-capable adapter",
                 {"adapter_name": selected_adapter},
             )
         capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
-        execution_lane = self._resolve_execution_lane(
-            preset=preset,
-            task_kind=resolved_task_kind,
-            selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
-            mutation_contract=mutation_contract,
-        )
+        execution_lane = resolved_execution.execution_lane
         tool_projection_manifest, mcp_server_profiles = self._build_tool_projection_manifest(
             run=run,
             preset=preset,
@@ -134,6 +179,7 @@ class LifecycleServiceMixin:
             capability_route=capability_route,
             memory_preview=memory_preview,
             execution_lane=execution_lane,
+            resolved_execution=resolved_execution,
             tool_projection_manifest=tool_projection_manifest,
             mcp_server_profiles=mcp_server_profiles,
             mutation_contract=mutation_contract,
@@ -154,7 +200,7 @@ class LifecycleServiceMixin:
                 },
             }
         )
-        worker_pool_profile = self._selected_worker_pool_profile()
+        worker_pool_profile = self._selected_worker_pool_profile(resolved_execution.worker_pool_id)
         if worker_pool_profile is not None:
             snapshot.task_packet = TaskPacket.model_validate(
                 {
@@ -214,6 +260,7 @@ class LifecycleServiceMixin:
             capability_route=snapshot.capability_route,
             memory_preview=snapshot.memory_preview,
             execution_lane=snapshot.execution_lane,
+            resolved_execution=snapshot.resolved_execution,
             tool_projection_manifest=snapshot.tool_projection_manifest,
             mcp_server_profiles=snapshot.mcp_server_profiles,
         )
@@ -228,6 +275,7 @@ class LifecycleServiceMixin:
             "memory_retrieval_preview": (
                 snapshot.memory_preview.model_dump(mode="json") if snapshot.memory_preview is not None else None
             ),
+            "resolved_execution": snapshot.resolved_execution.model_dump(mode="json"),
         }
 
     def _persist_prepared_run(
@@ -241,8 +289,9 @@ class LifecycleServiceMixin:
         run_event_summary: str,
         snapshot_summary: str,
     ) -> PreparedRunBundle:
+        runtime_gateway = self._runtime_gateway_for_task_packet(snapshot.task_packet)
         state_ref = self._state_ref_with_compile_context(
-            self.runtime_gateway.start(run.run_id, snapshot.runtime_task.runtime_task_id),
+            runtime_gateway.start(run.run_id, snapshot.runtime_task.runtime_task_id),
             run,
             preset,
             snapshot,
@@ -365,6 +414,14 @@ class LifecycleServiceMixin:
         run_id: str,
         task_kind: TaskKind | str | None = None,
         adapter_name: str | None = None,
+        agent_model: str | None = None,
+        codex_model: str | None = None,
+        opencode_model: str | None = None,
+        opencode_variant: str | None = None,
+        runtime_gateway_provider: str | None = None,
+        runtime_gateway_model: str | None = None,
+        runtime_reasoning_effort: str | None = None,
+        worker_pool_id: str | None = None,
         memory_item_ids: list[str] | None = None,
         task_card_ref: str | None = None,
         task_card_path: str | None = None,
@@ -373,6 +430,11 @@ class LifecycleServiceMixin:
         test_commands: list[str] | None = None,
         max_fix_iterations: int = 0,
         mutation_mode: MutationMode | str | None = None,
+        agent_profile_id: str | None = None,
+        cluster_template_id: str | None = None,
+        cluster_member_id: str | None = None,
+        public_role: str | None = None,
+        role_label: str | None = None,
     ) -> PreparedRunBundle:
         run = self.get_run(run_id)
         self._require_status(run, "compile", [RunStatus.pending])
@@ -384,6 +446,14 @@ class LifecycleServiceMixin:
             preset,
             task_kind,
             requested_adapter=adapter_name,
+            requested_agent_model=agent_model,
+            requested_codex_model=codex_model,
+            requested_opencode_model=opencode_model,
+            requested_opencode_variant=opencode_variant,
+            requested_runtime_gateway_provider=runtime_gateway_provider,
+            requested_runtime_gateway_model=runtime_gateway_model,
+            requested_runtime_reasoning_effort=runtime_reasoning_effort,
+            requested_worker_pool_id=worker_pool_id,
             memory_item_ids=memory_item_ids,
             task_card_ref=task_card_ref,
             task_card_path=task_card_path,
@@ -392,6 +462,11 @@ class LifecycleServiceMixin:
             test_commands=test_commands,
             max_fix_iterations=max_fix_iterations,
             mutation_mode=mutation_mode,
+            agent_profile_id=agent_profile_id,
+            cluster_template_id=cluster_template_id,
+            cluster_member_id=cluster_member_id,
+            public_role=public_role,
+            role_label=role_label,
         )
 
         with unit_of_work(self.db_path) as connection:
@@ -423,6 +498,14 @@ class LifecycleServiceMixin:
         run_id: str,
         task_kind: TaskKind | str | None = None,
         adapter_name: str | None = None,
+        agent_model: str | None = None,
+        codex_model: str | None = None,
+        opencode_model: str | None = None,
+        opencode_variant: str | None = None,
+        runtime_gateway_provider: str | None = None,
+        runtime_gateway_model: str | None = None,
+        runtime_reasoning_effort: str | None = None,
+        worker_pool_id: str | None = None,
         memory_item_ids: list[str] | None = None,
         task_card_ref: str | None = None,
         task_card_path: str | None = None,
@@ -431,6 +514,11 @@ class LifecycleServiceMixin:
         test_commands: list[str] | None = None,
         max_fix_iterations: int = 0,
         mutation_mode: MutationMode | str | None = None,
+        agent_profile_id: str | None = None,
+        cluster_template_id: str | None = None,
+        cluster_member_id: str | None = None,
+        public_role: str | None = None,
+        role_label: str | None = None,
         *,
         ignore_budget: bool = False,
     ) -> PreparedRunBundle:
@@ -444,6 +532,14 @@ class LifecycleServiceMixin:
             preset,
             task_kind,
             requested_adapter=adapter_name,
+            requested_agent_model=agent_model,
+            requested_codex_model=codex_model,
+            requested_opencode_model=opencode_model,
+            requested_opencode_variant=opencode_variant,
+            requested_runtime_gateway_provider=runtime_gateway_provider,
+            requested_runtime_gateway_model=runtime_gateway_model,
+            requested_runtime_reasoning_effort=runtime_reasoning_effort,
+            requested_worker_pool_id=worker_pool_id,
             memory_item_ids=memory_item_ids,
             task_card_ref=task_card_ref,
             task_card_path=task_card_path,
@@ -452,6 +548,11 @@ class LifecycleServiceMixin:
             test_commands=test_commands,
             max_fix_iterations=max_fix_iterations,
             mutation_mode=mutation_mode,
+            agent_profile_id=agent_profile_id,
+            cluster_template_id=cluster_template_id,
+            cluster_member_id=cluster_member_id,
+            public_role=public_role,
+            role_label=role_label,
         )
 
         with unit_of_work(self.db_path) as connection:
@@ -799,7 +900,8 @@ class LifecycleServiceMixin:
                 owner_id=owner_id,
                 attempt_id=current_attempt.attempt_id,
             )
-            resumed_state = self.runtime_gateway.resume(state_ref)
+            runtime_gateway = self._runtime_gateway_for_task_packet(task_packet)
+            resumed_state = runtime_gateway.resume(state_ref)
             durable_refs = self._durable_refs_for_state(resumed_state)
             if durable_refs:
                 durable_refs = self.durable_runtime_pilot.checkpoint(durable_refs, reason="resume")
@@ -847,6 +949,8 @@ class LifecycleServiceMixin:
                 key: value
                 for key, value in {
                     "WORKFLOW_RUNTIME_GATEWAY_PROVIDER": resumed_state.state_payload.get("runtime_gateway_provider"),
+                    "WORKFLOW_RUNTIME_GATEWAY_MODEL": resumed_state.state_payload.get("llm_model"),
+                    "WORKFLOW_RUNTIME_REASONING_EFFORT": resumed_state.state_payload.get("llm_reasoning_effort"),
                     "WORKFLOW_LLM_MODEL": resumed_state.state_payload.get("llm_model"),
                     "WORKFLOW_RUNTIME_BRIEF": resumed_state.state_payload.get("runtime_brief"),
                 }.items()
@@ -867,7 +971,9 @@ class LifecycleServiceMixin:
 
             adapter = self.worker_router.route(execution_packet)
             adapter_name = adapter.__class__.__name__.replace("Adapter", "").lower()
-            worker_pool_profile = self._selected_worker_pool_profile()
+            worker_pool_profile = self._selected_worker_pool_profile(
+                execution_packet.env.get("WORKFLOW_WORKER_POOL_ID") or None
+            )
             worker_name_override = worker_pool_profile.name if worker_pool_profile is not None else None
             worker_id_override = f"pool_{worker_pool_profile.worker_pool_id}" if worker_pool_profile is not None else None
             worker_kind, worker_id, worker_name = self._worker_identity(adapter_name, worker_name=worker_name_override)

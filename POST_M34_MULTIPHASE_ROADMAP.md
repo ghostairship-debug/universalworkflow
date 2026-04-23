@@ -1,21 +1,23 @@
 # Post-M34 Multi-Phase Roadmap
 
-Status: reference-only  
-Date: 2026-04-22  
-Baseline: accepted `M34 Phase 0`  
+Status: reference-only
+Date: 2026-04-24
+Baseline: accepted `M36 Phase 0`
 Scope: roadmap guidance only; not active execution truth until the next bounded phase opens
 
 ## 1. Relationship To Current Truth
 
-This document is a planning input created after accepted `M34 Phase 0`.
+This document is a planning input first created after accepted `M34 Phase 0` and now retained after accepted `M36 Phase 0`.
+
+The root-level external `GPT_PRO_ROADMAP .md` has been assessed and absorbed here where it aligns, so it should not remain a competing roadmap source.
 
 It does **not** override:
 
 1. [docs/current_development_workflow.md](docs/current_development_workflow.md)
-2. [docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md](docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md)
+2. [docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md](docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md)
 3. [docs/tech-debt-registry.md](docs/tech-debt-registry.md)
 
-Use this file to rebuild the post-`M34` roadmap shape, not to claim that `M35+` is already open.
+Use this file to rebuild the post-`M36 Phase 0` roadmap shape, not to claim that later `M36+` work is already open.
 
 ## 2. Why The Roadmap Must Be Rebuilt
 
@@ -29,13 +31,13 @@ That kept the execution discipline strong, but it also caused two kinds of drift
 As a result:
 
 - the repository gained strong architecture and runtime foundations
-- but the milestone naming lost part of its original “multi-phase product program” meaning
+- but the milestone naming lost part of its original multi-phase product-program meaning
 
 The post-`M34` line should correct that drift.
 
-## 3. What Was Actually Achieved By M32-M34
+## 3. What Was Actually Achieved By M32-M36 Phase 0
 
-Accepted `M32-M34` did real work and should not be described as failure.
+Accepted `M32-M36 Phase 0` did real work and should not be described as failure.
 
 ### Landed
 
@@ -44,11 +46,13 @@ Accepted `M32-M34` did real work and should not be described as failure.
 - shared orchestration plan builder for shipped multi-role presets
 - deeper scheduler-authority honesty cleanup
 - minimum `/ui/workbench` preview
+- explicit execution-profile contracts, resolver precedence, additive config defaults, and read-side execution explainability
+- bounded workbench IA / surface freeze
+- additive `codex` routing plus bounded MiniMax MCP search/image-understanding pilot support
 
 ### Still Missing Relative To The Earlier Product Vision
 
-- role-specific execution configuration as a first-class product surface
-- chat-style or guided natural-language workbench v1
+- full chat-style or guided natural-language workbench v1
 - generated-role lifecycle
 - automation plane
 - broader capability ecosystem productization
@@ -73,10 +77,12 @@ What happened instead:
 - old `M32` ideas were only partially absorbed by accepted `M32`
 - old `M33` and `M34` product expectations were largely deferred
 - accepted `M33` and `M34` prioritized structural contraction and honesty cleanup instead
+- accepted `M35` productized execution selection first
+- accepted `M36 Phase 0` froze workbench/capability boundaries before broader workbench implementation
 
 Therefore the correct statement is:
 
-> accepted `M34` reached the later bounded cleanup expectation, but it did **not** yet reach the earlier productization expectation that older planning material associated with `M33-M36`.
+> accepted `M36 Phase 0` has restored an honest product path, but it has **not** yet reached the earlier productization expectation that older planning material associated with a fully completed `M36`.
 
 ## 5. How Many Additional Milestones Are Still Needed
 
@@ -84,9 +90,12 @@ Two different target lines should be separated.
 
 ### 5.1 To Reach The Earlier Platform Product Goal
 
-To reach the older “post-`M36` platform” aspiration in a realistic way from the accepted `M34` baseline, the repository now needs **at least 5 additional milestones**:
+Update after accepted `M36 Phase 0`:
 
-- `M35`
+- the remaining platform-productization line is now the remainder of `M36` plus `M37-M39`
+
+To reach the older post-`M36` platform aspiration in a realistic way from the accepted `M36 Phase 0` baseline, the repository still needs **at least 4 milestone numbers**:
+
 - `M36`
 - `M37`
 - `M38`
@@ -94,13 +103,12 @@ To reach the older “post-`M36` platform” aspiration in a realistic way from 
 
 This is the minimum realistic count for:
 
-- role/profile/cluster execution productization
-- natural-language workbench v1
+- the remainder of natural-language workbench v1
 - generated roles plus bounded automation
 - broader capability ecosystem productization
 - eval/promotion/product closure
 
-### 5.2 To Reach The User’s Higher-Quality Game Development Goal
+### 5.2 To Reach The Higher-Quality Game Development Goal
 
 If the target is not just the platform vision, but also the previously discussed game-development quality bar, one more milestone is likely needed after that:
 
@@ -108,8 +116,8 @@ If the target is not just the platform vision, but also the previously discussed
 
 So the practical answer is:
 
-- original platform target: **5 more M**
-- game-development-quality target: **6 more M**
+- original platform target from the current baseline: **4 more M numbers**
+- game-development-quality target from the current baseline: **5 more M numbers**
 
 ## 6. Rules For Restoring Meaningful Milestones
 
@@ -129,15 +137,16 @@ From post-`M34` onward, a milestone should normally meet one of these two rules:
 
 For the productization line, the repository should prefer **Rule A**.
 
-## 7. Pre-Open Gates Before M35
+## 7. Pre-Open Gates Before M35 (Closed)
 
-Before opening `M35`, the repository should clear a small bug-first gate set:
+The repository cleared the small bug-first pre-open gate before opening `M35 Phase 0`:
 
-1. fix the two known governance-report expectation regressions noted in [M34_POST_EVALUATION.md](M34_POST_EVALUATION.md)
-2. align root planning docs with the accepted `M34` baseline
-3. decide whether `TD-STRUCT-005` and `TD-STRUCT-006` remain deferred through `M35`, or whether one of them enters active scope
+1. the known governance-report expectation regressions were repaired
+2. the root planning docs were aligned with the accepted `M34` baseline
+3. the no-behavior-change `APIRouter` transport split was absorbed as pre-open hardening work
+4. the carry-forward treatment of `TD-STRUCT-005` and `TD-STRUCT-006` remained deferred rather than being pulled into the opening slice
 
-This pre-open gate is not `M35 Phase 0` itself. It is the bug-first cleanup required before `M35` can be opened honestly.
+This pre-open gate was not `M35 Phase 0` itself. It was the bug-first cleanup required before `M35` could be opened honestly.
 
 ## 8. Rebuilt Roadmap
 
@@ -149,16 +158,27 @@ Theme:
 
 Why this milestone exists:
 
-- today the repository has the architectural objects but not a productized role/profile execution configuration model
+- the repository had the architectural objects but not a productized role/profile execution configuration model
+
+Accepted status:
+
+- `M35` closeout was accepted on 2026-04-24 in [docs/reviews/m35-role-execution-productization-freeze-review.md](docs/reviews/m35-role-execution-productization-freeze-review.md)
+- the accepted result includes explicit execution-profile contracts, an authoritative resolver, additive config/read surfaces, compile/runtime/orchestration consumption, and shipped execution explainability
 
 ### M35 Phase 0: Opening / Bug-First Gate / Config Contract Freeze
 
 Goals:
 
 - formally open the post-`M34` line
-- repair the pre-open governance-report regressions
 - freeze the role/profile/cluster execution configuration contract
+- define the execution-resolution precedence line explicitly instead of relying on scattered defaults
 - decide the carry-forward treatment of `TD-STRUCT-005` and `TD-STRUCT-006`
+- freeze the workflow-driven execution, review, and evidence model for the rest of `M35`
+
+Historical status:
+
+- `M35 Phase 0` was opened on 2026-04-23 through the phase doc and task-card pack
+- `M35 Phase 0` was closed on 2026-04-24 through the accepted `M35` freeze review
 
 ### M35 Phase 1: Role/Profile Execution Profiles
 
@@ -167,13 +187,16 @@ Goals:
 - introduce explicit execution profiles for public roles, agent profiles, and cluster members
 - support role-specific adapter / model / variant / policy selection
 - make different-role LLM selection real rather than aspirational
+- pull execution selection out of implicit `WorkerRouter` and runtime-gateway defaults so those layers consume resolved execution decisions
 
 ### M35 Phase 2: Config Surfaces / Dogfood / Closeout
 
 Goals:
 
 - expose effective execution defaults through `workflow.toml`, env, CLI, API, and read surfaces
+- expose an execution-resolution trace that explains why a lane was selected
 - prove `DevCluster` and `ResearchCluster` under the new defaults
+- if needed for explainability, add narrow lane-stat read surfaces without claiming full `TD-STRUCT-005` closure
 - close the milestone with clear validation and debt judgment
 
 ### M35 Exit
@@ -201,14 +224,21 @@ Goals:
 - define the workbench information architecture
 - freeze the interaction/workbench surface map
 - keep operator views and product workbench separated
+- freeze where stronger external capabilities should attach before broader workbench productization
+
+Accepted status:
+
+- `M36 Phase 0` was accepted on 2026-04-24 in [docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md](docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md)
+- the accepted result froze the workbench IA/surface map, landed additive `codex` adapter support, landed a bounded MiniMax MCP `web_search` / `understand_image` pilot profile, and explicitly deferred `MMX CLI` plus `gcloud` / Vertex AI
 
 ### M36 Phase 1: Conversational Workbench Flow
 
 Goals:
 
-- implement guided goal input, clarification, plan draft, and launch flow
+- implement guided goal input, clarification, plan draft, execution preview, and launch flow on top of the existing interaction-session APIs
 - show selected clusters, plan graph, and review state coherently
 - add workbench-level visibility into the execution defaults shipped by `M35`
+- consume the frozen capability-slot rules from accepted `M36 Phase 0` rather than inventing parallel capability entry points
 
 ### M36 Phase 2: Follow-Up / Review / Polish / Closeout
 
@@ -254,7 +284,7 @@ Goals:
 
 Goals:
 
-- add bounded background automation primitives
+- add bounded background automation primitives with a clear split between low-risk automatic actions and high-risk review-gated actions
 - support event-driven or schedule-driven controller actions
 - keep automation-plane behavior governed and auditable
 
@@ -275,12 +305,14 @@ Goals:
 Goals:
 
 - unify MCP, worker pools, sessions, and connector-style capabilities under a more productized runtime surface
+- define a stronger capability/product contract around health, invocation envelopes, auth/scope, and telemetry fields
 
 ### M38 Phase 2: Arbitrary Engineering Workflow Productization
 
 Goals:
 
 - move from shipped preset examples toward more serious engineering-task product surfaces
+- strengthen observability and remote-worker productization with a clearer OTLP/collector path plus worker identity, replay protection, and pool health expectations
 
 ## M39: Eval / Promotion / Product Closure
 
@@ -300,6 +332,7 @@ Goals:
 Goals:
 
 - add eval-backed promotion mechanics
+- organize real run history, golden tasks, failure taxonomy, and review outcomes into a reusable eval store
 - give `TD-STRUCT-006` a real reusable promotion path
 - decide whether `TD-STRUCT-005` closes here or remains on a later telemetry line
 
@@ -308,6 +341,7 @@ Goals:
 Goals:
 
 - finalize stable product surfaces
+- close the local-first product with install/run/observe packaging expectations rather than source-only success criteria
 - close the platform line as a coherent local-first product
 
 ## M40: Domain-Grade Design / Visual Verification
@@ -348,4 +382,4 @@ From `M35` onward:
 
 ## 11. One-Line Conclusion
 
-Accepted `M32-M34` built the real foundation, but they also pushed the earlier product goals backward. The honest rebaseline is: `M35-M39` are still needed to reach the earlier platform product target, and `M40` is likely needed if the target includes domain-grade design and visual validation.
+Accepted `M32-M36 Phase 0` built the real foundation and restored an honest product path, but the earlier product goals are still ahead. The honest rebaseline is: the remainder of `M36` plus `M37-M39` are still needed to reach the earlier platform product target, and `M40` is likely needed if the target includes domain-grade design and visual validation.

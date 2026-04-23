@@ -103,6 +103,21 @@ class OpenAIRuntimeGateway(RuntimeGateway):
             "context_budget_hard_limit_chars": self.max_input_chars,
         }
 
+    def copy_with(
+        self,
+        *,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> "OpenAIRuntimeGateway":
+        return OpenAIRuntimeGateway(
+            client=self._client,
+            model=model or self.model,
+            reasoning_effort=reasoning_effort or self.reasoning_effort,
+            max_output_tokens=self.max_output_tokens,
+            warn_input_chars=self.warn_input_chars,
+            max_input_chars=self.max_input_chars,
+        )
+
     def start(self, run_id: str, runtime_task_id: str) -> RuntimeStateRef:
         return RuntimeStateRef(
             run_id=run_id,
@@ -213,19 +228,53 @@ class OpenAIRuntimeGateway(RuntimeGateway):
         return ""
 
 
-def build_runtime_gateway_from_env() -> RuntimeGateway:
-    effective = build_effective_config()
-    provider = str(effective["runtime_gateway"]["provider"]).strip().lower()
+def build_runtime_gateway_from_env(
+    *,
+    explicit_provider: str | None = None,
+    explicit_model: str | None = None,
+    explicit_reasoning_effort: str | None = None,
+) -> RuntimeGateway:
+    effective = build_effective_config(explicit_runtime_gateway_provider=explicit_provider)
+    provider = str(explicit_provider or effective["runtime_gateway"]["provider"]).strip().lower()
     if provider in {"", "null", "none", "disabled"}:
         return NullRuntimeGateway()
     if provider == "openai":
         return OpenAIRuntimeGateway(
-            model=str(effective["runtime_gateway"]["openai_model"] or DEFAULT_OPENAI_MODEL),
+            model=str(explicit_model or effective["runtime_gateway"]["openai_model"] or DEFAULT_OPENAI_MODEL),
             reasoning_effort=str(
-                effective["runtime_gateway"]["openai_reasoning_effort"] or DEFAULT_OPENAI_REASONING_EFFORT
+                explicit_reasoning_effort
+                or effective["runtime_gateway"]["openai_reasoning_effort"]
+                or DEFAULT_OPENAI_REASONING_EFFORT
             ),
         )
     raise RuntimeGatewayConfigurationError(
         f"unsupported runtime gateway provider: {provider}",
         {"provider": provider, "available_providers": ["null", "openai"]},
+    )
+
+
+def resolve_runtime_gateway(
+    base_gateway: RuntimeGateway,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> RuntimeGateway:
+    base_description = base_gateway.describe()
+    requested_provider = str(provider or base_description.get("provider") or "null").strip().lower()
+    base_provider = str(base_description.get("provider") or "null").strip().lower()
+    if requested_provider == base_provider:
+        if requested_provider == "openai" and isinstance(base_gateway, OpenAIRuntimeGateway):
+            requested_model = model or base_gateway.model
+            requested_reasoning = reasoning_effort or base_gateway.reasoning_effort
+            if requested_model != base_gateway.model or requested_reasoning != base_gateway.reasoning_effort:
+                return base_gateway.copy_with(
+                    model=requested_model,
+                    reasoning_effort=requested_reasoning,
+                )
+        return base_gateway
+    return build_runtime_gateway_from_env(
+        explicit_provider=requested_provider,
+        explicit_model=model,
+        explicit_reasoning_effort=reasoning_effort,
     )

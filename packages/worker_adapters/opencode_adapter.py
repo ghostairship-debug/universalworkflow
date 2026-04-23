@@ -15,7 +15,7 @@ from packages.worker_adapters.base import ExecutionResult, utc_now
 from packages.worker_adapters.subprocess_support import build_subprocess_env, completed_process_from_timeout
 
 
-DEFAULT_OPENCODE_MODEL = "openai/gpt-5.4-mini"
+DEFAULT_OPENCODE_MODEL = "minimax/MiniMax-M2.7"
 
 
 class OpenCodeAdapter(CliAdapterBase):
@@ -43,6 +43,10 @@ class OpenCodeAdapter(CliAdapterBase):
 
     def get_capabilities(self) -> list[str]:
         return [str(TaskKind.shell_exec)]
+
+    def supports_mutation_mode(self, mode: MutationMode | str) -> bool:
+        normalized = MutationMode(mode)
+        return normalized in {MutationMode.artifact_only, MutationMode.patch_apply}
 
     def _resolved_executable(self) -> str:
         resolved = shutil.which(self.executable)
@@ -76,6 +80,12 @@ class OpenCodeAdapter(CliAdapterBase):
             runtime_model=packet.env.get("WORKFLOW_LLM_MODEL") or None,
             runtime_brief=packet.env.get("WORKFLOW_RUNTIME_BRIEF") or None,
         )
+
+    def _model_for_packet(self, packet: TaskPacket) -> str:
+        return str(packet.env.get("WORKFLOW_OPENCODE_MODEL") or self.model)
+
+    def _variant_for_packet(self, packet: TaskPacket) -> str | None:
+        return packet.env.get("WORKFLOW_OPENCODE_VARIANT") or self.variant
 
     def _prompt_for(self, packet: TaskPacket) -> str:
         mutation_mode = self._mutation_mode_for(packet)
@@ -159,10 +169,12 @@ class OpenCodeAdapter(CliAdapterBase):
         ]
         if self.pure:
             command.append("--pure")
-        if self.model:
-            command.extend(["--model", self.model])
-        if self.variant:
-            command.extend(["--variant", self.variant])
+        model = self._model_for_packet(packet)
+        variant = self._variant_for_packet(packet)
+        if model:
+            command.extend(["--model", model])
+        if variant:
+            command.extend(["--variant", variant])
         if self.auto_approve:
             command.append("--dangerously-skip-permissions")
         return command
@@ -187,7 +199,11 @@ class OpenCodeAdapter(CliAdapterBase):
         if completed.returncode == 0 and output_text:
             self._write_artifact(packet, output_text)
         finished_at = utc_now()
-        metadata = {"mutation_mode": str(self._mutation_mode_for(packet))}
+        metadata = {
+            "mutation_mode": str(self._mutation_mode_for(packet)),
+            "opencode_model": self._model_for_packet(packet),
+            "opencode_variant": self._variant_for_packet(packet),
+        }
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=completed.returncode,

@@ -83,7 +83,10 @@
       "max_retries": 0,
       "timeout_seconds": 120
     },
-    "requires_manual_approval": true
+    "requires_manual_approval": true,
+    "execution_profile": {
+      "adapter_name": "agent"
+    }
   },
   {
     "preset_id": "project_delivery",

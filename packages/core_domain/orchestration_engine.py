@@ -85,6 +85,7 @@ class OrchestrationEngine:
                 goal=role_goal_for(goal, step.role),
                 agent_profile_id=step.agent_profile_id,
                 cluster_template_id=step.cluster_template_id,
+                cluster_member_id=step.cluster_member_id,
                 role_label=step.role_label,
                 required_capabilities=[step.preset_id, *([step.preferred_adapter] if step.preferred_adapter else [])],
                 dependencies=dependency_ids,
@@ -94,6 +95,9 @@ class OrchestrationEngine:
                 fallback_path=[adapter for adapter in (step.preferred_adapter, step.fallback_adapter) if adapter is not None],
                 preset_id=step.preset_id,
                 preferred_adapter=step.preferred_adapter,
+                execution_profile=(
+                    step.execution_profile.model_dump(mode="json") if step.execution_profile is not None else None
+                ),
             )
             nodes.append(node)
             step_to_node_id[step.step_id] = node.node_id

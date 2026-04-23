@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.contracts import PresetDefinition, ReviewPolicy
-from packages.core_domain.db import DEFAULT_DB_PATH
+from packages.core_domain.db import DEFAULT_DB_PATH, get_connection
 from packages.core_domain.domain_packs import DomainPackRegistry
 from packages.core_domain.presets import load_seed_presets
 from packages.core_domain.repositories import PresetRepository
@@ -350,8 +350,7 @@ def _load_runtime_inventory(db_path: str | Path | None = None) -> dict[str, Any]
     counts: dict[str, int] = {}
     run_status_counts: dict[str, int] = {}
     try:
-        with sqlite3.connect(resolved_path) as connection:
-            connection.row_factory = sqlite3.Row
+        with get_connection(resolved_path) as connection:
             for key, table_name in table_map.items():
                 try:
                     counts[key] = connection.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()["count"]
@@ -745,9 +744,10 @@ def build_release_readiness_report(
             == [
                 {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
                 {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+                {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
                 {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
             ],
-            "detail": "shipped local and CLI adapters are visible through CapabilityRegistry",
+            "detail": "shipped local and coding adapters are visible through CapabilityRegistry",
         },
         {
             "gate": "domain_pack_baseline",

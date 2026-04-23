@@ -163,6 +163,66 @@ class ProjectionServiceMixin:
                 return dict(mutation_result)
         return None
 
+    def _resolved_execution_for(
+        self,
+        context: RunDiagnosticContext,
+        last_runtime_state: RuntimeStateRef | None,
+    ) -> dict[str, Any] | None:
+        if last_runtime_state is not None:
+            payload = last_runtime_state.state_payload.get("resolved_execution")
+            if isinstance(payload, dict):
+                return dict(payload)
+        runtime_task = self._runtime_task_for_context(context)
+        if runtime_task is None:
+            return None
+        task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+        if task_packet is None:
+            return None
+        adapter_name = task_packet.env.get("WORKFLOW_CAPABILITY_ADAPTER") or None
+        return {
+            "adapter_name": adapter_name,
+            "execution_lane": task_packet.env.get("WORKFLOW_EXECUTION_LANE") or None,
+            "selected_model": (
+                task_packet.env.get("WORKFLOW_AGENT_MODEL")
+                if adapter_name == "agent"
+                else task_packet.env.get("WORKFLOW_CODEX_MODEL")
+                if adapter_name == "codex"
+                else task_packet.env.get("WORKFLOW_OPENCODE_MODEL")
+                if adapter_name in {"opencode", "opencode_session"}
+                else None
+            ),
+            "selected_model_kind": (
+                "agent_model"
+                if adapter_name == "agent"
+                else "codex_model"
+                if adapter_name == "codex"
+                else "opencode_model"
+                if adapter_name in {"opencode", "opencode_session"}
+                else None
+            ),
+            "model_variant": task_packet.env.get("WORKFLOW_OPENCODE_VARIANT") or None,
+            "agent_model": task_packet.env.get("WORKFLOW_AGENT_MODEL") or None,
+            "codex_model": task_packet.env.get("WORKFLOW_CODEX_MODEL") or None,
+            "codex_reasoning_effort": task_packet.env.get("WORKFLOW_CODEX_REASONING_EFFORT") or None,
+            "opencode_model": task_packet.env.get("WORKFLOW_OPENCODE_MODEL") or None,
+            "opencode_variant": task_packet.env.get("WORKFLOW_OPENCODE_VARIANT") or None,
+            "runtime_gateway_provider": task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_PROVIDER") or None,
+            "runtime_gateway_model": task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_MODEL") or None,
+            "runtime_reasoning_effort": task_packet.env.get("WORKFLOW_RUNTIME_REASONING_EFFORT") or None,
+            "worker_pool_id": task_packet.env.get("WORKFLOW_WORKER_POOL_ID") or None,
+        }
+
+    def _execution_resolution_trace_for(
+        self,
+        last_runtime_state: RuntimeStateRef | None,
+    ) -> dict[str, Any] | None:
+        if last_runtime_state is None:
+            return None
+        payload = last_runtime_state.state_payload.get("execution_resolution_trace")
+        if isinstance(payload, dict):
+            return dict(payload)
+        return None
+
     def _scheduler_authority_for(
         self,
         context: RunDiagnosticContext,
@@ -767,6 +827,8 @@ class ProjectionServiceMixin:
             "execution_profile": {
                 "review_policy": detail["review_policy"],
                 "execution_lane": detail["execution_lane"],
+                "resolved_execution": detail["resolved_execution"],
+                "execution_resolution_trace": detail["execution_resolution_trace"],
                 "domain_pack": detail["domain_pack"],
                 "capability_resolution": detail["capability_resolution"],
                 "tool_projection_manifest": detail["tool_projection_manifest"],
@@ -994,6 +1056,8 @@ class ProjectionServiceMixin:
         lease_renewals = self._lease_renewals_for(last_runtime_state, last_evidence)
         mutation_contract = self._mutation_contract_for(context, last_runtime_state)
         mutation_result = self._mutation_result_for(last_runtime_state, last_evidence)
+        resolved_execution = self._resolved_execution_for(context, last_runtime_state)
+        execution_resolution_trace = self._execution_resolution_trace_for(last_runtime_state)
         scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
         orchestration_plan_graph = self._orchestration_plan_graph_from_context(context)
@@ -1034,7 +1098,7 @@ class ProjectionServiceMixin:
         )
         return {
             "run": context.run.model_dump(mode="json"),
-            "runtime_gateway": self.runtime_gateway.describe(),
+            "runtime_gateway": self._runtime_gateway_description_for_context(context),
             "trace_exporter": self.trace_exporter.describe(),
             "durable_runtime_pilot": self.durable_runtime_pilot.describe(),
             "feature_flags": self._feature_flags(),
@@ -1052,6 +1116,8 @@ class ProjectionServiceMixin:
             "capability_execution_receipt": capability_execution_receipt_payload,
             "execution_target": execution_target,
             "lease_renewals": lease_renewals,
+            "resolved_execution": resolved_execution,
+            "execution_resolution_trace": execution_resolution_trace,
             "mutation_contract": mutation_contract,
             "mutation_result": mutation_result,
             "scheduler_authority": scheduler_authority,
@@ -1163,6 +1229,8 @@ class ProjectionServiceMixin:
         lease_renewals = self._lease_renewals_for(last_runtime_state, last_evidence)
         mutation_contract = self._mutation_contract_for(context, last_runtime_state)
         mutation_result = self._mutation_result_for(last_runtime_state, last_evidence)
+        resolved_execution = self._resolved_execution_for(context, last_runtime_state)
+        execution_resolution_trace = self._execution_resolution_trace_for(last_runtime_state)
         scheduler_authority = self._scheduler_authority_for(context, last_runtime_state)
         orchestration = self._orchestration_from_context(context)
         orchestration_plan_graph = self._orchestration_plan_graph_from_context(context)
@@ -1202,7 +1270,7 @@ class ProjectionServiceMixin:
         )
         return {
             "run": context.run.model_dump(mode="json"),
-            "runtime_gateway": self.runtime_gateway.describe(),
+            "runtime_gateway": self._runtime_gateway_description_for_context(context),
             "trace_exporter": self.trace_exporter.describe(),
             "durable_runtime_pilot": self.durable_runtime_pilot.describe(),
             "feature_flags": self._feature_flags(),
@@ -1220,6 +1288,8 @@ class ProjectionServiceMixin:
             "capability_execution_receipt": capability_execution_receipt_payload,
             "execution_target": execution_target,
             "lease_renewals": lease_renewals,
+            "resolved_execution": resolved_execution,
+            "execution_resolution_trace": execution_resolution_trace,
             "mutation_contract": mutation_contract,
             "mutation_result": mutation_result,
             "scheduler_authority": scheduler_authority,
@@ -1299,6 +1369,7 @@ class ProjectionServiceMixin:
             "waiting_reason": detail["waiting_reason"],
             "review_policy": detail["review_policy"],
             "execution_lane": detail["execution_lane"],
+            "resolved_execution": detail["resolved_execution"],
             "domain_pack": detail["domain_pack"],
             "capability_resolution": detail["capability_resolution"],
             "execution_target": detail["execution_target"],

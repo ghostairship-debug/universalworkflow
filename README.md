@@ -1,6 +1,6 @@
 # Universal Agentic Workflow OS
 
-This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, unified `workflow.toml`-backed configuration, real remote HTTP worker-pool productization, real durable checkpoint snapshots, a shared `project_delivery` / `guarded_project_delivery` orchestration substrate, bounded repo-mutation contracts for semi-automatic workflow-driven development, a single-store quorum-style scheduler-authority layer with committed cross-control-plane lease ownership and takeover lineage, an opt-in OpenAI-backed `RuntimeGateway`, a built-in FastAPI Web operator UI, the existing terminal TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
+This repository now contains the local-first runtime for the Universal Agentic Workflow OS. It keeps SQLite as the only persistence layer, preserves the `RuntimeGateway` boundary, supports deterministic preset suggestion, public `compile / recompile / resume` surfaces, `HandoffLite` persistence, five executable run-level review policies (`auto_only`, `optional`, `recommended`, `human_required`, `mandatory`), a multi-adapter runtime boundary through `WorkerRouter`, `ShellAdapter`, `CodexAdapter`, `OpenCodeAdapter`, and `NoopAdapter`, a concrete `CapabilityRegistry`, one platformized seed-backed `Domain Pack` baseline, persisted `Memory` and `Simulation` baselines, replay-packet and run-metrics projections, governance metrics/alerts, explicit ownership-topology lineage, local batch-barrier / parallel-batch resume support, unified `workflow.toml`-backed configuration, real remote HTTP worker-pool productization, real durable checkpoint snapshots, a shared `project_delivery` / `guarded_project_delivery` orchestration substrate, bounded repo-mutation contracts for semi-automatic workflow-driven development, a single-store quorum-style scheduler-authority layer with committed cross-control-plane lease ownership and takeover lineage, an opt-in OpenAI-backed `RuntimeGateway`, a built-in FastAPI Web operator UI, the existing terminal TUI, plus local claim / worker-lease guards with reconcile-aware stale-claim repair.
 
 ## Environment
 
@@ -49,14 +49,14 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 - Chinese overview:
   - [README.zh-CN.md](README.zh-CN.md)
-- Milestone baseline: through accepted `M34 Phase 0`, complete
+- Milestone baseline: accepted `M35`; accepted `M36 Phase 0`; no later bounded phase open
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
   - local-first CLI/API runtime
   - native deterministic, borrowed agent, durable-pilot, and orchestration-aware execution lanes
-  - `shell`, `opencode`, `noop`, and feature-flagged `agent` adapter routing
-  - router-first capability plane with built-in capability projection and local stdio MCP pilot support
+  - `shell`, `codex`, `opencode`, `noop`, and feature-flagged `agent` adapter routing
+  - router-first capability plane with built-in capability projection, local stdio MCP pilot support, and a seeded MiniMax `web_search` / `understand_image` MCP pilot profile
   - capability descriptors / health, additive capability invocation / receipt surfaces, capability policy preview, and operator-facing packetized read models
   - unified `workflow.toml` + env + explicit override config precedence
   - productized worker-pool boundary with local/loopback and real remote HTTP dispatch support
@@ -74,22 +74,25 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - built-in FastAPI Web operator console and terminal TUI dashboard
   - `v1 core complete` mainline product status
 - Current planning position:
-  - `M8-M30`, accepted `M31 Phase 0`, accepted `M32 Phase 0`, accepted `M33 Phase 0`, and accepted `M34 Phase 0` are complete
-  - the latest accepted freeze is [docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md](docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md)
-  - no post-`M34` bounded phase is open yet
-  - the rebuilt post-`M34` roadmap is [POST_M34_MULTIPHASE_ROADMAP.md](POST_M34_MULTIPHASE_ROADMAP.md), and it remains reference-only until `M35` is formally opened
-  - the honest rebaseline is that the older platform-product target now likely requires `M35-M39`; if domain-grade design and multimodal visual verification are in scope, `M40` is likely needed
-  - a known pre-open bug-first gate remains: two governance tech-debt report expectation regressions should be repaired before `M35` opens
-  - the last bounded debt focus was `TD-STRUCT-001` and `TD-STRUCT-003`, both now carried forward as partial repayments
+  - `M8-M30`, accepted `M31 Phase 0`, accepted `M32 Phase 0`, accepted `M33 Phase 0`, accepted `M34 Phase 0`, accepted `M35`, and accepted `M36 Phase 0` are complete at their current bounded level
+  - the latest accepted freeze is [docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md](docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md)
+  - the retained `M36 Phase 0` materials are [m36_phase_docs/phase_0_workbench_ia_and_capability_slot_freeze.md](m36_phase_docs/phase_0_workbench_ia_and_capability_slot_freeze.md) and [docs/task_cards/m36_phase_0_task_cards.md](docs/task_cards/m36_phase_0_task_cards.md)
+  - the previous accepted milestone closeout remains [docs/reviews/m35-role-execution-productization-freeze-review.md](docs/reviews/m35-role-execution-productization-freeze-review.md)
+  - the rebuilt post-`M34` roadmap is [POST_M34_MULTIPHASE_ROADMAP.md](POST_M34_MULTIPHASE_ROADMAP.md), and it remains reference-only until the next bounded phase opens
+  - the honest rebaseline is that the older platform-product target now likely requires the remainder of `M36` plus `M37-M39`; if domain-grade design and multimodal visual verification are in scope, `M40` is likely needed
+  - the pre-open hardening gate is cleared and absorbed: the governance tech-debt report regressions are repaired, the root planning docs are aligned, and the no-behavior-change `APIRouter` split landed before `M35` execution productization closed
+  - accepted `M36 Phase 0` froze the workbench IA and bounded capability-slot strategy, landed additive `Codex CLI` support, and seeded bounded MiniMax MCP search/image-understanding support without opening broader capability-ecosystem productization
+  - `TD-STRUCT-001` and `TD-STRUCT-003` remain carry-forward partial repayments, but they were not the main `M35` theme
   - `TD-STRUCT-004` remains repaid
-  - `TD-STRUCT-005` and `TD-STRUCT-006` remain deferred to a post-`M34` bounded follow-on
-  - the latest accepted foundation is interaction-first, role-profile-aware, cluster-aware, and shared-orchestration-aware for the shipped multi-role presets
+  - `TD-STRUCT-005` remains deferred and aligns mainly to `M38-M39`
+  - `TD-STRUCT-006` remains deferred and aligns mainly to `M39`
+  - the latest accepted foundation is interaction-first, role-profile-aware, cluster-aware, execution-profile-aware, and capability-slot-aware for the shipped multi-role presets
   - the canonical current development guide is [docs/current_development_workflow.md](docs/current_development_workflow.md)
   - archived planning context from the pre-merge workspace is retained as reference-only in [docs/reviews/m32-archived-planning-inputs.md](docs/reviews/m32-archived-planning-inputs.md)
   - the previous bounded expansion freeze remains [docs/reviews/m31-boundary-contraction-freeze-review.md](docs/reviews/m31-boundary-contraction-freeze-review.md)
   - the previous milestone freeze remains [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
   - the deep core-complete baseline remains [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
-  - the latest recorded local full-suite validation for the accepted `M34 Phase 0` closeout is `python -m pytest -q --basetemp state/.pytest-final-<pid>` -> `282 passed`
+  - the latest recorded local full-suite validation in the current worktree is `pytest` -> `296 passed`
 
 ## Offline validation
 
@@ -123,18 +126,21 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 - API reconcile / repair path passes
 - cluster cutover flow passes
 
-The latest accepted `M34 Phase 0` closeout baseline is:
+The latest accepted bounded baseline is:
 
-- `python -m pytest -q --basetemp state/.pytest-final-<pid>`
-  - `282 passed`
+- `pytest --basetemp state/.pytest-tmp-m36-all`
+  - `296 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
   - `overall_passed=true`
 - `python -m infra.scripts.check_doc_links`
   - `passed=true`
 
-Known post-closeout pre-open gate:
+Current phase-opening status:
 
-- two governance tech-debt report expectation regressions remain to repair before `M35` is opened
+- `M35` closeout is accepted
+- `M36 Phase 0` bounded opening/freeze is accepted
+- no post-`M36 Phase 0` bounded phase is open yet
+- `M36 Phase 1` remains the next likely opening slice, but it is not active execution truth yet
 
 ## Common commands
 
@@ -173,6 +179,7 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db run create --goal "Ship a multi-role delivery slice" --preset project_delivery --prepare --execute`
 - `workflowctl --db-path state/workflow.db run create --goal "Ship with mandatory sign-off" --preset guarded_delivery --prepare --execute`
 - `workflowctl --db-path state/workflow.db run compile <run_id>`
+- `workflowctl --db-path state/workflow.db run compile <run_id> --adapter codex --codex-model gpt-5.4`
 - `workflowctl --db-path state/workflow.db run compile <run_id> --adapter opencode`
 - `workflowctl --db-path state/workflow.db run compile <run_id> --memory-item-id <memory_item_id>`
 - `workflowctl --db-path state/workflow.db run compile <run_id> --task-kind noop`
@@ -403,12 +410,12 @@ python -m apps.operator_cli.main --db-path state/project_demo.db run create --go
 python -m apps.operator_cli.main --db-path state/project_demo.db run orchestration <run_id>
 ```
 
-The `coder` role prefers `opencode` and falls back to `shell`.
+The `coder` role now prefers `codex`, keeps `opencode` as the lower-cost secondary lane, and falls back to `shell`.
 Research and review roles prefer the borrowed-agent lane and fall back safely to local execution.
 
 ## CLI-backed GPT route
 
-The current CLI-first GPT-capable lane is `OpenCodeAdapter`.
+The primary CLI-first coding lane is `CodexAdapter`. `OpenCodeAdapter` remains available as the lower-cost multi-provider lane.
 
 Requirements:
 
@@ -418,7 +425,10 @@ Requirements:
 Useful environment overrides:
 
 ```powershell
-$env:WORKFLOW_OPENCODE_MODEL="openai/gpt-5.4-mini"
+$env:WORKFLOW_AGENT_MODEL="gpt-5.4-mini"
+$env:WORKFLOW_CODEX_MODEL="gpt-5.4"
+$env:WORKFLOW_CODEX_REASONING_EFFORT="xhigh"
+$env:WORKFLOW_OPENCODE_MODEL="minimax/MiniMax-M2.7"
 $env:WORKFLOW_OPENCODE_VARIANT="<optional variant>"
 ```
 
@@ -656,7 +666,7 @@ The current routes are:
 - `POST /runs` only creates the run and records preset selection.
 - `compile`, `recompile`, `resume`, `approve`, and `reject` are explicit lifecycle steps in M1.
 - `research_spike` can be compiled with `--task-kind noop`; `feature_delivery` rejects `noop` with the structured error code `task_kind_not_allowed`.
-- `feature_delivery` can be compiled through `shell` or `opencode`; compile/recompile pin the selected adapter into the run's capability resolution.
+- `feature_delivery` can be compiled through `shell`, `codex`, or `opencode`; compile/recompile pin the selected adapter into the run's capability resolution.
 - `feature_delivery` stays `auto_only`.
 - `optional_delivery` uses `optional`: auto review always runs, but terminal status still follows execution success or failure.
 - `feature_delivery`, `optional_delivery`, `advisory_delivery`, and `guarded_delivery` now resolve the platformized `software_delivery_pack`; compile/status surfaces project the selected domain pack and adapter route.

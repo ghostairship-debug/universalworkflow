@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from packages.core_domain import governance as governance_module
 from packages.core_domain.governance import (
     build_domain_pack_platform_report,
     build_governance_alert_report,
@@ -89,6 +90,62 @@ def test_build_tech_debt_report_prefers_structured_sources_when_json_is_provided
     assert report["repaid_debt_count"] == 1
     assert report["open_debt_count"] == 1
     assert report["active_gate_focus_items"][0]["debt_id"] == "TD-010"
+
+
+def test_build_tech_debt_report_structured_source_projects_compatibility_path_when_available(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_path = tmp_path / "tech-debt-registry.json"
+    compatibility_path = tmp_path / "tech-debt-registry.md"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1",
+                "repaid_items": [],
+                "open_items": [],
+                "freeze_review_questions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    compatibility_path.write_text("# Technical Debt Registry\n", encoding="utf-8")
+    monkeypatch.setattr(governance_module, "DEFAULT_TECH_DEBT_REGISTRY_PATH", compatibility_path)
+
+    report = build_tech_debt_report(registry_path)
+
+    assert report["source_contract"] == "structured_json"
+    assert report["source_path"] == registry_path.as_posix()
+    assert report["source_paths"]["canonical"] == registry_path.as_posix()
+    assert report["source_paths"]["compatibility_markdown"] == compatibility_path.as_posix()
+
+
+def test_build_tech_debt_report_structured_source_leaves_compatibility_path_optional(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_path = tmp_path / "tech-debt-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1",
+                "repaid_items": [],
+                "open_items": [],
+                "freeze_review_questions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    missing_compatibility_path = tmp_path / "missing-tech-debt-registry.md"
+    monkeypatch.setattr(governance_module, "DEFAULT_TECH_DEBT_REGISTRY_PATH", missing_compatibility_path)
+
+    report = build_tech_debt_report(registry_path)
+
+    assert report["source_contract"] == "structured_json"
+    assert report["source_paths"]["canonical"] == registry_path.as_posix()
+    assert report["source_paths"]["compatibility_markdown"] is None
 
 
 def test_build_review_policy_report_projects_current_and_future_policy_catalog(tmp_path: Path) -> None:
@@ -204,6 +261,7 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert report["capability_routes"] == [
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+        {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
     assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]

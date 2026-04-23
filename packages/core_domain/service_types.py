@@ -13,6 +13,7 @@ from packages.contracts import (
     Phase,
     PresetDefinition,
     ReviewVerdict,
+    ResolvedExecutionProfile,
     Run,
     RunSnapshot,
     RuntimeAttempt,
@@ -38,6 +39,7 @@ class PreparedRunBundle:
     capability_route: CapabilityRoute | None
     memory_preview: MemoryRetrievalPreview | None
     execution_lane: ExecutionLaneType
+    resolved_execution: ResolvedExecutionProfile
     tool_projection_manifest: ToolProjectionManifest | None
     mcp_server_profiles: list[MCPServerProfile]
 

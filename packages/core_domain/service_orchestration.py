@@ -115,7 +115,21 @@ class OrchestrationExecutionService:
                 member.public_role,
                 selected_preset_id,
             )
-            preferred_adapter = preferred_adapter_for_cluster_member(member.public_role)
+            preset = self._facade.preset_repo.get(preset_id)
+            if preset is None:
+                raise ValueError(f"preset `{preset_id}` is not available for orchestration member `{member.member_id}`")
+            resolved_execution = self._facade._resolve_execution_profile_for_run(
+                preset=preset,
+                task_kind=preset.allowed_task_kinds[0],
+                domain_pack=self._facade._resolve_domain_pack(preset, preset.allowed_task_kinds[0]),
+                agent_profile_id=member.agent_profile_id,
+                cluster_template_id=template.template_id,
+                cluster_member_id=member.member_id,
+                public_role=member.public_role,
+                role_label=member.role_label,
+            )
+            execution_profile_payload = resolved_execution.model_dump(mode="json")
+            preferred_adapter = resolved_execution.adapter_name or preferred_adapter_for_cluster_member(member.public_role)
             fallback_adapter = fallback_adapter_for_cluster_member(member.public_role)
             roles.append(
                 RoleAssignment(
@@ -123,10 +137,12 @@ class OrchestrationExecutionService:
                     preset_id=preset_id,
                     agent_profile_id=member.agent_profile_id,
                     cluster_template_id=template.template_id,
+                    cluster_member_id=member.member_id,
                     role_label=member.role_label,
                     preferred_adapter=preferred_adapter,
                     fallback_adapter=fallback_adapter,
                     review_policy=review_policy,
+                    execution_profile=execution_profile_payload,
                 )
             )
             if member.public_role == AgentRoleType.operator and not include_operator_step:
@@ -140,6 +156,7 @@ class OrchestrationExecutionService:
                     preset_id=preset_id,
                     agent_profile_id=member.agent_profile_id,
                     cluster_template_id=template.template_id,
+                    cluster_member_id=member.member_id,
                     role_label=member.role_label,
                     preferred_adapter=preferred_adapter,
                     fallback_adapter=fallback_adapter,
@@ -150,6 +167,7 @@ class OrchestrationExecutionService:
                         member.public_role,
                     ),
                     status="pending",
+                    execution_profile=execution_profile_payload,
                 )
             )
 
@@ -187,6 +205,12 @@ class OrchestrationExecutionService:
         preferred_adapter: str | None,
         fallback_adapter: str | None,
         mutation_contract: MutationContract | None = None,
+        execution_profile: ExecutionProfileDefinition | None = None,
+        agent_profile_id: str | None = None,
+        cluster_template_id: str | None = None,
+        cluster_member_id: str | None = None,
+        public_role: str | None = None,
+        role_label: str | None = None,
     ) -> PreparedRunBundle:
         adapter_candidates = [preferred_adapter, fallback_adapter, None]
         seen: set[str | None] = set()
@@ -205,6 +229,11 @@ class OrchestrationExecutionService:
                     test_commands=mutation_contract.test_commands if mutation_contract is not None else None,
                     max_fix_iterations=mutation_contract.max_fix_iterations if mutation_contract is not None else 0,
                     mutation_mode=mutation_contract.mutation_mode if mutation_contract is not None else None,
+                    agent_profile_id=agent_profile_id,
+                    cluster_template_id=cluster_template_id,
+                    cluster_member_id=cluster_member_id,
+                    public_role=public_role,
+                    role_label=role_label,
                 )
             except (
                 CapabilityAdapterNotFoundError,
@@ -213,7 +242,14 @@ class OrchestrationExecutionService:
                 UnsupportedTaskKindError,
             ):
                 continue
-        return self._facade.compile_run(run_id)
+        return self._facade.compile_run(
+            run_id,
+            agent_profile_id=agent_profile_id,
+            cluster_template_id=cluster_template_id,
+            cluster_member_id=cluster_member_id,
+            public_role=public_role,
+            role_label=role_label,
+        )
 
     def finalize_child_run_if_waiting(self, run_id: str):
         run = self._facade.get_run(run_id)
@@ -336,6 +372,12 @@ class OrchestrationExecutionService:
                     preferred_adapter=step.preferred_adapter,
                     fallback_adapter=step.fallback_adapter,
                     mutation_contract=mutation_contract,
+                    execution_profile=step.execution_profile,
+                    agent_profile_id=step.agent_profile_id,
+                    cluster_template_id=step.cluster_template_id,
+                    cluster_member_id=step.cluster_member_id,
+                    public_role=str(step.role),
+                    role_label=step.role_label,
                 )
                 step.run_id = child_run.run_id
                 step.status = "prepared"
@@ -382,6 +424,12 @@ class OrchestrationExecutionService:
                         preferred_adapter=step.fallback_adapter,
                         fallback_adapter=None,
                         mutation_contract=step_mutation_contracts.get(step.step_id),
+                        execution_profile=step.execution_profile,
+                        agent_profile_id=step.agent_profile_id,
+                        cluster_template_id=step.cluster_template_id,
+                        cluster_member_id=step.cluster_member_id,
+                        public_role=str(step.role),
+                        role_label=step.role_label,
                     )
                     self._facade.resume_run(recovered_run.run_id)
                     finalized = self.finalize_child_run_if_waiting(recovered_run.run_id)

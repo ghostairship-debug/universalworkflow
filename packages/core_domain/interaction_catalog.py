@@ -7,6 +7,7 @@ from packages.contracts import (
     ClusterExecutionMode,
     ClusterMemberSpec,
     ClusterReviewRubric,
+    ExecutionProfileDefinition,
     ExecutionClusterTemplate,
     ProfileVisibility,
     ReviewPolicy,
@@ -41,6 +42,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["plan_graph", "task_card_pack"],
                 minimum_confidence=0.75,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
         ),
         AgentProfileDefinition(
             profile_id="coder_implementer",
@@ -67,6 +69,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["code_diff", "test_result"],
                 minimum_confidence=0.8,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="codex"),
         ),
         AgentProfileDefinition(
             profile_id="researcher_risk_mapper",
@@ -92,6 +95,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["risk_brief"],
                 minimum_confidence=0.7,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
         ),
         AgentProfileDefinition(
             profile_id="reviewer_quality_gate",
@@ -117,6 +121,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["review_verdict"],
                 minimum_confidence=0.8,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
         ),
         AgentProfileDefinition(
             profile_id="operator_launch_guard",
@@ -143,6 +148,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["launch_decision", "operator_packet"],
                 minimum_confidence=0.75,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="shell"),
         ),
         AgentProfileDefinition(
             profile_id="researcher_research_analyst",
@@ -169,6 +175,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["research_memo"],
                 minimum_confidence=0.72,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
         ),
         AgentProfileDefinition(
             profile_id="reviewer_citation_checker",
@@ -195,6 +202,7 @@ def build_default_agent_profile_registry() -> AgentProfileRegistry:
                 required_artifacts=["citation_review"],
                 minimum_confidence=0.78,
             ),
+            execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
         ),
     ]
     return AgentProfileRegistry(profiles=profiles, generated_profiles=[])
@@ -217,6 +225,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     agent_profile_id="planner_architect",
                     role_label="architect",
                     responsibilities=["decompose scope", "publish work breakdown", "define handoff edges"],
+                    execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
                 ),
                 ClusterMemberSpec(
                     member_id="dev_cluster_implementer",
@@ -225,6 +234,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     role_label="implementer",
                     responsibilities=["apply bounded repo changes", "run targeted tests"],
                     parallel_group="delivery_parallel",
+                    execution_profile=ExecutionProfileDefinition(adapter_name="codex"),
                 ),
                 ClusterMemberSpec(
                     member_id="dev_cluster_risk_mapper",
@@ -233,6 +243,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     role_label="risk_mapper",
                     responsibilities=["capture risks", "surface supporting evidence", "list unknowns"],
                     parallel_group="delivery_parallel",
+                    execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
                 ),
                 ClusterMemberSpec(
                     member_id="dev_cluster_quality_gate",
@@ -240,6 +251,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     agent_profile_id="reviewer_quality_gate",
                     role_label="quality_gate",
                     responsibilities=["review combined output", "call out regressions", "gate approval"],
+                    execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
                 ),
                 ClusterMemberSpec(
                     member_id="dev_cluster_launch_guard",
@@ -247,6 +259,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     agent_profile_id="operator_launch_guard",
                     role_label="launch_guard",
                     responsibilities=["keep launch human-visible", "record checkpoints", "own follow-up path"],
+                    execution_profile=ExecutionProfileDefinition(adapter_name="shell"),
                 ),
             ],
             review_rubric=ClusterReviewRubric(
@@ -276,6 +289,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     agent_profile_id="researcher_research_analyst",
                     role_label="research_analyst",
                     responsibilities=["investigate the question", "produce findings", "record open questions"],
+                    execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
                 ),
                 ClusterMemberSpec(
                     member_id="research_cluster_citation_checker",
@@ -283,6 +297,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     agent_profile_id="reviewer_citation_checker",
                     role_label="citation_checker",
                     responsibilities=["verify claims", "check citations", "adjust confidence posture"],
+                    execution_profile=ExecutionProfileDefinition(adapter_name="agent"),
                 ),
                 ClusterMemberSpec(
                     member_id="research_cluster_launch_guard",
@@ -290,6 +305,7 @@ def list_default_cluster_templates() -> list[ExecutionClusterTemplate]:
                     agent_profile_id="operator_launch_guard",
                     role_label="launch_guard",
                     responsibilities=["hold the launch gate", "keep operator follow-up explicit"],
+                    execution_profile=ExecutionProfileDefinition(adapter_name="shell"),
                 ),
             ],
             review_rubric=ClusterReviewRubric(
@@ -379,7 +395,7 @@ def member_preset_id(template_id: str, role_label: str, public_role: AgentRoleTy
 
 def preferred_adapter_for_cluster_member(public_role: AgentRoleType) -> str | None:
     if public_role == AgentRoleType.coder:
-        return "opencode"
+        return "codex"
     if public_role in {AgentRoleType.planner, AgentRoleType.researcher, AgentRoleType.reviewer}:
         return "agent"
     return None

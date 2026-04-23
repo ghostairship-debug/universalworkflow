@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from packages.contracts import TaskPacket
+from packages.contracts import MutationMode, TaskPacket
 
 
 def utc_now() -> datetime:
@@ -49,6 +49,9 @@ class WorkerAdapter(ABC):
 
     def normalized_name(self) -> str:
         return self.adapter_name or self.__class__.__name__.replace("Adapter", "").lower()
+
+    def supports_mutation_mode(self, mode: MutationMode | str) -> bool:
+        return MutationMode(mode) == MutationMode.artifact_only
 
     @abstractmethod
     def get_capabilities(self) -> list[str]:

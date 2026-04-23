@@ -18,6 +18,7 @@ from packages.contracts import (
     TaskPacket,
     WorkerPoolProfile,
 )
+from packages.worker_adapters.codex_adapter import CodexAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.router import WorkerRouter
@@ -66,7 +67,7 @@ def create_app(
     worker_router: WorkerRouter | None = None,
 ) -> FastAPI:
     post_json = callback_post or _default_json_post
-    router = worker_router or WorkerRouter([ShellAdapter(), OpenCodeAdapter(), NoopAdapter()])
+    router = worker_router or WorkerRouter([ShellAdapter(), CodexAdapter(), OpenCodeAdapter(), NoopAdapter()])
     app = FastAPI(title="Universal Agentic Workflow Remote Worker API", version="0.1.0")
 
     @app.get("/healthz")

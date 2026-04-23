@@ -6,6 +6,7 @@ from packages.contracts import TaskPacket
 from packages.core_domain.errors import CapabilityAdapterNotFoundError, UnsupportedTaskKindError
 from packages.worker_adapters.base import WorkerAdapter
 from packages.worker_adapters.capability_registry import CapabilityRegistry
+from packages.worker_adapters.codex_adapter import CodexAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.shell_adapter import ShellAdapter
@@ -13,7 +14,7 @@ from packages.worker_adapters.shell_adapter import ShellAdapter
 
 class WorkerRouter:
     def __init__(self, adapters: list[WorkerAdapter] | None = None):
-        self._adapters = adapters or [ShellAdapter(), OpenCodeAdapter(), NoopAdapter()]
+        self._adapters = adapters or [ShellAdapter(), CodexAdapter(), OpenCodeAdapter(), NoopAdapter()]
         self._registry = CapabilityRegistry(self._adapters)
         self._default_preferences = {
             "noop": "noop",

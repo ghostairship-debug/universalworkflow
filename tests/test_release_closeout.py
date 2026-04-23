@@ -15,6 +15,7 @@ def test_manage_demo_projects_canonical_closeout_packet(tmp_path: Path) -> None:
     assert payload["capability_routes"] == [
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+        {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]

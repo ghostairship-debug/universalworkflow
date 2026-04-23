@@ -178,6 +178,10 @@ class PresetRepository(RepositoryBase):
         data["allowed_task_kinds"] = _json_load(data.pop("allowed_task_kinds_json"))
         data["default_budget_policy"] = _json_load(data.pop("default_budget_policy_json"))
         data["requires_manual_approval"] = bool(data["requires_manual_approval"])
+        seed_defaults = {preset.preset_id: preset for preset in load_seed_presets()}
+        seeded = seed_defaults.get(data["preset_id"])
+        if seeded is not None and seeded.execution_profile is not None:
+            data["execution_profile"] = seeded.execution_profile.model_dump(mode="json")
         return PresetDefinition.model_validate(data)
 
 

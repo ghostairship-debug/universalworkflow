@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import uvicorn
@@ -85,7 +86,7 @@ def restore_environment(values: dict[str, str]) -> None:
 
 
 def mutate_task_packet_command(db_path: Path, runtime_task_id: str, command: list[str]) -> None:
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection:
         connection.execute(
             "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
             (json.dumps(command, ensure_ascii=False), runtime_task_id),

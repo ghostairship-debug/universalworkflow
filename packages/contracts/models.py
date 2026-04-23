@@ -129,6 +129,49 @@ class AgentRoleType(StrEnum):
     operator = "operator"
 
 
+class ExecutionProfileDefinition(ContractModel):
+    adapter_name: str | None = None
+    agent_model: str | None = None
+    codex_model: str | None = None
+    codex_reasoning_effort: str | None = None
+    opencode_model: str | None = None
+    opencode_variant: str | None = None
+    runtime_gateway_provider: str | None = None
+    runtime_gateway_model: str | None = None
+    runtime_reasoning_effort: str | None = None
+    worker_pool_id: str | None = None
+
+
+class ExecutionScopeContext(ContractModel):
+    preset_id: str | None = None
+    agent_profile_id: str | None = None
+    cluster_template_id: str | None = None
+    cluster_member_id: str | None = None
+    public_role: AgentRoleType | None = None
+    role_label: str | None = None
+
+
+class ResolvedExecutionProfile(ContractModel):
+    adapter_name: str | None = None
+    execution_lane: ExecutionLaneType | None = None
+    selected_model: str | None = None
+    selected_model_kind: str | None = None
+    model_variant: str | None = None
+    agent_model: str | None = None
+    codex_model: str | None = None
+    codex_reasoning_effort: str | None = None
+    opencode_model: str | None = None
+    opencode_variant: str | None = None
+    runtime_gateway_provider: str | None = None
+    runtime_gateway_model: str | None = None
+    runtime_reasoning_effort: str | None = None
+    worker_pool_id: str | None = None
+    scope_context: ExecutionScopeContext | None = None
+    source_map: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    applied_scopes: list[dict[str, Any]] = Field(default_factory=list)
+    compatibility_fallback: str | None = None
+
+
 class IntentSessionStatus(StrEnum):
     open = "open"
     clarifying = "clarifying"
@@ -318,6 +361,7 @@ class MCPServerProfile(PersistedContractModel):
     description: str
     transport: MCPTransport
     startup_command: list[str] = Field(default_factory=list)
+    startup_env: dict[str, str] = Field(default_factory=dict)
     auth_mode: str = "env"
     allowed_tools: list[str] = Field(default_factory=list)
     max_tools: int = Field(default=5, ge=1)
@@ -685,6 +729,7 @@ class PresetDefinition(PersistedContractModel):
     default_review_policy: ReviewPolicy
     default_budget_policy: BudgetPolicy
     requires_manual_approval: bool = False
+    execution_profile: ExecutionProfileDefinition | None = None
 
 
 class DomainPackMatchRule(ContractModel):
@@ -909,6 +954,7 @@ class AgentProfileDefinition(PersistedContractModel):
     system_brief: str | None = None
     termination_rule: TerminationRule = Field(default_factory=TerminationRule)
     evaluation_rubric: RoleEvaluationRubric | None = None
+    execution_profile: ExecutionProfileDefinition | None = None
 
 
 class GeneratedAgentProfile(PersistedContractModel):
@@ -925,6 +971,7 @@ class GeneratedAgentProfile(PersistedContractModel):
     system_brief: str | None = None
     termination_rule: TerminationRule = Field(default_factory=TerminationRule)
     evaluation_rubric: RoleEvaluationRubric | None = None
+    execution_profile: ExecutionProfileDefinition | None = None
 
 
 class AgentProfileRegistry(PersistedContractModel):
@@ -980,10 +1027,12 @@ class RoleAssignment(ContractModel):
     preset_id: str
     agent_profile_id: str | None = None
     cluster_template_id: str | None = None
+    cluster_member_id: str | None = None
     role_label: str | None = None
     preferred_adapter: str | None = None
     fallback_adapter: str | None = None
     review_policy: ReviewPolicy | None = None
+    execution_profile: ExecutionProfileDefinition | None = None
 
 
 class OrchestrationStep(ContractModel):
@@ -994,12 +1043,14 @@ class OrchestrationStep(ContractModel):
     preset_id: str
     agent_profile_id: str | None = None
     cluster_template_id: str | None = None
+    cluster_member_id: str | None = None
     role_label: str | None = None
     preferred_adapter: str | None = None
     fallback_adapter: str | None = None
     barrier_id: str | None = None
     sequence_no: int = Field(default=1, ge=1)
     status: str = "pending"
+    execution_profile: ExecutionProfileDefinition | None = None
 
 
 class OrchestrationBarrier(ContractModel):
@@ -1030,6 +1081,7 @@ class ClusterMemberSpec(ContractModel):
     responsibilities: list[str] = Field(default_factory=list)
     parallel_group: str | None = None
     required: bool = True
+    execution_profile: ExecutionProfileDefinition | None = None
 
 
 class ClusterReviewRubric(PersistedContractModel):
@@ -1052,6 +1104,7 @@ class ExecutionClusterTemplate(PersistedContractModel):
     execution_mode: ClusterExecutionMode = ClusterExecutionMode.mixed
     output_contract_name: str = "cluster_output_packet"
     review_rubric: ClusterReviewRubric | None = None
+    default_execution_profile: ExecutionProfileDefinition | None = None
 
 
 class ClusterExecutionPlan(PersistedContractModel):
@@ -1098,6 +1151,7 @@ class OrchestrationGraphNode(ContractModel):
     goal: str
     agent_profile_id: str | None = None
     cluster_template_id: str | None = None
+    cluster_member_id: str | None = None
     role_label: str | None = None
     required_capabilities: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
@@ -1108,6 +1162,7 @@ class OrchestrationGraphNode(ContractModel):
     preset_id: str | None = None
     preferred_adapter: str | None = None
     retry_policy_id: str | None = None
+    execution_profile: ResolvedExecutionProfile | None = None
 
 
 class EdgeSpec(ContractModel):

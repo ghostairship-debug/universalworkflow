@@ -119,6 +119,7 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
     assert capability_routes == [
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+        {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
 
@@ -197,6 +198,8 @@ def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     projection_payload = json.loads(projection_result.stdout)
     assert projection_payload["execution_lane"] == "standard_agent"
     assert projection_payload["capability_resolution"]["adapter_name"] == "agent"
+    assert projection_payload["resolved_execution"]["adapter_name"] == "agent"
+    assert projection_payload["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "preset"
     assert "mcp_list_workspace_files" in [
         item["tool_name"] for item in projection_payload["tool_projection_manifest"]["tools"]
     ]
@@ -383,6 +386,8 @@ default_pool_id = "mock_remote_shell"
     assert config_payload["config_path"].endswith("workflow.toml")
     assert config_payload["feature_flags"]["external_worker_pools"]["enabled"] is True
     assert config_payload["worker_pools"]["default_pool_id"] == "mock_remote_shell"
+    assert config_payload["execution_defaults"]["worker_pool_id"]["value"] == "mock_remote_shell"
+    assert config_payload["execution_defaults"]["worker_pool_id"]["source"] == "toml:worker_pools.default_pool_id"
 
     assert worker_pool_result.exit_code == 0
     worker_pools = json.loads(worker_pool_result.stdout)
@@ -418,9 +423,12 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "governance", "tech-debt")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
+    assert payload["source_contract"] == "structured_json"
     assert payload["open_debt_count"] == 4
+    assert payload["status_counts"] == {"partially_repaid": 3, "active": 1}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
-    assert payload["planned_phase_counts"] == {"M34 Phase 0": 2, "Post-M34 bounded phase": 2}
+    assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
+    assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
 
 
 def test_cli_governance_review_policy_report(tmp_path: Path) -> None:
@@ -1072,6 +1080,40 @@ def test_cli_compile_can_pin_opencode_adapter(tmp_path: Path) -> None:
     assert detail_payload["runtime_tasks"][0]["task_kind"] == "shell_exec"
 
 
+def test_cli_compile_can_pin_codex_adapter(tmp_path: Path) -> None:
+    _invoke(tmp_path, "db", "reset")
+    create_result = _invoke(
+        tmp_path,
+        "run",
+        "create",
+        "--goal",
+        "Pin codex adapter via CLI",
+        "--preset",
+        "feature_delivery",
+    )
+    run_id = json.loads(create_result.stdout)["run"]["run_id"]
+
+    compile_result = _invoke(
+        tmp_path,
+        "run",
+        "compile",
+        run_id,
+        "--adapter",
+        "codex",
+        "--codex-model",
+        "gpt-5.1-codex-max",
+    )
+    assert compile_result.exit_code == 0
+    compile_payload = json.loads(compile_result.stdout)
+    assert compile_payload["capability_adapter"] == "codex"
+    assert compile_payload["resolved_execution"]["selected_model"] == "gpt-5.1-codex-max"
+
+    detail_result = _invoke(tmp_path, "run", "status-detail", run_id)
+    detail_payload = json.loads(detail_result.stdout)
+    assert detail_payload["capability_resolution"]["adapter_name"] == "codex"
+    assert detail_payload["runtime_tasks"][0]["task_kind"] == "shell_exec"
+
+
 def test_cli_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     _invoke(tmp_path, "db", "reset")
     create_result = _invoke(
@@ -1089,7 +1131,7 @@ def test_cli_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     assert compile_result.exit_code != 0
     error = json.loads(compile_result.stdout)["error"]
     assert error["code"] == "capability_adapter_not_found"
-    assert error["details"]["available_adapters"] == ["shell", "opencode"]
+    assert error["details"]["available_adapters"] == ["shell", "codex", "opencode"]
 
 
 def test_cli_scheduler_cluster_exposes_quorum_snapshot(tmp_path: Path) -> None:
@@ -1124,6 +1166,7 @@ def test_cli_compile_recompile_status_detail_and_handoffs(tmp_path: Path) -> Non
     assert compile_result.exit_code == 0
     compile_payload = json.loads(compile_result.stdout)
     assert compile_payload["run"]["status"] == "prepared"
+    assert compile_payload["resolved_execution"]["adapter_name"] == "shell"
 
     detail_result = _invoke(tmp_path, "run", "status-detail", run_id)
     assert detail_result.exit_code == 0
@@ -1134,6 +1177,8 @@ def test_cli_compile_recompile_status_detail_and_handoffs(tmp_path: Path) -> Non
     assert detail_payload["last_runtime_state"]["graph_step"] == "compiled"
     assert detail_payload["last_review_verdict"] is None
     assert detail_payload["recoverability_hint"] == "resume_run"
+    assert detail_payload["resolved_execution"]["adapter_name"] == "shell"
+    assert detail_payload["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "compatibility_fallback"
     assert detail_payload["handoffs"]
     assert detail_payload["effective_review_state"] == "not_requested"
 

@@ -61,6 +61,9 @@ class LangChainAgentAdapter(WorkerAdapter):
     def collect_artifacts(self, packet: TaskPacket) -> list[str]:
         return resolve_artifact_paths(packet, create_missing=False)
 
+    def _model_for_packet(self, packet: TaskPacket) -> str:
+        return str(packet.env.get("WORKFLOW_AGENT_MODEL") or self.model)
+
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
         manifest = load_tool_projection_manifest(packet.env.get(TOOL_PROJECTION_MANIFEST_ENV_KEY))
@@ -83,6 +86,7 @@ class LangChainAgentAdapter(WorkerAdapter):
                 "projection_id": manifest.projection_id if manifest is not None else None,
                 "tool_names": [item.tool_name for item in manifest.tools] if manifest is not None else [],
                 "tool_call_ids": response.tool_call_ids,
+                "agent_model": self._model_for_packet(packet),
                 **response.metadata,
             },
         )
@@ -105,7 +109,7 @@ class LangChainAgentAdapter(WorkerAdapter):
                 adapter_name=self.normalized_name(),
                 domain_pack_id=packet.env.get("WORKFLOW_DOMAIN_PACK_ID") or None,
                 runtime_gateway=packet.env.get("WORKFLOW_RUNTIME_GATEWAY_PROVIDER") or None,
-                runtime_model=self.model,
+                runtime_model=self._model_for_packet(packet),
                 runtime_brief=packet.env.get("WORKFLOW_RUNTIME_BRIEF") or None,
                 execution_lane=packet.env.get("WORKFLOW_EXECUTION_LANE"),
                 projected_tools=tool_names,
@@ -130,7 +134,8 @@ class LangChainAgentAdapter(WorkerAdapter):
             elif self._mcp_tool_caller is not None:
                 tools.append(self._mcp_langchain_tool(StructuredTool, entry.tool_name))
 
-        model = ChatOpenAI(model=self.model)
+        selected_model = self._model_for_packet(packet)
+        model = ChatOpenAI(model=selected_model)
         system_prompt = (
             "You are running inside a local workflow control plane. "
             "Use only the provided read-only tools when they help. "
@@ -149,7 +154,7 @@ class LangChainAgentAdapter(WorkerAdapter):
         content = self._extract_content(result)
         return AgentExecutionResponse(
             content=content,
-            metadata={"agent_model": self.model},
+            metadata={"agent_model": selected_model},
         )
 
     def _built_in_langchain_tool(self, structured_tool: Any, packet: TaskPacket, tool_name: str):

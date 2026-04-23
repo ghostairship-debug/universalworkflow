@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from packages.core_domain.execution_profiles import build_effective_execution_defaults
+
 
 DEFAULT_CONFIG_FILE_NAME = "workflow.toml"
 
@@ -247,13 +249,31 @@ def build_effective_config(
                 coerce=str,
             )
         },
+        "codex": {
+            "model": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_CODEX_MODEL",
+                config=raw_config,
+                config_key="codex.model",
+                default="gpt-5.4",
+                coerce=str,
+            ),
+            "reasoning_effort": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_CODEX_REASONING_EFFORT",
+                config=raw_config,
+                config_key="codex.reasoning_effort",
+                default="xhigh",
+                coerce=str,
+            ),
+        },
         "opencode": {
             "model": _resolve_value(
                 env=environment,
                 env_key="WORKFLOW_OPENCODE_MODEL",
                 config=raw_config,
                 config_key="opencode.model",
-                default="openai/gpt-5.4-mini",
+                default="minimax/MiniMax-M2.7",
                 coerce=str,
             ),
             "variant": _resolve_value(
@@ -467,6 +487,12 @@ def build_effective_config(
             "model": config_values["agent"]["model"].value,
             "model_source": config_values["agent"]["model"].source,
         },
+        "codex": {
+            "model": config_values["codex"]["model"].value,
+            "model_source": config_values["codex"]["model"].source,
+            "reasoning_effort": config_values["codex"]["reasoning_effort"].value,
+            "reasoning_effort_source": config_values["codex"]["reasoning_effort"].source,
+        },
         "opencode": {
             "model": config_values["opencode"]["model"].value,
             "model_source": config_values["opencode"]["model"].source,
@@ -523,5 +549,37 @@ def build_effective_config(
             "heartbeat_interval_ms": config_values["scheduler_authority"]["heartbeat_interval_ms"].value,
             "heartbeat_interval_ms_source": config_values["scheduler_authority"]["heartbeat_interval_ms"].source,
         },
+        "execution_defaults": build_effective_execution_defaults(
+                {
+                    "runtime_gateway": {
+                        "provider": config_values["runtime_gateway"]["provider"],
+                        "provider_source": config_values["runtime_gateway"]["provider_source"],
+                        "openai_model": config_values["runtime_gateway"]["openai_model"].value,
+                        "openai_model_source": config_values["runtime_gateway"]["openai_model"].source,
+                        "openai_reasoning_effort": config_values["runtime_gateway"]["openai_reasoning_effort"].value,
+                    "openai_reasoning_effort_source": config_values["runtime_gateway"]["openai_reasoning_effort"].source,
+                },
+                "agent": {
+                    "model": config_values["agent"]["model"].value,
+                    "model_source": config_values["agent"]["model"].source,
+                },
+                "codex": {
+                    "model": config_values["codex"]["model"].value,
+                    "model_source": config_values["codex"]["model"].source,
+                    "reasoning_effort": config_values["codex"]["reasoning_effort"].value,
+                    "reasoning_effort_source": config_values["codex"]["reasoning_effort"].source,
+                },
+                "opencode": {
+                    "model": config_values["opencode"]["model"].value,
+                    "model_source": config_values["opencode"]["model"].source,
+                    "variant": config_values["opencode"]["variant"].value,
+                    "variant_source": config_values["opencode"]["variant"].source,
+                },
+                "worker_pools": {
+                    "default_pool_id": config_values["worker_pools"]["default_pool_id"].value,
+                    "default_pool_id_source": config_values["worker_pools"]["default_pool_id"].source,
+                },
+            }
+        ),
     }
     return effective

@@ -20,6 +20,8 @@ from packages.contracts import (
     DomainPackResolution,
     Evidence,
     ExecutionTargetRef,
+    ExecutionProfileDefinition,
+    ExecutionScopeContext,
     HandoffLite,
     LeaseRenewalRecord,
     LeaseFencingToken,
@@ -54,6 +56,7 @@ from packages.contracts import (
     RuntimeGraphStep,
     RuntimeStateRef,
     RepoMutationResult,
+    ResolvedExecutionProfile,
     SchedulerCommittedLease,
     SchedulerConsensusTerm,
     OwnershipActorKind,
@@ -111,6 +114,7 @@ from packages.core_domain.errors import (
     UnsupportedTaskKindError,
     WorkflowError,
 )
+from packages.core_domain.execution_profiles import build_effective_execution_defaults, resolve_execution_profile
 from packages.core_domain.memory import (
     MEMORY_RETRIEVAL_PREVIEW_ENV_KEY,
     load_memory_retrieval_preview,
@@ -186,12 +190,13 @@ from packages.runtime_langgraph.durable_pilot import (
     build_durable_runtime_pilot_from_env,
 )
 from packages.core_domain.service_audit_replay import AuditReplayService
-from packages.runtime_langgraph.gateway import build_runtime_gateway_from_env
+from packages.runtime_langgraph.gateway import build_runtime_gateway_from_env, resolve_runtime_gateway
 from packages.core_domain.service_ownership_lease import OwnershipLeaseService
 from packages.core_domain.service_review_policy import ReviewPolicyService
 from packages.core_domain.service_run_lifecycle import RunLifecycleService
 from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.base import ExecutionResult
+from packages.worker_adapters.codex_adapter import CodexAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
@@ -260,8 +265,30 @@ class OrchestratorService(
         self.intent_session_repo = IntentSessionRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
         self.runtime_gateway = runtime_gateway or build_runtime_gateway_from_env()
+        runtime_gateway_description = self.runtime_gateway.describe()
+        self.effective_config["runtime_gateway"]["provider"] = runtime_gateway_description.get("provider")
+        self.effective_config["runtime_gateway"]["provider_source"] = (
+            "runtime_gateway_argument" if runtime_gateway is not None else self.effective_config["runtime_gateway"]["provider_source"]
+        )
+        if runtime_gateway_description.get("model") is not None:
+            self.effective_config["runtime_gateway"]["openai_model"] = runtime_gateway_description.get("model")
+            self.effective_config["runtime_gateway"]["openai_model_source"] = (
+                "runtime_gateway_argument"
+                if runtime_gateway is not None
+                else self.effective_config["runtime_gateway"]["openai_model_source"]
+            )
+        if runtime_gateway_description.get("reasoning_effort") is not None:
+            self.effective_config["runtime_gateway"]["openai_reasoning_effort"] = runtime_gateway_description.get(
+                "reasoning_effort"
+            )
+            self.effective_config["runtime_gateway"]["openai_reasoning_effort_source"] = (
+                "runtime_gateway_argument"
+                if runtime_gateway is not None
+                else self.effective_config["runtime_gateway"]["openai_reasoning_effort_source"]
+            )
+        self.effective_config["execution_defaults"] = build_effective_execution_defaults(self.effective_config)
         self.capability_plane = capability_plane or CapabilityPlane(workspace_root=self._workspace_root())
-        adapters = [shell_adapter or ShellAdapter(), OpenCodeAdapter(), NoopAdapter()]
+        adapters = [shell_adapter or ShellAdapter(), CodexAdapter(), OpenCodeAdapter(), NoopAdapter()]
         if is_sessionful_external_agents_enabled():
             adapters.append(OpenCodeSessionAdapter())
         if is_agent_lane_enabled():
@@ -448,12 +475,24 @@ class OrchestratorService(
             for profile in self.worker_pool_profiles
         ]
 
-    def _selected_worker_pool_profile(self) -> Any | None:
+    def _selected_worker_pool_profile(self, worker_pool_id: str | None = None) -> Any | None:
         if not is_external_worker_pools_enabled():
             return None
         return resolve_worker_pool_profile(
             self.worker_pool_profiles,
-            self.effective_config["worker_pools"]["default_pool_id"],
+            worker_pool_id or self.effective_config["worker_pools"]["default_pool_id"],
+        )
+
+    def _runtime_gateway_for_task_packet(self, task_packet: TaskPacket):
+        return resolve_runtime_gateway(
+            self.runtime_gateway,
+            provider=task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_PROVIDER") or None,
+            model=(
+                task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_MODEL")
+                or task_packet.env.get("WORKFLOW_LLM_MODEL")
+                or None
+            ),
+            reasoning_effort=task_packet.env.get("WORKFLOW_RUNTIME_REASONING_EFFORT") or None,
         )
 
     def _scheduler_authority_payload(self, state_ref: RuntimeStateRef | None) -> dict[str, Any]:
@@ -959,9 +998,9 @@ class OrchestratorService(
         contract = packet.mutation_contract
         if contract is None or contract.mutation_mode != MutationMode.patch_apply:
             return adapter.launch(packet)
-        if adapter.normalized_name() != "opencode":
+        if not adapter.supports_mutation_mode(MutationMode.patch_apply):
             raise MutationContractError(
-                "repo mutation execution requires the opencode adapter",
+                "repo mutation execution requires a patch-capable adapter",
                 {"adapter_name": adapter.normalized_name()},
             )
         allowed_paths = normalize_allowed_paths(packet.working_directory, contract.write_set)
@@ -997,7 +1036,7 @@ class OrchestratorService(
                 if patch_path.exists():
                     patch_text = patch_path.read_text(encoding="utf-8")
             if execution_result.return_code != 0 and not patch_text.strip():
-                failure_feedback = execution_result.stderr or execution_result.stdout or "opencode patch generation failed"
+                failure_feedback = execution_result.stderr or execution_result.stdout or "patch generation failed"
                 final_test_status = "patch_generation_failed"
                 if attempt_index < attempt_limit:
                     continue
@@ -1010,7 +1049,7 @@ class OrchestratorService(
                 if attempt_index < attempt_limit:
                     continue
                 raise PatchApplyError(
-                    "opencode did not return a valid unified diff patch",
+                    "adapter did not return a valid unified diff patch",
                     {"reason": str(exc), "attempt_index": attempt_index},
                 ) from exc
             rejected_paths = [path for path in touched_paths if not is_path_allowed(path, allowed_paths)]
@@ -1113,6 +1152,193 @@ class OrchestratorService(
 
     def _execute_project_delivery_orchestration(self, packet: TaskPacket) -> ExecutionResult:
         return self.orchestration_service.execute_orchestration_packet(packet)
+
+    def _agent_profile_definition(self, agent_profile_id: str | None):
+        if not agent_profile_id:
+            return None
+        return next((profile for profile in self.list_agent_profiles() if profile.profile_id == agent_profile_id), None)
+
+    def _cluster_template_definition(self, cluster_template_id: str | None):
+        if not cluster_template_id:
+            return None
+        return next((template for template in self.list_cluster_templates() if template.template_id == cluster_template_id), None)
+
+    def _cluster_member_definition(
+        self,
+        cluster_template_id: str | None,
+        cluster_member_id: str | None,
+    ):
+        template = self._cluster_template_definition(cluster_template_id)
+        if template is None or not cluster_member_id:
+            return None
+        return next((member for member in template.member_specs if member.member_id == cluster_member_id), None)
+
+    def _execution_override_profile(
+        self,
+        *,
+        adapter_name: str | None = None,
+        agent_model: str | None = None,
+        codex_model: str | None = None,
+        opencode_model: str | None = None,
+        opencode_variant: str | None = None,
+        runtime_gateway_provider: str | None = None,
+        runtime_gateway_model: str | None = None,
+        runtime_reasoning_effort: str | None = None,
+        worker_pool_id: str | None = None,
+    ) -> ExecutionProfileDefinition | None:
+        payload = {
+            "adapter_name": adapter_name,
+            "agent_model": agent_model,
+            "codex_model": codex_model,
+            "opencode_model": opencode_model,
+            "opencode_variant": opencode_variant,
+            "runtime_gateway_provider": runtime_gateway_provider,
+            "runtime_gateway_model": runtime_gateway_model,
+            "runtime_reasoning_effort": runtime_reasoning_effort,
+            "worker_pool_id": worker_pool_id,
+        }
+        if not any(value is not None for value in payload.values()):
+            return None
+        return ExecutionProfileDefinition(**payload)
+
+    def _router_default_adapter_for_task_kind(self, task_kind: TaskKind | str) -> str | None:
+        route = self.worker_router.describe(str(task_kind), adapter_name=None)
+        if route is None:
+            return None
+        return str(route.get("adapter_name") or "") or None
+
+    def _resolve_execution_profile_for_run(
+        self,
+        *,
+        preset: PresetDefinition,
+        task_kind: TaskKind,
+        domain_pack: DomainPackResolution | None,
+        mutation_contract: MutationContract | None = None,
+        requested_adapter: str | None = None,
+        requested_agent_model: str | None = None,
+        requested_codex_model: str | None = None,
+        requested_opencode_model: str | None = None,
+        requested_opencode_variant: str | None = None,
+        requested_runtime_gateway_provider: str | None = None,
+        requested_runtime_gateway_model: str | None = None,
+        requested_runtime_reasoning_effort: str | None = None,
+        requested_worker_pool_id: str | None = None,
+        agent_profile_id: str | None = None,
+        cluster_template_id: str | None = None,
+        cluster_member_id: str | None = None,
+        public_role: AgentRoleType | str | None = None,
+        role_label: str | None = None,
+    ) -> ResolvedExecutionProfile:
+        cluster_member = self._cluster_member_definition(cluster_template_id, cluster_member_id)
+        template = self._cluster_template_definition(cluster_template_id)
+        resolved_agent_profile_id = (
+            agent_profile_id
+            or (cluster_member.agent_profile_id if cluster_member is not None and cluster_member.agent_profile_id else None)
+        )
+        agent_profile = self._agent_profile_definition(resolved_agent_profile_id)
+        scope_context = ExecutionScopeContext(
+            preset_id=preset.preset_id,
+            agent_profile_id=resolved_agent_profile_id,
+            cluster_template_id=cluster_template_id,
+            cluster_member_id=cluster_member_id,
+            public_role=public_role,
+            role_label=role_label,
+        )
+        resolved = resolve_execution_profile(
+            effective_config=self.effective_config,
+            explicit_profile=self._execution_override_profile(
+                adapter_name=requested_adapter,
+                agent_model=requested_agent_model,
+                codex_model=requested_codex_model,
+                opencode_model=requested_opencode_model,
+                opencode_variant=requested_opencode_variant,
+                runtime_gateway_provider=requested_runtime_gateway_provider,
+                runtime_gateway_model=requested_runtime_gateway_model,
+                runtime_reasoning_effort=requested_runtime_reasoning_effort,
+                worker_pool_id=requested_worker_pool_id,
+            ),
+            cluster_member_profile=cluster_member.execution_profile if cluster_member is not None else None,
+            agent_profile=agent_profile.execution_profile if agent_profile is not None else None,
+            preset_profile=preset.execution_profile,
+            cluster_template_profile=template.default_execution_profile if template is not None else None,
+            compatibility_adapter=self._default_adapter_for_preset(preset, task_kind, domain_pack),
+            routing_default_adapter=self._router_default_adapter_for_task_kind(task_kind),
+            scope_context=scope_context,
+        )
+        selected_adapter = resolved.adapter_name
+        if (
+            selected_adapter is not None
+            and self._capability_route_for(task_kind, adapter_name=selected_adapter) is None
+            and resolved.source_map.get("adapter_name", {}).get("scope") != "explicit_invocation"
+        ):
+            fallback_adapter = self._router_default_adapter_for_task_kind(task_kind)
+            selected_model = None
+            selected_model_kind = None
+            model_variant = None
+            if fallback_adapter == "agent":
+                selected_model = resolved.agent_model
+                selected_model_kind = "agent_model"
+            elif fallback_adapter == "codex":
+                selected_model = resolved.codex_model
+                selected_model_kind = "codex_model"
+            elif fallback_adapter in {"opencode", "opencode_session"}:
+                selected_model = resolved.opencode_model
+                selected_model_kind = "opencode_model"
+                model_variant = resolved.opencode_variant
+            source_map = dict(resolved.source_map)
+            source_map["adapter_name"] = {
+                "scope": "compatibility_fallback",
+                "source": "worker_router_default",
+                "value": fallback_adapter,
+            }
+            resolved = ResolvedExecutionProfile.model_validate(
+                {
+                    **resolved.model_dump(mode="json"),
+                    "adapter_name": fallback_adapter,
+                    "selected_model": selected_model,
+                    "selected_model_kind": selected_model_kind,
+                    "model_variant": model_variant,
+                    "compatibility_fallback": "worker_router_default",
+                    "source_map": source_map,
+                }
+            )
+        lane = self._resolve_execution_lane(
+            preset=preset,
+            task_kind=task_kind,
+            selected_adapter=resolved.adapter_name,
+            mutation_contract=mutation_contract,
+        )
+        source_map = dict(resolved.source_map)
+        source_map["execution_lane"] = {
+            "scope": "derived_lane_rules",
+            "source": "execution_lane_resolution",
+            "value": str(lane),
+        }
+        return ResolvedExecutionProfile.model_validate(
+            {
+                **resolved.model_dump(mode="json"),
+                "execution_lane": str(lane),
+                "source_map": source_map,
+            }
+        )
+
+    def _adapter_supports_mutation_mode(self, adapter_name: str | None, mode: MutationMode | str) -> bool:
+        if not adapter_name:
+            return False
+        adapter = self._capability_route_for(TaskKind.shell_exec, adapter_name=adapter_name)
+        if adapter is None:
+            return False
+        route = self.worker_router.route(
+            TaskPacket(
+                runtime_task_id="mutation_probe",
+                run_id="mutation_probe",
+                task_kind=TaskKind.shell_exec,
+                command=[],
+                working_directory=".",
+                env={"WORKFLOW_CAPABILITY_ADAPTER": adapter_name},
+            )
+        )
+        return route.supports_mutation_mode(mode)
 
     def _default_adapter_for_preset(
         self,
@@ -2801,6 +3027,33 @@ class OrchestratorService(
             return None
         return min(context.runtime_tasks, key=lambda task: (task.created_at, task.runtime_task_id))
 
+    def _runtime_gateway_description_for_context(self, context: RunDiagnosticContext) -> dict[str, Any]:
+        runtime_task = self._runtime_task_for_context(context)
+        if runtime_task is None:
+            return self.runtime_gateway.describe()
+        task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id)
+        if task_packet is None:
+            return self.runtime_gateway.describe()
+        description = dict(self.runtime_gateway.describe())
+        provider = task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_PROVIDER") or None
+        if provider is None:
+            return description
+        normalized_provider = str(provider).strip().lower()
+        description["provider"] = normalized_provider
+        if normalized_provider in {"", "null", "none", "disabled"}:
+            description["configured"] = False
+            description["live"] = False
+            description["model"] = None
+            description["reasoning_effort"] = None
+            return description
+        runtime_model = task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_MODEL") or None
+        reasoning_effort = task_packet.env.get("WORKFLOW_RUNTIME_REASONING_EFFORT") or None
+        if runtime_model is not None:
+            description["model"] = runtime_model
+        if reasoning_effort is not None:
+            description["reasoning_effort"] = reasoning_effort
+        return description
+
     def _state_ref_with_compile_context(
         self,
         state_ref: RuntimeStateRef,
@@ -2824,6 +3077,17 @@ class OrchestratorService(
             "memory_retrieval_preview": (
                 snapshot.memory_preview.model_dump(mode="json") if snapshot.memory_preview is not None else None
             ),
+            "resolved_execution": snapshot.resolved_execution.model_dump(mode="json"),
+            "execution_resolution_trace": {
+                "scope_context": (
+                    snapshot.resolved_execution.scope_context.model_dump(mode="json")
+                    if snapshot.resolved_execution.scope_context is not None
+                    else None
+                ),
+                "source_map": snapshot.resolved_execution.source_map,
+                "applied_scopes": snapshot.resolved_execution.applied_scopes,
+                "compatibility_fallback": snapshot.resolved_execution.compatibility_fallback,
+            },
             "mutation_contract": (
                 snapshot.task_packet.mutation_contract.model_dump(mode="json")
                 if snapshot.task_packet.mutation_contract is not None

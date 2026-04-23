@@ -22,5 +22,32 @@
     "retry_policy": "none",
     "manifest_ttl_seconds": 300,
     "enabled": true
+  },
+  {
+    "profile_id": "minimax_coding_plan",
+    "name": "MiniMax Coding Plan MCP",
+    "description": "MiniMax Token Plan MCP profile for bounded web search and image understanding during research/workbench flows.",
+    "transport": "stdio",
+    "startup_command": [
+      "uvx",
+      "minimax-coding-plan-mcp",
+      "-y"
+    ],
+    "startup_env": {
+      "MINIMAX_API_KEY": "${ENV:MINIMAX_API_KEY}",
+      "MINIMAX_API_HOST": "https://api.minimax.io"
+    },
+    "auth_mode": "env",
+    "allowed_tools": [
+      "web_search",
+      "understand_image"
+    ],
+    "max_tools": 2,
+    "max_schema_bytes": 8192,
+    "startup_timeout_ms": 4000,
+    "call_timeout_ms": 8000,
+    "retry_policy": "none",
+    "manifest_ttl_seconds": 300,
+    "enabled": true
   }
 ]

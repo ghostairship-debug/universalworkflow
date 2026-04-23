@@ -10,6 +10,7 @@ import sys
 import time
 import urllib.request
 import urllib.parse
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,7 +129,7 @@ def corrupt_runtime_state_for_run(
     is_terminal: bool,
     extra_payload: dict[str, Any] | None = None,
 ) -> str:
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection:
         connection.row_factory = sqlite3.Row
         row = connection.execute(
             """
@@ -166,7 +167,7 @@ def mutate_task_packet_command(
     runtime_task_id: str,
     command: list[str],
 ) -> None:
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection:
         connection.execute(
             "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
             (json.dumps(command, ensure_ascii=False), runtime_task_id),

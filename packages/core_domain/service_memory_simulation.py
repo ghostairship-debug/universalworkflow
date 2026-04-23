@@ -115,13 +115,15 @@ class MemorySimulationServiceMixin:
             raise PresetNotFoundError(f"preset not found: {preset_id}")
         resolved_task_kind = self._resolve_task_kind(preset, task_kind)
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        selected_adapter = adapter_name or self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
-        capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
-        lane_type = self._resolve_execution_lane(
+        resolved_execution = self._resolve_execution_profile_for_run(
             preset=preset,
             task_kind=resolved_task_kind,
-            selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
+            domain_pack=domain_pack,
+            requested_adapter=adapter_name,
         )
+        selected_adapter = resolved_execution.adapter_name
+        capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
+        lane_type = resolved_execution.execution_lane
         manifest, profiles = self.capability_plane.build_projection_manifest(
             run_id=None,
             preset_id=preset.preset_id,
@@ -136,6 +138,17 @@ class MemorySimulationServiceMixin:
             "task_kind": str(resolved_task_kind),
             "execution_lane": str(lane_type),
             "capability_resolution": capability_route.model_dump(mode="json") if capability_route is not None else None,
+            "resolved_execution": resolved_execution.model_dump(mode="json"),
+            "execution_resolution_trace": {
+                "scope_context": (
+                    resolved_execution.scope_context.model_dump(mode="json")
+                    if resolved_execution.scope_context is not None
+                    else None
+                ),
+                "source_map": resolved_execution.source_map,
+                "applied_scopes": resolved_execution.applied_scopes,
+                "compatibility_fallback": resolved_execution.compatibility_fallback,
+            },
             "tool_projection_manifest": manifest.model_dump(mode="json"),
             "mcp_server_profiles": [profile.model_dump(mode="json") for profile in profiles],
         }
@@ -166,7 +179,7 @@ class MemorySimulationServiceMixin:
         return "none"
 
     def _side_effect_level_for_adapter(self, adapter_name: str | None) -> str:
-        if adapter_name == "opencode":
+        if adapter_name in {"codex", "opencode"}:
             return "repo_mutation_controlled"
         if adapter_name in {"agent", "opencode_session"}:
             return "session_read_write"
@@ -211,13 +224,15 @@ class MemorySimulationServiceMixin:
             raise PresetNotFoundError(f"preset not found: {preset_id}")
         resolved_task_kind = self._resolve_task_kind(preset, task_kind)
         domain_pack = self._resolve_domain_pack(preset, resolved_task_kind)
-        selected_adapter = adapter_name or self._default_adapter_for_preset(preset, resolved_task_kind, domain_pack)
-        capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
-        lane_type = self._resolve_execution_lane(
+        resolved_execution = self._resolve_execution_profile_for_run(
             preset=preset,
             task_kind=resolved_task_kind,
-            selected_adapter=capability_route.adapter_name if capability_route is not None else selected_adapter,
+            domain_pack=domain_pack,
+            requested_adapter=adapter_name,
         )
+        selected_adapter = resolved_execution.adapter_name
+        capability_route = self._resolve_capability_route(resolved_task_kind, requested_adapter=selected_adapter)
+        lane_type = resolved_execution.execution_lane
         adapter_name = capability_route.adapter_name if capability_route is not None else None
         node = OrchestrationGraphNode(
             role=self._primary_role_for_preset(preset_id),
@@ -232,6 +247,7 @@ class MemorySimulationServiceMixin:
             fallback_path=[item for item in [adapter_name] if item is not None],
             preset_id=preset_id,
             preferred_adapter=adapter_name,
+            execution_profile=resolved_execution,
         )
         risk_summary: list[str] = []
         if str(preset.default_review_policy) != str(ReviewPolicy.auto_only):
@@ -319,6 +335,7 @@ class MemorySimulationServiceMixin:
             "capability_adapter": (
                 prepared.capability_route.adapter_name if prepared.capability_route is not None else None
             ),
+            "resolved_execution": prepared.resolved_execution.model_dump(mode="json"),
         }
         if execute:
             executed = self.resume_run(run.run_id)

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from packages.contracts import (
+    MCPServerProfile,
+    MCPTransport,
     MutationMode,
     RunEventType,
     RunSnapshotStage,
@@ -27,7 +29,7 @@ from packages.contracts import (
     WorkerLeaseStatus,
 )
 from packages.core_domain.auto_review import AutoReviewV0
-from packages.core_domain.capability_plane import CapabilityPlane
+from packages.core_domain.capability_plane import CapabilityPlane, MCPCapabilitySource
 from packages.core_domain.db import migrate, unit_of_work
 from packages.core_domain.domain_packs import DomainPackRegistry, load_seed_domain_packs
 from packages.core_domain.errors import (
@@ -46,6 +48,7 @@ from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot, LangGraphDurableRuntimePilot
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
 from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
+from packages.worker_adapters.codex_adapter import CodexAdapter
 from packages.worker_adapters.langchain_agent_adapter import AgentExecutionResponse, LangChainAgentAdapter
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
@@ -82,6 +85,42 @@ def _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeou
         command,
         0,
         stdout=json.dumps({"type": "text", "part": {"text": content_match.group(1)}}),
+        stderr="",
+    )
+
+
+def _fake_codex_runner(command, cwd, env, capture_output, text, check, timeout):
+    prompt = command[2]
+    artifact_path = Path(command[command.index("--output-last-message") + 1])
+    content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", prompt, re.DOTALL)
+    assert content_match is not None
+    assert timeout == 180
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(content_match.group(1), encoding="utf-8")
+    return subprocess.CompletedProcess(
+        command,
+        0,
+        stdout='{"event":"completed"}\n',
+        stderr="",
+    )
+
+
+def _fake_codex_patch_runner(command, cwd, env, capture_output, text, check, timeout):
+    artifact_path = Path(command[command.index("--output-last-message") + 1])
+    target = json.loads(env["WORKFLOW_MUTATION_WRITE_SET"])[0].replace("\\", "/")
+    patch_text = (
+        f"--- {target}\n"
+        f"+++ {target}\n"
+        "@@ -1 +1 @@\n"
+        "-before\n"
+        "+after\n"
+    )
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(patch_text, encoding="utf-8")
+    return subprocess.CompletedProcess(
+        command,
+        0,
+        stdout='{"event":"completed"}\n',
         stderr="",
     )
 
@@ -249,6 +288,115 @@ def test_openai_runtime_gateway_projects_brief_into_artifact_and_status(tmp_path
     assert timeline[-1].payload_json["trace_context"]["run_id"] == run.run_id
     assert timeline[-1].payload_json["trace_context"]["event_id"] == timeline[-1].event_id
     assert fake_client.responses.calls[0]["model"] == "gpt-5.4-mini"
+
+
+def test_compile_run_projects_resolved_execution_profile_and_trace(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Project resolved execution metadata", "feature_delivery")
+    prepared = service.compile_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    summary = service.get_run_summary(run.run_id)
+
+    assert prepared.resolved_execution.adapter_name == "shell"
+    assert str(prepared.resolved_execution.execution_lane) == "native_deterministic"
+    assert prepared.resolved_execution.runtime_gateway_provider == "null"
+    assert prepared.resolved_execution.source_map["runtime_gateway_provider"]["scope"] == "effective_global_defaults"
+    assert detail["resolved_execution"]["adapter_name"] == "shell"
+    assert detail["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "compatibility_fallback"
+    assert summary["execution_profile"]["resolved_execution"]["adapter_name"] == "shell"
+
+
+def test_research_spike_reviewable_falls_back_to_shell_without_agent_lane(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    preview = service.preview_tool_projection(preset_id="research_spike_reviewable")
+
+    assert preview["execution_lane"] == "native_deterministic"
+    assert preview["capability_resolution"]["adapter_name"] == "shell"
+    assert preview["resolved_execution"]["adapter_name"] == "shell"
+    assert preview["execution_resolution_trace"]["source_map"]["adapter_name"]["source"] == "worker_router_default"
+
+
+def test_explicit_execution_overrides_drive_runtime_gateway_and_adapter_model(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    fake_client = _FakeGatewayClient()
+    captured: dict[str, object] = {}
+
+    def _recording_runner(command, cwd, env, capture_output, text, check, timeout):
+        captured["command"] = list(command)
+        return _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeout)
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_recording_runner), NoopAdapter()])
+    service = OrchestratorService(
+        db_path,
+        runtime_gateway=OpenAIRuntimeGateway(client=fake_client, model="gpt-5.4-mini"),
+        worker_router=router,
+    )
+
+    run = service.create_run("Explicit execution override flow", "feature_delivery")
+    prepared = service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        opencode_model="openai/gpt-5.4",
+        opencode_variant="turbo",
+        runtime_gateway_provider="openai",
+        runtime_gateway_model="gpt-5.4",
+        runtime_reasoning_effort="medium",
+    )
+    service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert prepared.resolved_execution.adapter_name == "opencode"
+    assert prepared.resolved_execution.selected_model == "openai/gpt-5.4"
+    assert prepared.resolved_execution.runtime_gateway_model == "gpt-5.4"
+    assert command[command.index("--model") + 1] == "openai/gpt-5.4"
+    assert command[command.index("--variant") + 1] == "turbo"
+    assert fake_client.responses.calls[0]["model"] == "gpt-5.4"
+    assert fake_client.responses.calls[0]["reasoning"]["effort"] == "medium"
+    assert detail["runtime_gateway"]["provider"] == "openai"
+    assert detail["resolved_execution"]["runtime_reasoning_effort"] == "medium"
+
+
+def test_explicit_codex_execution_override_projects_selected_model(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    captured: dict[str, object] = {}
+
+    def _recording_runner(command, cwd, env, capture_output, text, check, timeout):
+        captured["command"] = list(command)
+        return _fake_codex_runner(command, cwd, env, capture_output, text, check, timeout)
+
+    router = WorkerRouter([ShellAdapter(), CodexAdapter(runner=_recording_runner), OpenCodeAdapter(runner=_fake_opencode_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    run = service.create_run("Explicit codex execution override flow", "feature_delivery")
+    prepared = service.compile_run(
+        run.run_id,
+        adapter_name="codex",
+        codex_model="gpt-5.1-codex-max",
+    )
+    service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert prepared.resolved_execution.adapter_name == "codex"
+    assert prepared.resolved_execution.selected_model == "gpt-5.1-codex-max"
+    assert prepared.resolved_execution.codex_model == "gpt-5.1-codex-max"
+    assert command[command.index("--model") + 1] == "gpt-5.1-codex-max"
+    assert detail["resolved_execution"]["selected_model_kind"] == "codex_model"
 
 
 def test_dashboard_snapshot_projects_recent_runs_and_focus_detail(tmp_path: Path) -> None:
@@ -619,6 +767,7 @@ def test_worker_router_exposes_capability_registry_routes() -> None:
     assert routes == [
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
+        {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
 
@@ -695,6 +844,61 @@ def test_compile_run_can_pin_opencode_adapter(tmp_path: Path) -> None:
     assert prepared.capability_route.adapter_name == "opencode"
     assert prepared.task_packet.env["WORKFLOW_CAPABILITY_ADAPTER"] == "opencode"
     assert detail["capability_resolution"]["adapter_name"] == "opencode"
+
+
+def test_compile_run_can_pin_codex_adapter(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Compile through codex", "feature_delivery")
+    prepared = service.compile_run(run.run_id, adapter_name="codex")
+    detail = service.get_status_detail(run.run_id)
+
+    assert prepared.capability_route is not None
+    assert prepared.capability_route.adapter_name == "codex"
+    assert prepared.task_packet.env["WORKFLOW_CAPABILITY_ADAPTER"] == "codex"
+    assert prepared.resolved_execution.selected_model == "gpt-5.4"
+    assert detail["capability_resolution"]["adapter_name"] == "codex"
+    assert detail["resolved_execution"]["selected_model_kind"] == "codex_model"
+
+
+def test_repo_default_adapter_models_match_expected_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WORKFLOW_AGENT_MODEL", raising=False)
+    monkeypatch.delenv("WORKFLOW_CODEX_MODEL", raising=False)
+    monkeypatch.delenv("WORKFLOW_CODEX_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("WORKFLOW_OPENCODE_MODEL", raising=False)
+    monkeypatch.delenv("WORKFLOW_CONFIG_PATH", raising=False)
+
+    assert LangChainAgentAdapter(runner=_fake_agent_runner).model == "gpt-5.4-mini"
+    assert CodexAdapter(runner=_fake_codex_runner).model == "gpt-5.4"
+    assert CodexAdapter(runner=_fake_codex_runner).reasoning_effort == "xhigh"
+    assert OpenCodeAdapter(runner=_fake_opencode_runner).model == "minimax/MiniMax-M2.7"
+
+
+def test_codex_adapter_projects_reasoning_effort_into_command(tmp_path: Path) -> None:
+    packet = TaskPacket(
+        runtime_task_id="task_codex_reasoning",
+        run_id="run_codex_reasoning",
+        task_kind=TaskKind.shell_exec,
+        command=[],
+        working_directory=str(tmp_path),
+        expected_artifacts=["state/artifacts/codex.md"],
+        env={
+            "WORKFLOW_PRESET_ID": "feature_delivery",
+            "WORKFLOW_RUN_GOAL": "codex reasoning",
+            "WORKFLOW_CODEX_MODEL": "gpt-5.4",
+            "WORKFLOW_CODEX_REASONING_EFFORT": "xhigh",
+        },
+    )
+
+    adapter = CodexAdapter(runner=_fake_codex_runner, executable="codex")
+    command = adapter.build_command(packet)
+
+    assert command[command.index("--model") + 1] == "gpt-5.4"
+    assert '-c' in command
+    assert 'model_reasoning_effort="xhigh"' in command
 
 
 def test_opencode_adapter_enforces_timeout_budget(tmp_path: Path) -> None:
@@ -1101,6 +1305,27 @@ def test_service_can_execute_opencode_adapter_with_fake_runner(tmp_path: Path) -
     assert "adapter: opencode" in content
 
 
+def test_service_can_execute_codex_adapter_with_fake_runner(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), CodexAdapter(runner=_fake_codex_runner), OpenCodeAdapter(runner=_fake_opencode_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    run = service.create_run("Run through codex adapter", "feature_delivery")
+    prepared = service.compile_run(run.run_id, adapter_name="codex")
+    bundle = service.resume_run(run.run_id)
+    evidence = service.get_task_evidence(prepared.task_packet.runtime_task_id)
+    artifact_path = Path(prepared.task_packet.expected_artifacts[0])
+    if not artifact_path.is_absolute():
+        artifact_path = Path(prepared.task_packet.working_directory) / artifact_path
+    content = artifact_path.read_text(encoding="utf-8")
+
+    assert bundle.run.status == "completed"
+    assert evidence.raw_execution["adapter_name"] == "codex"
+    assert "adapter: codex" in content
+
+
 def test_preview_tool_projection_includes_mcp_subset_for_reviewable_pilot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
     monkeypatch.setenv("UAWO_ENABLE_MCP_SOURCE", "1")
@@ -1119,7 +1344,41 @@ def test_preview_tool_projection_includes_mcp_subset_for_reviewable_pilot(tmp_pa
     tool_names = [item["tool_name"] for item in preview["tool_projection_manifest"]["tools"]]
     assert "list_workspace_files" in tool_names
     assert "mcp_list_workspace_files" in tool_names
-    assert preview["mcp_server_profiles"][0]["profile_id"] == "local_workspace_readonly"
+    assert "web_search" in tool_names
+    assert "understand_image" in tool_names
+    assert {item["profile_id"] for item in preview["mcp_server_profiles"]} >= {
+        "local_workspace_readonly",
+        "minimax_coding_plan",
+    }
+
+
+def test_mcp_profile_startup_env_resolves_env_placeholders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax-key")
+    source = MCPCapabilitySource(
+        profiles=[
+            MCPServerProfile(
+                profile_id="minimax_test",
+                name="MiniMax Test",
+                description="test profile",
+                transport=MCPTransport.stdio,
+                startup_command=["uvx", "minimax-coding-plan-mcp", "-y"],
+                startup_env={
+                    "MINIMAX_API_KEY": "${ENV:MINIMAX_API_KEY}",
+                    "MINIMAX_API_HOST": "https://api.minimax.io",
+                    "WORKSPACE_ROOT_ECHO": "${WORKSPACE_ROOT}",
+                },
+                allowed_tools=["web_search", "understand_image"],
+            )
+        ],
+        workspace_root=tmp_path,
+    )
+    profile = source.list_profiles()[0]
+
+    resolved = source._resolve_startup_env(profile)
+
+    assert resolved["MINIMAX_API_KEY"] == "test-minimax-key"
+    assert resolved["MINIMAX_API_HOST"] == "https://api.minimax.io"
+    assert resolved["WORKSPACE_ROOT_ECHO"] == tmp_path.resolve().as_posix()
 
 
 def test_research_spike_reviewable_runs_agent_lane_and_exports_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1372,6 +1631,28 @@ def test_project_delivery_runs_multi_role_orchestration(tmp_path: Path) -> None:
     assert operator_packet["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
 
 
+def test_project_delivery_plan_graph_projects_role_execution_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    preview = service.preview_orchestration_plan_graph(
+        goal="Ship a coordinated project slice",
+        preset_id="project_delivery",
+    )
+    nodes = {node["role_label"]: node for node in preview["plan_graph"]["nodes"]}
+
+    assert nodes["implementer"]["execution_profile"]["adapter_name"] == "codex"
+    assert nodes["implementer"]["execution_profile"]["execution_lane"] == "native_deterministic"
+    assert nodes["risk_mapper"]["execution_profile"]["adapter_name"] == "agent"
+    assert nodes["risk_mapper"]["execution_profile"]["execution_lane"] == "standard_agent"
+
+
 def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(tmp_path)
@@ -1379,7 +1660,7 @@ def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Pa
     db_path = tmp_path / "workflow.db"
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
-    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
+    router = WorkerRouter([ShellAdapter(), CodexAdapter(runner=_fake_codex_patch_runner), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
     service = OrchestratorService(db_path, worker_router=router)
 
     target_file = tmp_path / "mutated.txt"
@@ -1424,6 +1705,49 @@ def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Pa
     assert mutation_report["mutation_result"]["changed_files"] == ["mutated.txt"]
     assert detail_after["mutation_result"]["fix_iteration_count"] == 0
     assert detail_after["mutation_result"]["test_attempts"][0]["passed"] is True
+
+
+def test_compile_run_accepts_codex_repo_mutation_contract_and_projects_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), CodexAdapter(runner=_fake_codex_patch_runner), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "codex_mutated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    verifier = tmp_path / "verify_codex_mutated.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('codex_mutated.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+    test_command = f"{sys.executable} {verifier.name}"
+
+    run = service.create_run("Bounded codex repo mutation", "feature_delivery")
+    prepared = service.compile_run(
+        run.run_id,
+        adapter_name="codex",
+        codex_model="gpt-5.1-codex-max",
+        write_set=["codex_mutated.txt"],
+        test_commands=[test_command],
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    assert prepared.execution_lane == "repo_change_controlled"
+    assert prepared.resolved_execution.adapter_name == "codex"
+
+    bundle = service.resume_run(run.run_id)
+    mutation_report = service.get_run_mutation_report(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+    assert mutation_report["mutation_result"]["final_test_status"] == "passed"
+    assert mutation_report["mutation_result"]["changed_files"] == ["codex_mutated.txt"]
 
 
 def test_repo_mutation_rejects_out_of_scope_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1536,7 +1860,14 @@ def test_project_delivery_coder_uses_repo_mutation_when_parent_contract_is_prese
     db_path = tmp_path / "workflow.db"
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
-    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            CodexAdapter(runner=_fake_codex_patch_runner),
+            OpenCodeAdapter(runner=_fake_patch_runner),
+            NoopAdapter(),
+        ]
+    )
     service = OrchestratorService(db_path, worker_router=router)
 
     target_file = tmp_path / "project_slice.txt"
