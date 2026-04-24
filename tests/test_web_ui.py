@@ -4,11 +4,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
+import pytest
 
 from apps.orchestrator_api.main import create_app
 from packages.core_domain.db import migrate
 from packages.core_domain.repositories import PresetRepository
 
+
+pytestmark = pytest.mark.slow
 
 def build_client(db_path: Path) -> TestClient:
     migrate(db_path)

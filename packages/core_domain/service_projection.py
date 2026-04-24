@@ -22,6 +22,7 @@ from packages.contracts import (
     SimulationTriggerPolicy,
     WorkerLease,
 )
+from packages.core_domain.pr_ready_summary import build_pr_ready_summary
 from packages.core_domain.service_types import RunDiagnosticContext
 
 
@@ -879,6 +880,9 @@ class ProjectionServiceMixin:
             "next_action": detail["next_action"],
             "recoverability_hint": detail["recoverability_hint"],
         }
+
+    def get_run_pr_ready_summary(self, run_id: str) -> dict[str, Any]:
+        return build_pr_ready_summary(self.get_run_summary(run_id))
 
     def get_event_inspection(self, run_id: str) -> dict[str, Any]:
         detail = self.get_status_detail(run_id)

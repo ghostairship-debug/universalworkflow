@@ -5,10 +5,10 @@
 ## 1. 当前基线
 
 - 日期：2026-04-24
-- 最新接受基线：`M37`
-- 当前状态：没有打开 post-`M37` bounded phase
+- 最新接受基线：`M38`
+- 当前状态：`M38` 已接受；下一轮 M 尚未打开
 - 当前产品前提：个人自用 / 本地 operator runtime
-- 下一建议阶段：`M38 Phase 0`
+- 下一建议阶段：打开 M39 或下一轮 M 级计划
 
 ## 2. 历史里程碑
 
@@ -23,6 +23,12 @@
 | M35 | 建立 execution-profile contract、resolver precedence、config/read surfaces 和 execution explainability | 已接受 |
 | M36 | 将 workbench preview 推进到 natural-language workbench v1，加入 follow-up queue 和 Web/CLI/API parity | 已接受 |
 | M37 | 加入 governed generated profiles 和 bounded automation watchdog/controller | 已接受 |
+| M38 Phase 0 | 恢复当前 phase/task 模式，冻结安全 test runner、MCP canonical identity、doctor 和 `OrchestratorService` 第一批收缩切口 | 已接受 |
+| M38 Phase 1 | 实现安全 test runner，移除 repo mutation test command 的默认 shell 执行和完整环境继承，新增 timeout、输出上限、scoped env、secret redaction 和 blocked attempt | 已接受 |
+| M38 测试分层插入修复 | 将默认 `pytest -q` 从覆盖率全量慢测改为快速核心回归；CLI/API/Web/release 端到端套件标记为 `slow`；完整 `pytest -q --run-slow` 改为每个 M 收口跑一次 | 已接受 |
+| M38 Phase 2 | 增加 MCP / capability canonical tool identity，并新增 `workflowctl doctor` 本地诊断入口；离线验证断言 canonical id 和 doctor redaction | 已接受 |
+| M38 Phase 3 | 收缩 `OrchestratorService`，迁出 repo mutation coordinator 和 execution profile resolution helper；`services.py` 从 3833 行减少到 3520 行，净减少 313 行 | 已接受 |
+| M38 Phase 4 | 打通本地 task card / issue-like 输入到 bounded patch、safe tests、review、PR-ready summary 的个人闭环；新增 `workflowctl run from-task-card`、`workflowctl run pr-ready-summary` 和 `/runs/{run_id}/pr-ready-summary` | 已接受 |
 | M2M 修复 | 完成根目录历史文档归档、scheduler-authority flag 双态兼容、默认 local-only 语义修正 | 结论已吸收，本轮清理移除旧交接计划 |
 
 ## 3. 已移除的历史材料
@@ -41,21 +47,20 @@
 
 如需逐字审计旧材料，请使用 git 历史查看对应文件。
 
-## 4. M37 后真实判断
+## 4. M37 后真实判断与 M38 处理结果
 
-M37 后项目已经有足够多的能力入口，下一步不应继续堆新能力。最重要的判断是：
+M37 后项目已经有足够多的能力入口，下一步不应继续堆新能力。M38 已处理其中的安全、测试分层和第一轮结构收缩问题；仍需长期关注的判断是：
 
-- `OrchestratorService` 仍然过大，M38 应优先收缩。
+- `OrchestratorService` 已从 3833 行降到 3520 行，但仍然过大，后续仍应继续收缩。
 - 个人自用场景下，不需要外部用户 onboarding、SaaS、多租户或插件市场。
 - capability health、运行证据、失败原因、成本/使用情况需要更直观。
 - Web workbench 应逐步变成个人日常驾驶舱，而不是只做功能目录。
 
 ## 5. 推荐 M38 形状
 
-`M38 Phase 0` 应该先做：
+`M38` 已完成。下一轮打开前的要求：
 
-1. 写 M38 phase doc 和 task cards。
-2. 固化个人自用边界和日常操作剧本。
-3. 选择 `OrchestratorService` 第一批抽取切口。
-4. 设定运行证据、capability health、成本/失败展示的最小合同。
-5. 跑 `pytest -q`、offline validation 和 doc link validation 作为入口门槛。
+1. 先写新的 M 级计划和当前 phase/task 材料。
+2. 保持个人自用 / 本地 operator runtime 的产品前提。
+3. 不自动提交、不推送、不创建 GitHub PR，除非拥有者明确要求。
+4. 每个 M 最终收口时再跑一次完整 `pytest -q --run-slow`。

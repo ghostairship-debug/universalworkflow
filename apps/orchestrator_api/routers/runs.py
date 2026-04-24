@@ -192,6 +192,10 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
     def get_run_summary(run_id: str) -> dict:
         return service.get_run_summary(run_id)
 
+    @router.get("/runs/{run_id}/pr-ready-summary")
+    def get_run_pr_ready_summary(run_id: str) -> dict:
+        return service.get_run_pr_ready_summary(run_id)
+
     @router.get("/runs/{run_id}/simulation")
     def get_run_simulation(run_id: str) -> dict:
         return service.get_run_simulation(run_id).model_dump(mode="json")

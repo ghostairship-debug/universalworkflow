@@ -43,6 +43,12 @@ from packages.core_domain.errors import (
 )
 from packages.core_domain.evidence_builder import EvidenceBuilder
 from packages.core_domain.observability import InMemoryTraceExporter, TraceExporter, TraceRecord
+from packages.core_domain.repo_mutation import (
+    TEST_COMMAND_BLOCKED_EXIT_CODE,
+    TEST_COMMAND_OUTPUT_LIMIT_BYTES,
+    TEST_COMMAND_TIMEOUT_EXIT_CODE,
+    run_test_commands,
+)
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot, LangGraphDurableRuntimePilot
@@ -1342,8 +1348,11 @@ def test_preview_tool_projection_includes_mcp_subset_for_reviewable_pilot(tmp_pa
     assert preview["execution_lane"] == "standard_agent"
     assert preview["capability_resolution"]["adapter_name"] == "agent"
     tool_names = [item["tool_name"] for item in preview["tool_projection_manifest"]["tools"]]
+    canonical_tool_ids = [item["canonical_tool_id"] for item in preview["tool_projection_manifest"]["tools"]]
     assert "list_workspace_files" in tool_names
     assert "mcp_list_workspace_files" in tool_names
+    assert "builtin:shell_exec:list_workspace_files" in canonical_tool_ids
+    assert "mcp:local_workspace_readonly:mcp_list_workspace_files" in canonical_tool_ids
     assert "web_search" in tool_names
     assert "understand_image" in tool_names
     assert {item["profile_id"] for item in preview["mcp_server_profiles"]} >= {
@@ -1707,6 +1716,91 @@ def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Pa
     assert detail_after["mutation_result"]["test_attempts"][0]["passed"] is True
 
 
+def test_pr_ready_summary_projects_successful_bounded_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_patch_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "mutated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "task_card.md"
+    task_card.write_text("# Local task card\n", encoding="utf-8")
+    verifier = tmp_path / "verify_mutated.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('mutated.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+
+    run = service.create_run("Local bounded patch", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        task_card_ref="M38-4-success",
+        task_card_path=task_card.as_posix(),
+        write_set=["mutated.txt"],
+        test_commands=[f"{sys.executable} {verifier.name}"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+    service.resume_run(run.run_id)
+
+    payload = service.get_run_pr_ready_summary(run.run_id)
+
+    assert payload["readiness"] == "ready"
+    assert payload["ready"] is True
+    assert payload["task_card"]["ref"] == "M38-4-success"
+    assert payload["bounded_patch"]["changed_files"] == ["mutated.txt"]
+    assert payload["tests"]["status"] == "passed"
+    assert payload["manual_git"]["create_pr"] == "not_performed"
+    assert "PR-ready summary" in payload["markdown"]
+
+
+def test_pr_ready_summary_projects_failed_run_as_blocked(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Optional delivery fails for summary", "optional_delivery")
+    prepared = service.compile_run(run.run_id)
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
+            ('["python", "-c", "import sys; sys.exit(2)"]', prepared.task_packet.runtime_task_id),
+        )
+    service.resume_run(run.run_id)
+
+    payload = service.get_run_pr_ready_summary(run.run_id)
+
+    assert payload["readiness"] == "blocked"
+    assert payload["ready"] is False
+    assert payload["review"]["latest_review_decision"] == "fail"
+    assert "latest_review_failed" in payload["risk_notes"]
+
+
+def test_pr_ready_summary_projects_review_required_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Review required summary", "research_spike")
+    service.compile_run(run.run_id)
+    service.resume_run(run.run_id)
+
+    payload = service.get_run_pr_ready_summary(run.run_id)
+
+    assert payload["readiness"] == "review_required"
+    assert payload["review"]["pending_human_review"] is True
+    assert payload["next_action"] == "complete_human_review_or_adjust_test_contract"
+
+
 def test_compile_run_accepts_codex_repo_mutation_contract_and_projects_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(tmp_path)
@@ -1748,6 +1842,118 @@ def test_compile_run_accepts_codex_repo_mutation_contract_and_projects_it(tmp_pa
     assert target_file.read_text(encoding="utf-8") == "after\n"
     assert mutation_report["mutation_result"]["final_test_status"] == "passed"
     assert mutation_report["mutation_result"]["changed_files"] == ["codex_mutated.txt"]
+
+
+def test_repo_mutation_test_runner_uses_argv_and_scoped_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    monkeypatch.setenv("CUSTOM_ENV_SHOULD_NOT_LEAK", "not-for-tests")
+    captured: dict[str, object] = {}
+
+    def _safe_runner(command, cwd, shell, capture_output, text, env, timeout, check):
+        captured["command"] = command
+        captured["shell"] = shell
+        captured["env"] = dict(env)
+        captured["timeout"] = timeout
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _safe_runner)
+
+    attempts = run_test_commands([f"{sys.executable} -m pytest"], working_directory=tmp_path)
+
+    assert attempts[0]["passed"] is True
+    assert attempts[0]["status"] == "passed"
+    assert attempts[0]["argv"] == [sys.executable, "-m", "pytest"]
+    assert captured["command"] == [sys.executable, "-m", "pytest"]
+    assert captured["shell"] is False
+    assert captured["timeout"] == 120
+    assert "OPENAI_API_KEY" not in captured["env"]
+    assert "CUSTOM_ENV_SHOULD_NOT_LEAK" not in captured["env"]
+
+
+def test_repo_mutation_test_runner_blocks_shell_metacharacters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("blocked test command must not reach subprocess.run")
+
+    monkeypatch.setattr(subprocess, "run", _should_not_run)
+
+    attempts = run_test_commands(["python -m pytest | powershell"], working_directory=tmp_path)
+
+    assert attempts[0]["passed"] is False
+    assert attempts[0]["status"] == "blocked"
+    assert attempts[0]["return_code"] == TEST_COMMAND_BLOCKED_EXIT_CODE
+    assert attempts[0]["review_required"] is True
+
+
+def test_repo_mutation_test_runner_converts_timeout_to_stable_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _timeout_runner(command, cwd, shell, capture_output, text, env, timeout, check):
+        raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
+
+    monkeypatch.setattr(subprocess, "run", _timeout_runner)
+
+    attempts = run_test_commands([f"{sys.executable} -m pytest"], working_directory=tmp_path)
+
+    assert attempts[0]["passed"] is False
+    assert attempts[0]["status"] == "timeout"
+    assert attempts[0]["return_code"] == TEST_COMMAND_TIMEOUT_EXIT_CODE
+    assert "partial stdout" in attempts[0]["stdout"]
+    assert "partial stderr" in attempts[0]["stderr"]
+    assert "timed out after 120s" in attempts[0]["stderr"]
+
+
+def test_repo_mutation_test_runner_redacts_and_truncates_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SAMPLE_SECRET_TOKEN", "super-secret-token")
+
+    def _noisy_runner(command, cwd, shell, capture_output, text, env, timeout, check):
+        stdout = f"before super-secret-token {'x' * (TEST_COMMAND_OUTPUT_LIMIT_BYTES + 100)}"
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="super-secret-token")
+
+    monkeypatch.setattr(subprocess, "run", _noisy_runner)
+
+    attempts = run_test_commands([f"{sys.executable} -m pytest"], working_directory=tmp_path)
+
+    assert attempts[0]["passed"] is True
+    assert attempts[0]["stdout_truncated"] is True
+    assert len(attempts[0]["stdout"]) <= TEST_COMMAND_OUTPUT_LIMIT_BYTES
+    assert "super-secret-token" not in attempts[0]["stdout"]
+    assert "super-secret-token" not in attempts[0]["stderr"]
+    assert "[REDACTED]" in attempts[0]["stderr"]
+
+
+def test_repo_mutation_test_runner_short_circuits_after_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def _failing_runner(command, cwd, shell, capture_output, text, env, timeout, check):
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="failed")
+
+    monkeypatch.setattr(subprocess, "run", _failing_runner)
+
+    attempts = run_test_commands(
+        [
+            f"{sys.executable} -m pytest tests/test_execution_loop.py",
+            f"{sys.executable} -m pytest tests/test_contracts.py",
+        ],
+        working_directory=tmp_path,
+    )
+
+    assert len(attempts) == 1
+    assert len(calls) == 1
+    assert attempts[0]["status"] == "failed"
 
 
 def test_repo_mutation_rejects_out_of_scope_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
+from importlib import metadata
 
 import typer
 
 from apps.operator_tui.dashboard import run_dashboard
+from packages.core_domain.capability_plane import (
+    DEFAULT_MCP_PROFILE_SEED_PATH,
+    load_seed_mcp_server_profiles,
+    mcp_dependency_available,
+    mcp_dependency_reason,
+)
 from packages.core_domain.config import build_effective_config
 from packages.core_domain.db import DEFAULT_DB_PATH, get_migration_status, migrate, reset_db, workspace_scoped_db_path
 from packages.core_domain.errors import WorkflowError
@@ -97,6 +106,126 @@ def _parse_key_value_pairs(values: Optional[list[str]]) -> dict[str, str]:
     return parsed
 
 
+def _goal_from_task_card(task_card_path: Path) -> str:
+    text = task_card_path.read_text(encoding="utf-8")
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            return line.lstrip("#").strip() or task_card_path.stem
+        return line
+    return task_card_path.stem
+
+
+def _package_version(name: str) -> str | None:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _optional_command_status(name: str) -> dict[str, object]:
+    path = shutil.which(name)
+    return {
+        "name": name,
+        "status": "available" if path else "missing",
+        "path": path,
+        "required": False,
+    }
+
+
+def _redacted_env_status(names: list[str]) -> dict[str, dict[str, object]]:
+    return {
+        name: {
+            "present": bool(os.getenv(name)),
+            "value": "[REDACTED]" if os.getenv(name) else None,
+        }
+        for name in names
+    }
+
+
+def _state_path_status(db_path: str | Path) -> dict[str, object]:
+    state_dir = Path(db_path).expanduser().parent
+    if not state_dir.is_absolute():
+        state_dir = (Path.cwd() / state_dir).resolve()
+    probe_target = state_dir if state_dir.exists() else state_dir.parent
+    return {
+        "path": state_dir.as_posix(),
+        "exists": state_dir.exists(),
+        "writable": os.access(probe_target, os.W_OK) if probe_target.exists() else False,
+        "db_path": Path(db_path).as_posix(),
+    }
+
+
+def _build_doctor_payload(ctx: typer.Context) -> dict[str, object]:
+    effective = ctx.obj["effective_config"]
+    optional_commands = {
+        command_name: _optional_command_status(command_name)
+        for command_name in ("opencode", "codex")
+    }
+    state_path = _state_path_status(effective["db"]["path"])
+    profiles = load_seed_mcp_server_profiles(DEFAULT_MCP_PROFILE_SEED_PATH)
+    pytest_version = _package_version("pytest")
+    mcp_available = mcp_dependency_available()
+    issues: list[dict[str, object]] = []
+    for command_name, command_status in optional_commands.items():
+        if command_status["status"] != "available":
+            issues.append(
+                {
+                    "kind": "optional_command_missing",
+                    "command": command_name,
+                    "severity": "degraded",
+                }
+            )
+    if pytest_version is None:
+        issues.append({"kind": "pytest_missing", "severity": "degraded"})
+    if not state_path["writable"]:
+        issues.append({"kind": "state_path_not_writable", "severity": "degraded"})
+    if profiles and not mcp_available:
+        issues.append(
+            {
+                "kind": "mcp_dependency_missing",
+                "severity": "degraded",
+                "reason": mcp_dependency_reason(),
+            }
+        )
+    return {
+        "status": "ok" if not issues else "degraded",
+        "read_only": True,
+        "python": {
+            "executable": sys.executable,
+            "version": sys.version.split()[0],
+        },
+        "pytest": {
+            "status": "available" if pytest_version else "missing",
+            "version": pytest_version,
+        },
+        "state_path": state_path,
+        "optional_commands": optional_commands,
+        "mcp": {
+            "seed_path": DEFAULT_MCP_PROFILE_SEED_PATH.as_posix(),
+            "profile_count": len(profiles),
+            "enabled_profile_count": len([profile for profile in profiles if profile.enabled]),
+            "dependency_available": mcp_available,
+            "dependency_reason": mcp_dependency_reason(),
+        },
+        "environment": {
+            "secrets": _redacted_env_status(
+                [
+                    "OPENAI_API_KEY",
+                    "ANTHROPIC_API_KEY",
+                    "MINIMAX_API_KEY",
+                    "GITHUB_TOKEN",
+                    "WORKFLOW_REMOTE_WORKER_SHARED_SECRET",
+                ]
+            ),
+            "feature_flags": effective["feature_flags"],
+        },
+        "issues": issues,
+    }
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -129,6 +258,11 @@ def launch_tui(
         once=once,
         cycles=cycles,
     )
+
+
+@app.command("doctor")
+def doctor(ctx: typer.Context) -> None:
+    _emit_json(_build_doctor_payload(ctx))
 
 
 @preset_app.command("list")
@@ -353,6 +487,76 @@ def run_create(
         payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
         payload["evidence_id"] = executed.evidence.evidence_id
     payload["run"] = current_run.model_dump(mode="json")
+    _emit_json(payload)
+
+
+@run_app.command("from-task-card")
+def run_from_task_card(
+    ctx: typer.Context,
+    task_card_path: str = typer.Argument(..., help="Local markdown task card path."),
+    preset: str = typer.Option("feature_delivery", "--preset"),
+    adapter: Optional[str] = typer.Option("opencode", "--adapter", help="Patch-capable adapter to use."),
+    task_card_ref: Optional[str] = typer.Option(None, "--task-card-ref", help="Stable task card reference."),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Explicit writable paths."),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Explicit read-only context paths."),
+    test_command: Optional[list[str]] = typer.Option(None, "--test-command", help="Safe test commands to run."),
+    max_fix_iterations: int = typer.Option(0, "--max-fix-iterations", min=0),
+    execute: bool = typer.Option(False, "--execute", help="Execute the prepared run immediately."),
+) -> None:
+    path = Path(task_card_path)
+    if not path.exists():
+        _emit_json(
+            {
+                "error": {
+                    "code": "task_card_missing",
+                    "message": "task card path does not exist",
+                    "details": {"path": task_card_path},
+                }
+            }
+        )
+        raise typer.Exit(code=1)
+    if not write_set:
+        _emit_json(
+            {
+                "error": {
+                    "code": "write_set_required",
+                    "message": "from-task-card requires at least one --write-set path",
+                    "details": {},
+                }
+            }
+        )
+        raise typer.Exit(code=1)
+    service = _service(ctx)
+    ref = task_card_ref or path.stem
+    run = _run_workflow_action(lambda: service.create_run(goal=_goal_from_task_card(path), preset_id=preset))
+    prepared = _run_workflow_action(
+        lambda: service.compile_run(
+            run.run_id,
+            adapter_name=adapter,
+            task_card_ref=ref,
+            task_card_path=path.as_posix(),
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_command,
+            max_fix_iterations=max_fix_iterations,
+            mutation_mode="patch_apply",
+        )
+    )
+    payload: dict[str, object] = {
+        "run": prepared.run.model_dump(mode="json"),
+        "runtime_task_id": prepared.task_packet.runtime_task_id,
+        "mutation_contract": (
+            prepared.task_packet.mutation_contract.model_dump(mode="json")
+            if prepared.task_packet.mutation_contract is not None
+            else None
+        ),
+    }
+    if execute:
+        executed = _run_workflow_action(lambda: service.resume_run(run.run_id))
+        payload["run"] = executed.run.model_dump(mode="json")
+        payload["evidence_id"] = executed.evidence.evidence_id
+        payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
+    payload["pr_ready_summary"] = _run_workflow_action(lambda: service.get_run_pr_ready_summary(run.run_id))
     _emit_json(payload)
 
 
@@ -871,6 +1075,11 @@ def run_status_detail(ctx: typer.Context, run_id: str) -> None:
 @run_app.command("summary")
 def run_summary(ctx: typer.Context, run_id: str) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_summary(run_id)))
+
+
+@run_app.command("pr-ready-summary")
+def run_pr_ready_summary(ctx: typer.Context, run_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_run_pr_ready_summary(run_id)))
 
 
 @run_app.command("simulation")

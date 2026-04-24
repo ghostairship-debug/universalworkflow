@@ -5,15 +5,20 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
 from packages.contracts import RuntimeClaim, RuntimeGraphStep, RuntimeStateRef, WorkerLease
 from packages.core_domain.db import unit_of_work
 from packages.core_domain.services import OrchestratorService
-from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
+from packages.worker_adapters.codex_adapter import CodexAdapter
+from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 
+
+pytestmark = pytest.mark.slow
 
 runner = CliRunner()
 OPEN_DEBT_IDS = [
@@ -54,6 +59,28 @@ def _fake_cli_patch_launch(self, packet):  # type: ignore[override]
         artifact_paths=[artifact_path.resolve().as_posix()],
         adapter_name=self.normalized_name(),
         metadata={"mutation_mode": "patch_apply"},
+    )
+
+
+def _fake_cli_external_launch(self, packet):  # type: ignore[override]
+    started_at = utc_now()
+    artifact_paths = resolve_artifact_paths(
+        packet,
+        create_missing=True,
+        placeholder=f"# Fake external adapter\n\nadapter={self.normalized_name()}\n",
+    )
+    finished_at = utc_now()
+    return ExecutionResult(
+        runtime_task_id=packet.runtime_task_id,
+        return_code=0,
+        stdout=f"{self.normalized_name()} fake ok",
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+        artifact_paths=artifact_paths,
+        adapter_name=self.normalized_name(),
+        metadata={"test_fake_external_adapter": True},
     )
 
 
@@ -200,9 +227,13 @@ def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     assert projection_payload["capability_resolution"]["adapter_name"] == "agent"
     assert projection_payload["resolved_execution"]["adapter_name"] == "agent"
     assert projection_payload["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "preset"
-    assert "mcp_list_workspace_files" in [
-        item["tool_name"] for item in projection_payload["tool_projection_manifest"]["tools"]
+    tools = projection_payload["tool_projection_manifest"]["tools"]
+    assert "mcp_list_workspace_files" in [item["tool_name"] for item in tools]
+    assert "mcp:local_workspace_readonly:mcp_list_workspace_files" in [
+        item["canonical_tool_id"] for item in tools
     ]
+    assert all(item["raw_tool_name"] for item in tools)
+    assert all(item["display_name"] for item in tools)
 
 
 def test_cli_interaction_profiles_clusters_and_session_flow(tmp_path: Path) -> None:
@@ -793,7 +824,9 @@ def test_cli_run_replay_packet_projects_metrics(tmp_path: Path) -> None:
     assert retrieval_preview["namespace_ids"] == ["policy"]
 
 
-def test_cli_run_orchestration_projects_project_delivery(tmp_path: Path) -> None:
+def test_cli_run_orchestration_projects_project_delivery(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(CodexAdapter, "launch", _fake_cli_external_launch)
+    monkeypatch.setattr(LangChainAgentAdapter, "launch", _fake_cli_external_launch)
     _invoke(tmp_path, "db", "reset")
     create_result = _invoke(
         tmp_path,
@@ -963,6 +996,53 @@ def test_cli_compile_and_mutation_report_support_repo_mutation_contract(
     mutation_payload = json.loads(mutation_report_result.stdout)
     assert mutation_payload["mutation_result"]["final_test_status"] == "passed"
     assert mutation_payload["result_envelope"]["mutations"]["final_test_status"] == "passed"
+    summary_result = _invoke(tmp_path, "run", "pr-ready-summary", run_id)
+    summary_payload = json.loads(summary_result.stdout)
+    assert summary_payload["readiness"] == "ready"
+    assert summary_payload["bounded_patch"]["changed_files"] == ["cli_target.txt"]
+    assert summary_payload["manual_git"]["push"] == "not_performed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+
+
+def test_cli_from_task_card_executes_bounded_patch_and_returns_pr_ready_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    monkeypatch.setattr(OpenCodeAdapter, "launch", _fake_cli_patch_launch)
+    target_file = tmp_path / "cli_target.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "local_task_card.md"
+    task_card.write_text("# Local task card from CLI\n\nImplement one bounded patch.\n", encoding="utf-8")
+    verifier = tmp_path / "verify_cli_target.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "sys.exit(0 if Path('cli_target.txt').read_text(encoding='utf-8') == 'after\\n' else 1)\n",
+        encoding="utf-8",
+    )
+
+    _invoke(tmp_path, "db", "reset")
+    result = _invoke(
+        tmp_path,
+        "run",
+        "from-task-card",
+        task_card.as_posix(),
+        "--write-set",
+        "cli_target.txt",
+        "--test-command",
+        f"{sys.executable} {verifier.name}",
+        "--execute",
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["run"]["goal"] == "Local task card from CLI"
+    assert payload["mutation_contract"]["task_card_ref"] == "local_task_card"
+    assert payload["pr_ready_summary"]["readiness"] == "ready"
+    assert payload["pr_ready_summary"]["tests"]["status"] == "passed"
     assert target_file.read_text(encoding="utf-8") == "after\n"
 
 

@@ -90,6 +90,8 @@ from packages.contracts import (
     TaskPacket,
     LaunchDecision,
     TerminationRule,
+    ToolProjectionEntry,
+    TrustTier,
     WorkerLease,
     WorkerLeaseStatus,
     allowed_run_status_transitions,
@@ -441,6 +443,33 @@ def test_run_snapshot_requires_lightweight_projection_fields() -> None:
     assert dumped["stage"] == "repaired"
     assert dumped["run_status"] == "prepared"
     assert dumped["snapshot_payload"]["problem"] == "prepared_compile_snapshot_incomplete"
+
+
+def test_tool_projection_entry_fills_canonical_identity_fields() -> None:
+    built_in_entry = ToolProjectionEntry(
+        capability_id="shell_exec",
+        tool_name="list_workspace_files",
+        description="List files.",
+        source_type=CapabilitySourceType.built_in,
+        trust_tier=TrustTier.t0_builtin_local,
+        schema_hash="hash_builtin",
+    )
+    mcp_entry = ToolProjectionEntry(
+        capability_id="shell_exec",
+        tool_name="mcp_list_workspace_files",
+        description="List files through MCP.",
+        source_type=CapabilitySourceType.mcp_stdio,
+        trust_tier=TrustTier.t1_local_stdio_mcp,
+        schema_hash="hash_mcp",
+        server_profile_id="local_workspace_readonly",
+    )
+
+    assert built_in_entry.canonical_tool_id == "builtin:shell_exec:list_workspace_files"
+    assert built_in_entry.raw_tool_name == "list_workspace_files"
+    assert built_in_entry.display_name == "list workspace files"
+    assert mcp_entry.canonical_tool_id == "mcp:local_workspace_readonly:mcp_list_workspace_files"
+    assert mcp_entry.raw_tool_name == "mcp_list_workspace_files"
+    assert mcp_entry.tool_name == "mcp_list_workspace_files"
 
 
 def test_budget_ledger_tracks_non_negative_counters() -> None:

@@ -36,6 +36,10 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         ),
         encoding="utf-8",
     )
+    doctor_payload, _ = run_json_command(
+        [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "doctor"],
+        env,
+    )
     reset_payload, _ = run_json_command(
         [sys.executable, "-m", "apps.operator_cli.main", "--db-path", db_path.as_posix(), "db", "reset"],
         env,
@@ -754,6 +758,12 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
     result.update(
         {
             "db_reset_seeded": reset_payload.get("seeded_presets", []),
+            "doctor_status": doctor_payload["status"],
+            "doctor_read_only": doctor_payload["read_only"],
+            "doctor_secret_values_redacted": all(
+                item["value"] in {None, "[REDACTED]"}
+                for item in doctor_payload["environment"]["secrets"].values()
+            ),
             "preset_ids": [item["preset_id"] for item in preset_payload],
             "domain_pack_ids": [item["domain_pack_id"] for item in domain_pack_payload],
             "domain_pack_preview_id": (
@@ -776,6 +786,9 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "m8_projection_adapter": capability_projection_payload["capability_resolution"]["adapter_name"],
             "m8_projection_tool_names": [
                 item["tool_name"] for item in capability_projection_payload["tool_projection_manifest"]["tools"]
+            ],
+            "m8_projection_canonical_tool_ids": [
+                item["canonical_tool_id"] for item in capability_projection_payload["tool_projection_manifest"]["tools"]
             ],
             "m8_projection_trust_tiers": capability_projection_payload["tool_projection_manifest"]["trust_tiers"],
             "m8_skill_export_domain_pack_id": skill_export_payload["domain_pack_id"],
@@ -926,6 +939,9 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                 "project_delivery",
                 "guarded_project_delivery",
             ],
+            result["doctor_status"] in {"ok", "degraded"},
+            result["doctor_read_only"] is True,
+            result["doctor_secret_values_redacted"] is True,
             set(result["preset_ids"])
                 == {
                     "feature_delivery",
@@ -957,6 +973,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             result["m8_projection_adapter"] == "agent",
             "mcp_list_workspace_files" in result["m8_projection_tool_names"],
             "mcp_read_workspace_text" in result["m8_projection_tool_names"],
+            "mcp:local_workspace_readonly:mcp_list_workspace_files" in result["m8_projection_canonical_tool_ids"],
             "web_search" in result["m8_projection_tool_names"],
             "understand_image" in result["m8_projection_tool_names"],
             result["m8_projection_trust_tiers"] == ["t0_builtin_local", "t1_local_stdio_mcp"],

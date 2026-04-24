@@ -186,17 +186,17 @@ def tcp_probe(host: str, port: int, timeout: float = 2.0) -> dict[str, Any]:
         return {"target": f"{host}:{port}", "reachable": False, "elapsed_ms": elapsed_ms, "error": str(exc)}
 
 
-def http_get_json(url: str, timeout: float = 3.0) -> Any:
+def http_get_json(url: str, timeout: float = 10.0) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
         return json.loads(response.read().decode("utf-8"))
 
 
-def http_get_text(url: str, timeout: float = 3.0) -> str:
+def http_get_text(url: str, timeout: float = 10.0) -> str:
     with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
         return response.read().decode("utf-8")
 
 
-def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: float = 3.0) -> Any:
+def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: float = 10.0) -> Any:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,

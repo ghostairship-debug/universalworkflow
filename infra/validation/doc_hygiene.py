@@ -8,6 +8,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIVING_DOCS = [
     Path("README.md"),
+    Path("M38_REPAIR_AND_DEVELOPMENT_PLAN.md"),
     Path("docs/current_development_workflow.md"),
     Path("docs/tech-debt-registry.md"),
     Path("docs/milestone_history.md"),

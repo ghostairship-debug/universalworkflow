@@ -44,7 +44,10 @@ namespaces = true
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--basetemp=state/.pytest-tmp --cov=packages --cov=apps --cov-report=term-missing --cov-fail-under=70"
+addopts = "--basetemp=state/.pytest-tmp"
+markers = [
+  "slow: slow end-to-end CLI/API/Web/release tests skipped by default; use --run-slow for full validation"
+]
 
 [build-system]
 requires = ["setuptools>=69", "wheel"]

@@ -22,7 +22,6 @@ from packages.contracts import (
     Evidence,
     ExecutionTargetRef,
     ExecutionProfileDefinition,
-    ExecutionScopeContext,
     HandoffLite,
     LeaseRenewalRecord,
     LeaseFencingToken,
@@ -56,7 +55,6 @@ from packages.contracts import (
     RuntimeGateway,
     RuntimeGraphStep,
     RuntimeStateRef,
-    RepoMutationResult,
     ResolvedExecutionProfile,
     SchedulerCommittedLease,
     SchedulerConsensusTerm,
@@ -103,11 +101,9 @@ from packages.core_domain.errors import (
     ExecutionLaneNotAllowedError,
     InvalidStateTransitionError,
     MutationContractError,
-    PatchApplyError,
     PresetNotFoundError,
     PresetRequiredError,
     RepairActionNotAvailableError,
-    RepoMutationScopeError,
     RuntimeClaimConflictError,
     SchedulerArbitrationError,
     TaskKindNotAllowedError,
@@ -115,7 +111,7 @@ from packages.core_domain.errors import (
     UnsupportedTaskKindError,
     WorkflowError,
 )
-from packages.core_domain.execution_profiles import build_effective_execution_defaults, resolve_execution_profile
+from packages.core_domain.execution_profiles import build_effective_execution_defaults
 from packages.core_domain.memory import (
     MEMORY_RETRIEVAL_PREVIEW_ENV_KEY,
     load_memory_retrieval_preview,
@@ -153,6 +149,8 @@ from packages.core_domain.service_interaction import InteractionServiceMixin
 from packages.core_domain.service_memory_simulation import MemorySimulationServiceMixin
 from packages.core_domain.service_orchestration import OrchestrationExecutionService
 from packages.core_domain.service_projection import ProjectionServiceMixin
+from packages.core_domain.service_execution_resolution import resolve_execution_profile_for_service
+from packages.core_domain.service_repo_mutation import execute_repo_mutation
 from packages.core_domain.service_scheduler_authority_support import SchedulerAuthoritySupportService
 from packages.core_domain.service_types import (
     ExecutedRunBundle,
@@ -164,16 +162,6 @@ from packages.core_domain.external_workers import (
     ExternalWorkerGateway,
     load_worker_pool_profiles,
     resolve_worker_pool_profile,
-)
-from packages.core_domain.repo_mutation import (
-    apply_unified_diff,
-    capture_workspace_snapshot,
-    extract_touched_paths,
-    hash_patch_text,
-    is_path_allowed,
-    normalize_allowed_paths,
-    restore_workspace_snapshot,
-    run_test_commands,
 )
 from packages.core_domain.scheduler_authority import NullSchedulerAuthorityCluster, SchedulerAuthorityClusterService
 from packages.core_domain.skills import export_domain_pack_skill_bundle
@@ -946,245 +934,15 @@ class OrchestratorService(
     def _write_orchestration_artifact(self, packet: TaskPacket, content: str) -> list[str]:
         return self.orchestration_service.write_orchestration_artifact(packet, content)
 
-    def _task_card_content_for_mutation(self, contract: MutationContract | None, *, working_directory: str) -> str | None:
-        if contract is None or not contract.task_card_path:
-            return None
-        task_card_path = Path(contract.task_card_path)
-        if not task_card_path.is_absolute():
-            task_card_path = Path(working_directory) / task_card_path
-        resolved = task_card_path.resolve()
-        if not resolved.exists():
-            raise MutationContractError(
-                "task_card_path does not exist for mutation contract",
-                {"task_card_path": contract.task_card_path},
-            )
-        return resolved.read_text(encoding="utf-8")
-
-    def _packet_for_mutation_attempt(
-        self,
-        packet: TaskPacket,
-        contract: MutationContract,
-        *,
-        attempt_index: int,
-        failure_feedback: str | None,
-    ) -> TaskPacket:
-        task_card_content = self._task_card_content_for_mutation(contract, working_directory=packet.working_directory)
-        return TaskPacket.model_validate(
-            {
-                **packet.model_dump(mode="json"),
-                "env": {
-                    **packet.env,
-                    "WORKFLOW_MUTATION_TASK_CARD_REF": contract.task_card_ref or "",
-                    "WORKFLOW_MUTATION_TASK_CARD_PATH": contract.task_card_path or "",
-                    "WORKFLOW_MUTATION_TASK_CARD_CONTENT": task_card_content or "",
-                    "WORKFLOW_MUTATION_WRITE_SET": json.dumps(contract.write_set, ensure_ascii=False),
-                    "WORKFLOW_MUTATION_READ_SET": json.dumps(contract.read_set, ensure_ascii=False),
-                    "WORKFLOW_MUTATION_TEST_COMMANDS": json.dumps(contract.test_commands, ensure_ascii=False),
-                    "WORKFLOW_MUTATION_ATTEMPT_INDEX": str(attempt_index),
-                    "WORKFLOW_MUTATION_FAILURE_FEEDBACK": failure_feedback or "",
-                },
-            }
-        )
-
-    def _merge_test_feedback(self, attempts: list[dict[str, Any]]) -> str:
-        if not attempts:
-            return ""
-        chunks: list[str] = []
-        for attempt in attempts[-3:]:
-            chunks.append(
-                "\n".join(
-                    [
-                        f"command: {attempt['command']}",
-                        f"return_code: {attempt['return_code']}",
-                        f"stdout:\n{attempt['stdout']}",
-                        f"stderr:\n{attempt['stderr']}",
-                    ]
-                ).strip()
-            )
-        return "\n\n".join(chunks)
-
     def _execute_repo_mutation(
         self,
         adapter,
         packet: TaskPacket,
     ) -> ExecutionResult:
-        contract = packet.mutation_contract
-        if contract is None or contract.mutation_mode != MutationMode.patch_apply:
-            return adapter.launch(packet)
-        if not adapter.supports_mutation_mode(MutationMode.patch_apply):
-            raise MutationContractError(
-                "repo mutation execution requires a patch-capable adapter",
-                {"adapter_name": adapter.normalized_name()},
-            )
-        allowed_paths = normalize_allowed_paths(packet.working_directory, contract.write_set)
-        baseline_snapshot = capture_workspace_snapshot(packet.working_directory, contract.write_set)
-        attempt_limit = max(contract.max_fix_iterations, 0)
-        failure_feedback: str | None = None
-        aggregated_test_attempts: list[dict[str, Any]] = []
-        out_of_scope_rejections: list[str] = []
-        last_result: ExecutionResult | None = None
-        last_patch_hash: str | None = None
-        last_touched_paths: list[str] = []
-        final_test_status = "patch_generation_failed"
-
-        for attempt_index in range(attempt_limit + 1):
-            if attempt_index > 0:
-                restore_workspace_snapshot(
-                    packet.working_directory,
-                    baseline_snapshot,
-                    extra_paths=last_touched_paths,
-                )
-                last_touched_paths = []
-            attempt_packet = self._packet_for_mutation_attempt(
-                packet,
-                contract,
-                attempt_index=attempt_index,
-                failure_feedback=failure_feedback,
-            )
-            execution_result = adapter.launch(attempt_packet)
-            last_result = execution_result
-            patch_text = ""
-            if execution_result.artifact_paths:
-                patch_path = Path(execution_result.artifact_paths[0])
-                if patch_path.exists():
-                    patch_text = patch_path.read_text(encoding="utf-8")
-            if execution_result.return_code != 0 and not patch_text.strip():
-                failure_feedback = execution_result.stderr or execution_result.stdout or "patch generation failed"
-                final_test_status = "patch_generation_failed"
-                if attempt_index < attempt_limit:
-                    continue
-                break
-            try:
-                touched_paths = extract_touched_paths(patch_text, workspace_root=packet.working_directory)
-            except ValueError as exc:
-                failure_feedback = str(exc)
-                final_test_status = "patch_parse_failed"
-                if attempt_index < attempt_limit:
-                    continue
-                raise PatchApplyError(
-                    "adapter did not return a valid unified diff patch",
-                    {"reason": str(exc), "attempt_index": attempt_index},
-                ) from exc
-            rejected_paths = [path for path in touched_paths if not is_path_allowed(path, allowed_paths)]
-            if rejected_paths:
-                out_of_scope_rejections.extend(rejected_paths)
-                failure_feedback = f"patch touched out-of-scope paths: {', '.join(rejected_paths)}"
-                final_test_status = "patch_rejected"
-                if attempt_index < attempt_limit:
-                    continue
-                raise RepoMutationScopeError(
-                    "patch attempted to modify files outside the allowed write_set",
-                    {
-                        "rejected_paths": rejected_paths,
-                        "allowed_paths": allowed_paths,
-                    },
-                )
-            try:
-                last_patch_hash = hash_patch_text(patch_text)
-                last_touched_paths = apply_unified_diff(
-                    packet.working_directory,
-                    patch_text,
-                    allowed_paths=allowed_paths,
-                )
-            except ValueError as exc:
-                failure_feedback = str(exc)
-                final_test_status = "patch_apply_failed"
-                if attempt_index < attempt_limit:
-                    continue
-                raise PatchApplyError(
-                    "failed to apply the generated unified diff patch",
-                    {"reason": str(exc), "attempt_index": attempt_index},
-                ) from exc
-            command_attempts = []
-            if contract.test_commands:
-                command_attempts = run_test_commands(contract.test_commands, working_directory=packet.working_directory)
-                for command_attempt in command_attempts:
-                    aggregated_test_attempts.append({"iteration": attempt_index, **command_attempt})
-            if command_attempts and any(not bool(item["passed"]) for item in command_attempts):
-                failure_feedback = self._merge_test_feedback(command_attempts)
-                final_test_status = "failed"
-                if attempt_index < attempt_limit:
-                    continue
-                restore_workspace_snapshot(
-                    packet.working_directory,
-                    baseline_snapshot,
-                    extra_paths=last_touched_paths,
-                )
-                break
-            final_test_status = "passed" if contract.test_commands else "not_requested"
-            mutation_result = RepoMutationResult(
-                changed_files=sorted(set(last_touched_paths)),
-                applied_patch_hash=last_patch_hash,
-                out_of_scope_rejections=sorted(set(out_of_scope_rejections)),
-                test_attempts=aggregated_test_attempts,
-                fix_iteration_count=attempt_index,
-                final_test_status=final_test_status,
-            )
-            return ExecutionResult(
-                runtime_task_id=execution_result.runtime_task_id,
-                return_code=0,
-                stdout=execution_result.stdout,
-                stderr=execution_result.stderr,
-                started_at=execution_result.started_at,
-                finished_at=execution_result.finished_at,
-                duration_ms=execution_result.duration_ms,
-                artifact_paths=execution_result.artifact_paths,
-                adapter_name=execution_result.adapter_name,
-                metadata={
-                    **execution_result.metadata,
-                    "mutation_contract": contract.model_dump(mode="json"),
-                    "mutation_result": mutation_result.model_dump(mode="json"),
-                },
-            )
-
-        failed_result = last_result or adapter.launch(packet)
-        mutation_result = RepoMutationResult(
-            changed_files=[],
-            applied_patch_hash=last_patch_hash,
-            out_of_scope_rejections=sorted(set(out_of_scope_rejections)),
-            test_attempts=aggregated_test_attempts,
-            fix_iteration_count=attempt_limit,
-            final_test_status=final_test_status,
-        )
-        return ExecutionResult(
-            runtime_task_id=failed_result.runtime_task_id,
-            return_code=failed_result.return_code or 1,
-            stdout=failed_result.stdout,
-            stderr=failed_result.stderr or failure_feedback or "repo mutation failed",
-            started_at=failed_result.started_at,
-            finished_at=failed_result.finished_at,
-            duration_ms=failed_result.duration_ms,
-            artifact_paths=failed_result.artifact_paths,
-            adapter_name=failed_result.adapter_name,
-            metadata={
-                **failed_result.metadata,
-                "mutation_contract": contract.model_dump(mode="json"),
-                "mutation_result": mutation_result.model_dump(mode="json"),
-            },
-        )
+        return execute_repo_mutation(adapter, packet)
 
     def _execute_project_delivery_orchestration(self, packet: TaskPacket) -> ExecutionResult:
         return self.orchestration_service.execute_orchestration_packet(packet)
-
-    def _agent_profile_definition(self, agent_profile_id: str | None):
-        if not agent_profile_id:
-            return None
-        return next((profile for profile in self.list_agent_profiles() if profile.profile_id == agent_profile_id), None)
-
-    def _cluster_template_definition(self, cluster_template_id: str | None):
-        if not cluster_template_id:
-            return None
-        return next((template for template in self.list_cluster_templates() if template.template_id == cluster_template_id), None)
-
-    def _cluster_member_definition(
-        self,
-        cluster_template_id: str | None,
-        cluster_member_id: str | None,
-    ):
-        template = self._cluster_template_definition(cluster_template_id)
-        if template is None or not cluster_member_id:
-            return None
-        return next((member for member in template.member_specs if member.member_id == cluster_member_id), None)
 
     def _execution_override_profile(
         self,
@@ -1242,97 +1000,26 @@ class OrchestratorService(
         public_role: AgentRoleType | str | None = None,
         role_label: str | None = None,
     ) -> ResolvedExecutionProfile:
-        cluster_member = self._cluster_member_definition(cluster_template_id, cluster_member_id)
-        template = self._cluster_template_definition(cluster_template_id)
-        resolved_agent_profile_id = (
-            agent_profile_id
-            or (cluster_member.agent_profile_id if cluster_member is not None and cluster_member.agent_profile_id else None)
-        )
-        agent_profile = self._agent_profile_definition(resolved_agent_profile_id)
-        scope_context = ExecutionScopeContext(
-            preset_id=preset.preset_id,
-            agent_profile_id=resolved_agent_profile_id,
+        return resolve_execution_profile_for_service(
+            self,
+            preset=preset,
+            task_kind=task_kind,
+            domain_pack=domain_pack,
+            mutation_contract=mutation_contract,
+            requested_adapter=requested_adapter,
+            requested_agent_model=requested_agent_model,
+            requested_codex_model=requested_codex_model,
+            requested_opencode_model=requested_opencode_model,
+            requested_opencode_variant=requested_opencode_variant,
+            requested_runtime_gateway_provider=requested_runtime_gateway_provider,
+            requested_runtime_gateway_model=requested_runtime_gateway_model,
+            requested_runtime_reasoning_effort=requested_runtime_reasoning_effort,
+            requested_worker_pool_id=requested_worker_pool_id,
+            agent_profile_id=agent_profile_id,
             cluster_template_id=cluster_template_id,
             cluster_member_id=cluster_member_id,
             public_role=public_role,
             role_label=role_label,
-        )
-        resolved = resolve_execution_profile(
-            effective_config=self.effective_config,
-            explicit_profile=self._execution_override_profile(
-                adapter_name=requested_adapter,
-                agent_model=requested_agent_model,
-                codex_model=requested_codex_model,
-                opencode_model=requested_opencode_model,
-                opencode_variant=requested_opencode_variant,
-                runtime_gateway_provider=requested_runtime_gateway_provider,
-                runtime_gateway_model=requested_runtime_gateway_model,
-                runtime_reasoning_effort=requested_runtime_reasoning_effort,
-                worker_pool_id=requested_worker_pool_id,
-            ),
-            cluster_member_profile=cluster_member.execution_profile if cluster_member is not None else None,
-            agent_profile=agent_profile.execution_profile if agent_profile is not None else None,
-            preset_profile=preset.execution_profile,
-            cluster_template_profile=template.default_execution_profile if template is not None else None,
-            compatibility_adapter=self._default_adapter_for_preset(preset, task_kind, domain_pack),
-            routing_default_adapter=self._router_default_adapter_for_task_kind(task_kind),
-            scope_context=scope_context,
-        )
-        selected_adapter = resolved.adapter_name
-        if (
-            selected_adapter is not None
-            and self._capability_route_for(task_kind, adapter_name=selected_adapter) is None
-            and resolved.source_map.get("adapter_name", {}).get("scope") != "explicit_invocation"
-        ):
-            fallback_adapter = self._router_default_adapter_for_task_kind(task_kind)
-            selected_model = None
-            selected_model_kind = None
-            model_variant = None
-            if fallback_adapter == "agent":
-                selected_model = resolved.agent_model
-                selected_model_kind = "agent_model"
-            elif fallback_adapter == "codex":
-                selected_model = resolved.codex_model
-                selected_model_kind = "codex_model"
-            elif fallback_adapter in {"opencode", "opencode_session"}:
-                selected_model = resolved.opencode_model
-                selected_model_kind = "opencode_model"
-                model_variant = resolved.opencode_variant
-            source_map = dict(resolved.source_map)
-            source_map["adapter_name"] = {
-                "scope": "compatibility_fallback",
-                "source": "worker_router_default",
-                "value": fallback_adapter,
-            }
-            resolved = ResolvedExecutionProfile.model_validate(
-                {
-                    **resolved.model_dump(mode="json"),
-                    "adapter_name": fallback_adapter,
-                    "selected_model": selected_model,
-                    "selected_model_kind": selected_model_kind,
-                    "model_variant": model_variant,
-                    "compatibility_fallback": "worker_router_default",
-                    "source_map": source_map,
-                }
-            )
-        lane = self._resolve_execution_lane(
-            preset=preset,
-            task_kind=task_kind,
-            selected_adapter=resolved.adapter_name,
-            mutation_contract=mutation_contract,
-        )
-        source_map = dict(resolved.source_map)
-        source_map["execution_lane"] = {
-            "scope": "derived_lane_rules",
-            "source": "execution_lane_resolution",
-            "value": str(lane),
-        }
-        return ResolvedExecutionProfile.model_validate(
-            {
-                **resolved.model_dump(mode="json"),
-                "execution_lane": str(lane),
-                "source_map": source_map,
-            }
         )
 
     def _adapter_supports_mutation_mode(self, adapter_name: str | None, mode: MutationMode | str) -> bool:

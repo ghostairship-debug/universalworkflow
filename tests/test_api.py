@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from apps.orchestrator_api.main import create_app
 from packages.contracts import RunEventType, RuntimeClaim, RuntimeGateway, RuntimeGraphStep, RuntimeStateRef, WorkerLease
@@ -13,10 +14,14 @@ from packages.core_domain.db import migrate
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
-from packages.worker_adapters.base import ExecutionResult, utc_now
+from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
+from packages.worker_adapters.codex_adapter import CodexAdapter
+from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
 
+
+pytestmark = pytest.mark.slow
 
 class _FakeApiGatewayResponse:
     id = "resp_api"
@@ -104,6 +109,28 @@ def _fake_api_session_launch(self, packet):  # type: ignore[override]
             "session_export_ref": export_path.resolve().as_posix(),
             "external_trace_id": "trace_api_session_123",
         },
+    )
+
+
+def _fake_api_external_launch(self, packet):  # type: ignore[override]
+    started_at = utc_now()
+    artifact_paths = resolve_artifact_paths(
+        packet,
+        create_missing=True,
+        placeholder=f"# Fake external adapter\n\nadapter={self.normalized_name()}\n",
+    )
+    finished_at = utc_now()
+    return ExecutionResult(
+        runtime_task_id=packet.runtime_task_id,
+        return_code=0,
+        stdout=f"{self.normalized_name()} fake ok",
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+        artifact_paths=artifact_paths,
+        adapter_name=self.normalized_name(),
+        metadata={"test_fake_external_adapter": True},
     )
 
 
@@ -235,8 +262,13 @@ def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path
     assert projection_response.json()["capability_resolution"]["adapter_name"] == "agent"
     assert projection_response.json()["resolved_execution"]["adapter_name"] == "agent"
     assert projection_response.json()["execution_resolution_trace"]["source_map"]["adapter_name"]["scope"] == "preset"
-    tool_names = [item["tool_name"] for item in projection_response.json()["tool_projection_manifest"]["tools"]]
+    tools = projection_response.json()["tool_projection_manifest"]["tools"]
+    tool_names = [item["tool_name"] for item in tools]
+    canonical_tool_ids = [item["canonical_tool_id"] for item in tools]
     assert "mcp_list_workspace_files" in tool_names
+    assert "mcp:local_workspace_readonly:mcp_list_workspace_files" in canonical_tool_ids
+    assert all(item["raw_tool_name"] for item in tools)
+    assert all(item["display_name"] for item in tools)
 
 
 def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> None:
@@ -381,7 +413,9 @@ def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
     assert all("runtime_probe_status" in item for item in health_response.json())
 
 
-def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
+def test_api_exposes_plan_graph_and_launch_surfaces(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(CodexAdapter, "launch", _fake_api_external_launch)
+    monkeypatch.setattr(LangChainAgentAdapter, "launch", _fake_api_external_launch)
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
 
@@ -874,11 +908,16 @@ def test_api_compile_and_mutation_report_support_repo_mutation_contract(
 
     resume_response = client.post(f"/runs/{run['run_id']}/resume")
     mutation_report_response = client.get(f"/runs/{run['run_id']}/mutation-report")
+    pr_ready_response = client.get(f"/runs/{run['run_id']}/pr-ready-summary")
 
     assert resume_response.status_code == 200
     assert mutation_report_response.status_code == 200
+    assert pr_ready_response.status_code == 200
     assert mutation_report_response.json()["mutation_result"]["final_test_status"] == "passed"
     assert mutation_report_response.json()["result_envelope"]["mutations"]["final_test_status"] == "passed"
+    assert pr_ready_response.json()["readiness"] == "ready"
+    assert pr_ready_response.json()["bounded_patch"]["changed_files"] == ["api_target.txt"]
+    assert pr_ready_response.json()["manual_git"]["create_pr"] == "not_performed"
     assert target_file.read_text(encoding="utf-8") == "after\n"
 
 

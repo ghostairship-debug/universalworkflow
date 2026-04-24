@@ -2,11 +2,42 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from infra.scripts.manage import run_demo
 from infra.scripts.m21_rebaseline_report import build_m21_rebaseline_report
+from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
+from packages.worker_adapters.codex_adapter import CodexAdapter
+from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 
 
-def test_manage_demo_projects_canonical_closeout_packet(tmp_path: Path) -> None:
+pytestmark = pytest.mark.slow
+
+def _fake_release_external_launch(self, packet):  # type: ignore[override]
+    started_at = utc_now()
+    artifact_paths = resolve_artifact_paths(
+        packet,
+        create_missing=True,
+        placeholder=f"# Fake external adapter\n\nadapter={self.normalized_name()}\n",
+    )
+    finished_at = utc_now()
+    return ExecutionResult(
+        runtime_task_id=packet.runtime_task_id,
+        return_code=0,
+        stdout=f"{self.normalized_name()} fake ok",
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
+        artifact_paths=artifact_paths,
+        adapter_name=self.normalized_name(),
+        metadata={"test_fake_external_adapter": True},
+    )
+
+
+def test_manage_demo_projects_canonical_closeout_packet(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(CodexAdapter, "launch", _fake_release_external_launch)
+    monkeypatch.setattr(LangChainAgentAdapter, "launch", _fake_release_external_launch)
     db_path = tmp_path / "workflow.db"
 
     payload = run_demo(db_path)
@@ -33,7 +64,9 @@ def test_manage_demo_projects_canonical_closeout_packet(tmp_path: Path) -> None:
     assert Path(payload["paths"]["auto"]["artifact_path"]).exists()
 
 
-def test_m21_rebaseline_report_covers_canonical_demo_matrix(tmp_path: Path) -> None:
+def test_m21_rebaseline_report_covers_canonical_demo_matrix(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(CodexAdapter, "launch", _fake_release_external_launch)
+    monkeypatch.setattr(LangChainAgentAdapter, "launch", _fake_release_external_launch)
     db_path = tmp_path / "m21_rebaseline.db"
 
     payload = build_m21_rebaseline_report(db_path)

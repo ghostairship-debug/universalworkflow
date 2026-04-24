@@ -376,6 +376,9 @@ class MCPServerProfile(PersistedContractModel):
 class ToolProjectionEntry(ContractModel):
     capability_id: str
     tool_name: str
+    canonical_tool_id: str | None = None
+    raw_tool_name: str | None = None
+    display_name: str | None = None
     description: str
     source_type: CapabilitySourceType
     trust_tier: TrustTier
@@ -387,6 +390,22 @@ class ToolProjectionEntry(ContractModel):
     redaction_rules: list[str] = Field(default_factory=list)
     server_profile_id: str | None = None
     adapter_name: str | None = None
+
+    @model_validator(mode="after")
+    def fill_canonical_identity(self) -> "ToolProjectionEntry":
+        raw_tool_name = self.raw_tool_name or self.tool_name
+        self.raw_tool_name = raw_tool_name
+        self.display_name = self.display_name or raw_tool_name.replace("_", " ")
+        if self.canonical_tool_id:
+            return self
+        source_type = str(self.source_type)
+        if source_type in {CapabilitySourceType.mcp_stdio, CapabilitySourceType.mcp_http} and self.server_profile_id:
+            self.canonical_tool_id = f"mcp:{self.server_profile_id}:{raw_tool_name}"
+        elif source_type == CapabilitySourceType.built_in:
+            self.canonical_tool_id = f"builtin:{self.capability_id}:{raw_tool_name}"
+        else:
+            self.canonical_tool_id = f"{source_type}:{self.capability_id}:{raw_tool_name}"
+        return self
 
 
 class ToolProjectionManifest(PersistedContractModel):

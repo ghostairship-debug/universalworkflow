@@ -1,4 +1,4 @@
-.PHONY: dev migrate reset-db smoke logs-tail offline-validation check-doc-links export-source pre-m8-gates
+.PHONY: dev migrate reset-db smoke logs-tail offline-validation check-doc-links export-source pre-m8-gates test test-full test-coverage
 
 PYTHON ?= python
 DB_PATH ?= state/workflow.db
@@ -29,3 +29,12 @@ export-source:
 
 pre-m8-gates:
 	$(PYTHON) -m infra.scripts.pre_m8_gates
+
+test:
+	pytest -q
+
+test-full:
+	pytest -q --run-slow
+
+test-coverage:
+	pytest -q --run-slow --cov=packages --cov=apps --cov-report=term-missing --cov-fail-under=70

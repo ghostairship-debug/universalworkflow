@@ -243,6 +243,9 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "m8_projection_tool_names": [
                     item["tool_name"] for item in capability_projection["tool_projection_manifest"]["tools"]
                 ],
+                "m8_projection_canonical_tool_ids": [
+                    item["canonical_tool_id"] for item in capability_projection["tool_projection_manifest"]["tools"]
+                ],
                 "m8_projection_trust_tiers": capability_projection["tool_projection_manifest"]["trust_tiers"],
                 "m8_skill_export_domain_pack_id": skill_export["domain_pack_id"],
                 "m8_skill_export_bundle_has_readme": (Path(skill_export["bundle_path"]) / "README.md").exists(),
@@ -416,6 +419,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 result["m8_projection_adapter"] == "agent",
                 "mcp_list_workspace_files" in result["m8_projection_tool_names"],
                 "mcp_read_workspace_text" in result["m8_projection_tool_names"],
+                "mcp:local_workspace_readonly:mcp_list_workspace_files" in result["m8_projection_canonical_tool_ids"],
                 "web_search" in result["m8_projection_tool_names"],
                 "understand_image" in result["m8_projection_tool_names"],
                 result["m8_projection_trust_tiers"] == ["t0_builtin_local", "t1_local_stdio_mcp"],

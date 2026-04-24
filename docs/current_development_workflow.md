@@ -8,17 +8,23 @@
 
 1. [README.md](../README.md)
 2. [docs/current_development_workflow.md](current_development_workflow.md)
-3. [docs/tech-debt-registry.md](tech-debt-registry.md)
-4. [docs/milestone_history.md](milestone_history.md)
-5. [PROJECT_DEEP_EVALUATION_M37.md](../PROJECT_DEEP_EVALUATION_M37.md)
-6. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
+3. [M38_REPAIR_AND_DEVELOPMENT_PLAN.md](../M38_REPAIR_AND_DEVELOPMENT_PLAN.md)
+4. [docs/tech-debt-registry.md](tech-debt-registry.md)
+5. [docs/milestone_history.md](milestone_history.md)
+6. [PROJECT_DEEP_EVALUATION_M37.md](../PROJECT_DEEP_EVALUATION_M37.md)
+7. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
 
-旧 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。需要历史细节时从 git 历史查看，不再恢复到工作树。
+旧 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。当前没有打开新的 active phase；需要历史细节时从 git 历史查看，不再恢复到工作树。
 
 ## 2. 当前仓库状态
 
 - 已完成：`M8-M30`、`M31 Phase 0`、`M32 Phase 0`、`M33 Phase 0`、`M34 Phase 0`、`M35`、`M36`、`M37`。
-- 当前没有打开 post-`M37` bounded phase。
+- 已接受 `M38 Phase 0`：开相、安全与范围冻结。
+- 已接受 `M38 Phase 1`：安全 test runner。
+- 已接受 `M38 Phase 2`：MCP canonical identity 与 `workflowctl doctor`。
+- 已接受 `M38 Phase 3`：`OrchestratorService` 第一轮收缩，`services.py` 从 3833 行降到 3520 行。
+- 已接受 `M38 Phase 4`：个人本地 task card 到 PR-ready summary 闭环。
+- 当前没有打开新的 active phase。
 - 当前主线可称为 `v1 core complete` personal-runtime baseline。
 - Web UI 已有可用的 natural-language workbench v1。
 - generated profiles 已作为受治理的 generated-profile family 落地。
@@ -28,17 +34,16 @@
 
 ## 3. 下一步
 
-下一步只应打开 `M38 Phase 0`，并且必须先写 phase doc 和 task cards。建议主题：
+最新完成的 `M38` 主题：
 
 > M38：个人自用硬化、`OrchestratorService` 收缩、运行证据增强。
 
-M38 Phase 0 应先做：
+下一轮开发启动时必须遵守：
 
-1. 固化个人自用边界，避免旧的外部产品化叙事回流。
-2. 写一份短的个人日常操作剧本。
-3. 验证当前 resume、reconcile、cancel、review、state recovery 路径。
-4. 明确 `OrchestratorService` 收缩的第一批切口。
-5. 确认运行证据、capability health、成本/失败原因展示的最小目标。
+1. 先打开新的 M 级计划和当前 active phase/task 材料。
+2. 不自动提交 git、不推送远端、不创建 GitHub PR，除非拥有者明确要求。
+3. repo mutation 必须保留 write-set、安全测试和 review 状态。
+4. 完整 `pytest -q --run-slow` 只在每个 M 最终收口时跑一次。
 
 ## 4. 明确不做
 
@@ -93,8 +98,22 @@ python -m infra.scripts.offline_validation --skip-offline-probe
 pytest -q
 ```
 
-M38 打开前，任何清理都不能删除真实 pytest 测试、迁移、seed、运行时配置或治理 JSON。
+每个 M 收口时，必须再运行一次全量慢测：
+
+```powershell
+pytest -q --run-slow
+```
+
+普通 phase closeout 或 CLI/API/Web 改动只跑相关定点 slow 用例，避免每个小阶段都压全量慢测。
+
+覆盖率不再挂在默认 `pytest` 上；需要覆盖率门槛时显式运行：
+
+```powershell
+pytest -q --run-slow --cov=packages --cov=apps --cov-report=term-missing --cov-fail-under=70
+```
+
+任何清理都不能删除真实 pytest 测试、迁移、seed、运行时配置或治理 JSON。
 
 ## 8. 一句话指令
 
-把已接受的 `M37` 当作最新完成基线；保持 post-`M37` phase 关闭；下一次只通过 `M38 Phase 0` 文档和任务卡打开个人自用硬化工作。
+把已接受的 `M38` 当作最新完成基线；下一步先打开新的 M 级计划，再进入新的 active phase。
