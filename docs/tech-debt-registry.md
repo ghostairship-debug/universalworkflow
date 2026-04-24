@@ -1,70 +1,56 @@
-# Technical Debt Registry
+# 技术债登记表
 
-**Document role:** a living architecture debt register for the current repository, not a milestone-specific appendix.  
-**Usage rule:** this file should be reviewed in freeze reviews, governance reports, and any scope-rebaseline discussion before new breadth work is approved.
+本文档是人类可读的技术债摘要。结构化真相源是 [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)，治理 API/CLI 默认读取该 JSON；本文档用于快速理解当前还剩什么债、下一步为什么要先做 M38 自用硬化。
 
----
+# 1. 登记规则
 
-# 1. Registry Rules
+- 只记录已经明确接受或在仓库中清楚观察到的债务。
+- 不把未分诊想法塞进这里。
+- 每条债务必须说明引入位置、计划偿还阶段、当前状态和阻塞影响。
+- 历史债务可以汇总，但不能在没有证据的情况下静默删除。
+- 当前没有打开 post-`M37` phase；下一阶段建议通过 `M38 Phase 0` 正式打开。
 
-- Record only debt that has been explicitly accepted or clearly observed in the repository.
-- Do not use this file as a generic backlog for untriaged ideas.
-- Every item must describe:
-  - where it was introduced
-  - where it is planned to be repaid
-  - whether it is still active, partially repaid, or fully retired
-  - what it blocks
-- Historical debt may be moved into the repaid section, but should not disappear without review evidence.
-- Cross-milestone structural debt belongs here even if it spans several cycles.
-- When no future bounded phase is formally open yet, a planned repayment label may remain generic (for example, `Post-M34 bounded phase`) until the next milestone is explicitly opened.
-- Once the next milestone is opened, planned repayment labels should be updated to the most honest active-phase, later-milestone, or carry-forward target rather than leaving the generic placeholder indefinitely.
+# 2. 已偿还债务
 
----
-
-# 2. Repaid Debt
-
-| ID | Description | Introduced In | Repaid In | Result |
+| ID | 描述 | 引入 | 偿还 | 结果 |
 | --- | --- | --- | --- | --- |
-| TD-002 | `PresetResolver` only supported `manual_select` and had no deterministic suggestion path | M0 | M1 | Added deterministic offline `suggest()` while keeping execution explicit |
-| TD-003 | `HandoffLite` was frozen only as a contract and not persisted | M0 | M1 | Added persistence plus `status-detail`, `handoffs`, smoke, and offline-validation coverage |
-| TD-004 | thin compile existed only as an internal placeholder and not as a public lifecycle surface | M0 | M1 | Added explicit public `compile / recompile / resume` lifecycle surfaces |
-| TD-005 | execution initially relied on a shell-only lane with no stable GPT-capable CLI route | M0 | M5 Phase 3 | `WorkerRouter`, multi-route capability selection, adapter pinning, `NoopAdapter`, and `OpenCodeAdapter` now provide a real multi-adapter execution baseline |
-| TD-011 | `packages/core_domain/services.py` concentrated too much orchestration, projection, memory, simulation, and lifecycle logic in one file | M2-M7 | Pre-M8 Phase C | Extracted bounded service modules for projection/reporting, memory/simulation, and lifecycle/review while keeping `OrchestratorService` as the public facade |
-| TD-016 | subprocess-backed adapters did not enforce declared timeout budgets and inherited too much parent environment state | M5-M7 | Pre-M8 Phase B | Added timeout enforcement, subprocess env allowlisting, interpreter-portable compile commands, and explicit local execution trust-boundary docs |
-| TD-012 | `infra/scripts/offline_validation.py` had grown into an oversized validation script instead of a modular validation package | M5-M7 | Pre-M8 Phase D | Split validation flows into `infra/validation/` modules and reduced `offline_validation.py` to a thin entry wrapper |
-| TD-013 | runtime-brief and memory-retrieval assembly lacked a hard context-budget preflight and explicit pruning guard path | M5-M7 | Pre-M8 Phase D | Added diagnostics-first `context_budget`, gateway preflight guarding, trace context, and ADR-006 for the next-step pruning strategy |
-| TD-014 | key runtime dependencies were pinned with narrow upper bounds, making routine compatibility and security updates harder than necessary | M5-M7 | Pre-M8 Phase E | Widened core runtime upper bounds selectively and documented the repository's dependency/versioning policy before `M8` |
-| TD-015 | governance reports parsed Markdown debt prose directly instead of consuming a structured canonical source | M3-M7 | Pre-M8 Phase D | Added canonical JSON governance sources with Markdown compatibility fallback and explicit source-contract reporting |
-| TD-017 | clean source-package/export flow was not productized, so review or handoff snapshots could include local state, DBs, artifacts, and repo noise | M5-M7 | Pre-M8 Phase E | Added source-package manifest/export tooling, minimal automation gates, and freeze-review provenance for handoff claims |
-| TD-018 | canonical repo docs mixed local absolute links and current/historical guidance without a portable source map | M1-M7 | Pre-M8 Phase E | Finished portable-link cleanup for living docs and formalized current-vs-historical doc governance in the active workflow guide |
-| TD-006 | review policy breadth stopped at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` was reference-only | M0 | M9 | Added executable `optional` advisory-review runtime behavior, seed coverage, and governance/readiness parity |
-| TD-007 | `run_events` and trace export lacked replay-grade linkage and first-class run metrics | M0 | M9 | Added replay-packet projection, end-to-end run metrics, and richer audit/status observability surfaces |
-| TD-008 | the durable pilot still lacked explicit interrupt/resume/checkpoint lineage and reconciliation semantics | M0 | M9 | Added structured durable lineage history, durable transition inspection, and terminal/review checkpoint reconciliation |
-| TD-010 | governance visibility remained document-centric and lacked quantitative automation and alerts | M0 | M9 | Added quantitative governance metrics, automated alert reports, and updated release-readiness integration |
-| TD-001 | claim and worker-lease semantics remained local-only and did not provide explicit repository-owned ownership topology | M0 | M10 | Added explicit claim/worker ownership topology, attempt-aware claim and lease linkage, coherent ownership projections, and local batch-domain semantics without turning the runtime into a multi-node scheduler |
-| TD-009 | execution semantics were still serial-first and did not implement claim/lease/barrier-aware local batch concurrency | M0 | M10 | Added local batch-barrier events, parallel batch resume semantics, projection surfaces, and CLI/API batch-resume entry points for the supported local control plane |
-| TD-020 | the full operator web UI and human control surface were still missing beyond CLI/API and the read-mostly TUI | M5-M13 | M14 | Added a built-in FastAPI web operator surface with dashboard, run explorer, pending-review console, governance/config pages, and controller-owned human action routes |
-| TD-019 | hosted remote worker pools and multi-node scheduling were still not productized beyond the shipped local-first / loopback external-worker baseline | M10 | M15 | Added single-control-plane remote HTTP worker pools, callback-driven lease renewal/completion recording, remote worker bootstrap packaging, and remote worker recovery coverage while keeping repository truth in the control plane |
-| TD-021 | a centralized scheduler-authority first slice existed for multi-control-plane identity, lease proposal, and arbitration provenance, but true distributed scheduler consensus and cross-control-plane failover were still incomplete | M15 | M20 | Added a single-store quorum-style scheduler-authority layer, committed cross-control-plane lease ownership, fencing-token enforced remote callbacks, takeover handoff lineage, cluster operator surfaces, and offline cutover validation while keeping repository truth inside the control planes |
-| TD-STRUCT-002 | post-`M31 Phase 0` truth was still partially duplicated across freeze reviews, the current workflow guide, retained phase/task-card artifacts, and root rebaseline bundles until the opening material was fully absorbed and pruned | M31 | M32 Phase 0 | Absorbed the opening-bundle and backup-workspace truth into accepted freeze reviews and archive notes, then cleaned the repository back to one primary worktree |
-| TD-STRUCT-004 | orchestration logic still carried `project_delivery`-shaped assumptions even after the first shared graph substrate extraction | M30-M31 | M33 Phase 0 | Contracted default planning, preview, and execution onto a shared orchestration service and canonical plan builder for the shipped multi-role presets |
+| TD-002 | preset 缺少确定性 suggestion 路径 | M0 | M1 | 已加入离线 deterministic suggestion |
+| TD-003 | `HandoffLite` 只有契约没有持久化 | M0 | M1 | 已加入持久化和状态查询 |
+| TD-004 | compile 只是内部占位 | M0 | M1 | 已加入公开 lifecycle surface |
+| TD-005 | 执行路径过度依赖 shell-only lane | M0 | M5 Phase 3 | 已形成多 adapter baseline |
+| TD-011 | `services.py` 过度集中编排、投影、生命周期逻辑 | M2-M7 | Pre-M8 Phase C | 已抽出部分 service modules，但 facade 债务仍以 `TD-STRUCT-001` 继续存在 |
+| TD-016 | subprocess adapter 缺少 timeout 和环境隔离 | M5-M7 | Pre-M8 Phase B | 已加入 timeout、env allowlist 和 trust-boundary 说明 |
+| TD-012 | offline validation 脚本过大 | M5-M7 | Pre-M8 Phase D | 已拆为 `infra/validation/` |
+| TD-013 | runtime brief / memory retrieval 缺少 context-budget preflight | M5-M7 | Pre-M8 Phase D | 已加入 context budget 和 gateway preflight |
+| TD-014 | 依赖上界过窄 | M5-M7 | Pre-M8 Phase E | 已选择性放宽核心运行依赖 |
+| TD-015 | governance report 直接解析 Markdown prose | M3-M7 | Pre-M8 Phase D | 已加入 canonical JSON source |
+| TD-017 | source-package/export 会带入本地噪音 | M5-M7 | Pre-M8 Phase E | 已加入 manifest/export 工具 |
+| TD-018 | 文档混用绝对链接和历史/当前说明 | M1-M7 | Pre-M8 Phase E | 已清理 portable links 并建立文档治理规则 |
+| TD-006 | `optional` review policy 只是 reference-only | M0 | M9 | 已加入可执行 optional advisory review |
+| TD-007 | run events / trace 缺少 replay-grade linkage | M0 | M9 | 已加入 replay packet 和 run metrics |
+| TD-008 | durable pilot 缺少 interrupt/resume/checkpoint lineage | M0 | M9 | 已加入 durable lineage 和 reconciliation |
+| TD-010 | governance visibility 缺少量化指标 | M0 | M9 | 已加入 governance metrics / alerts |
+| TD-001 | claim/worker lease 缺少 ownership topology | M0 | M10 | 已加入 claim/worker ownership topology |
+| TD-009 | 执行语义 serial-first，缺少 local batch barrier | M0 | M10 | 已加入 local batch barrier 和 batch resume |
+| TD-020 | Web operator UI 缺失 | M5-M13 | M14 | 已加入 FastAPI Web operator surface |
+| TD-019 | remote worker pool 不成熟 | M10 | M15 | 已加入单 control-plane remote HTTP worker pools |
+| TD-021 | scheduler authority 第一片不完整 | M15 | M20 | 已加入 single-store quorum-style authority、fencing 和 cutover validation |
+| TD-STRUCT-002 | M31 后 truth 分散在多个文档 | M31 | M32 Phase 0 | 已吸收到 freeze review / archive；本轮又进一步收束为中文活跃真相集 |
+| TD-STRUCT-004 | orchestration 仍携带 `project_delivery` 假设 | M30-M31 | M33 Phase 0 | 已收缩到 shared orchestration service 和 canonical plan builder |
 
----
+# 3. 未偿还债务
 
-# 3. Open Debt
-
-| ID | Description | Introduced In | Planned Repayment Phase | Current Status | Blocking Impact |
+| ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
-| TD-STRUCT-001 | `OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface | M31 | bounded carry-forward | partially_repaid | blocks honest service-boundary claims and safe follow-on extraction |
-| TD-STRUCT-003 | scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee | M20-M31 | bounded carry-forward | partially_repaid | blocks semantic honesty and operator comprehension |
-| TD-STRUCT-005 | capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane | M30-M31 | M38-M39 | active | blocks fully trustworthy capability readiness and routing decisions |
-| TD-STRUCT-006 | future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts | M31 | M39 | partially_repaid | blocks safe promotion of M32+ platform objects into the mainline type system |
+| TD-STRUCT-001 | `OrchestratorService` 仍是巨型 facade，集中跨平面 wiring 和大量 helper 逻辑 | M31 | M38 | partially_repaid | 阻塞服务边界诚实性和后续安全抽取 |
+| TD-STRUCT-003 | scheduler-authority 内部表名、事件名和旧措辞仍带有过强 consensus 暗示 | M20-M31 | bounded carry-forward | partially_repaid | 阻塞语义诚实和 operator 理解 |
+| TD-STRUCT-005 | capability health 仍部分依赖 descriptor，尚未被完整 runtime telemetry 支撑 | M30-M31 | M38-M39 | active | 阻塞可信 capability readiness 和路由决策 |
+| TD-STRUCT-006 | M31 bundle/ZIP 的未来平台对象仍是 reference material，缺少治理式 promotion path | M31 | M39 | partially_repaid | 阻塞未来对象安全进入主线类型系统 |
 
----
+# 4. Freeze Review 问题
 
-# 4. Freeze Review Questions
-
-1. Are all accepted cross-milestone debts from `M0` through the current cycle recorded here?
-2. Does any active debt item now block the next milestone entry gate?
-3. Have all pre-entry hardening debts been repaid before feature breadth resumes?
-4. Were any completed debts retired with explicit review evidence rather than silently dropped?
+1. 当前 active phase 是否已经正式打开？
+2. 是否有未偿还技术债阻塞下一阶段入口？
+3. 新功能是否会继续扩大 `OrchestratorService`？
+4. capability health、执行证据和失败原因是否足够支持个人长期自用？
+5. 已关闭阶段的历史结论是否已经吸收到活跃中文文档，而不是继续保留分散材料？

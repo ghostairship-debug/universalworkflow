@@ -8,11 +8,10 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIVING_DOCS = [
     Path("README.md"),
-    Path("README.zh-CN.md"),
     Path("docs/current_development_workflow.md"),
     Path("docs/tech-debt-registry.md"),
-    Path("docs/reviews/m20-freeze-review.md"),
-    Path("docs/reviews/m30-operator-control-freeze-review.md"),
+    Path("docs/milestone_history.md"),
+    Path("PROJECT_DEEP_EVALUATION_M37.md"),
 ]
 MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 

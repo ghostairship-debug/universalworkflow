@@ -1,126 +1,100 @@
-# Current Development Workflow
+# 当前开发工作流
 
-This document is the canonical living guide for what the repository should do next and how work should be executed.
+本文档是后续开发的最高优先级操作说明。当前项目是个人自用的本地 operator runtime，所有计划、文档和验证都应服务“未来的我能不能稳定继续使用”，而不是服务外部用户、公开 SaaS、开源 onboarding 或第三方生态。
 
-## 1. Authoritative Current-State Sources
+## 1. 活跃真相源
 
-Use these in priority order when deciding what is current:
+判断当前状态时，只看以下文件：
 
-1. [docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md](reviews/m37-generated-roles-and-automation-plane-freeze-review.md)
-2. [docs/reviews/m36-natural-language-workbench-v1-freeze-review.md](reviews/m36-natural-language-workbench-v1-freeze-review.md)
+1. [README.md](../README.md)
+2. [docs/current_development_workflow.md](current_development_workflow.md)
 3. [docs/tech-debt-registry.md](tech-debt-registry.md)
-4. [README.md](../README.md)
-5. [m37_phase_docs/phase_2_automation_controller_watchdog_and_closeout.md](../m37_phase_docs/phase_2_automation_controller_watchdog_and_closeout.md)
-6. [docs/task_cards/m37_phase_2_task_cards.md](task_cards/m37_phase_2_task_cards.md)
-7. [docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md](reviews/m36-workbench-ia-capability-slot-freeze-review.md)
-8. [docs/reviews/m35-role-execution-productization-freeze-review.md](reviews/m35-role-execution-productization-freeze-review.md)
+4. [docs/milestone_history.md](milestone_history.md)
+5. [PROJECT_DEEP_EVALUATION_M37.md](../PROJECT_DEEP_EVALUATION_M37.md)
+6. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
 
-The repository has accepted `M37` and currently has no open post-`M37` bounded phase.
+旧 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。需要历史细节时从 git 历史查看，不再恢复到工作树。
 
-Archived planning context from the pre-merge backup workspace is summarized in [docs/reviews/m32-archived-planning-inputs.md](reviews/m32-archived-planning-inputs.md). Treat it as reference-only, not as parallel execution truth.
+## 2. 当前仓库状态
 
-The rebuilt post-`M34` roadmap is summarized in [POST_M34_MULTIPHASE_ROADMAP.md](../POST_M34_MULTIPHASE_ROADMAP.md). Treat it as reference-only until the next bounded phase opens.
+- 已完成：`M8-M30`、`M31 Phase 0`、`M32 Phase 0`、`M33 Phase 0`、`M34 Phase 0`、`M35`、`M36`、`M37`。
+- 当前没有打开 post-`M37` bounded phase。
+- 当前主线可称为 `v1 core complete` personal-runtime baseline。
+- Web UI 已有可用的 natural-language workbench v1。
+- generated profiles 已作为受治理的 generated-profile family 落地。
+- bounded automation watchdog 已落地，高风险动作仍必须 review-gated。
+- scheduler-authority 默认 local-only，只有设置 `UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER=1` 时才走 quorum-style 路径。
+- `TD-STRUCT-001`、`TD-STRUCT-003`、`TD-STRUCT-005`、`TD-STRUCT-006` 仍是后续主要结构债。
 
-## 2. Current Repository Position
+## 3. 下一步
 
-The repository has now completed:
+下一步只应打开 `M38 Phase 0`，并且必须先写 phase doc 和 task cards。建议主题：
 
-- `M8` through `M30`
-- accepted `M31 Phase 0`
-- accepted `M32 Phase 0`
-- accepted `M33 Phase 0`
-- accepted `M34 Phase 0`
-- accepted `M35`
-- accepted `M36`
-- accepted `M37`
+> M38：个人自用硬化、`OrchestratorService` 收缩、运行证据增强。
 
-Current status:
+M38 Phase 0 应先做：
 
-- the mainline product remains `v1 core complete`
-- the latest accepted freeze is `M37 Generated Roles And Automation Plane`
-- there is no currently active bounded phase
-- the built-in Web UI now includes a usable natural-language workbench v1
-- interaction sessions now keep persistent follow-up queues
-- generated roles now exist as governed generated profiles scoped to existing sessions and runs
-- automation now exists as a bounded watchdog/controller line with explicit review-gated high-risk actions
-- `TD-STRUCT-001` and `TD-STRUCT-003` remain partially repaid carry-forward debt
-- `TD-STRUCT-005` remains deferred and is aligned mainly to `M38-M39`
-- `TD-STRUCT-006` remains deferred and is aligned mainly to `M39`
-- broader capability-ecosystem productization, eval/promotion, and design-grade multimodal validation remain later work
+1. 固化个人自用边界，避免旧的外部产品化叙事回流。
+2. 写一份短的个人日常操作剧本。
+3. 验证当前 resume、reconcile、cancel、review、state recovery 路径。
+4. 明确 `OrchestratorService` 收缩的第一批切口。
+5. 确认运行证据、capability health、成本/失败原因展示的最小目标。
 
-## 3. What Must Happen Next
+## 4. 明确不做
 
-The next honest step is to open `M38 Phase 0` only after its phase doc and task-card pack exist.
+除非拥有者明确改目标，否则后续阶段不做：
 
-The repository should proceed by:
+- 外部用户 onboarding。
+- 公开 SaaS / 多租户 / 企业权限。
+- 第三方插件市场。
+- 社区贡献路径。
+- 为陌生用户解释而牺牲个人自用效率的文档工程。
+- 无运行证据支撑的新 capability 广覆盖。
 
-1. treating accepted [docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md](reviews/m37-generated-roles-and-automation-plane-freeze-review.md) as the latest completed bounded baseline
-2. keeping the retained `M36` and `M37` phase materials as closeout evidence rather than active execution truth
-3. opening `M38 Phase 0` only after writing its phase doc, task-card index, and detailed cards
-4. continuing bug-first: repair real workflow/runtime regressions before continuing new scope
-5. preserving the additive `execution_profile` family, interaction-session family, generated-profile family, and bounded watchdog semantics shipped through accepted `M35-M37`
-6. keeping high-risk automation and promotion behavior review-gated and auditable
-7. continuing to defer broad `MMX CLI`, `gcloud` / Vertex AI, `TD-STRUCT-005`, and `TD-STRUCT-006` breadth until a later bounded phase says otherwise
+## 5. 任务卡协议
 
-## 4. Task-Card Protocol
+每个新 active phase 仍按 task-card 协议推进：
 
-The repository continues to use the task-card protocol for every new active phase:
+1. 先写当前 phase doc。
+2. 再写当前 phase task-card index。
+3. 再写 detailed task cards。
+4. 执行时同步记录实际结果。
+5. 完成后用验证结果和 living-doc 更新收尾。
 
-1. write the current phase doc first
-2. write the current phase task-card index
-3. write the current phase detailed task cards
-4. execute only after the detailed cards exist
-5. update cards with actual results while implementing
-6. close the phase with tests, review, and living-doc updates
+规则：
 
-Rules:
+- 只为当前 active phase 生成任务卡。
+- 不提前生成未来 phase 的任务卡包。
+- 已关闭阶段的任务卡不要长期保留在工作树；结论吸收到本文件、历史摘要或技术债登记表后即可清理。
+- 每个 mutating workflow run 必须有写集、测试和审查边界。
 
-- generate task cards only for the current active phase
-- do not pre-generate future phase task-card packs
-- closed task-card packs are not retained by default; once their conclusions are absorbed into freeze reviews and integrated roadmaps, prefer pruning them
-- complex phases require standalone detailed cards for every task
-- every mutating workflow run should still carry bounded mutation contracts, read/write scope, and explicit tests
-- every completed card should record real workflow evidence back into the card or accepted review bundle
+## 6. 文档治理规则
 
-## 5. Collaboration Mode
+工作树应保持小而清楚。
 
-Default collaboration remains:
+- 根目录只保留真正需要直接看到的入口文档。
+- 历史里程碑只保留中文摘要，不保留分散 phase/task-card/review 材料。
+- 技术债以 `docs/governance/tech_debt_registry.json` 为结构化真相，`docs/tech-debt-registry.md` 只做人类可读摘要。
+- 文档内容优先中文；如代码、命令、环境变量或公共类型必须保留英文原文，则只保留必要英文。
+- 旧计划不得与当前工作流并列成为“第二真相源”。
 
-- architecture, high-risk semantics, and final release decisions are human-led
-- workflow is used as the bounded execution engine, validation surface, and audit/replay control plane
-- generated profiles and automation watchdogs stay additive and governed
-- bug-first always applies
+## 7. 验证规则
 
-## 6. Minimal Documentation Rule
+文档或代码变更后至少运行：
 
-Keep the working tree small.
+```powershell
+python -m infra.scripts.check_doc_links
+```
 
-- prefer keeping only the latest accepted freeze review, current README, current workflow guide, living debt registry, and any currently active phase materials as the active truth set
-- if useful long-horizon planning rationale must be retained, collapse it into one clearly non-authoritative roadmap or archive note instead of restoring multiple competing plans
-- treat older plans, phase docs, task-card packs, and historical review bundles as disposable once their conclusions are absorbed
+涉及运行路径、验证脚本或 active truth set 时再运行：
 
-## 7. What Counts As Done
+```powershell
+python -m infra.scripts.offline_validation --skip-offline-probe
+pytest -q
+```
 
-### Task done
+M38 打开前，任何清理都不能删除真实 pytest 测试、迁移、seed、运行时配置或治理 JSON。
 
-- code or documentation delta is implemented
-- declared tests pass
-- task-card status is updated
-- any promised evidence is recorded
+## 8. 一句话指令
 
-### Phase done
-
-- every task card in the active phase is complete
-- phase-level verification passes
-- phase review or equivalent closeout is written
-
-### Milestone done
-
-- freeze review exists
-- living docs are updated
-- debt implications are recorded
-- the repository can state what is complete and what remains deferred
-
-## 8. Current One-Line Instruction
-
-Treat accepted `M37` as the latest completed bounded baseline, keep no post-`M37` phase active until the next phase doc and task-card pack exist, and open `M38+` breadth only through the task-card protocol.
+把已接受的 `M37` 当作最新完成基线；保持 post-`M37` phase 关闭；下一次只通过 `M38 Phase 0` 文档和任务卡打开个人自用硬化工作。
