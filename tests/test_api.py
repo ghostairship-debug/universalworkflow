@@ -246,6 +246,7 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
     profiles_response = client.get("/interaction/agent-profiles")
     registry_response = client.get("/interaction/agent-profiles/registry")
     clusters_response = client.get("/interaction/clusters/templates")
+    empty_sessions_response = client.get("/interaction/sessions")
     create_response = client.post(
         "/interaction/sessions",
         json={
@@ -254,12 +255,16 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
             "preferred_cluster_template_ids": ["dev_cluster"],
             "constraints": ["keep operator checkpoints visible"],
             "assumptions": ["workspace is clean"],
+            "referenced_artifact_paths": ["docs/current_development_workflow.md"],
+            "followup_context": ["prior review asked for a launch checkpoint"],
         },
     )
 
     assert profiles_response.status_code == 200
     assert registry_response.status_code == 200
     assert clusters_response.status_code == 200
+    assert empty_sessions_response.status_code == 200
+    assert empty_sessions_response.json() == []
     assert any(profile["profile_id"] == "planner_architect" for profile in profiles_response.json())
     assert registry_response.json()["generated_profiles"] == []
     assert clusters_response.json()[0]["template_id"] == "dev_cluster"
@@ -271,12 +276,24 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
     assert create_payload["plan_draft"]["selected_preset_id"] == "project_delivery"
     assert create_payload["plan_draft"]["selected_cluster_template_ids"] == ["dev_cluster"]
     assert create_payload["goal_packet"]["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert create_payload["session"]["intent_packet"]["constraints"] == ["keep operator checkpoints visible"]
+    assert create_payload["session"]["intent_packet"]["assumptions"] == ["workspace is clean"]
+    assert create_payload["session"]["intent_packet"]["referenced_artifact_paths"] == ["docs/current_development_workflow.md"]
+    assert create_payload["session"]["intent_packet"]["followup_context"] == ["prior review asked for a launch checkpoint"]
+    assert create_payload["followup_requests"] == []
+    assert create_payload["active_run_operator_view"] is None
 
     get_response = client.get(f"/interaction/sessions/{session_id}")
     assert get_response.status_code == 200
     get_payload = get_response.json()
     assert get_payload["session"]["latest_plan_draft_id"] == create_payload["plan_draft"]["draft_id"]
     assert get_payload["available_cluster_templates"][0]["template_id"] == "dev_cluster"
+    assert get_payload["followup_requests"] == []
+    assert get_payload["active_run_operator_view"] is None
+
+    sessions_response = client.get("/interaction/sessions")
+    assert sessions_response.status_code == 200
+    assert [item["session_id"] for item in sessions_response.json()] == [session_id]
 
     launch_response = client.post(
         f"/interaction/sessions/{session_id}/launch",
@@ -295,6 +312,57 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
     assert launch_payload["launch_payload"]["selected_clusters"][0]["template_id"] == "dev_cluster"
     assert launch_payload["launch_payload"]["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
     assert launch_payload["launch_payload"]["run"]["status"] == "prepared"
+    assert launch_payload["active_run_operator_view"]["run"]["run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
+    assert launch_payload["active_run_operator_view"]["status_detail"]["next_action"] in {"resume_run", "start_execution", "resume"}
+    assert any(item["trigger"] == "review_gate" for item in launch_payload["automation_watchdogs"])
+    assert any(item["action_type"] == "monitor_run" for item in launch_payload["automation_evaluation"]["actions"])
+
+    generate_profiles_response = client.post(f"/interaction/sessions/{session_id}/generated-profiles")
+    assert generate_profiles_response.status_code == 201
+    generate_profiles_payload = generate_profiles_response.json()
+    assert len(generate_profiles_payload["generated_profiles"]) >= 1
+    assert any(item["cluster_template_id"] == "dev_cluster" for item in generate_profiles_payload["generated_profiles"])
+
+    generated_profiles_response = client.get(
+        "/interaction/generated-profiles",
+        params={"session_id": session_id},
+    )
+    assert generated_profiles_response.status_code == 200
+    assert len(generated_profiles_response.json()) >= 1
+
+    registry_after_generation = client.get("/interaction/agent-profiles/registry")
+    assert registry_after_generation.status_code == 200
+    assert len(registry_after_generation.json()["generated_profiles"]) >= 1
+
+    followup_response = client.post(
+        f"/interaction/sessions/{session_id}/followups",
+        json={
+            "instruction": "Prepare the approval checkpoint after the implementation run completes.",
+            "intent": "review_gate",
+            "blocking": True,
+        },
+    )
+    assert followup_response.status_code == 201
+    followup_payload = followup_response.json()
+    assert followup_payload["followup_request"]["instruction"].startswith("Prepare the approval checkpoint")
+    assert len(followup_payload["followup_requests"]) == 1
+    assert followup_payload["followup_requests"][0]["blocking"] is True
+    assert followup_payload["active_run_operator_view"]["run"]["run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
+    assert {item["trigger"] for item in followup_payload["automation_watchdogs"]} >= {"review_gate", "followup_pending"}
+    assert any(item["action_type"] == "wait_for_run_checkpoint" for item in followup_payload["automation_evaluation"]["actions"])
+
+    followup_list_response = client.get(f"/interaction/sessions/{session_id}/followups")
+    assert followup_list_response.status_code == 200
+    assert len(followup_list_response.json()) == 1
+    assert followup_list_response.json()[0]["intent"] == "review_gate"
+
+    watchdog_list_response = client.get(f"/interaction/sessions/{session_id}/watchdogs")
+    assert watchdog_list_response.status_code == 200
+    assert {item["trigger"] for item in watchdog_list_response.json()} >= {"review_gate", "followup_pending"}
+
+    watchdog_eval_response = client.get("/interaction/watchdogs/evaluate", params={"session_id": session_id})
+    assert watchdog_eval_response.status_code == 200
+    assert len(watchdog_eval_response.json()["actions"]) >= 1
 
 
 def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
@@ -814,7 +882,8 @@ def test_api_compile_and_mutation_report_support_repo_mutation_contract(
     assert target_file.read_text(encoding="utf-8") == "after\n"
 
 
-def test_api_scheduler_authority_grants_and_projects_first_slice(tmp_path: Path) -> None:
+def test_api_scheduler_authority_grants_and_projects_first_slice(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER", "1")
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
     service = OrchestratorService(db_path)
@@ -859,7 +928,8 @@ def test_api_scheduler_authority_grants_and_projects_first_slice(tmp_path: Path)
     assert replay_response.json()["scheduler_authority"]["latest_decision"]["decision_id"] == payload["decision"]["decision_id"]
 
 
-def test_api_scheduler_authority_conflict_duplicate_and_release_flow(tmp_path: Path) -> None:
+def test_api_scheduler_authority_conflict_duplicate_and_release_flow(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER", "1")
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
     service = OrchestratorService(db_path)
@@ -933,7 +1003,8 @@ def test_api_scheduler_authority_conflict_duplicate_and_release_flow(tmp_path: P
     )
 
 
-def test_api_scheduler_authority_regrants_after_expiry_and_survives_restart(tmp_path: Path) -> None:
+def test_api_scheduler_authority_regrants_after_expiry_and_survives_restart(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER", "1")
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
     service = OrchestratorService(db_path)
@@ -986,57 +1057,38 @@ def test_api_scheduler_authority_regrants_after_expiry_and_survives_restart(tmp_
     )
 
 
-def test_api_scheduler_cluster_and_operator_view_expose_cluster_topology(tmp_path: Path) -> None:
+def test_api_local_only_mode_exposes_disabled_scheduler_cluster_by_default(tmp_path: Path) -> None:
     db_path = tmp_path / "workflow.db"
     client = build_client(db_path)
-    service = OrchestratorService(db_path)
 
-    run = service.create_run("Operator cluster projection", "feature_delivery")
-    service.compile_run(run.run_id)
-    runtime_task_id = service.get_status_detail(run.run_id)["runtime_task_ids"][0]
-
-    proposal = client.post(
-        "/scheduler/proposals",
-        json={
-            "control_plane_id": "control_plane_alpha",
-            "run_id": run.run_id,
-            "runtime_task_id": runtime_task_id,
-            "domain_key": runtime_task_id,
-        },
-    )
+    run = client.post("/runs", json={"goal": "Operator cluster projection", "preset_id": "feature_delivery"}).json()
     cluster_response = client.get("/scheduler/cluster")
-    operator_view = client.get(f"/runs/{run.run_id}/operator-view")
+    runs_response = client.get("/runs")
+    operator_view = client.get(f"/runs/{run['run_id']}/operator-view")
     dashboard_html = client.get("/ui").text
     governance_html = client.get("/ui/governance").text
 
-    assert proposal.status_code == 201
     assert cluster_response.status_code == 200
+    assert runs_response.status_code == 200
     assert operator_view.status_code == 200
     cluster_payload = cluster_response.json()
     operator_payload = operator_view.json()
-    assert cluster_payload["mode"] == "quorum"
+    assert cluster_payload["enabled"] is False
+    assert cluster_payload["mode"] == "local_only"
     assert cluster_payload["leader_node_id"] is not None
     assert cluster_payload["authority_node_id"] == cluster_payload["leader_node_id"]
     assert cluster_payload["authority_term_no"] == cluster_payload["term_no"]
     assert cluster_payload["decision_index"] == cluster_payload["commit_index"]
+    assert operator_payload["cluster_overview"]["enabled"] is False
     assert operator_payload["cluster_overview"]["leader_node_id"] == cluster_payload["leader_node_id"]
     assert operator_payload["cluster_overview"]["authority_node_id"] == cluster_payload["authority_node_id"]
     assert operator_payload["cluster_overview"]["authority_term_no"] == cluster_payload["authority_term_no"]
     assert operator_payload["cluster_overview"]["decision_index"] == cluster_payload["decision_index"]
-    assert (
-        operator_payload["scheduler_authority"]["active_committed_lease"]["control_plane_id"]
-        == "control_plane_alpha"
-    )
-    assert (
-        operator_payload["scheduler_authority"]["active_committed_lease"]["authority_term_no"]
-        == operator_payload["scheduler_authority"]["active_committed_lease"]["term_no"]
-    )
-    assert (
-        operator_payload["scheduler_authority"]["active_committed_lease"]["decision_index"]
-        == operator_payload["scheduler_authority"]["active_committed_lease"]["commit_index"]
-    )
+    assert len(runs_response.json()) >= 1
     assert "Authority Topology" in dashboard_html
     assert "Authority Topology" in governance_html
+    assert "Scheduler authority cluster disabled (local-only mode)." in dashboard_html
+    assert "Scheduler authority cluster disabled (local-only mode)." in governance_html
 
 
 def test_api_exposes_run_replay_packet(tmp_path: Path) -> None:

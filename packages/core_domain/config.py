@@ -117,6 +117,7 @@ def build_effective_config(
     *,
     explicit_db_path: str | Path | None = None,
     explicit_runtime_gateway_provider: str | None = None,
+    explicit_scheduler_authority_cluster_enabled: bool | None = None,
     explicit_config_path: str | Path | None = None,
     env: dict[str, str] | None = None,
     cwd: str | Path | None = None,
@@ -235,6 +236,15 @@ def build_effective_config(
                 env_key="UAWO_ENABLE_SESSIONFUL_EXTERNAL_AGENTS",
                 config=raw_config,
                 config_key="feature_flags.sessionful_external_agents",
+                default=False,
+                coerce=_coerce_bool,
+            ),
+            "scheduler_authority_cluster": _resolve_value(
+                explicit=explicit_scheduler_authority_cluster_enabled,
+                env=environment,
+                env_key="UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER",
+                config=raw_config,
+                config_key="feature_flags.scheduler_authority_cluster",
                 default=False,
                 coerce=_coerce_bool,
             ),
@@ -464,6 +474,9 @@ def build_effective_config(
         },
     }
 
+    scheduler_cluster_enabled = bool(config_values["feature_flags"]["scheduler_authority_cluster"].value)
+    scheduler_cluster_enabled_source = config_values["feature_flags"]["scheduler_authority_cluster"].source
+
     effective = {
         "config_path": config_path.as_posix() if config_path is not None else None,
         "db": config_values["db"],
@@ -532,18 +545,68 @@ def build_effective_config(
             "remote_timeout_seconds_source": config_values["worker_pools"]["remote_timeout_seconds"].source,
         },
         "scheduler_authority": {
-            "mode": config_values["scheduler_authority"]["mode"].value,
-            "mode_source": config_values["scheduler_authority"]["mode"].source,
-            "authority_mode": config_values["scheduler_authority"]["authority_mode"].value,
-            "authority_mode_source": config_values["scheduler_authority"]["authority_mode"].source,
-            "node_id": config_values["scheduler_authority"]["node_id"].value,
-            "node_id_source": config_values["scheduler_authority"]["node_id"].source,
-            "bind_url": config_values["scheduler_authority"]["bind_url"].value,
-            "bind_url_source": config_values["scheduler_authority"]["bind_url"].source,
-            "peer_urls": config_values["scheduler_authority"]["peer_urls"].value,
-            "peer_urls_source": config_values["scheduler_authority"]["peer_urls"].source,
-            "quorum_size": config_values["scheduler_authority"]["quorum_size"].value,
-            "quorum_size_source": config_values["scheduler_authority"]["quorum_size"].source,
+            "enabled": scheduler_cluster_enabled,
+            "enabled_source": scheduler_cluster_enabled_source,
+            "mode": (
+                config_values["scheduler_authority"]["mode"].value
+                if scheduler_cluster_enabled
+                else "local_only"
+            ),
+            "mode_source": (
+                config_values["scheduler_authority"]["mode"].source
+                if scheduler_cluster_enabled
+                else f"derived:{scheduler_cluster_enabled_source}"
+            ),
+            "authority_mode": (
+                config_values["scheduler_authority"]["authority_mode"].value
+                if scheduler_cluster_enabled
+                else "single_control_plane_local_only"
+            ),
+            "authority_mode_source": (
+                config_values["scheduler_authority"]["authority_mode"].source
+                if scheduler_cluster_enabled
+                else f"derived:{scheduler_cluster_enabled_source}"
+            ),
+            "node_id": (
+                config_values["scheduler_authority"]["node_id"].value
+                if scheduler_cluster_enabled
+                else config_values["control_plane"]["id"].value
+            ),
+            "node_id_source": (
+                config_values["scheduler_authority"]["node_id"].source
+                if scheduler_cluster_enabled
+                else f"derived:{scheduler_cluster_enabled_source}"
+            ),
+            "bind_url": (
+                config_values["scheduler_authority"]["bind_url"].value
+                if scheduler_cluster_enabled
+                else f"local://{config_values['control_plane']['id'].value}"
+            ),
+            "bind_url_source": (
+                config_values["scheduler_authority"]["bind_url"].source
+                if scheduler_cluster_enabled
+                else f"derived:{scheduler_cluster_enabled_source}"
+            ),
+            "peer_urls": (
+                config_values["scheduler_authority"]["peer_urls"].value
+                if scheduler_cluster_enabled
+                else []
+            ),
+            "peer_urls_source": (
+                config_values["scheduler_authority"]["peer_urls"].source
+                if scheduler_cluster_enabled
+                else f"derived:{scheduler_cluster_enabled_source}"
+            ),
+            "quorum_size": (
+                config_values["scheduler_authority"]["quorum_size"].value
+                if scheduler_cluster_enabled
+                else 1
+            ),
+            "quorum_size_source": (
+                config_values["scheduler_authority"]["quorum_size"].source
+                if scheduler_cluster_enabled
+                else f"derived:{scheduler_cluster_enabled_source}"
+            ),
             "election_timeout_ms": config_values["scheduler_authority"]["election_timeout_ms"].value,
             "election_timeout_ms_source": config_values["scheduler_authority"]["election_timeout_ms"].source,
             "heartbeat_interval_ms": config_values["scheduler_authority"]["heartbeat_interval_ms"].value,

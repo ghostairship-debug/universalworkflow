@@ -48,11 +48,14 @@ def test_api_and_web_ui_expose_operator_surfaces(tmp_path: Path) -> None:
     assert operator_response.status_code == 200
     assert operator_response.json()["run"]["run_id"] == review_run["run_id"]
     assert operator_response.json()["status_detail"]["effective_review_state"] == "human_pending"
+    assert operator_response.json()["cluster_overview"]["enabled"] is False
     assert "Run Explorer" in runs_page_response.text
     assert "Pending Review Console" in reviews_page_response.text
     assert "Governance" in governance_page_response.text
     assert "Effective Configuration" in config_page_response.text
     assert "Operator Dashboard" in dashboard_response.text
+    assert "Scheduler authority cluster disabled (local-only mode)." in dashboard_response.text
+    assert "Scheduler authority cluster disabled (local-only mode)." in governance_page_response.text
     assert review_run["run_id"] in run_page_response.text
 
 
@@ -94,6 +97,10 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
             "goal": "Coordinate a multi-role project delivery slice",
             "preset_id": "project_delivery",
             "cluster_template_id": "dev_cluster",
+            "constraints": "keep operator checkpoints visible",
+            "assumptions": "workspace is clean",
+            "referenced_artifact_paths": "docs/current_development_workflow.md",
+            "followup_context": "prior review asked for a launch checkpoint",
         },
         follow_redirects=False,
     )
@@ -110,6 +117,8 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     assert "Interaction Workbench" in workbench_response.text
     assert session_id in workbench_response.text
     assert "ready_to_launch" in workbench_response.text
+    assert "Execution Defaults" in workbench_response.text
+    assert "Recent Sessions" in workbench_response.text
 
     clarify_response = client.post(
         f"/ui/workbench/{session_id}/clarify",
@@ -154,3 +163,40 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     assert operator_response.status_code == 200
     assert operator_response.json()["run"]["run_id"] == run_id
     assert operator_response.json()["run"]["status"] == "prepared"
+
+    generate_profiles_response = client.post(
+        f"/ui/workbench/{session_id}/generate-profiles",
+        follow_redirects=False,
+    )
+    assert generate_profiles_response.status_code == 303
+    generated_profiles_page = client.get(generate_profiles_response.headers["location"])
+    assert generated_profiles_page.status_code == 200
+    assert "Generated Profiles" in generated_profiles_page.text
+    assert "Automation Watchdogs" in generated_profiles_page.text
+
+    followup_response = client.post(
+        f"/ui/workbench/{session_id}/followup",
+        data={
+            "instruction": "Prepare the approval checkpoint after the implementation run completes.",
+            "intent": "review_gate",
+            "blocking": "true",
+            "run_id": run_id,
+        },
+        follow_redirects=False,
+    )
+
+    assert followup_response.status_code == 303
+    followup_location = followup_response.headers["location"]
+    followup_query = parse_qs(urlparse(followup_location).query)
+    assert urlparse(followup_location).path == "/ui/workbench"
+    assert followup_query["session_id"] == [session_id]
+    assert followup_query["notice"] == ["follow-up queued"]
+
+    followup_page_response = client.get(followup_location)
+    assert followup_page_response.status_code == 200
+    assert "Follow-Up Queue" in followup_page_response.text
+    assert "Active Run Checkpoint" in followup_page_response.text
+    assert "Generated Profiles" in followup_page_response.text
+    assert "Automation Watchdogs" in followup_page_response.text
+    assert "review_gate" in followup_page_response.text
+    assert run_id in followup_page_response.text

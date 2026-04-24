@@ -45,6 +45,7 @@ def run_cluster_cutover_demo(db_path: Path) -> dict[str, Any]:
     db_path = Path(db_path)
     base_env = {
         "UAWO_ENABLE_EXTERNAL_WORKER_POOLS": "1",
+        "UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER": "1",
         "WORKFLOW_WORKER_POOL_ID": "remote_http_shell",
         "WORKFLOW_REMOTE_WORKER_SHARED_SECRET": "secret-demo",
     }

@@ -139,6 +139,7 @@ def test_remote_worker_completion_callback_is_idempotent(tmp_path: Path, monkeyp
 
 def test_remote_worker_callback_rejects_stale_control_plane_after_takeover(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("UAWO_ENABLE_EXTERNAL_WORKER_POOLS", "1")
+    monkeypatch.setenv("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER", "1")
     monkeypatch.setenv("WORKFLOW_REMOTE_WORKER_SHARED_SECRET", "secret-demo")
 
     db_path = tmp_path / "workflow.db"

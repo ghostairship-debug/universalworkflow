@@ -210,6 +210,7 @@ def test_cli_interaction_profiles_clusters_and_session_flow(tmp_path: Path) -> N
 
     profiles_result = _invoke(tmp_path, "interaction", "profiles")
     clusters_result = _invoke(tmp_path, "interaction", "clusters")
+    empty_sessions_result = _invoke(tmp_path, "interaction", "sessions")
     create_result = _invoke(
         tmp_path,
         "interaction",
@@ -220,10 +221,20 @@ def test_cli_interaction_profiles_clusters_and_session_flow(tmp_path: Path) -> N
         "project_delivery",
         "--cluster",
         "dev_cluster",
+        "--constraint",
+        "keep operator checkpoints visible",
+        "--assumption",
+        "workspace is clean",
+        "--artifact",
+        "docs/current_development_workflow.md",
+        "--followup-context",
+        "prior review asked for a launch checkpoint",
     )
 
     assert profiles_result.exit_code == 0
     assert clusters_result.exit_code == 0
+    assert empty_sessions_result.exit_code == 0
+    assert json.loads(empty_sessions_result.stdout) == []
     assert any(item["profile_id"] == "planner_architect" for item in json.loads(profiles_result.stdout)["profiles"])
     assert json.loads(profiles_result.stdout)["generated_profiles"] == []
     assert any(item["template_id"] == "dev_cluster" for item in json.loads(clusters_result.stdout))
@@ -234,7 +245,14 @@ def test_cli_interaction_profiles_clusters_and_session_flow(tmp_path: Path) -> N
     assert create_payload["session"]["status"] == "ready_to_launch"
     assert create_payload["plan_draft"]["selected_cluster_template_ids"] == ["dev_cluster"]
     assert create_payload["goal_packet"]["selected_clusters"][0]["template_id"] == "dev_cluster"
+    assert create_payload["session"]["intent_packet"]["constraints"] == ["keep operator checkpoints visible"]
+    assert create_payload["session"]["intent_packet"]["assumptions"] == ["workspace is clean"]
+    assert create_payload["session"]["intent_packet"]["referenced_artifact_paths"] == ["docs/current_development_workflow.md"]
+    assert create_payload["session"]["intent_packet"]["followup_context"] == ["prior review asked for a launch checkpoint"]
+    assert create_payload["followup_requests"] == []
+    assert create_payload["active_run_operator_view"] is None
 
+    sessions_result = _invoke(tmp_path, "interaction", "sessions")
     get_result = _invoke(tmp_path, "interaction", "get-session", session_id)
     launch_result = _invoke(
         tmp_path,
@@ -251,15 +269,67 @@ def test_cli_interaction_profiles_clusters_and_session_flow(tmp_path: Path) -> N
 
     assert get_result.exit_code == 0
     assert launch_result.exit_code == 0
+    assert sessions_result.exit_code == 0
     get_payload = json.loads(get_result.stdout)
     launch_payload = json.loads(launch_result.stdout)
+    sessions_payload = json.loads(sessions_result.stdout)
     assert get_payload["session"]["latest_plan_draft_id"] == create_payload["plan_draft"]["draft_id"]
+    assert [item["session_id"] for item in sessions_payload] == [session_id]
     assert launch_payload["session"]["status"] == "launched"
     assert launch_payload["session"]["active_run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
     assert launch_payload["launch_decision"]["selected_cluster_template_ids"] == ["dev_cluster"]
     assert launch_payload["launch_payload"]["selected_clusters"][0]["template_id"] == "dev_cluster"
     assert launch_payload["launch_payload"]["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
     assert launch_payload["launch_payload"]["run"]["status"] == "prepared"
+    assert launch_payload["active_run_operator_view"]["run"]["run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
+    assert any(item["trigger"] == "review_gate" for item in launch_payload["automation_watchdogs"])
+
+    generate_profiles_result = _invoke(tmp_path, "interaction", "generate-profiles", session_id)
+    generated_profiles_result = _invoke(
+        tmp_path,
+        "interaction",
+        "generated-profiles",
+        "--session-id",
+        session_id,
+    )
+
+    assert generate_profiles_result.exit_code == 0
+    assert generated_profiles_result.exit_code == 0
+    generated_profiles_payload = json.loads(generated_profiles_result.stdout)
+    assert len(generated_profiles_payload) >= 1
+    assert any(item["cluster_template_id"] == "dev_cluster" for item in generated_profiles_payload)
+
+    followup_result = _invoke(
+        tmp_path,
+        "interaction",
+        "followup",
+        session_id,
+        "--instruction",
+        "Prepare the approval checkpoint after the implementation run completes.",
+        "--intent",
+        "review_gate",
+        "--blocking",
+    )
+    followups_result = _invoke(tmp_path, "interaction", "followups", session_id)
+    watchdogs_result = _invoke(tmp_path, "interaction", "watchdogs", "--session-id", session_id)
+    evaluate_watchdogs_result = _invoke(tmp_path, "interaction", "evaluate-watchdogs", "--session-id", session_id)
+
+    assert followup_result.exit_code == 0
+    assert followups_result.exit_code == 0
+    assert watchdogs_result.exit_code == 0
+    assert evaluate_watchdogs_result.exit_code == 0
+    followup_payload = json.loads(followup_result.stdout)
+    followups_payload = json.loads(followups_result.stdout)
+    watchdogs_payload = json.loads(watchdogs_result.stdout)
+    evaluation_payload = json.loads(evaluate_watchdogs_result.stdout)
+    assert followup_payload["followup_request"]["intent"] == "review_gate"
+    assert len(followup_payload["followup_requests"]) == 1
+    assert followup_payload["active_run_operator_view"]["run"]["run_id"] == launch_payload["launch_payload"]["run"]["run_id"]
+    assert {item["trigger"] for item in followup_payload["automation_watchdogs"]} >= {"review_gate", "followup_pending"}
+    assert len(followups_payload) == 1
+    assert followups_payload[0]["blocking"] is True
+    assert {item["trigger"] for item in watchdogs_payload} >= {"review_gate", "followup_pending"}
+    assert len(evaluation_payload["actions"]) >= 1
 
 
 def test_cli_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
@@ -1134,13 +1204,31 @@ def test_cli_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     assert error["details"]["available_adapters"] == ["shell", "codex", "opencode"]
 
 
-def test_cli_scheduler_cluster_exposes_quorum_snapshot(tmp_path: Path) -> None:
+def test_cli_scheduler_cluster_exposes_local_only_snapshot_by_default(tmp_path: Path) -> None:
     _invoke(tmp_path, "db", "reset")
 
     cluster_result = _invoke(tmp_path, "scheduler", "cluster")
 
     assert cluster_result.exit_code == 0
     payload = json.loads(cluster_result.stdout)
+    assert payload["enabled"] is False
+    assert payload["mode"] == "local_only"
+    assert payload["leader_node_id"] is not None
+    assert payload["authority_node_id"] == payload["leader_node_id"]
+    assert payload["authority_term_no"] == payload["term_no"]
+    assert payload["decision_index"] == payload["commit_index"]
+    assert payload["quorum_size"] == 1
+
+
+def test_cli_scheduler_cluster_exposes_quorum_snapshot_when_flag_enabled(tmp_path: Path) -> None:
+    env = {"UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER": "1"}
+    _invoke(tmp_path, "db", "reset", env=env)
+
+    cluster_result = _invoke(tmp_path, "scheduler", "cluster", env=env)
+
+    assert cluster_result.exit_code == 0
+    payload = json.loads(cluster_result.stdout)
+    assert payload["enabled"] is True
     assert payload["mode"] == "quorum"
     assert payload["leader_node_id"] is not None
     assert payload["authority_node_id"] == payload["leader_node_id"]

@@ -9,6 +9,7 @@ from packages.contracts import (
     AgentRoleType,
     AgentProfileDefinition,
     AgentProfileRegistry,
+    AutomationWatchdog,
     BudgetLedger,
     CapabilityDescriptor,
     CapabilityExecutionReceipt,
@@ -695,6 +696,13 @@ def test_m32_interaction_and_cluster_contracts_round_trip() -> None:
         selected_cluster_template_ids=["dev_cluster"],
         rationale="ready to launch",
     )
+    watchdog = AutomationWatchdog(
+        session_id=session.session_id,
+        run_id="run_123",
+        objective="Track the follow-up queue until closeout.",
+        trigger="followup_pending",
+        auto_action_enabled=True,
+    )
     cluster_template = ExecutionClusterTemplate(
         template_id="dev_cluster",
         name="DevCluster",
@@ -757,6 +765,7 @@ def test_m32_interaction_and_cluster_contracts_round_trip() -> None:
         session,
         plan_draft,
         launch_decision,
+        watchdog,
         cluster_template,
         cluster_plan,
         cluster_handoff,

@@ -7,6 +7,7 @@ from typing import Any
 
 from packages.contracts import (
     AgentRoleType,
+    AutomationWatchdog,
     AuthorityNodeIdentity,
     BudgetLedger,
     CapabilityDescriptor,
@@ -124,8 +125,11 @@ from packages.core_domain.simulation import LocalDeterministicSimulationRunner, 
 from packages.core_domain.evidence_builder import EvidenceBuilder
 from packages.core_domain.repositories import (
     BudgetLedgerRepository,
+    AutomationWatchdogRepository,
     EventRepository,
     EvidenceRepository,
+    FollowupRequestRepository,
+    GeneratedAgentProfileRepository,
     HandoffRepository,
     IntentSessionRepository,
     MemoryItemRepository,
@@ -171,7 +175,7 @@ from packages.core_domain.repo_mutation import (
     restore_workspace_snapshot,
     run_test_commands,
 )
-from packages.core_domain.scheduler_authority import SchedulerAuthorityClusterService
+from packages.core_domain.scheduler_authority import NullSchedulerAuthorityCluster, SchedulerAuthorityClusterService
 from packages.core_domain.skills import export_domain_pack_skill_bundle
 from packages.core_domain.m8_flags import (
     active_feature_flags,
@@ -263,6 +267,9 @@ class OrchestratorService(
         self.snapshot_repo = RunSnapshotRepository(self.db_path)
         self.memory_item_repo = MemoryItemRepository(self.db_path)
         self.intent_session_repo = IntentSessionRepository(self.db_path)
+        self.followup_request_repo = FollowupRequestRepository(self.db_path)
+        self.generated_agent_profile_repo = GeneratedAgentProfileRepository(self.db_path)
+        self.automation_watchdog_repo = AutomationWatchdogRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
         self.runtime_gateway = runtime_gateway or build_runtime_gateway_from_env()
         runtime_gateway_description = self.runtime_gateway.describe()
@@ -315,7 +322,13 @@ class OrchestratorService(
             endpoint=self.effective_config["db"]["path"],
             status="active",
         )
-        self.scheduler_authority_cluster = SchedulerAuthorityClusterService(
+        self.scheduler_authority_cluster_enabled = bool(self.effective_config["scheduler_authority"]["enabled"])
+        scheduler_authority_cluster_cls = (
+            SchedulerAuthorityClusterService
+            if self.scheduler_authority_cluster_enabled
+            else NullSchedulerAuthorityCluster
+        )
+        self.scheduler_authority_cluster = scheduler_authority_cluster_cls(
             self.db_path,
             node_id=self.effective_config["scheduler_authority"]["node_id"],
             bind_url=self.effective_config["scheduler_authority"]["bind_url"],

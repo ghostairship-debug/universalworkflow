@@ -117,6 +117,12 @@ class SchedulerAuthoritySupportService:
         cluster: dict[str, Any] | None = None,
         term: SchedulerConsensusTerm | dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        def _first_non_none(*values: Any) -> Any:
+            for value in values:
+                if value is not None:
+                    return value
+            return None
+
         if cluster is None and term is None:
             return None
         term_payload = (
@@ -127,26 +133,42 @@ class SchedulerAuthoritySupportService:
         term_payload = self.with_authority_aliases(term_payload)
         cluster_payload = self.with_authority_aliases(dict(cluster) if isinstance(cluster, dict) else {}) or {}
         return {
-            "mode": self._facade.effective_config["scheduler_authority"]["mode"],
-            "authority_mode": self._facade.effective_config["scheduler_authority"]["authority_mode"],
+            "enabled": cluster_payload.get(
+                "enabled",
+                self._facade.effective_config["scheduler_authority"].get("enabled", True),
+            ),
+            "mode": cluster_payload.get("mode") or self._facade.effective_config["scheduler_authority"]["mode"],
+            "authority_mode": (
+                cluster_payload.get("authority_mode")
+                or self._facade.effective_config["scheduler_authority"]["authority_mode"]
+            ),
             "node_id": self._facade.effective_config["scheduler_authority"]["node_id"],
             "bind_url": self._facade.effective_config["scheduler_authority"]["bind_url"],
             "quorum_size": cluster_payload.get("quorum_size"),
             "leader_node_id": cluster_payload.get("leader_node_id"),
-            "authority_node_id": cluster_payload.get("authority_node_id") or cluster_payload.get("leader_node_id"),
-            "term_no": cluster_payload.get("term_no") or (term_payload or {}).get("term_no"),
-            "authority_term_no": (
-                cluster_payload.get("authority_term_no")
-                or cluster_payload.get("term_no")
-                or (term_payload or {}).get("authority_term_no")
-                or (term_payload or {}).get("term_no")
+            "authority_node_id": _first_non_none(
+                cluster_payload.get("authority_node_id"),
+                cluster_payload.get("leader_node_id"),
             ),
-            "commit_index": cluster_payload.get("commit_index") or (term_payload or {}).get("commit_index"),
-            "decision_index": (
-                cluster_payload.get("decision_index")
-                or cluster_payload.get("commit_index")
-                or (term_payload or {}).get("decision_index")
-                or (term_payload or {}).get("commit_index")
+            "term_no": _first_non_none(
+                cluster_payload.get("term_no"),
+                (term_payload or {}).get("term_no"),
+            ),
+            "authority_term_no": _first_non_none(
+                cluster_payload.get("authority_term_no"),
+                cluster_payload.get("term_no"),
+                (term_payload or {}).get("authority_term_no"),
+                (term_payload or {}).get("term_no"),
+            ),
+            "commit_index": _first_non_none(
+                cluster_payload.get("commit_index"),
+                (term_payload or {}).get("commit_index"),
+            ),
+            "decision_index": _first_non_none(
+                cluster_payload.get("decision_index"),
+                cluster_payload.get("commit_index"),
+                (term_payload or {}).get("decision_index"),
+                (term_payload or {}).get("commit_index"),
             ),
             "cluster": cluster_payload,
             "term": term_payload,

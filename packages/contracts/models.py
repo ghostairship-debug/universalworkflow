@@ -925,6 +925,18 @@ class FollowupRequest(PersistedContractModel):
     status: str = "pending"
 
 
+class AutomationWatchdog(PersistedContractModel):
+    watchdog_id: str = Field(default_factory=lambda: new_id("watchdog"))
+    session_id: str | None = None
+    run_id: str | None = None
+    objective: str
+    trigger: str = "followup_pending"
+    status: str = "active"
+    auto_action_enabled: bool = False
+    notes: list[str] = Field(default_factory=list)
+    last_evaluated_at: datetime | None = None
+
+
 class TerminationRule(ContractModel):
     max_turns: int | None = Field(default=None, ge=1)
     max_runtime_minutes: int | None = Field(default=None, ge=1)

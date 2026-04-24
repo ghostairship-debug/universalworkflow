@@ -49,7 +49,10 @@ def error_body(code: str, message: str, details: dict | None = None) -> dict:
 
 
 def create_app(db_path: str | Path | None = None) -> FastAPI:
-    effective_config = build_effective_config(explicit_db_path=db_path)
+    effective_config = build_effective_config(
+        explicit_db_path=db_path,
+        explicit_scheduler_authority_cluster_enabled=True,
+    )
     resolved_db_path = (
         Path(effective_config["db"]["path"])
         if db_path is not None or effective_config["db"]["path"]

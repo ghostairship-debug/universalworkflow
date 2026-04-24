@@ -27,6 +27,13 @@ def build_ui_router(
 ) -> APIRouter:
     router = APIRouter()
 
+    def _split_lines(value: Any) -> list[str]:
+        return [
+            line.strip()
+            for line in str(value or "").splitlines()
+            if line and line.strip()
+        ]
+
     def _redirect_with_notice(path: str, notice: str) -> RedirectResponse:
         separator = "&" if "?" in path else "?"
         return RedirectResponse(url=f"{path}{separator}{urlencode({'notice': notice})}", status_code=status.HTTP_303_SEE_OTHER)
@@ -86,6 +93,8 @@ def build_ui_router(
                 session_payload=session_payload,
                 presets=[preset.model_dump(mode="json") for preset in service.list_presets()],
                 cluster_templates=[template.model_dump(mode="json") for template in service.list_cluster_templates()],
+                recent_sessions=[session.model_dump(mode="json") for session in service.list_intent_sessions(limit=8)],
+                effective_config=effective_config,
                 notice=notice,
             )
         )
@@ -106,6 +115,10 @@ def build_ui_router(
             goal=goal,
             preferred_preset_id=preset_id,
             preferred_cluster_template_ids=[cluster_template_id] if cluster_template_id else None,
+            constraints=_split_lines(form.get("constraints")),
+            assumptions=_split_lines(form.get("assumptions")),
+            referenced_artifact_paths=_split_lines(form.get("referenced_artifact_paths")),
+            followup_context=_split_lines(form.get("followup_context")),
         )
         return _redirect_with_notice(
             f"/ui/workbench?session_id={payload['session']['session_id']}",
@@ -140,6 +153,32 @@ def build_ui_router(
             f"/ui/runs/{run_id}",
             f"launch completed: preset={payload['launch_payload']['selected_preset_id']}",
         )
+
+    @router.post("/ui/workbench/{session_id}/generate-profiles")
+    def web_workbench_generate_profiles(session_id: str) -> RedirectResponse:
+        service.generate_session_profiles(session_id)
+        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "generated profiles refreshed")
+
+    @router.post("/ui/workbench/{session_id}/followup")
+    async def web_workbench_followup(session_id: str, request: Request) -> RedirectResponse:
+        form = await request.form()
+        instruction = str(form.get("instruction") or "").strip()
+        if not instruction:
+            return _redirect_with_notice(
+                f"/ui/workbench?session_id={session_id}",
+                "follow-up skipped: instruction is required",
+            )
+        intent = str(form.get("intent") or "continue").strip() or "continue"
+        blocking = str(form.get("blocking") or "").lower() in {"1", "true", "on", "yes"}
+        run_id = str(form.get("run_id") or "").strip() or None
+        service.create_followup_request(
+            session_id,
+            instruction=instruction,
+            intent=intent,
+            blocking=blocking,
+            run_id=run_id,
+        )
+        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "follow-up queued")
 
     @router.post("/ui/actions/{run_id}/resume")
     def web_resume_run(run_id: str) -> RedirectResponse:

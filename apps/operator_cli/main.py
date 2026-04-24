@@ -446,6 +446,10 @@ def interaction_create_session(
     goal: str = typer.Option(..., "--goal"),
     preset: Optional[str] = typer.Option(None, "--preset"),
     cluster: Optional[str] = typer.Option(None, "--cluster"),
+    constraint: Optional[list[str]] = typer.Option(None, "--constraint"),
+    assumption: Optional[list[str]] = typer.Option(None, "--assumption"),
+    artifact: Optional[list[str]] = typer.Option(None, "--artifact"),
+    followup_context: Optional[list[str]] = typer.Option(None, "--followup-context"),
 ) -> None:
     _emit_json(
         _run_workflow_action(
@@ -453,9 +457,41 @@ def interaction_create_session(
                 goal=goal,
                 preferred_preset_id=preset,
                 preferred_cluster_template_ids=[cluster] if cluster else None,
+                constraints=constraint,
+                assumptions=assumption,
+                referenced_artifact_paths=artifact,
+                followup_context=followup_context,
             )
         )
     )
+
+
+@interaction_app.command("sessions")
+def interaction_sessions(
+    ctx: typer.Context,
+    limit: int = typer.Option(10, "--limit", min=1),
+    status: Optional[str] = typer.Option(None, "--status"),
+) -> None:
+    sessions = _run_workflow_action(lambda: _service(ctx).list_intent_sessions(limit=limit, status=status))
+    _emit_json([session.model_dump(mode="json") for session in sessions])
+
+
+@interaction_app.command("generated-profiles")
+def interaction_generated_profiles(
+    ctx: typer.Context,
+    session_id: Optional[str] = typer.Option(None, "--session-id"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    limit: int = typer.Option(20, "--limit", min=1),
+) -> None:
+    profiles = _run_workflow_action(
+        lambda: _service(ctx).list_generated_agent_profiles(session_id=session_id, run_id=run_id, limit=limit)
+    )
+    _emit_json([profile.model_dump(mode="json") for profile in profiles])
+
+
+@interaction_app.command("generate-profiles")
+def interaction_generate_profiles(ctx: typer.Context, session_id: str) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).generate_session_profiles(session_id)))
 
 
 @interaction_app.command("get-session")
@@ -540,6 +576,55 @@ def interaction_followup(
                 intent=intent,
                 blocking=blocking,
                 run_id=run_id,
+            )
+        )
+    )
+
+
+@interaction_app.command("followups")
+def interaction_followups(
+    ctx: typer.Context,
+    session_id: str,
+    limit: int = typer.Option(20, "--limit", min=1),
+) -> None:
+    followups = _run_workflow_action(lambda: _service(ctx).list_followup_requests(session_id, limit=limit))
+    _emit_json([item.model_dump(mode="json") for item in followups])
+
+
+@interaction_app.command("watchdogs")
+def interaction_watchdogs(
+    ctx: typer.Context,
+    session_id: Optional[str] = typer.Option(None, "--session-id"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    status: Optional[str] = typer.Option(None, "--status"),
+    limit: int = typer.Option(20, "--limit", min=1),
+) -> None:
+    watchdogs = _run_workflow_action(
+        lambda: _service(ctx).list_automation_watchdogs(
+            session_id=session_id,
+            run_id=run_id,
+            status=status,
+            limit=limit,
+        )
+    )
+    _emit_json([item.model_dump(mode="json") for item in watchdogs])
+
+
+@interaction_app.command("evaluate-watchdogs")
+def interaction_evaluate_watchdogs(
+    ctx: typer.Context,
+    session_id: Optional[str] = typer.Option(None, "--session-id"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    auto_apply: bool = typer.Option(False, "--auto-apply"),
+    limit: int = typer.Option(20, "--limit", min=1),
+) -> None:
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).evaluate_watchdogs(
+                session_id=session_id,
+                run_id=run_id,
+                auto_apply=auto_apply,
+                limit=limit,
             )
         )
     )

@@ -12,6 +12,13 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         "UAWO_ENABLE_MCP_SOURCE": "1",
         "UAWO_ENABLE_SKILL_EXPORT": "1",
     }
+    scheduler_cluster_flag_enabled = str(env.get("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "enabled",
+    }
     release_validation_report_path = PROJECT_ROOT / "state" / "offline_validate_release_readiness_api.json"
     release_validation_report_path.write_text(
         json.dumps(
@@ -256,6 +263,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     item["domain_pack_id"] for item in governance_release_readiness["domain_packs"]
                 ],
                 "governance_domain_pack_platformized": governance_domain_packs["overall_platformized"],
+                "scheduler_cluster_enabled": scheduler_cluster.get("enabled", True),
                 "scheduler_cluster_mode": scheduler_cluster["mode"],
                 "scheduler_cluster_leader": scheduler_cluster["leader_node_id"],
                 "scheduler_cluster_quorum_size": scheduler_cluster["quorum_size"],
@@ -323,6 +331,12 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "governance_html_ok": "Governance" in governance_html,
                 "dashboard_html_contains_cluster": "Authority Topology" in dashboard_html,
                 "governance_html_contains_cluster": "Authority Topology" in governance_html,
+                "dashboard_html_has_local_only_banner": (
+                    "Scheduler authority cluster disabled (local-only mode)." in dashboard_html
+                ),
+                "governance_html_has_local_only_banner": (
+                    "Scheduler authority cluster disabled (local-only mode)." in governance_html
+                ),
                 "config_html_ok": "Effective Configuration" in config_html,
                 "human_recoverability_hint": human_detail["recoverability_hint"],
                 "human_inspection_passed": human_inspection["passed"],
@@ -480,9 +494,23 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 result["operator_runs_count"] >= 2,
                 human_run_id in result["pending_review_run_ids"],
                 result["operator_view_run_id"] == human_run_id,
-                result["scheduler_cluster_mode"] == "quorum",
-                result["scheduler_cluster_leader"] is not None,
-                result["scheduler_cluster_quorum_size"] >= 1,
+                (
+                    result["scheduler_cluster_enabled"] is True
+                    and result["scheduler_cluster_mode"] == "quorum"
+                    and result["scheduler_cluster_leader"] is not None
+                    and result["scheduler_cluster_quorum_size"] >= 1
+                    and result["dashboard_html_has_local_only_banner"] is False
+                    and result["governance_html_has_local_only_banner"] is False
+                )
+                if scheduler_cluster_flag_enabled
+                else (
+                    result["scheduler_cluster_enabled"] is False
+                    and result["scheduler_cluster_mode"] == "local_only"
+                    and result["scheduler_cluster_leader"] is not None
+                    and result["scheduler_cluster_quorum_size"] == 1
+                    and result["dashboard_html_has_local_only_banner"] is True
+                    and result["governance_html_has_local_only_banner"] is True
+                ),
                 result["dashboard_html_ok"] is True,
                 result["runs_html_ok"] is True,
                 result["reviews_html_ok"] is True,

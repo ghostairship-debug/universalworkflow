@@ -4,6 +4,7 @@ from typing import Any
 
 from packages.contracts import (
     AgentRoleType,
+    AutomationWatchdog,
     ClarificationPrompt,
     ClarificationState,
     ClusterExecutionPlan,
@@ -11,6 +12,8 @@ from packages.contracts import (
     ClusterOutputPacket,
     ExecutionClusterTemplate,
     FollowupRequest,
+    GeneratedAgentProfile,
+    GeneratedProfileSource,
     IntentPacket,
     IntentSession,
     IntentSessionStatus,
@@ -21,6 +24,7 @@ from packages.contracts import (
     PlanDraft,
     PlanDraftStatus,
     RoleAssignment,
+    TerminationRule,
 )
 from packages.core_domain.cluster_router import ClusterRouter
 from packages.core_domain.errors import EntityNotFoundError, WorkflowError
@@ -37,10 +41,44 @@ from packages.core_domain.interaction_catalog import (
 
 class InteractionServiceMixin:
     def get_agent_profile_registry(self):
-        return build_default_agent_profile_registry()
+        registry = build_default_agent_profile_registry()
+        registry.generated_profiles = self.generated_agent_profile_repo.list(limit=50)
+        return registry
 
     def list_agent_profiles(self):
         return self.get_agent_profile_registry().profiles
+
+    def list_intent_sessions(self, *, limit: int = 10, status: str | None = None) -> list[IntentSession]:
+        return self.intent_session_repo.list(limit=limit, status=status)
+
+    def list_followup_requests(self, session_id: str, *, limit: int = 20) -> list[FollowupRequest]:
+        if self.intent_session_repo.get(session_id) is None:
+            raise EntityNotFoundError("intent_session", session_id)
+        return self.followup_request_repo.list_for_session(session_id, limit=limit)
+
+    def list_generated_agent_profiles(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        limit: int = 20,
+    ) -> list[GeneratedAgentProfile]:
+        return self.generated_agent_profile_repo.list(session_id=session_id, run_id=run_id, limit=limit)
+
+    def list_automation_watchdogs(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[AutomationWatchdog]:
+        return self.automation_watchdog_repo.list(
+            session_id=session_id,
+            run_id=run_id,
+            status=status,
+            limit=limit,
+        )
 
     def list_cluster_templates(self) -> list[ExecutionClusterTemplate]:
         return list_default_cluster_templates()
@@ -507,6 +545,252 @@ class InteractionServiceMixin:
         self.intent_session_repo.upsert(session)
         return session
 
+    def _base_profile_map(self) -> dict[str, Any]:
+        return {
+            profile.profile_id: profile
+            for profile in build_default_agent_profile_registry().profiles
+        }
+
+    def _ensure_watchdog(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None,
+        trigger: str,
+        objective: str,
+        auto_action_enabled: bool = False,
+        notes: list[str] | None = None,
+    ) -> AutomationWatchdog:
+        existing = self.automation_watchdog_repo.find_active(
+            session_id=session_id,
+            run_id=run_id,
+            trigger=trigger,
+        )
+        if existing is not None:
+            return existing
+        watchdog = AutomationWatchdog(
+            session_id=session_id,
+            run_id=run_id,
+            trigger=trigger,
+            objective=objective,
+            auto_action_enabled=auto_action_enabled,
+            notes=list(notes or []),
+        )
+        self.automation_watchdog_repo.upsert(watchdog)
+        return watchdog
+
+    def generate_session_profiles(self, session_id: str) -> dict[str, Any]:
+        session = self.intent_session_repo.get(session_id)
+        if session is None:
+            raise EntityNotFoundError("intent_session", session_id)
+        existing_profiles = self.generated_agent_profile_repo.list(session_id=session_id, limit=50)
+        if existing_profiles:
+            return self.get_intent_session_payload(session_id)
+
+        plan_draft, goal_packet = self._plan_draft_for_session(session)
+        selected_template_ids = (
+            list(plan_draft.selected_cluster_template_ids)
+            if plan_draft is not None
+            else self._selected_cluster_template_ids(
+                goal=session.intent_packet.goal,
+                preset_id=session.intent_packet.preferred_preset_id,
+                preferred_cluster_template_ids=session.intent_packet.preferred_cluster_template_ids,
+            )
+        )
+        selected_clusters = self._cluster_templates_for_ids(selected_template_ids)
+        profile_map = self._base_profile_map()
+        session_suffix = session.session_id.split("_")[-1][:6]
+        repo_scope_paths = (
+            list(session.intent_packet.referenced_artifact_paths)
+            or ["."]
+        )
+        followup_context = list(session.intent_packet.followup_context)
+        constraint_lines = list(session.intent_packet.constraints)
+
+        if not selected_clusters:
+            fallback_profile_ids = ["planner_architect", "operator_launch_guard"]
+            for profile_id in fallback_profile_ids:
+                base_profile = profile_map.get(profile_id)
+                if base_profile is None:
+                    continue
+                generated_profile = GeneratedAgentProfile(
+                    base_profile_id=base_profile.profile_id,
+                    source_type=GeneratedProfileSource.interaction_generated,
+                    public_role=base_profile.public_role,
+                    role_label=f"{base_profile.role_label}_{session_suffix}",
+                    session_id=session_id,
+                    run_id=session.active_run_id,
+                    repo_scope_paths=repo_scope_paths,
+                    capability_scope_tags=sorted(
+                        set(list(base_profile.capability_scope_tags) + ["generated_profile", "interaction_session"])
+                    ),
+                    system_brief=(
+                        f"{base_profile.system_brief or ''} Session goal: {session.intent_packet.goal}. "
+                        f"Constraints: {'; '.join(constraint_lines) if constraint_lines else 'none'}."
+                    ).strip(),
+                    termination_rule=base_profile.termination_rule,
+                    evaluation_rubric=base_profile.evaluation_rubric,
+                    execution_profile=base_profile.execution_profile,
+                )
+                self.generated_agent_profile_repo.create(generated_profile)
+            return self.get_intent_session_payload(session_id)
+
+        for template in selected_clusters:
+            for member in template.member_specs:
+                base_profile = profile_map.get(str(member.agent_profile_id or ""))
+                base_scope_tags = list(base_profile.capability_scope_tags) if base_profile is not None else []
+                system_brief_prefix = base_profile.system_brief if base_profile is not None else ""
+                generated_profile = GeneratedAgentProfile(
+                    base_profile_id=member.agent_profile_id,
+                    source_type=GeneratedProfileSource.cluster_generated,
+                    public_role=member.public_role,
+                    role_label=f"{member.role_label}_{session_suffix}",
+                    session_id=session_id,
+                    run_id=session.active_run_id,
+                    cluster_template_id=template.template_id,
+                    repo_scope_paths=repo_scope_paths,
+                    capability_scope_tags=sorted(
+                        set(base_scope_tags + ["generated_profile", template.template_id, member.role_label])
+                    ),
+                    system_brief=(
+                        f"{system_brief_prefix or ''} Session goal: {session.intent_packet.goal}. "
+                        f"Constraints: {'; '.join(constraint_lines) if constraint_lines else 'none'}. "
+                        f"Follow-up context: {'; '.join(followup_context) if followup_context else 'none'}."
+                    ).strip(),
+                    termination_rule=(
+                        base_profile.termination_rule
+                        if base_profile is not None
+                        else TerminationRule(
+                            max_turns=8,
+                            completion_signals=["session-scoped generated profile delivered"],
+                            escalate_on=["missing session context"],
+                        )
+                    ),
+                    evaluation_rubric=base_profile.evaluation_rubric if base_profile is not None else None,
+                    execution_profile=member.execution_profile or (base_profile.execution_profile if base_profile is not None else None),
+                )
+                if base_profile is not None:
+                    generated_profile.termination_rule = base_profile.termination_rule
+                self.generated_agent_profile_repo.create(generated_profile)
+        return self._interaction_payload(session=session, plan_draft=plan_draft, goal_packet=goal_packet)
+
+    def evaluate_watchdogs(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        auto_apply: bool = False,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        watchdogs = self.list_automation_watchdogs(
+            session_id=session_id,
+            run_id=run_id,
+            status="active",
+            limit=limit,
+        )
+        actions: list[dict[str, Any]] = []
+        auto_applied_actions: list[dict[str, Any]] = []
+        resolved_watchdog_ids: list[str] = []
+        for watchdog in watchdogs:
+            session = self.intent_session_repo.get(watchdog.session_id) if watchdog.session_id else None
+            target_run_id = watchdog.run_id or (session.active_run_id if session is not None else None)
+            run = self.run_repo.get(target_run_id) if target_run_id else None
+            pending_followups = (
+                self.followup_request_repo.list_for_session(session.session_id, limit=50)
+                if session is not None
+                else []
+            )
+            pending_followups = [item for item in pending_followups if item.status == "pending"]
+            pending_blocking = [item for item in pending_followups if item.blocking]
+            action = {
+                "watchdog_id": watchdog.watchdog_id,
+                "trigger": watchdog.trigger,
+                "objective": watchdog.objective,
+                "session_id": watchdog.session_id,
+                "run_id": target_run_id,
+                "action_type": "none",
+                "requires_review": False,
+                "risk_level": "low",
+                "summary": "watchdog is currently satisfied",
+                "auto_applied": False,
+            }
+
+            if watchdog.trigger == "review_gate":
+                if run is None:
+                    action["summary"] = "review-gate watchdog has no target run"
+                elif str(run.status) == "awaiting_review":
+                    action.update(
+                        {
+                            "action_type": "review_active_run",
+                            "requires_review": True,
+                            "risk_level": "high",
+                            "summary": f"run `{run.run_id}` is awaiting review",
+                        }
+                    )
+                elif str(run.status) in {"completed", "failed", "cancelled"} and not pending_blocking and session is not None:
+                    action.update(
+                        {
+                            "action_type": "close_session",
+                            "requires_review": False,
+                            "risk_level": "low",
+                            "summary": f"session `{session.session_id}` can close because the active run is terminal",
+                        }
+                    )
+                    if auto_apply and watchdog.auto_action_enabled and str(session.status) != str(IntentSessionStatus.closed):
+                        session.status = IntentSessionStatus.closed
+                        self._persist_session(session)
+                        watchdog.status = "resolved"
+                        self.automation_watchdog_repo.upsert(watchdog)
+                        action["auto_applied"] = True
+                        auto_applied_actions.append(action)
+                        resolved_watchdog_ids.append(watchdog.watchdog_id)
+                else:
+                    action.update(
+                        {
+                            "action_type": "monitor_run",
+                            "summary": f"run `{run.run_id}` is still progressing toward a review checkpoint",
+                        }
+                    )
+            elif watchdog.trigger == "followup_pending":
+                if not pending_followups:
+                    action["summary"] = "no pending follow-up requests remain"
+                    if auto_apply and watchdog.auto_action_enabled:
+                        watchdog.status = "resolved"
+                        self.automation_watchdog_repo.upsert(watchdog)
+                        resolved_watchdog_ids.append(watchdog.watchdog_id)
+                elif run is not None and str(run.status) == "awaiting_review":
+                    action.update(
+                        {
+                            "action_type": "review_then_replan",
+                            "requires_review": True,
+                            "risk_level": "high",
+                            "summary": f"pending follow-up for `{session.session_id if session else watchdog.session_id}` is blocked on review of `{run.run_id}`",
+                        }
+                    )
+                elif run is not None and str(run.status) in {"prepared", "running"}:
+                    action.update(
+                        {
+                            "action_type": "wait_for_run_checkpoint",
+                            "summary": f"pending follow-up remains queued while `{run.run_id}` is {run.status}",
+                        }
+                    )
+                else:
+                    action.update(
+                        {
+                            "action_type": "replan_session",
+                            "requires_review": True,
+                            "risk_level": "medium",
+                            "summary": f"pending follow-up for `{session.session_id if session else watchdog.session_id}` should open a new plan or operator decision",
+                        }
+                    )
+            actions.append(action)
+        return {
+            "watchdogs": [watchdog.model_dump(mode="json") for watchdog in watchdogs],
+            "actions": actions,
+            "auto_applied_actions": auto_applied_actions,
+            "resolved_watchdog_ids": resolved_watchdog_ids,
+        }
+
     def _interaction_payload(
         self,
         *,
@@ -517,6 +801,10 @@ class InteractionServiceMixin:
         launch_payload: dict[str, Any] | None = None,
         followup_request: FollowupRequest | None = None,
     ) -> dict[str, Any]:
+        persisted_followups = self.followup_request_repo.list_for_session(session.session_id, limit=20)
+        active_run_operator_view = self.get_operator_view(session.active_run_id) if session.active_run_id else None
+        generated_profiles = self.generated_agent_profile_repo.list(session_id=session.session_id, limit=20)
+        automation_watchdogs = self.automation_watchdog_repo.list(session_id=session.session_id, limit=20)
         return {
             "session": session.model_dump(mode="json"),
             "plan_draft": plan_draft.model_dump(mode="json") if plan_draft is not None else None,
@@ -524,6 +812,11 @@ class InteractionServiceMixin:
             "launch_decision": launch_decision.model_dump(mode="json") if launch_decision is not None else None,
             "launch_payload": launch_payload,
             "followup_request": followup_request.model_dump(mode="json") if followup_request is not None else None,
+            "followup_requests": [item.model_dump(mode="json") for item in persisted_followups],
+            "active_run_operator_view": active_run_operator_view,
+            "generated_profiles": [item.model_dump(mode="json") for item in generated_profiles],
+            "automation_watchdogs": [item.model_dump(mode="json") for item in automation_watchdogs],
+            "automation_evaluation": self.evaluate_watchdogs(session_id=session.session_id, auto_apply=False, limit=20),
             "agent_profile_registry": self.get_agent_profile_registry().model_dump(mode="json"),
             "available_cluster_templates": [
                 template.model_dump(mode="json") for template in self.list_cluster_templates()
@@ -665,6 +958,14 @@ class InteractionServiceMixin:
         session.active_run_id = launch_decision.target_run_id
         session.status = IntentSessionStatus.launched
         self._persist_session(session)
+        self._ensure_watchdog(
+            session_id=session.session_id,
+            run_id=session.active_run_id,
+            trigger="review_gate",
+            objective="Track the active run until it reaches review or closeout.",
+            auto_action_enabled=True,
+            notes=["auto-created on launch"],
+        )
         return self._interaction_payload(
             session=session,
             plan_draft=plan_draft,
@@ -692,6 +993,15 @@ class InteractionServiceMixin:
             intent=intent,
             blocking=blocking,
             status="pending",
+        )
+        self.followup_request_repo.create(followup_request)
+        self._ensure_watchdog(
+            session_id=session_id,
+            run_id=followup_request.run_id,
+            trigger="followup_pending",
+            objective="Keep the follow-up queue visible until it is replanned or cleared.",
+            auto_action_enabled=True,
+            notes=["auto-created on follow-up"],
         )
         return self._interaction_payload(
             session=session,

@@ -12,6 +12,13 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
         "UAWO_ENABLE_MCP_SOURCE": "1",
         "UAWO_ENABLE_SKILL_EXPORT": "1",
     }
+    scheduler_cluster_flag_enabled = str(env.get("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "enabled",
+    }
     release_validation_report_path = PROJECT_ROOT / "state" / "offline_validate_release_readiness.json"
     release_validation_report_path.write_text(
         json.dumps(
@@ -790,6 +797,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
                 item["domain_pack_id"] for item in governance_release_readiness_payload["domain_packs"]
             ],
             "governance_domain_pack_platformized": governance_domain_pack_payload["overall_platformized"],
+            "scheduler_cluster_enabled": scheduler_cluster_payload.get("enabled", True),
             "scheduler_cluster_mode": scheduler_cluster_payload["mode"],
             "scheduler_cluster_leader": scheduler_cluster_payload["leader_node_id"],
             "scheduler_cluster_quorum_size": scheduler_cluster_payload["quorum_size"],
@@ -970,9 +978,19 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             result["governance_release_ready"] is True,
             result["governance_release_domain_pack_ids"] == ["software_delivery_pack"],
             result["governance_domain_pack_platformized"] is True,
-            result["scheduler_cluster_mode"] == "quorum",
-            result["scheduler_cluster_leader"] is not None,
-            result["scheduler_cluster_quorum_size"] >= 1,
+            (
+                result["scheduler_cluster_enabled"] is True
+                and result["scheduler_cluster_mode"] == "quorum"
+                and result["scheduler_cluster_leader"] is not None
+                and result["scheduler_cluster_quorum_size"] >= 1
+            )
+            if scheduler_cluster_flag_enabled
+            else (
+                result["scheduler_cluster_enabled"] is False
+                and result["scheduler_cluster_mode"] == "local_only"
+                and result["scheduler_cluster_leader"] is not None
+                and result["scheduler_cluster_quorum_size"] == 1
+            ),
             result["suggest_top_preset"] == "research_spike",
             result["auto_run_status"] == "completed",
             result["auto_review_decision"] == "pass",

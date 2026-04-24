@@ -2,22 +2,22 @@
 
 Status: reference-only
 Date: 2026-04-24
-Baseline: accepted `M36 Phase 0`
+Baseline: accepted `M37`
 Scope: roadmap guidance only; not active execution truth until the next bounded phase opens
 
 ## 1. Relationship To Current Truth
 
-This document is a planning input first created after accepted `M34 Phase 0` and now retained after accepted `M36 Phase 0`.
+This document is a planning input first created after accepted `M34 Phase 0` and now retained after accepted `M37`.
 
-The root-level external `GPT_PRO_ROADMAP .md` has been assessed and absorbed here where it aligns, so it should not remain a competing roadmap source.
+The archived external roadmap input [docs/archive/GPT_PRO_ROADMAP.md](docs/archive/GPT_PRO_ROADMAP.md) has been assessed and absorbed here where it aligns, so it should not remain a competing roadmap source.
 
 It does **not** override:
 
 1. [docs/current_development_workflow.md](docs/current_development_workflow.md)
-2. [docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md](docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md)
+2. [docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md](docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md)
 3. [docs/tech-debt-registry.md](docs/tech-debt-registry.md)
 
-Use this file to rebuild the post-`M36 Phase 0` roadmap shape, not to claim that later `M36+` work is already open.
+Use this file to rebuild the post-`M37` roadmap shape, not to claim that later `M38+` work is already open.
 
 ## 2. Why The Roadmap Must Be Rebuilt
 
@@ -61,7 +61,7 @@ Accepted `M32-M36 Phase 0` did real work and should not be described as failure.
 
 ## 4. Honest Comparison To The Earlier M32-M36 Vision
 
-The earlier planning material under [M31_FUTURE_IMPLEMENTATION_PLAN.md](M31_FUTURE_IMPLEMENTATION_PLAN.md) and related evaluation notes imagined a faster move into:
+The earlier planning material under [docs/archive/M31_FUTURE_IMPLEMENTATION_PLAN.md](docs/archive/M31_FUTURE_IMPLEMENTATION_PLAN.md) and related evaluation notes imagined a faster move into:
 
 - workbench UI v1
 - fixed-role runtime productization
@@ -90,21 +90,17 @@ Two different target lines should be separated.
 
 ### 5.1 To Reach The Earlier Platform Product Goal
 
-Update after accepted `M36 Phase 0`:
+Update after accepted `M37`:
 
-- the remaining platform-productization line is now the remainder of `M36` plus `M37-M39`
+- the remaining platform-productization line is now `M38-M39`
 
-To reach the older post-`M36` platform aspiration in a realistic way from the accepted `M36 Phase 0` baseline, the repository still needs **at least 4 milestone numbers**:
+To reach the older post-`M36` platform aspiration in a realistic way from the accepted `M37` baseline, the repository still needs **at least 2 milestone numbers**:
 
-- `M36`
-- `M37`
 - `M38`
 - `M39`
 
 This is the minimum realistic count for:
 
-- the remainder of natural-language workbench v1
-- generated roles plus bounded automation
 - broader capability ecosystem productization
 - eval/promotion/product closure
 
@@ -116,8 +112,8 @@ If the target is not just the platform vision, but also the previously discussed
 
 So the practical answer is:
 
-- original platform target from the current baseline: **4 more M numbers**
-- game-development-quality target from the current baseline: **5 more M numbers**
+- original platform target from the current baseline: **2 more M numbers**
+- game-development-quality target from the current baseline: **3 more M numbers**
 
 ## 6. Rules For Restoring Meaningful Milestones
 
@@ -240,6 +236,11 @@ Goals:
 - add workbench-level visibility into the execution defaults shipped by `M35`
 - consume the frozen capability-slot rules from accepted `M36 Phase 0` rather than inventing parallel capability entry points
 
+Accepted status:
+
+- `M36 Phase 1` was completed on 2026-04-24 through [m36_phase_docs/phase_1_conversational_workbench_flow.md](m36_phase_docs/phase_1_conversational_workbench_flow.md) and [docs/task_cards/m36_phase_1_task_cards.md](docs/task_cards/m36_phase_1_task_cards.md)
+- the accepted result turned the minimum workbench preview into a usable guided workbench flow with richer goal intake, recent sessions, execution-default projection, and active run checkpoint visibility
+
 ### M36 Phase 2: Follow-Up / Review / Polish / Closeout
 
 Goals:
@@ -247,6 +248,11 @@ Goals:
 - finish follow-up, review, and launch checkpoints
 - validate operator/workbench consistency
 - ship a real natural-language workbench v1 and close the milestone honestly
+
+Accepted status:
+
+- `M36 Phase 2` was completed on 2026-04-24 through [m36_phase_docs/phase_2_followup_review_and_closeout.md](m36_phase_docs/phase_2_followup_review_and_closeout.md) and [docs/task_cards/m36_phase_2_task_cards.md](docs/task_cards/m36_phase_2_task_cards.md)
+- `M36` milestone closeout was accepted in [docs/reviews/m36-natural-language-workbench-v1-freeze-review.md](docs/reviews/m36-natural-language-workbench-v1-freeze-review.md)
 
 ### M36 Exit
 
@@ -273,12 +279,20 @@ Goals:
 - define the generated-role and automation boundaries
 - keep bounded execution and review gates explicit
 
+Accepted status:
+
+- `M37 Phase 0` was completed on 2026-04-24 through [m37_phase_docs/phase_0_generated_roles_and_automation_scope_freeze.md](m37_phase_docs/phase_0_generated_roles_and_automation_scope_freeze.md) and [docs/task_cards/m37_phase_0_task_cards.md](docs/task_cards/m37_phase_0_task_cards.md)
+
 ### M37 Phase 1: Generated Profiles / Role Factory
 
 Goals:
 
 - support governed generated roles or generated profiles
 - define lifecycle, review, and cleanup rules
+
+Accepted status:
+
+- `M37 Phase 1` was completed on 2026-04-24 through [m37_phase_docs/phase_1_generated_profiles_and_role_factory.md](m37_phase_docs/phase_1_generated_profiles_and_role_factory.md) and [docs/task_cards/m37_phase_1_task_cards.md](docs/task_cards/m37_phase_1_task_cards.md)
 
 ### M37 Phase 2: Automation Controller / Watchdog / Closeout
 
@@ -287,6 +301,11 @@ Goals:
 - add bounded background automation primitives with a clear split between low-risk automatic actions and high-risk review-gated actions
 - support event-driven or schedule-driven controller actions
 - keep automation-plane behavior governed and auditable
+
+Accepted status:
+
+- `M37 Phase 2` was completed on 2026-04-24 through [m37_phase_docs/phase_2_automation_controller_watchdog_and_closeout.md](m37_phase_docs/phase_2_automation_controller_watchdog_and_closeout.md) and [docs/task_cards/m37_phase_2_task_cards.md](docs/task_cards/m37_phase_2_task_cards.md)
+- `M37` milestone closeout was accepted in [docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md](docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md)
 
 ## M38: Capability Ecosystem And Product-Grade Engineering Workflows
 
@@ -382,4 +401,4 @@ From `M35` onward:
 
 ## 11. One-Line Conclusion
 
-Accepted `M32-M36 Phase 0` built the real foundation and restored an honest product path, but the earlier product goals are still ahead. The honest rebaseline is: the remainder of `M36` plus `M37-M39` are still needed to reach the earlier platform product target, and `M40` is likely needed if the target includes domain-grade design and visual validation.
+Accepted `M36` and `M37` completed the workbench-v1 plus generated-role/bounded-automation line. The honest rebaseline is: `M38-M39` are still needed to reach the earlier platform product target, and `M40` is likely needed if the target includes domain-grade design and visual validation.

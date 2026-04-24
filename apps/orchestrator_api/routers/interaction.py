@@ -15,6 +15,21 @@ from packages.core_domain.services import OrchestratorService
 def build_interaction_router(service: OrchestratorService) -> APIRouter:
     router = APIRouter()
 
+    @router.get("/interaction/sessions")
+    def list_intent_sessions(limit: int = 10, status: str | None = None) -> list[dict]:
+        return [session.model_dump(mode="json") for session in service.list_intent_sessions(limit=limit, status=status)]
+
+    @router.get("/interaction/generated-profiles")
+    def list_generated_agent_profiles(
+        session_id: str | None = None,
+        run_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        return [
+            item.model_dump(mode="json")
+            for item in service.list_generated_agent_profiles(session_id=session_id, run_id=run_id, limit=limit)
+        ]
+
     @router.get("/interaction/agent-profiles")
     def list_agent_profiles() -> list[dict]:
         return [profile.model_dump(mode="json") for profile in service.list_agent_profiles()]
@@ -46,6 +61,37 @@ def build_interaction_router(service: OrchestratorService) -> APIRouter:
     @router.get("/interaction/sessions/{session_id}")
     def get_intent_session(session_id: str) -> dict:
         return service.get_intent_session_payload(session_id)
+
+    @router.get("/interaction/sessions/{session_id}/generated-profiles")
+    def list_session_generated_profiles(session_id: str, limit: int = 20) -> list[dict]:
+        return [
+            item.model_dump(mode="json")
+            for item in service.list_generated_agent_profiles(session_id=session_id, limit=limit)
+        ]
+
+    @router.post("/interaction/sessions/{session_id}/generated-profiles", status_code=status.HTTP_201_CREATED)
+    def generate_session_profiles(session_id: str) -> dict:
+        return service.generate_session_profiles(session_id)
+
+    @router.get("/interaction/sessions/{session_id}/followups")
+    def list_intent_session_followups(session_id: str, limit: int = 20) -> list[dict]:
+        return [item.model_dump(mode="json") for item in service.list_followup_requests(session_id, limit=limit)]
+
+    @router.get("/interaction/sessions/{session_id}/watchdogs")
+    def list_intent_session_watchdogs(session_id: str, limit: int = 20) -> list[dict]:
+        return [
+            item.model_dump(mode="json")
+            for item in service.list_automation_watchdogs(session_id=session_id, limit=limit)
+        ]
+
+    @router.get("/interaction/watchdogs/evaluate")
+    def evaluate_watchdogs(
+        session_id: str | None = None,
+        run_id: str | None = None,
+        auto_apply: bool = False,
+        limit: int = 20,
+    ) -> dict:
+        return service.evaluate_watchdogs(session_id=session_id, run_id=run_id, auto_apply=auto_apply, limit=limit)
 
     @router.post("/interaction/sessions/{session_id}/clarifications")
     def update_intent_session_clarifications(session_id: str, payload: ClarificationUpdateRequest) -> dict:

@@ -11,9 +11,12 @@
 
 1. [README.md](README.md)
 2. [docs/current_development_workflow.md](docs/current_development_workflow.md)
-3. [docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md](docs/reviews/m34-facade-reduction-and-authority-interior-cleanup-freeze-review.md)
-4. [docs/tech-debt-registry.md](docs/tech-debt-registry.md)
-5. [POST_M34_MULTIPHASE_ROADMAP.md](POST_M34_MULTIPHASE_ROADMAP.md)
+3. [docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md](docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md)
+4. [docs/reviews/m36-natural-language-workbench-v1-freeze-review.md](docs/reviews/m36-natural-language-workbench-v1-freeze-review.md)
+5. [docs/tech-debt-registry.md](docs/tech-debt-registry.md)
+6. [POST_M34_MULTIPHASE_ROADMAP.md](POST_M34_MULTIPHASE_ROADMAP.md)
+7. [docs/archive/](docs/archive/)
+8. `M2M_REMEDIATION_PLAN.md` (active remediation handoff, kept at repo root)
 
 ## 1. 当前仓库位置
 
@@ -72,7 +75,7 @@
 
 ### 自然语言入口
 
-自然语言目标入口已经存在，但主要落在 **CLI / API / minimum workbench preview**，而不是完整前端工作台。
+自然语言目标入口现在已经覆盖 **Web workbench / CLI / API**，其中 Web workbench 已经是可用的 natural-language workbench v1。
 
 当前后端已经支持：
 
@@ -132,7 +135,7 @@
 
 当前最诚实的判断是：
 
-- 如果目标是完成较早设想中的平台产品化目标，至少还需要 `M35-M39`
+- 如果目标是完成较早设想中的平台产品化目标，当前至少还需要 `M38-M39`
 - 如果目标还包括更高质量的 `DesignCluster` 与多模态视觉验证，通常还需要 `M40`
 
 也就是说：
@@ -152,4 +155,4 @@
 
 ## 7. 一句话总结
 
-当前仓库已经完成了 `M34` 之前的核心 foundation、收缩和诚实化工作，但真正的产品化主线还没有开始。post-`M34` 的正确理解不是“马上进入 M35/M36 并自动完成前端和配置”，而是要先用新的多 phase milestone 结构，逐步完成 `M35-M39` 的平台产品化，并在需要时继续推进到 `M40` 的设计与视觉验证能力。
+当前仓库已经完成了 `M34` 之前的核心 foundation、收缩和诚实化工作，也已经完成了 `M35`、`M36` 和 `M37` 的当前产品化里程碑。post-`M34` 的正确理解已经不再是“准备进入 M35”，而是下一步如果继续推进，就要按新的多 phase milestone 结构去打开 `M38-M40` 的后续产品化与设计/视觉验证能力。

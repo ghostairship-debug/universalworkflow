@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from packages.contracts import (
+    AutomationWatchdog,
     BudgetLedger,
     ControlPlaneIdentity,
     Evidence,
+    FollowupRequest,
+    GeneratedAgentProfile,
     HandoffLite,
     IntentSession,
     MemoryItem,
@@ -234,6 +237,220 @@ class IntentSessionRepository(RepositoryBase):
         with self._connection(connection) as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
         return [IntentSession.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+
+class FollowupRequestRepository(RepositoryBase):
+    def create(
+        self,
+        request: FollowupRequest,
+        connection: sqlite3.Connection | None = None,
+    ) -> FollowupRequest:
+        payload = request.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO followup_requests (
+                  request_id, session_id, run_id, intent, blocking, status, instruction, payload_json,
+                  schema_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request.request_id,
+                    request.session_id,
+                    request.run_id,
+                    request.intent,
+                    1 if request.blocking else 0,
+                    request.status,
+                    request.instruction,
+                    _json_dump(payload),
+                    request.schema_version,
+                    request.created_at.isoformat(),
+                    _utc_now_iso(),
+                ),
+            )
+        return request
+
+    def list_for_session(
+        self,
+        session_id: str,
+        *,
+        limit: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[FollowupRequest]:
+        query = "SELECT payload_json FROM followup_requests WHERE session_id = ? ORDER BY created_at DESC, request_id DESC"
+        params: list[Any] = [session_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [FollowupRequest.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+    def list_for_run(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[FollowupRequest]:
+        query = "SELECT payload_json FROM followup_requests WHERE run_id = ? ORDER BY created_at DESC, request_id DESC"
+        params: list[Any] = [run_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [FollowupRequest.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+
+class GeneratedAgentProfileRepository(RepositoryBase):
+    def create(
+        self,
+        profile: GeneratedAgentProfile,
+        connection: sqlite3.Connection | None = None,
+    ) -> GeneratedAgentProfile:
+        payload = profile.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO generated_agent_profiles (
+                  generated_profile_id, base_profile_id, source_type, public_role, role_label, session_id, run_id,
+                  cluster_template_id, payload_json, schema_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    profile.generated_profile_id,
+                    profile.base_profile_id,
+                    profile.source_type,
+                    profile.public_role,
+                    profile.role_label,
+                    profile.session_id,
+                    profile.run_id,
+                    profile.cluster_template_id,
+                    _json_dump(payload),
+                    profile.schema_version,
+                    profile.created_at.isoformat(),
+                    _utc_now_iso(),
+                ),
+            )
+        return profile
+
+    def list(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        limit: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[GeneratedAgentProfile]:
+        query = "SELECT payload_json FROM generated_agent_profiles"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if run_id is not None:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC, generated_profile_id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [GeneratedAgentProfile.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+
+class AutomationWatchdogRepository(RepositoryBase):
+    def upsert(
+        self,
+        watchdog: AutomationWatchdog,
+        connection: sqlite3.Connection | None = None,
+    ) -> AutomationWatchdog:
+        payload = watchdog.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO automation_watchdogs (
+                  watchdog_id, session_id, run_id, trigger, status, objective, auto_action_enabled, payload_json,
+                  schema_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(watchdog_id) DO UPDATE SET
+                  session_id = excluded.session_id,
+                  run_id = excluded.run_id,
+                  trigger = excluded.trigger,
+                  status = excluded.status,
+                  objective = excluded.objective,
+                  auto_action_enabled = excluded.auto_action_enabled,
+                  payload_json = excluded.payload_json,
+                  schema_version = excluded.schema_version,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    watchdog.watchdog_id,
+                    watchdog.session_id,
+                    watchdog.run_id,
+                    watchdog.trigger,
+                    watchdog.status,
+                    watchdog.objective,
+                    1 if watchdog.auto_action_enabled else 0,
+                    _json_dump(payload),
+                    watchdog.schema_version,
+                    watchdog.created_at.isoformat(),
+                    _utc_now_iso(),
+                ),
+            )
+        return watchdog
+
+    def list(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[AutomationWatchdog]:
+        query = "SELECT payload_json FROM automation_watchdogs"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id is not None:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if run_id is not None:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC, watchdog_id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [AutomationWatchdog.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+    def find_active(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        trigger: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> AutomationWatchdog | None:
+        results = self.list(
+            session_id=session_id,
+            run_id=run_id,
+            status="active",
+            limit=20,
+            connection=connection,
+        )
+        return next((item for item in results if item.trigger == trigger), None)
 
 
 class TaskRepository(RepositoryBase):

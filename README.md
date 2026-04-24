@@ -49,7 +49,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
 
 - Chinese overview:
   - [README.zh-CN.md](README.zh-CN.md)
-- Milestone baseline: accepted `M35`; accepted `M36 Phase 0`; no later bounded phase open
+- Milestone baseline: accepted `M35`; accepted `M36`; accepted `M37`; no later bounded phase open
 - Validated baseline note:
   - the shipped-shape claims below refer to the latest validated closeout baseline, not necessarily every transient in-progress worktree state
 - Current shipped shape:
@@ -67,6 +67,8 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - durable pilot checkpoint snapshots in `state/durable`
   - shared orchestration graph substrate with `project_delivery` and `guarded_project_delivery`
   - orchestration plan graphs plus natural-language `plan-graph` / `policy-preview` / `goal-packet` / `launch` surfaces
+  - usable natural-language workbench v1 with recent sessions, execution-default projection, active-run checkpoints, and persistent follow-up queues
+  - additive generated profiles plus bounded automation-watchdog evaluation across workbench, CLI, and API
   - sessionful external-agent lane with projected external session refs
   - controlled repo mutation through explicit write-sets, patch apply, and bounded test/fix loops
   - a single-store quorum-style scheduler-authority layer, committed cross-control-plane lease ownership, and fenced takeover lineage
@@ -74,14 +76,16 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - built-in FastAPI Web operator console and terminal TUI dashboard
   - `v1 core complete` mainline product status
 - Current planning position:
-  - `M8-M30`, accepted `M31 Phase 0`, accepted `M32 Phase 0`, accepted `M33 Phase 0`, accepted `M34 Phase 0`, accepted `M35`, and accepted `M36 Phase 0` are complete at their current bounded level
-  - the latest accepted freeze is [docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md](docs/reviews/m36-workbench-ia-capability-slot-freeze-review.md)
-  - the retained `M36 Phase 0` materials are [m36_phase_docs/phase_0_workbench_ia_and_capability_slot_freeze.md](m36_phase_docs/phase_0_workbench_ia_and_capability_slot_freeze.md) and [docs/task_cards/m36_phase_0_task_cards.md](docs/task_cards/m36_phase_0_task_cards.md)
-  - the previous accepted milestone closeout remains [docs/reviews/m35-role-execution-productization-freeze-review.md](docs/reviews/m35-role-execution-productization-freeze-review.md)
+- `M8-M30`, accepted `M31 Phase 0`, accepted `M32 Phase 0`, accepted `M33 Phase 0`, accepted `M34 Phase 0`, accepted `M35`, accepted `M36`, and accepted `M37` are complete at their current bounded level
+  - the latest accepted freeze is [docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md](docs/reviews/m37-generated-roles-and-automation-plane-freeze-review.md)
+  - the `M36` closeout review is [docs/reviews/m36-natural-language-workbench-v1-freeze-review.md](docs/reviews/m36-natural-language-workbench-v1-freeze-review.md)
+  - the retained `M36` materials are [m36_phase_docs/phase_1_conversational_workbench_flow.md](m36_phase_docs/phase_1_conversational_workbench_flow.md), [m36_phase_docs/phase_2_followup_review_and_closeout.md](m36_phase_docs/phase_2_followup_review_and_closeout.md), [docs/task_cards/m36_phase_1_task_cards.md](docs/task_cards/m36_phase_1_task_cards.md), and [docs/task_cards/m36_phase_2_task_cards.md](docs/task_cards/m36_phase_2_task_cards.md)
+  - the retained `M37` materials are [m37_phase_docs/phase_0_generated_roles_and_automation_scope_freeze.md](m37_phase_docs/phase_0_generated_roles_and_automation_scope_freeze.md), [m37_phase_docs/phase_1_generated_profiles_and_role_factory.md](m37_phase_docs/phase_1_generated_profiles_and_role_factory.md), [m37_phase_docs/phase_2_automation_controller_watchdog_and_closeout.md](m37_phase_docs/phase_2_automation_controller_watchdog_and_closeout.md), [docs/task_cards/m37_phase_0_task_cards.md](docs/task_cards/m37_phase_0_task_cards.md), [docs/task_cards/m37_phase_1_task_cards.md](docs/task_cards/m37_phase_1_task_cards.md), and [docs/task_cards/m37_phase_2_task_cards.md](docs/task_cards/m37_phase_2_task_cards.md)
   - the rebuilt post-`M34` roadmap is [POST_M34_MULTIPHASE_ROADMAP.md](POST_M34_MULTIPHASE_ROADMAP.md), and it remains reference-only until the next bounded phase opens
-  - the honest rebaseline is that the older platform-product target now likely requires the remainder of `M36` plus `M37-M39`; if domain-grade design and multimodal visual verification are in scope, `M40` is likely needed
+  - the honest rebaseline is that the older platform-product target now likely requires `M38-M39`; if domain-grade design and multimodal visual verification are in scope, `M40` is likely needed
   - the pre-open hardening gate is cleared and absorbed: the governance tech-debt report regressions are repaired, the root planning docs are aligned, and the no-behavior-change `APIRouter` split landed before `M35` execution productization closed
-  - accepted `M36 Phase 0` froze the workbench IA and bounded capability-slot strategy, landed additive `Codex CLI` support, and seeded bounded MiniMax MCP search/image-understanding support without opening broader capability-ecosystem productization
+  - the legacy root planning inputs referenced by older notes now live under [docs/archive/](docs/archive/); `M2M_REMEDIATION_PLAN.md` remains at the repo root as the active remediation handoff
+  - accepted `M36` completed workbench v1, and accepted `M37` completed governed generated profiles plus bounded watchdog automation without opening broader capability-ecosystem productization
   - `TD-STRUCT-001` and `TD-STRUCT-003` remain carry-forward partial repayments, but they were not the main `M35` theme
   - `TD-STRUCT-004` remains repaid
   - `TD-STRUCT-005` remains deferred and aligns mainly to `M38-M39`
@@ -92,7 +96,7 @@ python -m infra.scripts.manage --db-path state/workflow.db demo
   - the previous bounded expansion freeze remains [docs/reviews/m31-boundary-contraction-freeze-review.md](docs/reviews/m31-boundary-contraction-freeze-review.md)
   - the previous milestone freeze remains [docs/reviews/m30-operator-control-freeze-review.md](docs/reviews/m30-operator-control-freeze-review.md)
   - the deep core-complete baseline remains [docs/reviews/m20-freeze-review.md](docs/reviews/m20-freeze-review.md)
-  - the latest recorded local full-suite validation in the current worktree is `pytest` -> `296 passed`
+  - the latest recorded local full-suite validation in the current worktree is `pytest` -> `299 passed`
 
 ## Offline validation
 
@@ -128,8 +132,8 @@ The script writes a JSON report to `state/offline_validation_report.json` and ve
 
 The latest accepted bounded baseline is:
 
-- `pytest --basetemp state/.pytest-tmp-m36-all`
-  - `296 passed`
+- `python -m pytest -q`
+  - `299 passed`
 - `python -m infra.scripts.offline_validation --skip-offline-probe`
   - `overall_passed=true`
 - `python -m infra.scripts.check_doc_links`
@@ -138,9 +142,9 @@ The latest accepted bounded baseline is:
 Current phase-opening status:
 
 - `M35` closeout is accepted
-- `M36 Phase 0` bounded opening/freeze is accepted
-- no post-`M36 Phase 0` bounded phase is open yet
-- `M36 Phase 1` remains the next likely opening slice, but it is not active execution truth yet
+- `M36` closeout is accepted
+- `M37` closeout is accepted
+- no post-`M37` bounded phase is open yet
 
 ## Common commands
 
@@ -166,6 +170,12 @@ If the project is installed as a package, the `workflowctl` entry point is avail
 - `workflowctl --db-path state/workflow.db domain-pack export-skill --domain-pack-id software_delivery_pack`
 - `workflowctl db workspace-path --label dev`
 - `workflowctl --db-path state/workflow.db run suggest-presets --goal "Research runtime strategy"`
+- `workflowctl --db-path state/workflow.db interaction sessions`
+- `workflowctl --db-path state/workflow.db interaction create-session --goal "Coordinate a delivery slice" --preset project_delivery --cluster dev_cluster`
+- `workflowctl --db-path state/workflow.db interaction generate-profiles <session_id>`
+- `workflowctl --db-path state/workflow.db interaction followups <session_id>`
+- `workflowctl --db-path state/workflow.db interaction watchdogs --session-id <session_id>`
+- `workflowctl --db-path state/workflow.db interaction evaluate-watchdogs --session-id <session_id>`
 - `workflowctl governance tech-debt`
 - `workflowctl governance review-policy`
 - `workflowctl --db-path state/workflow.db governance release-readiness`
@@ -295,16 +305,26 @@ Current Web UI scope:
 - browse runs, focus detail, review queues, governance, and effective config
 - trigger lifecycle actions such as `resume`, `approve`, `reject`, `reconcile`, `cancel`, and `batch-resume`
 - inspect packetized operator state through the existing run detail views
+- use `/ui/workbench` as the shipped natural-language workbench v1 with richer goal intake, recent sessions, persistent follow-ups, generated profiles, and bounded watchdog projections
 
 Current Web UI non-goals:
 
-- it is not yet a chat-style natural-language workbench
 - it does not yet expose streaming conversation, inline replanning, or free-form operator chat with the model
-- the rebuilt roadmap treats a real natural-language workbench v1 as post-`M34` productization work rather than a shipped `M34` capability
+- it does not replace the operator review surfaces with silent automation
+- the rebuilt roadmap still treats broader capability-ecosystem, promotion, and multimodal productization as later `M38+` work
 
 ## Natural-language launch surfaces
 
-The repository now has natural-language goal entry points, but they currently live in CLI/API rather than the Web UI or TUI.
+The repository now has natural-language goal entry points across the Web workbench, CLI, and API.
+
+Web workbench:
+
+- `GET /ui/workbench`
+- `POST /ui/workbench/preview`
+- `POST /ui/workbench/{session_id}/clarify`
+- `POST /ui/workbench/{session_id}/launch`
+- `POST /ui/workbench/{session_id}/followup`
+- `POST /ui/workbench/{session_id}/generate-profiles`
 
 CLI:
 
@@ -315,6 +335,9 @@ workflowctl --db-path state/workflow.db run policy-preview --goal "Ship a guarde
 workflowctl --db-path state/workflow.db run goal-packet --goal "Ship a guarded delivery slice"
 workflowctl --db-path state/workflow.db run launch --goal "Ship a guarded delivery slice" --execute
 workflowctl --db-path state/workflow.db run operator-packet <run_id>
+workflowctl --db-path state/workflow.db interaction sessions
+workflowctl --db-path state/workflow.db interaction generate-profiles <session_id>
+workflowctl --db-path state/workflow.db interaction evaluate-watchdogs --session-id <session_id>
 ```
 
 API:
@@ -324,16 +347,24 @@ API:
 - `POST /runs/goal-packet`
 - `POST /runs/launch`
 - `GET /runs/{run_id}/operator-packet`
+- `GET /interaction/sessions`
+- `POST /interaction/sessions`
+- `GET /interaction/sessions/{session_id}`
+- `POST /interaction/sessions/{session_id}/generated-profiles`
+- `GET /interaction/sessions/{session_id}/followups`
+- `GET /interaction/sessions/{session_id}/watchdogs`
+- `GET /interaction/watchdogs/evaluate`
 
 Important boundary:
 
-- the backend can already plan and launch from a natural-language goal
-- the built-in Web UI and TUI remain operator surfaces, not full natural-language interaction terminals
-- the rebuilt roadmap currently places product-grade workbench completion on the `M36` line, not in the accepted `M34` baseline
+- the workbench now provides a real natural-language product entry point
+- review authority remains explicit in the operator surfaces
+- the TUI remains a read-mostly operator dashboard rather than a conversational shell
 
 Remote worker productization and scheduler-authority peers are both built in for the shipped multi-control-plane core-complete path:
 
 ```powershell
+$env:UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER="1"
 $env:UAWO_ENABLE_EXTERNAL_WORKER_POOLS="1"
 $env:WORKFLOW_WORKER_POOL_ID="remote_http_shell"
 $env:WORKFLOW_REMOTE_WORKER_SHARED_SECRET="<shared secret>"
@@ -343,6 +374,8 @@ $env:WORKFLOW_SCHEDULER_AUTHORITY_BIND_URL="http://127.0.0.1:8020"
 workflow-scheduler-authority
 workflow-remote-worker
 ```
+
+By default, the integrated orchestrator stays in local-only mode and reports `enabled: false` for `/scheduler/cluster` and `workflowctl scheduler cluster`. Set `UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER=1` to enable the quorum-style scheduler-authority path.
 
 ## M8 external lanes
 
@@ -640,6 +673,14 @@ The current routes are:
 - `GET /runs/{id}/handoffs`
 - `GET /runs/{id}/orchestration`
 - `POST /runs/batch-resume`
+- `GET /interaction/sessions`
+- `POST /interaction/sessions`
+- `GET /interaction/sessions/{id}`
+- `GET /interaction/generated-profiles`
+- `POST /interaction/sessions/{id}/generated-profiles`
+- `GET /interaction/sessions/{id}/followups`
+- `GET /interaction/sessions/{id}/watchdogs`
+- `GET /interaction/watchdogs/evaluate`
 - `GET /presets`
 - `GET /domain-packs`
 - `GET /domain-packs/resolve`

@@ -2965,9 +2965,10 @@ def test_compile_and_resume_project_capability_envelope_and_receipt(tmp_path: Pa
     run = service.create_run("Project capability contract projection", "feature_delivery")
     service.compile_run(run.run_id)
     compiled_detail = service.get_status_detail(run.run_id)
+    expected_authority_mode = service.effective_config["scheduler_authority"]["authority_mode"]
 
     assert compiled_detail["capability_invocation_envelope"] is not None
-    assert compiled_detail["capability_invocation_envelope"]["authority_mode"] == "single_store_quorum"
+    assert compiled_detail["capability_invocation_envelope"]["authority_mode"] == expected_authority_mode
     assert compiled_detail["capability_invocation_envelope"]["descriptor"]["provider_kind"] == "adapter_route"
 
     service.resume_run(run.run_id)
@@ -2977,7 +2978,7 @@ def test_compile_and_resume_project_capability_envelope_and_receipt(tmp_path: Pa
     assert detail["capability_execution_receipt"] is not None
     assert detail["capability_execution_receipt"]["status"] == "completed"
     assert detail["capability_execution_receipt"]["return_code"] == 0
-    assert audit_report["capability_execution_receipt"]["envelope"]["authority_mode"] == "single_store_quorum"
+    assert audit_report["capability_execution_receipt"]["envelope"]["authority_mode"] == expected_authority_mode
 
 
 def test_guarded_project_delivery_uses_shared_graph_substrate(tmp_path: Path) -> None:
@@ -2996,6 +2997,7 @@ def test_guarded_project_delivery_uses_shared_graph_substrate(tmp_path: Path) ->
         execute=False,
     )
     detail = service.get_status_detail(launch["run"]["run_id"])
+    expected_authority_mode = service.effective_config["scheduler_authority"]["authority_mode"]
 
     assert preview["selected_preset_id"] == "guarded_project_delivery"
     assert preview["plan_graph"]["execution_mode"] == "planner_generated_graph_with_parallel_children"
@@ -3004,7 +3006,7 @@ def test_guarded_project_delivery_uses_shared_graph_substrate(tmp_path: Path) ->
     assert len(preview["plan_graph"]["barriers"]) == 1
     assert len(preview["plan_graph"]["retry_policies"]) == 1
     assert detail["orchestration_plan_graph"]["preset_id"] == "guarded_project_delivery"
-    assert detail["capability_invocation_envelope"]["authority_mode"] == "single_store_quorum"
+    assert detail["capability_invocation_envelope"]["authority_mode"] == expected_authority_mode
 
 
 def test_guarded_project_delivery_uses_shared_orchestration_plan_defaults(tmp_path: Path) -> None:

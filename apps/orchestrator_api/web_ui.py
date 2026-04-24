@@ -17,6 +17,17 @@ def _pill(value: str, tone: str = "neutral") -> str:
     return f'<span class="pill pill-{tone}">{_escape(value)}</span>'
 
 
+def _cluster_status_banner(cluster: dict[str, Any] | None) -> str:
+    payload = cluster or {}
+    if payload.get("enabled", True):
+        return ""
+    return (
+        '<div class="notice" style="margin-bottom:12px;">'
+        "Scheduler authority cluster disabled (local-only mode)."
+        "</div>"
+    )
+
+
 def _nav() -> str:
     links = [
         ('/ui', 'Dashboard'),
@@ -315,6 +326,37 @@ def _review_tone(state: str) -> str:
     return "neutral"
 
 
+def _session_table(rows: list[dict[str, Any]]) -> str:
+    body = "".join(
+        f"""
+        <tr>
+          <td><a href="/ui/workbench?session_id={_escape(row['session_id'])}">{_escape(row['session_id'])}</a></td>
+          <td>{_pill(str(row.get('status', '-')), _status_tone(str(row.get('status', '-'))))}</td>
+          <td>{_escape(row.get('intent_packet', {}).get('preferred_preset_id') or 'auto')}</td>
+          <td>{_escape(row.get('active_run_id') or '-')}</td>
+          <td>{_escape(row.get('intent_packet', {}).get('goal') or '-')}</td>
+        </tr>
+        """
+        for row in rows
+    )
+    if not body:
+        body = '<tr><td colspan="5" class="muted">No recent sessions yet.</td></tr>'
+    return f"""
+    <table>
+      <thead>
+        <tr>
+          <th>Session</th>
+          <th>Status</th>
+          <th>Preset</th>
+          <th>Active Run</th>
+          <th>Goal</th>
+        </tr>
+      </thead>
+      <tbody>{body}</tbody>
+    </table>
+    """
+
+
 def render_dashboard(
     *,
     snapshot: dict[str, Any],
@@ -383,6 +425,7 @@ def render_dashboard(
     </div>
     <section class="panel" style="margin-top:16px;">
       <h2>Authority Topology</h2>
+      {_cluster_status_banner(cluster)}
       <div class="kv">
         <div class="kv-item"><strong>Mode</strong>{_escape(cluster.get('mode', '-'))}</div>
         <div class="kv-item"><strong>Authority Node</strong>{_escape(cluster.get('authority_node_id', cluster.get('leader_node_id', '-')))}</div>
@@ -496,6 +539,7 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
     <div class="split" style="margin-top:16px;">
       <section class="panel">
         <h3>Authority Topology</h3>
+        {_cluster_status_banner(cluster_overview)}
         <div class="kv">
           <div class="kv-item"><strong>Authority Node</strong>{_escape(cluster_overview.get('authority_node_id', cluster_overview.get('leader_node_id', '-')))}</div>
           <div class="kv-item"><strong>Authority Term</strong>{_escape(cluster_overview.get('authority_term_no', cluster_overview.get('term_no', '-')))}</div>
@@ -585,7 +629,7 @@ def render_governance(*, reports: dict[str, Any], cluster_overview: dict[str, An
       <section class="panel"><h2>Alerts</h2>{_json_block(reports['alerts'])}</section>
       <section class="panel"><h2>Release Readiness</h2>{_json_block(reports['release_readiness'])}</section>
       <section class="panel"><h2>Domain Packs</h2>{_json_block(reports['domain_packs'])}</section>
-      <section class="panel"><h2>Authority Topology</h2>{_json_block(cluster)}</section>
+      <section class="panel"><h2>Authority Topology</h2>{_cluster_status_banner(cluster)}{_json_block(cluster)}</section>
     </div>
     """
     return _layout("Governance", body, notice=notice)
@@ -596,6 +640,8 @@ def render_workbench(
     session_payload: dict[str, Any] | None,
     presets: list[dict[str, Any]],
     cluster_templates: list[dict[str, Any]],
+    recent_sessions: list[dict[str, Any]],
+    effective_config: dict[str, Any],
     notice: str | None = None,
 ) -> str:
     preset_options = "".join(
@@ -609,25 +655,50 @@ def render_workbench(
     preview_form = f"""
     <section class="panel">
       <h2>Interaction-First Workbench</h2>
-      <p class="muted">Create an intent session, inspect the goal packet and cluster preview, then launch into the existing operator surface.</p>
+      <p class="muted">Create an intent session, inspect the goal packet and cluster preview, surface execution defaults, then launch into the existing operator surface.</p>
       <form method="post" action="/ui/workbench/preview">
         <div class="kv">
           <div class="kv-item"><strong>Goal</strong><textarea name="goal" rows="4" style="width:100%;" placeholder="Describe the objective, artifact, or decision you want this run to produce."></textarea></div>
           <div class="kv-item"><strong>Preferred Preset</strong><select name="preset_id"><option value="">auto</option>{preset_options}</select></div>
           <div class="kv-item"><strong>Preferred Cluster</strong><select name="cluster_template_id"><option value="">auto</option>{cluster_options}</select></div>
+          <div class="kv-item"><strong>Constraints</strong><textarea name="constraints" rows="4" style="width:100%;" placeholder="One constraint per line."></textarea></div>
+          <div class="kv-item"><strong>Assumptions</strong><textarea name="assumptions" rows="4" style="width:100%;" placeholder="One assumption per line."></textarea></div>
+          <div class="kv-item"><strong>Artifact Paths</strong><textarea name="referenced_artifact_paths" rows="4" style="width:100%;" placeholder="One referenced path per line."></textarea></div>
+          <div class="kv-item"><strong>Follow-Up Context</strong><textarea name="followup_context" rows="4" style="width:100%;" placeholder="Prior decision, rejection, or operator context."></textarea></div>
         </div>
         <div style="margin-top:14px;"><button type="submit">Preview Goal Packet</button></div>
       </form>
     </section>
     """
     if session_payload is None:
-        return _layout("Interaction Workbench", preview_form, notice=notice)
+        body = f"""
+        {preview_form}
+        <div class="split" style="margin-top:16px;">
+          <section class="panel">
+            <h2>Execution Defaults</h2>
+            <p class="muted">Current M35 execution defaults projected into the workbench.</p>
+            {_json_block(effective_config.get('execution_defaults'))}
+          </section>
+          <section class="panel">
+            <h2>Recent Sessions</h2>
+            {_session_table(recent_sessions)}
+          </section>
+        </div>
+        """
+        return _layout("Interaction Workbench", body, notice=notice)
 
     session = session_payload["session"]
     clarification_state = session.get("clarification_state") or {}
     plan_draft = session_payload.get("plan_draft")
     goal_packet = session_payload.get("goal_packet") or {}
     selected_clusters = goal_packet.get("selected_clusters", [])
+    followup_requests = session_payload.get("followup_requests") or []
+    active_run_operator_view = session_payload.get("active_run_operator_view") or {}
+    generated_profiles = session_payload.get("generated_profiles") or []
+    automation_watchdogs = session_payload.get("automation_watchdogs") or []
+    automation_evaluation = session_payload.get("automation_evaluation") or {}
+    active_run = active_run_operator_view.get("run") or {}
+    active_status_detail = active_run_operator_view.get("status_detail") or {}
     clarification_prompts = clarification_state.get("prompts") or []
     clarification_inputs = "".join(
         f"""
@@ -639,6 +710,7 @@ def render_workbench(
         for prompt in clarification_prompts
     ) or '<div class="kv-item"><strong>Clarifications</strong>No blocking clarification prompts.</div>'
     selected_cluster_labels = ", ".join(item["name"] for item in selected_clusters) or "single-path preset"
+    selected_cluster_ids = ", ".join(item["template_id"] for item in selected_clusters) or "auto"
     active_run_link = (
         f'<a href="/ui/runs/{_escape(session["active_run_id"])}">{_escape(session["active_run_id"])}</a>'
         if session.get("active_run_id")
@@ -654,6 +726,67 @@ def render_workbench(
         if plan_draft is not None
         else "<span class='muted'>Launch becomes available once the session has a plan draft.</span>"
     )
+    followup_rows = "".join(
+        f"""
+        <tr>
+          <td>{_escape(item.get('request_id'))}</td>
+          <td>{_pill(str(item.get('status', '-')), _status_tone(str(item.get('status', '-'))))}</td>
+          <td>{_escape(item.get('intent') or '-')}</td>
+          <td>{_escape(item.get('blocking'))}</td>
+          <td>{_escape(item.get('instruction') or '-')}</td>
+        </tr>
+        """
+        for item in followup_requests
+    ) or '<tr><td colspan="5" class="muted">No follow-up requests queued.</td></tr>'
+    generated_profile_rows = "".join(
+        f"""
+        <tr>
+          <td>{_escape(item.get('generated_profile_id'))}</td>
+          <td>{_escape(item.get('base_profile_id') or '-')}</td>
+          <td>{_escape(item.get('role_label') or '-')}</td>
+          <td>{_escape(item.get('cluster_template_id') or '-')}</td>
+          <td>{_escape(', '.join(item.get('repo_scope_paths') or [])) or '-'}</td>
+        </tr>
+        """
+        for item in generated_profiles
+    ) or '<tr><td colspan="5" class="muted">No generated profiles materialized yet.</td></tr>'
+    watchdog_rows = "".join(
+        f"""
+        <tr>
+          <td>{_escape(item.get('watchdog_id'))}</td>
+          <td>{_escape(item.get('trigger') or '-')}</td>
+          <td>{_pill(str(item.get('status', '-')), _status_tone(str(item.get('status', '-'))))}</td>
+          <td>{_escape(item.get('objective') or '-')}</td>
+        </tr>
+        """
+        for item in automation_watchdogs
+    ) or '<tr><td colspan="4" class="muted">No automation watchdogs registered yet.</td></tr>'
+    watchdog_action_rows = "".join(
+        f"""
+        <tr>
+          <td>{_escape(item.get('trigger') or '-')}</td>
+          <td>{_escape(item.get('action_type') or '-')}</td>
+          <td>{_escape(item.get('risk_level') or '-')}</td>
+          <td>{_escape(item.get('requires_review'))}</td>
+          <td>{_escape(item.get('summary') or '-')}</td>
+        </tr>
+        """
+        for item in automation_evaluation.get("actions", [])
+    ) or '<tr><td colspan="5" class="muted">No automation actions projected yet.</td></tr>'
+    active_checkpoint = (
+        f"""
+        <div class="kv">
+          <div class="kv-item"><strong>Run</strong><a href="/ui/runs/{_escape(active_run.get('run_id'))}">{_escape(active_run.get('run_id'))}</a></div>
+          <div class="kv-item"><strong>Status</strong>{_pill(str(active_run.get('status', '-')), _status_tone(str(active_run.get('status', '-'))))}</div>
+          <div class="kv-item"><strong>Review State</strong>{_pill(str(active_status_detail.get('effective_review_state', '-')), _review_tone(str(active_status_detail.get('effective_review_state', '-'))))}</div>
+          <div class="kv-item"><strong>Next Action</strong>{_escape(active_status_detail.get('next_action') or '-')}</div>
+          <div class="kv-item"><strong>Recoverability</strong>{_escape(active_status_detail.get('recoverability_hint') or '-')}</div>
+          <div class="kv-item"><strong>Review Console</strong><a href="/ui/reviews">Open review queue</a></div>
+        </div>
+        """
+        if active_run
+        else "<p class='muted'>No active run is attached to this session yet.</p>"
+    )
     body = f"""
     {preview_form}
     <div class="split" style="margin-top:16px;">
@@ -662,7 +795,10 @@ def render_workbench(
         <div class="kv">
           <div class="kv-item"><strong>Session ID</strong>{_escape(session['session_id'])}</div>
           <div class="kv-item"><strong>Status</strong>{_escape(session['status'])}</div>
+          <div class="kv-item"><strong>Goal</strong>{_escape(session.get('intent_packet', {}).get('goal') or '-')}</div>
+          <div class="kv-item"><strong>Preferred Preset</strong>{_escape(session.get('intent_packet', {}).get('preferred_preset_id') or 'auto')}</div>
           <div class="kv-item"><strong>Selected Cluster Path</strong>{_escape(selected_cluster_labels)}</div>
+          <div class="kv-item"><strong>Cluster Template IDs</strong>{_escape(selected_cluster_ids)}</div>
           <div class="kv-item"><strong>Active Run</strong>{active_run_link}</div>
         </div>
         <form method="post" action="/ui/workbench/{_escape(session['session_id'])}/clarify" style="margin-top:16px;">
@@ -674,6 +810,16 @@ def render_workbench(
       <section class="panel">
         <h2>Plan Draft</h2>
         {_json_block(plan_draft)}
+      </section>
+    </div>
+    <div class="split" style="margin-top:16px;">
+      <section class="panel">
+        <h2>Execution Defaults</h2>
+        {_json_block(effective_config.get('execution_defaults'))}
+      </section>
+      <section class="panel">
+        <h2>Active Run Checkpoint</h2>
+        {active_checkpoint}
       </section>
     </div>
     <div class="split" style="margin-top:16px;">
@@ -694,6 +840,61 @@ def render_workbench(
       <section class="panel">
         <h2>Cluster Policy Preview</h2>
         {_json_block(goal_packet.get('cluster_policy_preview'))}
+      </section>
+    </div>
+    <div class="split" style="margin-top:16px;">
+      <section class="panel">
+        <h2>Follow-Up Queue</h2>
+        <table>
+          <thead>
+            <tr><th>Request</th><th>Status</th><th>Intent</th><th>Blocking</th><th>Instruction</th></tr>
+          </thead>
+          <tbody>{followup_rows}</tbody>
+        </table>
+        <form method="post" action="/ui/workbench/{_escape(session['session_id'])}/followup" style="margin-top:16px;">
+          <input type="hidden" name="run_id" value="{_escape(session.get('active_run_id') or '')}">
+          <div class="kv">
+            <div class="kv-item"><strong>Instruction</strong><textarea name="instruction" rows="4" style="width:100%;" placeholder="Record the next bounded follow-up request."></textarea></div>
+            <div class="kv-item"><strong>Intent</strong><input type="text" name="intent" value="continue"></div>
+            <div class="kv-item"><strong>Blocking</strong><label><input type="checkbox" name="blocking" value="true"> requires operator attention before closure</label></div>
+          </div>
+          <div class="actions" style="margin-top:14px;"><button type="submit">Queue Follow-Up</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>Recent Sessions</h2>
+        {_session_table(recent_sessions)}
+      </section>
+    </div>
+    <div class="split" style="margin-top:16px;">
+      <section class="panel">
+        <h2>Generated Profiles</h2>
+        <p class="muted">M37 session-scoped role materialization stays additive and reviewable.</p>
+        <form class="inline" method="post" action="/ui/workbench/{_escape(session['session_id'])}/generate-profiles" style="margin-bottom:12px;">
+          <button type="submit">Generate Session Profiles</button>
+        </form>
+        <table>
+          <thead>
+            <tr><th>Profile</th><th>Base</th><th>Role Label</th><th>Cluster</th><th>Repo Scope</th></tr>
+          </thead>
+          <tbody>{generated_profile_rows}</tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2>Automation Watchdogs</h2>
+        <p class="muted">Bounded watchdogs project low-risk automation hints without bypassing review gates.</p>
+        <table>
+          <thead>
+            <tr><th>Watchdog</th><th>Trigger</th><th>Status</th><th>Objective</th></tr>
+          </thead>
+          <tbody>{watchdog_rows}</tbody>
+        </table>
+        <table style="margin-top:16px;">
+          <thead>
+            <tr><th>Trigger</th><th>Action</th><th>Risk</th><th>Review</th><th>Summary</th></tr>
+          </thead>
+          <tbody>{watchdog_action_rows}</tbody>
+        </table>
       </section>
     </div>
     """
