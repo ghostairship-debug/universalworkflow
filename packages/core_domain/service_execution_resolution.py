@@ -127,6 +127,8 @@ def resolve_execution_profile_for_service(
                 "selected_model": selected_model,
                 "selected_model_kind": selected_model_kind,
                 "model_variant": model_variant,
+                "model_selection_source": "fallback",
+                "model_selection_reason": "worker router compatibility fallback selected the available adapter",
                 "compatibility_fallback": "worker_router_default",
                 "source_map": source_map,
             }
@@ -147,6 +149,7 @@ def resolve_execution_profile_for_service(
         {
             **resolved.model_dump(mode="json"),
             "execution_lane": str(lane),
+            "role_responsibilities": list(cluster_member.responsibilities if cluster_member is not None else []),
             "source_map": source_map,
         }
     )

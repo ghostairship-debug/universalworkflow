@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 from collections.abc import Mapping
+from typing import Any
 
 
 TIMEOUT_EXIT_CODE = 124
@@ -38,9 +40,17 @@ _ENV_ALLOWLIST = {
     "HTTPS_PROXY",
 }
 _ENV_ALLOWLIST_PREFIXES = (
+    "ANTHROPIC_",
+    "CLAUDE_",
+    "CLOUDSDK_",
+    "CODEX_",
+    "DEEPSEEK_",
+    "GOOGLE_",
+    "MINIMAX_",
     "OPENAI_",
     "OPENCODE_",
     "PYTHON",
+    "VERTEX_",
     "WORKFLOW_",
 )
 
@@ -80,3 +90,60 @@ def completed_process_from_timeout(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+def terminate_process_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+
+
+def run_subprocess_with_tree_timeout(command: list[str], **run_kwargs: Any) -> subprocess.CompletedProcess[str]:
+    timeout_seconds = int(run_kwargs.pop("timeout"))
+    capture_output = bool(run_kwargs.pop("capture_output", False))
+    check = bool(run_kwargs.pop("check", False))
+    text = bool(run_kwargs.pop("text", False))
+    stdin_value = run_kwargs.pop("input", None)
+    stdout_target = subprocess.PIPE if capture_output else None
+    stderr_target = subprocess.PIPE if capture_output else None
+    popen_kwargs: dict[str, Any] = {
+        "cwd": run_kwargs.pop("cwd", None),
+        "env": run_kwargs.pop("env", None),
+        "stdin": subprocess.PIPE if stdin_value is not None else None,
+        "stdout": stdout_target,
+        "stderr": stderr_target,
+        "text": text,
+        **run_kwargs,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(command, **popen_kwargs)
+    try:
+        stdout, stderr = process.communicate(stdin_value, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        terminate_process_tree(process.pid)
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+        exc.stdout = stdout if stdout is not None else exc.stdout
+        exc.stderr = stderr if stderr is not None else exc.stderr
+        return completed_process_from_timeout(exc, command=command, timeout_seconds=timeout_seconds)
+
+    completed = subprocess.CompletedProcess(command, process.returncode, stdout=stdout or "", stderr=stderr or "")
+    if check and completed.returncode:
+        completed.check_returncode()
+    return completed

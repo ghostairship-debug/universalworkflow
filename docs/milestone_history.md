@@ -1,16 +1,16 @@
 # 里程碑历史摘要
 
-本文档合并了旧 phase docs、task cards、freeze reviews、archive、M2M 交接文档和根目录重复计划中的必要信息。它只提供历史摘要，不作为活跃执行计划。
+本文档合并旧 phase docs、task cards、freeze reviews、archive、M2M 交接文档和根目录重复计划中的必要信息。它只提供历史摘要，不作为活跃执行计划。
 
-## 1. 当前基线
+## 当前基线
 
-- 日期：2026-04-24
-- 最新接受基线：`M38`
-- 当前状态：`M38` 已接受；下一轮 M 尚未打开
+- 日期：2026-04-25
+- 最新接受基线：`M42`
 - 当前产品前提：个人自用 / 本地 operator runtime
-- 下一建议阶段：打开 M39 或下一轮 M 级计划
+- 当前主入口：`/ui/workbench` LLM streaming chat workbench
+- 下一步建议：继续围绕真实多模态输入、Claude architect gate 低频实测、Codex artifact prompt 收缩、Workbench 体验和 `OrchestratorService` 收缩做小步开发
 
-## 2. 历史里程碑
+## 历史里程碑
 
 | 阶段 | 摘要 | 当前结论 |
 | --- | --- | --- |
@@ -18,49 +18,47 @@
 | M25-M30 | 完成 policy control、operator packet、goal packet、dashboard/operator convergence 和 operator control freeze | 历史结论已吸收 |
 | M31 | 做 boundary contraction 和 semantic honesty，确认后续需要继续收缩服务边界 | 主要遗留进入 `TD-STRUCT-*` |
 | M32 | 吸收历史规划输入，建立 interaction / profile / cluster foundation | 历史结论已吸收 |
-| M33 | 收缩 orchestration substrate，建立共享 orchestration service 和 canonical plan builder | `TD-STRUCT-004` 已偿还 |
-| M34 | 继续 facade reduction 和 scheduler-authority interior cleanup | `TD-STRUCT-001`、`TD-STRUCT-003` 仍部分存在 |
+| M33 | 收缩 orchestration substrate，建立 shared orchestration service 和 canonical plan builder | `TD-STRUCT-004` 已偿还 |
+| M34 | 继续 facade reduction 和 scheduler-authority interior cleanup | 部分结构债保留 |
 | M35 | 建立 execution-profile contract、resolver precedence、config/read surfaces 和 execution explainability | 已接受 |
 | M36 | 将 workbench preview 推进到 natural-language workbench v1，加入 follow-up queue 和 Web/CLI/API parity | 已接受 |
 | M37 | 加入 governed generated profiles 和 bounded automation watchdog/controller | 已接受 |
-| M38 Phase 0 | 恢复当前 phase/task 模式，冻结安全 test runner、MCP canonical identity、doctor 和 `OrchestratorService` 第一批收缩切口 | 已接受 |
-| M38 Phase 1 | 实现安全 test runner，移除 repo mutation test command 的默认 shell 执行和完整环境继承，新增 timeout、输出上限、scoped env、secret redaction 和 blocked attempt | 已接受 |
-| M38 测试分层插入修复 | 将默认 `pytest -q` 从覆盖率全量慢测改为快速核心回归；CLI/API/Web/release 端到端套件标记为 `slow`；完整 `pytest -q --run-slow` 改为每个 M 收口跑一次 | 已接受 |
-| M38 Phase 2 | 增加 MCP / capability canonical tool identity，并新增 `workflowctl doctor` 本地诊断入口；离线验证断言 canonical id 和 doctor redaction | 已接受 |
-| M38 Phase 3 | 收缩 `OrchestratorService`，迁出 repo mutation coordinator 和 execution profile resolution helper；`services.py` 从 3833 行减少到 3520 行，净减少 313 行 | 已接受 |
-| M38 Phase 4 | 打通本地 task card / issue-like 输入到 bounded patch、safe tests、review、PR-ready summary 的个人闭环；新增 `workflowctl run from-task-card`、`workflowctl run pr-ready-summary` 和 `/runs/{run_id}/pr-ready-summary` | 已接受 |
-| M2M 修复 | 完成根目录历史文档归档、scheduler-authority flag 双态兼容、默认 local-only 语义修正 | 结论已吸收，本轮清理移除旧交接计划 |
+| M38 | 恢复 phase/task 模式，实现安全 test runner、MCP canonical identity、`workflowctl doctor` 和本地 task-card 到 PR-ready summary 闭环 | 已接受 |
+| M39 | 将 `/ui/workbench` 改造为 streaming chat workbench，新增持久化 transcript、SSE workflow event stream、确认卡和 chat action router | 已接受 |
+| M40 | 将 `/ui/workbench` 升级为 LLM 流式聊天驾驶舱，新增 chat LLM runtime、assistant delta/final、LangGraph control graph、`after_event_id` 去重和聊天/状态事件分离 | 已接受 |
+| M41 | 建立强模型优先 workflow dogfood：默认 Codex CLI 后端、MiniMax/DeepSeek LangChain 控制层、MMX/Vertex/Claude artifact-only 能力骨架、`architecture_delivery_cluster` 真机 E2E | 已接受 |
+| M42 | 补齐搜索、设计、多模态、review、管理五类角色集群，扩展强 dogfood 路由，并修复 Windows Codex CLI 子进程树超时清理 | 已接受 |
+| M2M 修复 | 完成根目录历史文档归档、scheduler-authority flag 双态兼容、默认 local-only 语义修正 | 结论已吸收 |
 
-## 3. 已移除的历史材料
+## M41 关键结论
+
+M41 证明：没有 `OPENAI_API_KEY` 时，核心 dogfood 可以通过本机 Codex CLI 跑通。真实 `architecture_delivery_cluster` E2E 为 `intent_session_557cecbe8fc4` / `run_c0cad7dc9f58`，父 run `completed`，输出位于 `state/m41_phase13_dogfood_e2e_rerun4/`。
+
+保留结论：MMX/Claude 仍主要是 degraded/fallback 验证，不代表真实多模态和 Claude gate 已完全产品化。
+
+## M42 关键结论
+
+M42 将 M41 的单条架构交付链路扩展为更完整的个人 runtime 角色层：
+
+- `search_cluster`：搜索、来源、证据和引用核验。
+- `design_cluster`：产品方向、交互/视觉方案和设计审查。
+- `multimodal_cluster`：PDF、图片、截图、设计稿 evidence 入口。
+- `review_cluster`：质量、测试、治理和中文文档收口。
+- `management_cluster`：roadmap、phase/task 和 closeout 管理。
+
+M42 真实 smoke 记录：
+
+- `state/m42_management_cluster_smoke/summary.json`：一次长 timeout smoke，证明部分 Codex 子 run 可成功，失败子 run 会被保留为 failed 并 fallback。
+- `state/m42_management_cluster_tree_timeout_smoke/summary.json`：进程树 timeout 修复后的收口 smoke，根 run `run_665006c2016d` completed，Codex 子 run 均在约 8 秒收束，无残留 `codex.exe`。
+
+## 已移除的历史材料
 
 以下材料已经关闭，不再保留为活跃文件：
 
-- `m21_phase_docs/` 到 `m37_phase_docs/`
-- `docs/task_cards/`
-- `docs/reviews/`
-- `docs/archive/`
-- `docs/m2m/`
-- `M2M_REMEDIATION_PLAN.md`
-- `NEXT_DEVELOPMENT_PLAN.md`
-- `POST_M34_MULTIPHASE_ROADMAP.md`
-- `README.zh-CN.md`
+- 旧 `m21_phase_docs/` 到 `m39_phase_docs/`
+- 旧 `docs/reviews/`
+- 旧 `docs/archive/`
+- 旧 `docs/m2m/`
+- 旧根目录重复计划或交接文档
 
 如需逐字审计旧材料，请使用 git 历史查看对应文件。
-
-## 4. M37 后真实判断与 M38 处理结果
-
-M37 后项目已经有足够多的能力入口，下一步不应继续堆新能力。M38 已处理其中的安全、测试分层和第一轮结构收缩问题；仍需长期关注的判断是：
-
-- `OrchestratorService` 已从 3833 行降到 3520 行，但仍然过大，后续仍应继续收缩。
-- 个人自用场景下，不需要外部用户 onboarding、SaaS、多租户或插件市场。
-- capability health、运行证据、失败原因、成本/使用情况需要更直观。
-- Web workbench 应逐步变成个人日常驾驶舱，而不是只做功能目录。
-
-## 5. 推荐 M38 形状
-
-`M38` 已完成。下一轮打开前的要求：
-
-1. 先写新的 M 级计划和当前 phase/task 材料。
-2. 保持个人自用 / 本地 operator runtime 的产品前提。
-3. 不自动提交、不推送、不创建 GitHub PR，除非拥有者明确要求。
-4. 每个 M 最终收口时再跑一次完整 `pytest -q --run-slow`。

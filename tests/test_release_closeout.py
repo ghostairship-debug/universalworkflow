@@ -47,6 +47,9 @@ def test_manage_demo_projects_canonical_closeout_packet(tmp_path: Path, monkeypa
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
         {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
+        {"capability": "shell_exec", "adapter_name": "claude_architect", "adapter_class": "ClaudeArchitectAdapter"},
+        {"capability": "shell_exec", "adapter_name": "mmx_multimodal", "adapter_class": "MMXMultimodalAdapter"},
+        {"capability": "shell_exec", "adapter_name": "vertex_multimodal", "adapter_class": "VertexMultimodalAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]

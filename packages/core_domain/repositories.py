@@ -10,6 +10,9 @@ from typing import Any
 from packages.contracts import (
     AutomationWatchdog,
     BudgetLedger,
+    ChatMessage,
+    ChatMessageStatus,
+    ChatStreamEvent,
     ControlPlaneIdentity,
     Evidence,
     FollowupRequest,
@@ -301,6 +304,184 @@ class FollowupRequestRepository(RepositoryBase):
         with self._connection(connection) as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
         return [FollowupRequest.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+
+class ChatMessageRepository(RepositoryBase):
+    def create(
+        self,
+        message: ChatMessage,
+        connection: sqlite3.Connection | None = None,
+    ) -> ChatMessage:
+        payload = message.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_messages (
+                  message_id, session_id, run_id, role, content, message_type, action_type, status, payload_json,
+                  schema_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message.message_id,
+                    message.session_id,
+                    message.run_id,
+                    str(message.role),
+                    message.content,
+                    str(message.message_type),
+                    message.action_type,
+                    str(message.status),
+                    _json_dump(payload),
+                    message.schema_version,
+                    message.created_at.isoformat(),
+                    _utc_now_iso(),
+                ),
+            )
+        return message
+
+    def get(self, message_id: str, connection: sqlite3.Connection | None = None) -> ChatMessage | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT payload_json FROM chat_messages WHERE message_id = ?", (message_id,)).fetchone()
+        if row is None:
+            return None
+        return ChatMessage.model_validate(_json_load(row["payload_json"]))
+
+    def list_for_session(
+        self,
+        session_id: str,
+        *,
+        limit: int | None = None,
+        after_message_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[ChatMessage]:
+        query = "SELECT payload_json FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC, message_id ASC"
+        params: list[Any] = [session_id]
+        if limit is not None and after_message_id is None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        messages = [ChatMessage.model_validate(_json_load(row["payload_json"])) for row in rows]
+        if after_message_id is not None:
+            for index, message in enumerate(messages):
+                if message.message_id == after_message_id:
+                    messages = messages[index + 1 :]
+                    break
+        if limit is not None and after_message_id is not None:
+            return messages[:limit]
+        return messages
+
+    def list_for_run(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[ChatMessage]:
+        query = "SELECT payload_json FROM chat_messages WHERE run_id = ? ORDER BY created_at ASC, message_id ASC"
+        params: list[Any] = [run_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [ChatMessage.model_validate(_json_load(row["payload_json"])) for row in rows]
+
+    def update_status(
+        self,
+        message_id: str,
+        status: ChatMessageStatus | str,
+        *,
+        payload_json: dict[str, Any] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> ChatMessage | None:
+        message = self.get(message_id, connection=connection)
+        if message is None:
+            return None
+        message.status = ChatMessageStatus(status)
+        if payload_json is not None:
+            message.payload_json = payload_json
+        payload = message.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE chat_messages
+                SET status = ?, payload_json = ?, updated_at = ?
+                WHERE message_id = ?
+                """,
+                (
+                    str(message.status),
+                    _json_dump(payload),
+                    _utc_now_iso(),
+                    message_id,
+                ),
+            )
+        return message
+
+
+class ChatStreamEventRepository(RepositoryBase):
+    def create(
+        self,
+        event: ChatStreamEvent,
+        connection: sqlite3.Connection | None = None,
+    ) -> ChatStreamEvent:
+        if event.sequence_no == 0:
+            event.sequence_no = self.next_sequence_no(event.session_id, connection=connection)
+        payload = event.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_stream_events (
+                  event_id, session_id, run_id, message_id, event_type, sequence_no,
+                  payload_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.event_id,
+                    event.session_id,
+                    event.run_id,
+                    event.message_id,
+                    str(event.event_type),
+                    event.sequence_no,
+                    _json_dump(payload),
+                    event.schema_version,
+                    event.created_at.isoformat(),
+                ),
+            )
+        return event
+
+    def next_sequence_no(self, session_id: str, connection: sqlite3.Connection | None = None) -> int:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(sequence_no), 0) AS max_sequence_no FROM chat_stream_events WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return int(row["max_sequence_no"]) + 1 if row is not None else 1
+
+    def list_for_session(
+        self,
+        session_id: str,
+        *,
+        limit: int | None = None,
+        after_event_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[ChatStreamEvent]:
+        query = "SELECT payload_json FROM chat_stream_events WHERE session_id = ? ORDER BY sequence_no ASC, event_id ASC"
+        params: list[Any] = [session_id]
+        with self._connection(connection) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        events = [ChatStreamEvent.model_validate(_json_load(row["payload_json"])) for row in rows]
+        if after_event_id is not None:
+            found_event_id = False
+            for index, event in enumerate(events):
+                if event.event_id == after_event_id:
+                    found_event_id = True
+                    events = events[index + 1 :]
+                    break
+            if not found_event_id:
+                events = []
+        if limit is not None:
+            return events[:limit]
+        return events
 
 
 class GeneratedAgentProfileRepository(RepositoryBase):

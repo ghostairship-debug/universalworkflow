@@ -272,6 +272,9 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
         "TD-STRUCT-003",
         "TD-STRUCT-005",
         "TD-STRUCT-006",
+        "TD-DOGFOOD-001",
+        "TD-CODEX-LATENCY-001",
+        "TD-MULTIMODAL-001",
     ]
     assert report["governance_alerts"]["overall_status"] == "degraded"
     assert any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["governance_alerts"]["alerts"])
@@ -339,6 +342,9 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
         "TD-STRUCT-003",
         "TD-STRUCT-005",
         "TD-STRUCT-006",
+        "TD-DOGFOOD-001",
+        "TD-CODEX-LATENCY-001",
+        "TD-MULTIMODAL-001",
     ]
     assert report["review_policy"]["supported_policy_count"] == 5
     assert report["review_policy"]["reference_only_candidates"] == []

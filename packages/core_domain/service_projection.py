@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+import json
 from typing import Any
 
 from packages.contracts import (
@@ -190,7 +191,7 @@ class ProjectionServiceMixin:
                 if adapter_name == "codex"
                 else task_packet.env.get("WORKFLOW_OPENCODE_MODEL")
                 if adapter_name in {"opencode", "opencode_session"}
-                else None
+                else task_packet.env.get("WORKFLOW_LLM_MODEL") or None
             ),
             "selected_model_kind": (
                 "agent_model"
@@ -199,9 +200,23 @@ class ProjectionServiceMixin:
                 if adapter_name == "codex"
                 else "opencode_model"
                 if adapter_name in {"opencode", "opencode_session"}
+                else "external_cli_model"
+                if adapter_name in {"claude_architect", "mmx_multimodal", "vertex_multimodal"}
                 else None
             ),
             "model_variant": task_packet.env.get("WORKFLOW_OPENCODE_VARIANT") or None,
+            "model_selection_source": task_packet.env.get("WORKFLOW_MODEL_SELECTION_SOURCE") or None,
+            "model_selection_reason": task_packet.env.get("WORKFLOW_MODEL_SELECTION_REASON") or None,
+            "dogfood_strong_model_enabled": task_packet.env.get("WORKFLOW_DOGFOOD_STRONG_MODEL_ENABLED") == "true",
+            "dogfood_execution_backend": task_packet.env.get("WORKFLOW_DOGFOOD_EXECUTION_BACKEND") or None,
+            "langchain_agent_provider": task_packet.env.get("WORKFLOW_LANGCHAIN_AGENT_PROVIDER") or None,
+            "langchain_agent_model": task_packet.env.get("WORKFLOW_LANGCHAIN_AGENT_MODEL") or None,
+            "langchain_agent_degraded_reason": (
+                task_packet.env.get("WORKFLOW_LANGCHAIN_AGENT_DEGRADED_REASON") or None
+            ),
+            "role_responsibilities": self._json_list_env(task_packet.env.get("WORKFLOW_ROLE_RESPONSIBILITIES")),
+            "claude_architect_call_count": int(task_packet.env.get("WORKFLOW_CLAUDE_ARCHITECT_CALL_COUNT") or 0),
+            "multimodal_evidence_refs": self._json_list_env(task_packet.env.get("WORKFLOW_MULTIMODAL_EVIDENCE_REFS")),
             "agent_model": task_packet.env.get("WORKFLOW_AGENT_MODEL") or None,
             "codex_model": task_packet.env.get("WORKFLOW_CODEX_MODEL") or None,
             "codex_reasoning_effort": task_packet.env.get("WORKFLOW_CODEX_REASONING_EFFORT") or None,
@@ -212,6 +227,17 @@ class ProjectionServiceMixin:
             "runtime_reasoning_effort": task_packet.env.get("WORKFLOW_RUNTIME_REASONING_EFFORT") or None,
             "worker_pool_id": task_packet.env.get("WORKFLOW_WORKER_POOL_ID") or None,
         }
+
+    def _json_list_env(self, value: str | None) -> list[str]:
+        if not value:
+            return []
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [str(item) for item in payload]
 
     def _execution_resolution_trace_for(
         self,

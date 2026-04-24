@@ -161,6 +161,34 @@
       "introduced_in": "M30-M31",
       "repaid_in": "M33 Phase 0",
       "result": "Contracted default planning, preview, and execution onto a shared orchestration service and canonical plan builder for the shipped multi-role presets"
+    },
+    {
+      "debt_id": "TD-CODEX-CLI-001",
+      "description": "`CodexAdapter` assembled `codex exec` with prompt/options ordering and Windows text handling that could break model selection or artifact output",
+      "introduced_in": "M41 Phase 8",
+      "repaid_in": "M41 Phase 13",
+      "result": "Codex CLI execution now passes options before prompt, uses stdin for real prompts, decodes UTF-8 safely, creates artifact directories, and supports bounded local timeout overrides"
+    },
+    {
+      "debt_id": "TD-DOGFOOD-002",
+      "description": "orchestration child failures could be silently approved as completed, hiding non-zero evidence during fallback",
+      "introduced_in": "M41 Phase 13 dogfood",
+      "repaid_in": "M41 Phase 13",
+      "result": "Failed child runs now stay failed or are rejected before fallback; successful artifact-only child runs can be approved only when return_code is zero"
+    },
+    {
+      "debt_id": "TD-MODEL-ACCESS-001",
+      "description": "local Codex CLI could not access the desired dogfood model version before the CLI upgrade",
+      "introduced_in": "M41 Phase 8",
+      "repaid_in": "M41 Phase 13",
+      "result": "Upgraded npm `@openai/codex` to `0.125.0`; local `codex exec --model gpt-5.5` smoke succeeded"
+    },
+    {
+      "debt_id": "TD-CODEX-PROCESS-001",
+      "description": "Codex CLI on Windows could leave node/native child processes alive after workflow timeout, causing long dogfood runs to hang",
+      "introduced_in": "M42 smoke",
+      "repaid_in": "M42",
+      "result": "Real Codex CLI execution now uses process-tree timeout cleanup; the M42 management-cluster tree-timeout smoke completed with no residual `codex.exe`"
     }
   ],
   "open_items": [
@@ -195,6 +223,30 @@
       "planned_repayment_phase": "M39",
       "current_status": "partially_repaid",
       "blocking_impact": "blocks safe promotion of M32+ platform objects into the mainline type system"
+    },
+    {
+      "debt_id": "TD-DOGFOOD-001",
+      "description": "workflow dogfood has a real Codex CLI architecture-delivery E2E, but MMX/Claude are still verified mainly through degraded/fallback paths",
+      "introduced_in": "M41",
+      "planned_repayment_phase": "M42+",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks claiming the full multi-agent capability layer is production-ready"
+    },
+    {
+      "debt_id": "TD-CODEX-LATENCY-001",
+      "description": "Codex CLI review/doc artifact-only roles can fail to converge quickly and rely on timeout/fallback rather than prompt-level reliability",
+      "introduced_in": "M41 Phase 13",
+      "planned_repayment_phase": "M42+",
+      "current_status": "active",
+      "blocking_impact": "slows personal dogfood loops and makes long-running role telemetry harder to interpret"
+    },
+    {
+      "debt_id": "TD-MULTIMODAL-001",
+      "description": "MMX/Vertex are modeled as multimodal evidence lanes, but real local PDF/image extraction has not yet been fully validated end to end",
+      "introduced_in": "M41",
+      "planned_repayment_phase": "M42+",
+      "current_status": "active",
+      "blocking_impact": "blocks relying on multimodal evidence for complex project inputs without manual verification"
     }
   ],
   "freeze_review_questions": [

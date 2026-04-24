@@ -12,6 +12,7 @@ from packages.contracts import (
     OrchestrationBarrier,
     OrchestrationPlan,
     OrchestrationStep,
+    ReviewDecision,
     ReviewPolicy,
     RoleAssignment,
     RunStatus,
@@ -187,8 +188,18 @@ class OrchestrationExecutionService:
         self,
         preset_id: str,
         run_id: str,
+        preferred_cluster_template_ids: list[str] | None = None,
     ) -> OrchestrationPlan | None:
-        template = self._template_for_preset(preset_id)
+        template = None
+        if preferred_cluster_template_ids:
+            suggested = self._cluster_router.suggest_template_ids(
+                goal="",
+                preset_id=preset_id,
+                preferred_template_ids=preferred_cluster_template_ids,
+            )
+            template = self._cluster_router.get_template(suggested[0]) if suggested else None
+        if template is None:
+            template = self._template_for_preset(preset_id)
         if template is None:
             return None
         return self.build_cluster_orchestration_plan(
@@ -251,11 +262,33 @@ class OrchestrationExecutionService:
             role_label=role_label,
         )
 
+    def _latest_review_decision_for_run(self, run_id: str) -> str | None:
+        verdict = self._facade.review_repo.latest_for_run(run_id)
+        if verdict is None:
+            return None
+        return str(verdict.decision)
+
+    def _latest_return_code_for_run(self, run_id: str) -> int | None:
+        latest_state = self._facade.runtime_state_repo.latest_for_run(run_id)
+        if latest_state is None:
+            return None
+        value = latest_state.state_payload.get("return_code")
+        return int(value) if isinstance(value, int) else None
+
     def finalize_child_run_if_waiting(self, run_id: str):
         run = self._facade.get_run(run_id)
         if str(run.status) != RunStatus.awaiting_review:
             return run
-        return self._facade.approve_run_review(run_id).run
+        latest_decision = self._latest_review_decision_for_run(run_id)
+        if latest_decision == str(ReviewDecision.pass_):
+            return self._facade.approve_run_review(run_id).run
+        latest_return_code = self._latest_return_code_for_run(run_id)
+        if latest_decision is None and latest_return_code == 0:
+            return self._facade.approve_run_review(
+                run_id,
+                rationale="orchestration child completed successfully",
+            ).run
+        return run
 
     def _goal_for_step(
         self,
@@ -415,6 +448,19 @@ class OrchestrationExecutionService:
                     and step.fallback_adapter
                     and step.fallback_adapter != step.preferred_adapter
                 ):
+                    latest_decision = self._latest_review_decision_for_run(finalized.run_id)
+                    latest_return_code = self._latest_return_code_for_run(finalized.run_id)
+                    if (
+                        str(finalized.status) == RunStatus.awaiting_review
+                        and (
+                            latest_decision == str(ReviewDecision.fail)
+                            or (latest_decision is None and latest_return_code not in (None, 0))
+                        )
+                    ):
+                        finalized = self._facade.reject_run_review(
+                            finalized.run_id,
+                            rationale="orchestration child failed auto-review before fallback",
+                        ).run
                     recovered_run = self._facade.create_run(
                         self._goal_for_step(parent_goal, step, prior_run_ids=prior_run_ids),
                         step.preset_id,

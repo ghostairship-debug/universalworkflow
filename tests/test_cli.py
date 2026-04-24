@@ -26,6 +26,18 @@ OPEN_DEBT_IDS = [
     "TD-STRUCT-003",
     "TD-STRUCT-005",
     "TD-STRUCT-006",
+    "TD-DOGFOOD-001",
+    "TD-CODEX-LATENCY-001",
+    "TD-MULTIMODAL-001",
+]
+
+AVAILABLE_SHELL_EXEC_ADAPTERS = [
+    "shell",
+    "codex",
+    "claude_architect",
+    "mmx_multimodal",
+    "vertex_multimodal",
+    "opencode",
 ]
 
 
@@ -147,6 +159,9 @@ def test_cli_db_reset_and_preset_list(tmp_path: Path) -> None:
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
         {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
+        {"capability": "shell_exec", "adapter_name": "claude_architect", "adapter_class": "ClaudeArchitectAdapter"},
+        {"capability": "shell_exec", "adapter_name": "mmx_multimodal", "adapter_class": "MMXMultimodalAdapter"},
+        {"capability": "shell_exec", "adapter_name": "vertex_multimodal", "adapter_class": "VertexMultimodalAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
 
@@ -525,8 +540,8 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["source_contract"] == "structured_json"
-    assert payload["open_debt_count"] == 4
-    assert payload["status_counts"] == {"partially_repaid": 3, "active": 1}
+    assert payload["open_debt_count"] == 7
+    assert payload["status_counts"] == {"partially_repaid": 4, "active": 3}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
@@ -1281,7 +1296,7 @@ def test_cli_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     assert compile_result.exit_code != 0
     error = json.loads(compile_result.stdout)["error"]
     assert error["code"] == "capability_adapter_not_found"
-    assert error["details"]["available_adapters"] == ["shell", "codex", "opencode"]
+    assert error["details"]["available_adapters"] == AVAILABLE_SHELL_EXEC_ADAPTERS
 
 
 def test_cli_scheduler_cluster_exposes_local_only_snapshot_by_default(tmp_path: Path) -> None:

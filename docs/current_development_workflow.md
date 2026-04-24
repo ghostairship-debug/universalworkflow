@@ -1,89 +1,84 @@
 # 当前开发工作流
 
-本文档是后续开发的最高优先级操作说明。当前项目是个人自用的本地 operator runtime，所有计划、文档和验证都应服务“未来的我能不能稳定继续使用”，而不是服务外部用户、公开 SaaS、开源 onboarding 或第三方生态。
+本文档是后续开发的最高优先级操作说明。项目当前仍然是个人自用的本地 operator runtime；所有计划、文档和验证都服务于“我能不能稳定继续使用它”，而不是服务外部用户、公开 SaaS、开源 onboarding 或第三方生态。
 
-## 1. 活跃真相源
+## 活跃真相源
 
-判断当前状态时，只看以下文件：
+判断当前状态时只看以下文件：
 
 1. [README.md](../README.md)
 2. [docs/current_development_workflow.md](current_development_workflow.md)
-3. [M38_REPAIR_AND_DEVELOPMENT_PLAN.md](../M38_REPAIR_AND_DEVELOPMENT_PLAN.md)
+3. [docs/milestone_history.md](milestone_history.md)
 4. [docs/tech-debt-registry.md](tech-debt-registry.md)
-5. [docs/milestone_history.md](milestone_history.md)
-6. [PROJECT_DEEP_EVALUATION_M37.md](../PROJECT_DEEP_EVALUATION_M37.md)
-7. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
+5. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
+6. [M38_REPAIR_AND_DEVELOPMENT_PLAN.md](../M38_REPAIR_AND_DEVELOPMENT_PLAN.md)
+7. [PROJECT_DEEP_EVALUATION_M37.md](../PROJECT_DEEP_EVALUATION_M37.md)
 
-旧 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。当前没有打开新的 active phase；需要历史细节时从 git 历史查看，不再恢复到工作树。
+关闭阶段的 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。需要历史细节时从 git 历史查看，不恢复到工作树。
 
-## 2. 当前仓库状态
+## 当前仓库状态
 
-- 已完成：`M8-M30`、`M31 Phase 0`、`M32 Phase 0`、`M33 Phase 0`、`M34 Phase 0`、`M35`、`M36`、`M37`。
-- 已接受 `M38 Phase 0`：开相、安全与范围冻结。
-- 已接受 `M38 Phase 1`：安全 test runner。
-- 已接受 `M38 Phase 2`：MCP canonical identity 与 `workflowctl doctor`。
-- 已接受 `M38 Phase 3`：`OrchestratorService` 第一轮收缩，`services.py` 从 3833 行降到 3520 行。
-- 已接受 `M38 Phase 4`：个人本地 task card 到 PR-ready summary 闭环。
-- 当前没有打开新的 active phase。
-- 当前主线可称为 `v1 core complete` personal-runtime baseline。
-- Web UI 已有可用的 natural-language workbench v1。
-- generated profiles 已作为受治理的 generated-profile family 落地。
-- bounded automation watchdog 已落地，高风险动作仍必须 review-gated。
-- scheduler-authority 默认 local-only，只有设置 `UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER=1` 时才走 quorum-style 路径。
-- `TD-STRUCT-001`、`TD-STRUCT-003`、`TD-STRUCT-005`、`TD-STRUCT-006` 仍是后续主要结构债。
+- 最新接受基线：`M42`
+- 当前产品前提：个人自用 / 本地 operator runtime
+- 当前主入口：CLI、API、Web operator console、`/ui/workbench`
+- 当前 workbench 形态：LLM-assisted streaming chat workbench，主区域只显示真实对话、assistant delta/final 和确认卡；右侧显示 session、active run、graph node、evidence、review 和 PR-ready summary
+- 当前 stream 形态：SSE chat event stream，聊天 transcript 使用 `user_message`、`assistant_delta`、`assistant_final`、`confirmation_required`、`confirmation_result`、`error`；状态卡使用 `graph_update`、`run_update`、`status_patch`、`timeline_event`、`review_required`、`test_evidence`、`pr_ready_summary`、`heartbeat`
+- 当前确认规则：`resume_run`、`approve_run`、`reject_run`、`cancel_run`、`launch_execute`、repo mutation、git commit/push/PR 必须通过确认卡
+- 当前测试分层：默认 `pytest -q` 是快速核心回归；完整 `pytest -q --run-slow` 只在每个 M 收口运行一次
 
-## 3. 下一步
+## Phase / Task 协议
 
-最新完成的 `M38` 主题：
-
-> M38：个人自用硬化、`OrchestratorService` 收缩、运行证据增强。
-
-下一轮开发启动时必须遵守：
-
-1. 先打开新的 M 级计划和当前 active phase/task 材料。
-2. 不自动提交 git、不推送远端、不创建 GitHub PR，除非拥有者明确要求。
-3. repo mutation 必须保留 write-set、安全测试和 review 状态。
-4. 完整 `pytest -q --run-slow` 只在每个 M 最终收口时跑一次。
-
-## 4. 明确不做
-
-除非拥有者明确改目标，否则后续阶段不做：
-
-- 外部用户 onboarding。
-- 公开 SaaS / 多租户 / 企业权限。
-- 第三方插件市场。
-- 社区贡献路径。
-- 为陌生用户解释而牺牲个人自用效率的文档工程。
-- 无运行证据支撑的新 capability 广覆盖。
-
-## 5. 任务卡协议
-
-每个新 active phase 仍按 task-card 协议推进：
+每个新 M 或 active phase 按 task-card 协议推进：
 
 1. 先写当前 phase doc。
 2. 再写当前 phase task-card index。
-3. 再写 detailed task cards。
-4. 执行时同步记录实际结果。
-5. 完成后用验证结果和 living-doc 更新收尾。
+3. 再写必要的 detailed task cards。
+4. 执行时同步记录真实结果、run id、artifact path 和失败/fallback 证据。
+5. 收口时把结论吸收到 README、当前工作流、里程碑历史和技术债文档。
+6. 关闭阶段的详细 phase/task 临时材料默认删除或不再作为活跃真相源。
 
-规则：
+## Agent / Cluster 现状
 
-- 只为当前 active phase 生成任务卡。
-- 不提前生成未来 phase 的任务卡包。
-- 已关闭阶段的任务卡不要长期保留在工作树；结论吸收到本文件、历史摘要或技术债登记表后即可清理。
-- 每个 mutating workflow run 必须有写集、测试和审查边界。
+M42 后，系统具备以下可路由角色集群：
 
-## 6. 文档治理规则
+- `dev_cluster`：软件交付默认集群，覆盖 planner、coder、risk mapper、quality gate、launch guard。
+- `research_cluster`：研究与证据集群，覆盖 research analyst、citation checker、launch guard。
+- `architecture_delivery_cluster`：M41 dogfood 主链路，顺序为 `multimodal_evidence -> planner_design -> claude_architect_gate -> phase_designer -> implementer -> quality_gate -> doc_curator -> launch_guard`。
+- `search_cluster`：资料检索、来源追踪、证据综合和引用核验。
+- `design_cluster`：产品方向、交互/视觉方案和设计审查。
+- `multimodal_cluster`：PDF、图片、截图、设计稿等多模态 evidence 入口，MMX 优先，Vertex 作为未来 fallback。
+- `review_cluster`：质量门、测试哨兵、治理哨兵和中文文档收口。
+- `management_cluster`：roadmap、phase/task、治理和 closeout 管理。
 
-工作树应保持小而清楚。
+强 dogfood 模式下，M42 专用集群里的核心 `agent` 角色默认解析为 Codex CLI：
 
-- 根目录只保留真正需要直接看到的入口文档。
-- 历史里程碑只保留中文摘要，不保留分散 phase/task-card/review 材料。
-- 技术债以 `docs/governance/tech_debt_registry.json` 为结构化真相，`docs/tech-debt-registry.md` 只做人类可读摘要。
-- 文档内容优先中文；如代码、命令、环境变量或公共类型必须保留英文原文，则只保留必要英文。
-- 旧计划不得与当前工作流并列成为“第二真相源”。
+```powershell
+$env:WORKFLOW_DOGFOOD_STRONG_MODEL_ENABLED="1"
+$env:WORKFLOW_DOGFOOD_EXECUTION_BACKEND="codex_cli"
+$env:WORKFLOW_DOGFOOD_MODEL="gpt-5.5"
+$env:WORKFLOW_DOGFOOD_REASONING_EFFORT="xhigh"
+```
 
-## 7. 验证规则
+外部 artifact-only 能力保持单独角色：`mmx_multimodal`、`vertex_multimodal`、`claude_architect`。这些能力失败时必须记录 degraded/fallback 证据，不允许静默成功。
+
+## M42 收口结论
+
+M42 已完成以下能力补全：
+
+- 新增并注册 `search_cluster`、`design_cluster`、`multimodal_cluster`、`review_cluster`、`management_cluster`。
+- 扩展 router，使中文/英文目标可以推荐对应专用集群，同时保留 `architecture_delivery_cluster` 的最高优先级。
+- 扩展 dogfood execution resolution，使 M42 专用集群的核心 agent roles 在强 dogfood + `codex_cli` 后端下投影为 `dogfood_strong_codex_cli`。
+- 修复 Codex CLI 在 Windows 上可能遗留 node/native 子进程的问题：真实 Codex 执行现在使用进程树 timeout 清理。
+- 完成一次真实 `management_cluster` dogfood smoke：`run_665006c2016d`，根 run `completed`；Codex 子 run 在 8 秒左右硬超时后被标记 failed，再由 shell fallback 完成，且无残留 `codex.exe`。
+
+仍需后续关注：
+
+- MMX/Vertex 多模态真实提取还需要用真实 PDF/图片输入继续验收。
+- Claude architect gate 目前仍以 quota-guarded / artifact-only 骨架为主，不能高频使用。
+- Codex artifact-only reviewer/doc curator 仍可能偏慢，进程树 timeout 已降低卡死风险，但 prompt 还可以继续收缩。
+- `OrchestratorService` 仍偏大，后续 M 应继续抽离 interaction/chat/projection/lifecycle glue。
+
+## 验证规则
 
 文档或代码变更后至少运行：
 
@@ -91,29 +86,17 @@
 python -m infra.scripts.check_doc_links
 ```
 
-涉及运行路径、验证脚本或 active truth set 时再运行：
+涉及运行路径、API、UI、验证脚本或活跃真相源时再运行：
 
 ```powershell
 python -m infra.scripts.offline_validation --skip-offline-probe
 pytest -q
 ```
 
-每个 M 收口时，必须再运行一次全量慢测：
+每个 M 收口时运行一次完整慢测试：
 
 ```powershell
 pytest -q --run-slow
 ```
 
 普通 phase closeout 或 CLI/API/Web 改动只跑相关定点 slow 用例，避免每个小阶段都压全量慢测。
-
-覆盖率不再挂在默认 `pytest` 上；需要覆盖率门槛时显式运行：
-
-```powershell
-pytest -q --run-slow --cov=packages --cov=apps --cov-report=term-missing --cov-fail-under=70
-```
-
-任何清理都不能删除真实 pytest 测试、迁移、seed、运行时配置或治理 JSON。
-
-## 8. 一句话指令
-
-把已接受的 `M38` 当作最新完成基线；下一步先打开新的 M 级计划，再进入新的 active phase。

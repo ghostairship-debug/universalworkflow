@@ -414,6 +414,11 @@ class CapabilityPlane:
             side_effect_level = "repo_mutation_controlled" if adapter_name in {"codex", "opencode"} else "artifact_only"
             if adapter_name in {"agent", "opencode_session"}:
                 side_effect_level = "session_read_write"
+            display_names = {
+                "claude_architect": "Claude Architect Gate route",
+                "mmx_multimodal": "MMX multimodal evidence route",
+                "vertex_multimodal": "Vertex multimodal fallback route",
+            }
             descriptors.append(
                 CapabilityDescriptor(
                     capability_id=f"adapter_route:{capability}:{adapter_name}",
@@ -429,7 +434,7 @@ class CapabilityPlane:
                         "result_envelope": "v1",
                         "task_evidence": "v1",
                     },
-                    display_name=f"{adapter_name} route for {capability}",
+                    display_name=display_names.get(adapter_name, f"{adapter_name} route for {capability}"),
                     adapter_name=adapter_name,
                     enabled=True,
                     default_selected=adapter_name in {"shell", "noop"},

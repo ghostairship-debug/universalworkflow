@@ -6,6 +6,12 @@ import pytest
 
 from packages.contracts import (
     BudgetLedger,
+    ChatMessage,
+    ChatMessageRole,
+    ChatMessageStatus,
+    ChatStreamEvent,
+    ChatStreamEventType,
+    ChatMessageType,
     SchedulerLeaseDecision,
     SchedulerLeaseProposal,
     SchedulerPeerHeartbeat,
@@ -37,6 +43,8 @@ from packages.core_domain.db import get_journal_mode, migrate, reset_db
 from packages.core_domain.errors import DatabaseBusyError
 from packages.core_domain.repositories import (
     BudgetLedgerRepository,
+    ChatMessageRepository,
+    ChatStreamEventRepository,
     EventRepository,
     HandoffRepository,
     MemoryItemRepository,
@@ -130,6 +138,86 @@ def test_memory_item_repository_round_trip(tmp_path: Path) -> None:
     assert duplicate.memory_item_id == memory_item.memory_item_id
     assert [item.memory_item_id for item in memory_repo.list_for_run(run.run_id)] == [memory_item.memory_item_id]
     assert [item.memory_item_id for item in memory_repo.list_for_namespace("policy")] == [memory_item.memory_item_id]
+
+
+def test_chat_message_repository_round_trip(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    chat_repo = ChatMessageRepository(db_path)
+
+    first = chat_repo.create(
+        ChatMessage(
+            session_id="intent_session_chat",
+            run_id="run_chat",
+            role=ChatMessageRole.user,
+            content="launch",
+        )
+    )
+    second = chat_repo.create(
+        ChatMessage(
+            session_id="intent_session_chat",
+            run_id="run_chat",
+            role=ChatMessageRole.assistant,
+            content="Confirm resume?",
+            message_type=ChatMessageType.confirmation_required,
+            action_type="resume_run",
+            status=ChatMessageStatus.pending_confirmation,
+            payload_json={"confirmation": {"action_type": "resume_run", "run_id": "run_chat"}},
+        )
+    )
+
+    stored = chat_repo.get(second.message_id)
+    assert stored is not None
+    assert stored.action_type == "resume_run"
+    assert stored.payload_json["confirmation"]["run_id"] == "run_chat"
+    assert [item.message_id for item in chat_repo.list_for_session("intent_session_chat")] == [
+        first.message_id,
+        second.message_id,
+    ]
+    assert [item.message_id for item in chat_repo.list_for_session("intent_session_chat", after_message_id=first.message_id)] == [
+        second.message_id,
+    ]
+    assert [item.message_id for item in chat_repo.list_for_run("run_chat")] == [first.message_id, second.message_id]
+
+    updated = chat_repo.update_status(
+        second.message_id,
+        ChatMessageStatus.confirmed,
+        payload_json={"confirmation": {"action_type": "resume_run"}, "result": {"status": "ok"}},
+    )
+    assert updated is not None
+    assert updated.status == "confirmed"
+    assert chat_repo.get(second.message_id).payload_json["result"]["status"] == "ok"  # type: ignore[union-attr]
+
+    stream_repo = ChatStreamEventRepository(db_path)
+    user_event = stream_repo.create(
+        ChatStreamEvent(
+            session_id="intent_session_chat",
+            run_id="run_chat",
+            message_id=first.message_id,
+            event_type=ChatStreamEventType.user_message,
+            payload_json=first.model_dump(mode="json"),
+        )
+    )
+    delta_event = stream_repo.create(
+        ChatStreamEvent(
+            session_id="intent_session_chat",
+            run_id="run_chat",
+            message_id=second.message_id,
+            event_type=ChatStreamEventType.assistant_delta,
+            payload_json={"message_id": second.message_id, "delta": "Confirm"},
+        )
+    )
+
+    assert [item.event_id for item in stream_repo.list_for_session("intent_session_chat")] == [
+        user_event.event_id,
+        delta_event.event_id,
+    ]
+    assert [item.event_id for item in stream_repo.list_for_session("intent_session_chat", after_event_id=user_event.event_id)] == [
+        delta_event.event_id,
+    ]
+    assert stream_repo.list_for_session("intent_session_chat", after_event_id="heartbeat:intent_session_chat") == []
+    assert user_event.sequence_no == 1
+    assert delta_event.sequence_no == 2
 
 
 def test_simulation_record_repository_round_trip(tmp_path: Path) -> None:

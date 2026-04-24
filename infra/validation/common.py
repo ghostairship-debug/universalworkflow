@@ -63,6 +63,11 @@ LLM_ENV_KEYS = {
     "MISTRAL_API_KEY",
     "COHERE_API_KEY",
     "DEEPSEEK_API_KEY",
+    "MINIMAX_API_KEY",
+    "MINIMAX_TOKEN",
+    "MINIMAX_BASE_URL",
+    "MINIMAX_API_HOST",
+    "WORKFLOW_MINIMAX_MODEL",
 }
 
 
@@ -104,6 +109,8 @@ def run_command(command: list[str], env: dict[str, str]) -> CommandResult:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return CommandResult(command=command, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)

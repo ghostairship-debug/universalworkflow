@@ -21,6 +21,7 @@ from packages.core_domain.db import DEFAULT_DB_PATH, migrate
 from packages.core_domain.errors import WorkflowError
 from packages.core_domain.external_workers import ExternalWorkerGateway
 from packages.core_domain.services import OrchestratorService
+from packages.runtime_langgraph.chat_runtime import ChatLLMRuntime
 
 
 def error_body(code: str, message: str, details: dict | None = None) -> dict:
@@ -31,6 +32,7 @@ def create_app(
     db_path: str | Path | None = None,
     runtime_gateway: RuntimeGateway | None = None,
     external_worker_gateway: ExternalWorkerGateway | None = None,
+    chat_llm_runtime: ChatLLMRuntime | None = None,
 ) -> FastAPI:
     effective_config = build_effective_config(explicit_db_path=db_path)
     resolved_db_path = Path(effective_config["db"]["path"]) if db_path is not None or effective_config["db"]["path"] else DEFAULT_DB_PATH
@@ -39,6 +41,7 @@ def create_app(
         resolved_db_path,
         runtime_gateway=runtime_gateway,
         external_worker_gateway=external_worker_gateway,
+        chat_llm_runtime=chat_llm_runtime,
     )
     app = FastAPI(title="Universal Agentic Workflow Orchestrator API", version="0.1.0")
 

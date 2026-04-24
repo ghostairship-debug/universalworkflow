@@ -155,6 +155,24 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         reviews_html = http_get_text(f"{base_url}/ui/reviews")
         governance_html = http_get_text(f"{base_url}/ui/governance")
         config_html = http_get_text(f"{base_url}/ui/config")
+        chat_create = http_post_json(
+            f"{base_url}/interaction/chat/messages",
+            {
+                "content": "Build a small artifact for streaming chat validation with visible operator evidence",
+                "mode": "llm_assisted",
+            },
+        )
+        chat_session_id = chat_create["session"]["session_id"]
+        chat_stream = http_get_text(f"{base_url}/interaction/sessions/{chat_session_id}/stream")
+        chat_launch = http_post_json(
+            f"{base_url}/interaction/chat/messages",
+            {"session_id": chat_session_id, "content": "launch", "mode": "rule_based"},
+        )
+        chat_resume_gate = http_post_json(
+            f"{base_url}/interaction/chat/messages",
+            {"session_id": chat_session_id, "content": "resume", "mode": "rule_based"},
+        )
+        chat_workbench_html = http_get_text(f"{base_url}/ui/workbench?session_id={chat_session_id}")
         human_approve = http_post_json(f"{base_url}/runs/{human_run_id}/approve")
         human_claims = http_get_json(f"{base_url}/runs/{human_run_id}/claims")
         human_leases = http_get_json(f"{base_url}/runs/{human_run_id}/leases")
@@ -328,19 +346,31 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "operator_runs_count": len(runs_catalog),
                 "pending_review_run_ids": [item["run"]["run_id"] for item in pending_reviews],
                 "operator_view_run_id": operator_view["run"]["run_id"],
-                "dashboard_html_ok": "Operator Dashboard" in dashboard_html,
-                "runs_html_ok": "Run Explorer" in runs_html,
-                "reviews_html_ok": "Pending Review Console" in reviews_html,
-                "governance_html_ok": "Governance" in governance_html,
-                "dashboard_html_contains_cluster": "Authority Topology" in dashboard_html,
-                "governance_html_contains_cluster": "Authority Topology" in governance_html,
+                "dashboard_html_ok": "操作台总览" in dashboard_html,
+                "runs_html_ok": "运行目录" in runs_html,
+                "reviews_html_ok": "待审查控制台" in reviews_html,
+                "governance_html_ok": "治理" in governance_html,
+                "dashboard_html_contains_cluster": "调度权威拓扑" in dashboard_html,
+                "governance_html_contains_cluster": "调度权威拓扑" in governance_html,
                 "dashboard_html_has_local_only_banner": (
-                    "Scheduler authority cluster disabled (local-only mode)." in dashboard_html
+                    "调度权威集群已关闭，当前为本地单机模式。" in dashboard_html
                 ),
                 "governance_html_has_local_only_banner": (
-                    "Scheduler authority cluster disabled (local-only mode)." in governance_html
+                    "调度权威集群已关闭，当前为本地单机模式。" in governance_html
                 ),
-                "config_html_ok": "Effective Configuration" in config_html,
+                "config_html_ok": "有效配置" in config_html,
+                "chat_message_roles": [item["role"] for item in chat_create["chat_messages"]],
+                "chat_stream_has_user_message": "event: user_message" in chat_stream,
+                "chat_stream_has_assistant_delta": "event: assistant_delta" in chat_stream,
+                "chat_stream_has_assistant_final": "event: assistant_final" in chat_stream,
+                "chat_stream_has_status_patch": "event: status_patch" in chat_stream,
+                "chat_stream_has_heartbeat": "event: heartbeat" in chat_stream,
+                "chat_launch_action_type": chat_launch["action_result"]["action_type"],
+                "chat_launch_active_run_id": chat_launch["session"]["active_run_id"],
+                "chat_resume_pending_action_type": chat_resume_gate["pending_confirmation"]["action_type"],
+                "chat_resume_pending_status": chat_resume_gate["pending_confirmation"]["status"],
+                "chat_workbench_html_ok": "流式聊天工作台" in chat_workbench_html,
+                "chat_workbench_has_eventsource": "EventSource" in chat_workbench_html,
                 "human_recoverability_hint": human_detail["recoverability_hint"],
                 "human_inspection_passed": human_inspection["passed"],
                 "human_inspection_problem_count": human_inspection["problem_count"],
@@ -411,6 +441,9 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
                     {"capability": "shell_exec", "adapter_name": "agent", "adapter_class": "LangChainAgentAdapter"},
                     {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
+                    {"capability": "shell_exec", "adapter_name": "claude_architect", "adapter_class": "ClaudeArchitectAdapter"},
+                    {"capability": "shell_exec", "adapter_name": "mmx_multimodal", "adapter_class": "MMXMultimodalAdapter"},
+                    {"capability": "shell_exec", "adapter_name": "vertex_multimodal", "adapter_class": "VertexMultimodalAdapter"},
                     {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
                 ],
                 result["m8_capability_source_types"] == ["built_in", "mcp_stdio", "mcp_stdio"],
@@ -432,9 +465,17 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     "delivery_consistency_simulation",
                     "research_no_simulation",
                 ],
-                result["governance_open_debt_count"] == 4,
+                result["governance_open_debt_count"] == 7,
                 result["governance_active_gate_focus_ids"]
-                == ["TD-STRUCT-001", "TD-STRUCT-003", "TD-STRUCT-005", "TD-STRUCT-006"],
+                == [
+                    "TD-STRUCT-001",
+                    "TD-STRUCT-003",
+                    "TD-STRUCT-005",
+                    "TD-STRUCT-006",
+                    "TD-DOGFOOD-001",
+                    "TD-CODEX-LATENCY-001",
+                    "TD-MULTIMODAL-001",
+                ],
                 result["governance_supported_review_policies"]
                 == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
                 result["governance_review_policy_debt_id"] == "TD-006",
@@ -522,6 +563,18 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 result["dashboard_html_contains_cluster"] is True,
                 result["governance_html_contains_cluster"] is True,
                 result["config_html_ok"] is True,
+                result["chat_message_roles"] == ["user", "assistant"],
+                result["chat_stream_has_user_message"] is True,
+                result["chat_stream_has_assistant_delta"] is True,
+                result["chat_stream_has_assistant_final"] is True,
+                result["chat_stream_has_status_patch"] is True,
+                result["chat_stream_has_heartbeat"] is True,
+                result["chat_launch_action_type"] == "launch_prepare",
+                isinstance(result["chat_launch_active_run_id"], str),
+                result["chat_resume_pending_action_type"] == "resume_run",
+                result["chat_resume_pending_status"] == "pending_confirmation",
+                result["chat_workbench_html_ok"] is True,
+                result["chat_workbench_has_eventsource"] is True,
                 result["human_recoverability_hint"] == "resume_run",
                 result["human_inspection_passed"] is True,
                 result["human_inspection_problem_count"] == 0,

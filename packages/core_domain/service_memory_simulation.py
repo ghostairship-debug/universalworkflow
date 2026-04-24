@@ -194,8 +194,13 @@ class MemorySimulationServiceMixin:
         recommended_preset_id: str | None = None,
         adapter_name: str | None = None,
         task_kind: TaskKind | str | None = None,
+        preferred_cluster_template_ids: list[str] | None = None,
     ) -> OrchestrationPlanGraph:
-        orchestration_plan = self._default_orchestration_plan_for_preset(preset_id, run_id or "preview_run")
+        orchestration_plan = self._default_orchestration_plan_for_preset(
+            preset_id,
+            run_id or "preview_run",
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
         if orchestration_plan is not None:
             risk_summary = []
             if orchestration_plan.barriers:
@@ -277,6 +282,7 @@ class MemorySimulationServiceMixin:
             goal=goal,
             preset_id=selected_preset_id,
             recommended_preset_id=suggestions[0]["preset_id"] if suggestions else selected_preset_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
         )
         graph.cluster_template_ids = self._selected_cluster_template_ids(
             goal=goal,
@@ -316,7 +322,15 @@ class MemorySimulationServiceMixin:
         )
         selected_preset_id = str(preview["selected_preset_id"])
         run = self.create_run(goal=goal, preset_id=selected_preset_id)
-        prepared = self.compile_run(run.run_id)
+        selected_cluster_template_ids = [
+            str(item["template_id"])
+            for item in goal_packet.get("selected_clusters", [])
+            if isinstance(item, dict) and item.get("template_id")
+        ]
+        prepared = self.compile_run(
+            run.run_id,
+            cluster_template_id=selected_cluster_template_ids[0] if selected_cluster_template_ids else None,
+        )
         payload = {
             "goal": goal,
             "selected_preset_id": selected_preset_id,

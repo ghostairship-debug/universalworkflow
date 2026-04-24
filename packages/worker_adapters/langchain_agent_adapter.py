@@ -19,6 +19,11 @@ from packages.worker_adapters.base import ExecutionResult, WorkerAdapter, resolv
 
 
 DEFAULT_AGENT_MODEL = "gpt-5.4-mini"
+DEFAULT_LANGCHAIN_AGENT_PROVIDER = "auto"
+DEFAULT_MINIMAX_MODEL = "MiniMax-M2.7"
+DEFAULT_MINIMAX_BASE_URL = "https://api.minimaxi.com/v1"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
 @dataclass(slots=True)
@@ -28,8 +33,132 @@ class AgentExecutionResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class LangChainAgentLLMSelection:
+    provider: str
+    model: str | None
+    base_url: str | None
+    api_key_env: str | None
+    fallback_provider: str | None = None
+    fallback_model: str | None = None
+    fallback_base_url: str | None = None
+    fallback_api_key_env: str | None = None
+    degraded_reason: str | None = None
+
+
 AgentRunner = Callable[[TaskPacket, Any | None], AgentExecutionResponse]
 MCPToolCaller = Callable[[str, dict[str, Any]], str]
+
+
+def _present_env(env: dict[str, str], names: list[str]) -> str | None:
+    for name in names:
+        if env.get(name):
+            return name
+    return None
+
+
+def _minimax_base_url_from_env(env: dict[str, str], configured_base_url: str | None) -> str:
+    if configured_base_url:
+        return configured_base_url.rstrip("/")
+    if env.get("MINIMAX_BASE_URL"):
+        return str(env["MINIMAX_BASE_URL"]).rstrip("/")
+    api_host = env.get("MINIMAX_API_HOST")
+    if api_host:
+        host = str(api_host).rstrip("/")
+        return host if host.endswith("/v1") else f"{host}/v1"
+    return DEFAULT_MINIMAX_BASE_URL
+
+
+def resolve_langchain_agent_llm_selection(
+    *,
+    effective_config: dict[str, Any] | None = None,
+    env: dict[str, str] | None = None,
+) -> LangChainAgentLLMSelection:
+    environment = dict(env or os.environ)
+    effective = effective_config or build_effective_config()
+    langchain_config = effective.get("langchain_agent") or {}
+    provider = str(
+        environment.get("WORKFLOW_LANGCHAIN_AGENT_PROVIDER")
+        or langchain_config.get("provider")
+        or DEFAULT_LANGCHAIN_AGENT_PROVIDER
+    ).strip().lower()
+    configured_model = environment.get("WORKFLOW_LANGCHAIN_AGENT_MODEL") or langchain_config.get("model")
+    configured_base_url = environment.get("WORKFLOW_LANGCHAIN_AGENT_BASE_URL") or langchain_config.get("base_url")
+    provider_order = ["minimax", "deepseek", "openai"] if provider in {"", "auto", "null"} else [provider]
+
+    selections: list[LangChainAgentLLMSelection] = []
+    for candidate in provider_order:
+        if candidate == "minimax":
+            key_env = _present_env(environment, ["MINIMAX_API_KEY", "MINIMAX_TOKEN"])
+            selections.append(
+                LangChainAgentLLMSelection(
+                    provider="minimax",
+                    model=str(configured_model or environment.get("WORKFLOW_MINIMAX_MODEL") or DEFAULT_MINIMAX_MODEL),
+                    base_url=_minimax_base_url_from_env(environment, str(configured_base_url) if configured_base_url else None),
+                    api_key_env=key_env,
+                    degraded_reason=None if key_env else "missing MINIMAX_API_KEY or MINIMAX_TOKEN",
+                )
+            )
+        elif candidate == "deepseek":
+            key_env = _present_env(environment, ["DEEPSEEK_API_KEY"])
+            selections.append(
+                LangChainAgentLLMSelection(
+                    provider="deepseek",
+                    model=str(configured_model or environment.get("WORKFLOW_DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL),
+                    base_url=str(configured_base_url or environment.get("DEEPSEEK_BASE_URL") or DEFAULT_DEEPSEEK_BASE_URL).rstrip("/"),
+                    api_key_env=key_env,
+                    degraded_reason=None if key_env else "missing DEEPSEEK_API_KEY",
+                )
+            )
+        elif candidate == "openai":
+            key_env = _present_env(environment, ["OPENAI_API_KEY"])
+            selections.append(
+                LangChainAgentLLMSelection(
+                    provider="openai",
+                    model=str(configured_model or environment.get("WORKFLOW_AGENT_MODEL") or effective["agent"]["model"] or DEFAULT_AGENT_MODEL),
+                    base_url=str(configured_base_url).rstrip("/") if configured_base_url else None,
+                    api_key_env=key_env,
+                    degraded_reason=None if key_env else "missing OPENAI_API_KEY",
+                )
+            )
+
+    ready = [item for item in selections if item.api_key_env]
+    if not ready:
+        reason = "; ".join(item.degraded_reason or f"{item.provider} unavailable" for item in selections)
+        return LangChainAgentLLMSelection(
+            provider=provider or "auto",
+            model=str(configured_model) if configured_model else None,
+            base_url=str(configured_base_url).rstrip("/") if configured_base_url else None,
+            api_key_env=None,
+            degraded_reason=reason or "no LangChain agent provider configured",
+        )
+
+    primary = ready[0]
+    fallback = next((item for item in ready[1:] if item.provider != primary.provider), None)
+    if fallback is not None:
+        primary.fallback_provider = fallback.provider
+        primary.fallback_model = fallback.model
+        primary.fallback_base_url = fallback.base_url
+        primary.fallback_api_key_env = fallback.api_key_env
+    return primary
+
+
+def describe_langchain_agent_llm(
+    *,
+    effective_config: dict[str, Any] | None = None,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    selection = resolve_langchain_agent_llm_selection(effective_config=effective_config, env=env)
+    return {
+        "status": "ready" if selection.api_key_env else "missing_auth",
+        "provider": selection.provider,
+        "model": selection.model,
+        "base_url": selection.base_url,
+        "auth": selection.api_key_env,
+        "fallback_provider": selection.fallback_provider,
+        "fallback_model": selection.fallback_model,
+        "degraded_reason": selection.degraded_reason,
+    }
 
 
 class LangChainAgentAdapter(WorkerAdapter):
@@ -62,7 +191,44 @@ class LangChainAgentAdapter(WorkerAdapter):
         return resolve_artifact_paths(packet, create_missing=False)
 
     def _model_for_packet(self, packet: TaskPacket) -> str:
-        return str(packet.env.get("WORKFLOW_AGENT_MODEL") or self.model)
+        selection = resolve_langchain_agent_llm_selection(
+            effective_config=build_effective_config(),
+            env={**os.environ, **{key: value for key, value in packet.env.items() if value}},
+        )
+        return str(selection.model or packet.env.get("WORKFLOW_AGENT_MODEL") or self.model)
+
+    def _chat_model_kwargs(self, selection: LangChainAgentLLMSelection) -> dict[str, Any]:
+        if not selection.api_key_env:
+            raise WorkerAdapterUnavailableError(
+                self.normalized_name(),
+                "LangChain agent lane has no configured MiniMax, DeepSeek, or OpenAI API key",
+                {
+                    "provider": selection.provider,
+                    "selected_model": selection.model,
+                    "degraded_reason": selection.degraded_reason,
+                },
+            )
+        kwargs = {
+            "model": selection.model,
+            "api_key": os.getenv(selection.api_key_env),
+        }
+        if selection.base_url:
+            kwargs["base_url"] = selection.base_url
+        return kwargs
+
+    def _build_chat_model(self, ChatOpenAI: Any, selection: LangChainAgentLLMSelection):
+        primary = ChatOpenAI(**self._chat_model_kwargs(selection))
+        if selection.fallback_provider and selection.fallback_api_key_env:
+            fallback = LangChainAgentLLMSelection(
+                provider=selection.fallback_provider,
+                model=selection.fallback_model,
+                base_url=selection.fallback_base_url,
+                api_key_env=selection.fallback_api_key_env,
+            )
+            fallback_model = ChatOpenAI(**self._chat_model_kwargs(fallback))
+            if hasattr(primary, "with_fallbacks"):
+                return primary.with_fallbacks([fallback_model])
+        return primary
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
@@ -134,8 +300,27 @@ class LangChainAgentAdapter(WorkerAdapter):
             elif self._mcp_tool_caller is not None:
                 tools.append(self._mcp_langchain_tool(StructuredTool, entry.tool_name))
 
-        selected_model = self._model_for_packet(packet)
-        model = ChatOpenAI(model=selected_model)
+        packet_env = {**os.environ, **{key: value for key, value in packet.env.items() if value}}
+        selection = resolve_langchain_agent_llm_selection(
+            effective_config=build_effective_config(),
+            env=packet_env,
+        )
+        selected_model = str(selection.model or self._model_for_packet(packet))
+        try:
+            model = self._build_chat_model(ChatOpenAI, selection)
+        except WorkerAdapterUnavailableError:
+            raise
+        except Exception as exc:
+            raise WorkerAdapterUnavailableError(
+                self.normalized_name(),
+                "agent lane could not initialize LangChain ChatOpenAI-compatible provider",
+                {
+                    "provider": selection.provider,
+                    "selected_model": selected_model,
+                    "fallback_provider": selection.fallback_provider,
+                    "degraded_reason": selection.degraded_reason,
+                },
+            ) from exc
         system_prompt = (
             "You are running inside a local workflow control plane. "
             "Use only the provided read-only tools when they help. "
@@ -154,7 +339,13 @@ class LangChainAgentAdapter(WorkerAdapter):
         content = self._extract_content(result)
         return AgentExecutionResponse(
             content=content,
-            metadata={"agent_model": selected_model},
+            metadata={
+                "agent_model": selected_model,
+                "langchain_agent_provider": selection.provider,
+                "langchain_agent_model": selected_model,
+                "langchain_agent_fallback_provider": selection.fallback_provider,
+                "langchain_agent_fallback_model": selection.fallback_model,
+            },
         )
 
     def _built_in_langchain_tool(self, structured_tool: Any, packet: TaskPacket, tool_name: str):

@@ -13,6 +13,7 @@ from packages.core_domain.db import unit_of_work
 from packages.core_domain.db import migrate
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
+from packages.runtime_langgraph.chat_runtime import ChatActionDecision, ChatLLMRuntime, DegradedChatLLMRuntime
 from packages.runtime_langgraph.gateway import OpenAIRuntimeGateway
 from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
 from packages.worker_adapters.codex_adapter import CodexAdapter
@@ -43,13 +44,35 @@ OPEN_DEBT_IDS = [
     "TD-STRUCT-003",
     "TD-STRUCT-005",
     "TD-STRUCT-006",
+    "TD-DOGFOOD-001",
+    "TD-CODEX-LATENCY-001",
+    "TD-MULTIMODAL-001",
+]
+
+AVAILABLE_SHELL_EXEC_ADAPTERS = [
+    "shell",
+    "codex",
+    "claude_architect",
+    "mmx_multimodal",
+    "vertex_multimodal",
+    "opencode",
 ]
 
 
-def build_client(db_path: Path, runtime_gateway: RuntimeGateway | None = None) -> TestClient:
+def build_client(
+    db_path: Path,
+    runtime_gateway: RuntimeGateway | None = None,
+    chat_llm_runtime: ChatLLMRuntime | None = None,
+) -> TestClient:
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
-    return TestClient(create_app(db_path, runtime_gateway=runtime_gateway))
+    return TestClient(
+        create_app(
+            db_path,
+            runtime_gateway=runtime_gateway,
+            chat_llm_runtime=chat_llm_runtime or DegradedChatLLMRuntime(),
+        )
+    )
 
 
 def _fake_api_patch_launch(self, packet):  # type: ignore[override]
@@ -79,6 +102,16 @@ def _fake_api_patch_launch(self, packet):  # type: ignore[override]
         adapter_name=self.normalized_name(),
         metadata={"mutation_mode": "patch_apply"},
     )
+
+
+class _SwitchingChatRuntime(DegradedChatLLMRuntime):
+    def infer_action(self, content: str, context: dict) -> ChatActionDecision:
+        if "launch" in content.lower() or "启动" in content or "新计划" in content:
+            return ChatActionDecision(action_type="launch_prepare", confidence=0.9, rationale="test launch")
+        return ChatActionDecision(action_type="answer_only", confidence=0.9, rationale="test answer")
+
+    def stream_reply(self, **kwargs):
+        yield "测试回复"
 
 
 def _fake_api_session_launch(self, packet):  # type: ignore[override]
@@ -202,6 +235,9 @@ def test_api_lists_domain_packs_and_capability_routes(tmp_path: Path) -> None:
         {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
         {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
         {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
+        {"capability": "shell_exec", "adapter_name": "claude_architect", "adapter_class": "ClaudeArchitectAdapter"},
+        {"capability": "shell_exec", "adapter_name": "mmx_multimodal", "adapter_class": "MMXMultimodalAdapter"},
+        {"capability": "shell_exec", "adapter_name": "vertex_multimodal", "adapter_class": "VertexMultimodalAdapter"},
         {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
     ]
 
@@ -395,6 +431,245 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
     watchdog_eval_response = client.get("/interaction/watchdogs/evaluate", params={"session_id": session_id})
     assert watchdog_eval_response.status_code == 200
     assert len(watchdog_eval_response.json()["actions"]) >= 1
+
+
+def test_api_chat_messages_stream_and_confirmation_gate(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    chinese_create_response = client.post(
+        "/interaction/chat/messages",
+        json={"content": "为当前项目创建一个测试聊天功能的计划预览，产出一份简短说明文档"},
+    )
+    assert chinese_create_response.status_code == 201
+    chinese_create_payload = chinese_create_response.json()
+    assert chinese_create_payload["session"]["status"] == "ready_to_launch"
+    assert chinese_create_payload["plan_draft"] is not None
+    assert chinese_create_payload["chat_messages"][1]["action_type"] == "plan_preview"
+
+    create_response = client.post(
+        "/interaction/chat/messages",
+        json={"content": "Build a small artifact for chat smoke test with visible operator evidence"},
+    )
+    assert create_response.status_code == 201
+    create_payload = create_response.json()
+    session_id = create_payload["session"]["session_id"]
+    assert [item["role"] for item in create_payload["chat_messages"]] == ["user", "assistant"]
+    assert create_payload["chat_messages"][1]["message_type"] == "text"
+    assert create_payload["chat_messages"][1]["stream_status"] == "completed"
+    create_stream_event_types = [item["event_type"] for item in create_payload["chat_stream_events"]]
+    assert "user_message" in create_stream_event_types
+    assert "graph_update" in create_stream_event_types
+    assert "tool_action_proposed" in create_stream_event_types
+
+    stream_response = client.get(f"/interaction/sessions/{session_id}/stream")
+    assert stream_response.status_code == 200
+    assert "event: user_message" in stream_response.text
+    assert "event: assistant_delta" in stream_response.text
+    assert "event: assistant_final" in stream_response.text
+    assert "event: status_patch" in stream_response.text
+    assert "event: heartbeat" in stream_response.text
+    assert "event: session_update" not in stream_response.text
+
+    last_stream_event_id = create_payload["chat_stream_events"][-1]["event_id"]
+    reconnect_response = client.get(
+        f"/interaction/sessions/{session_id}/stream",
+        params={"after_event_id": last_stream_event_id},
+    )
+    assert reconnect_response.status_code == 200
+    assert "event: user_message" not in reconnect_response.text
+    assert "event: assistant_final" not in reconnect_response.text
+    assert "event: heartbeat" in reconnect_response.text
+
+    status_cursor_response = client.get(
+        f"/interaction/sessions/{session_id}/stream",
+        params={"after_event_id": f"heartbeat:{session_id}"},
+    )
+    assert status_cursor_response.status_code == 200
+    assert "event: user_message" not in status_cursor_response.text
+    assert "event: assistant_delta" not in status_cursor_response.text
+    assert "event: status_patch" in status_cursor_response.text
+
+    launch_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "launch"},
+    )
+    assert launch_response.status_code == 201
+    launch_payload = launch_response.json()
+    run_id = launch_payload["session"]["active_run_id"]
+    assert run_id is not None
+    assert launch_payload["action_result"]["action_type"] == "launch_prepare"
+    assert launch_payload["chat_events"][-1]["action_type"] == "launch_prepare"
+
+    resume_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "resume"},
+    )
+    assert resume_response.status_code == 201
+    pending_confirmation = resume_response.json()["pending_confirmation"]
+    assert pending_confirmation["message_type"] == "confirmation_required"
+    assert pending_confirmation["action_type"] == "resume_run"
+    assert pending_confirmation["status"] == "pending_confirmation"
+
+    confirm_response = client.post(
+        f"/interaction/chat/actions/{pending_confirmation['message_id']}/confirm",
+        json={"rationale": "test resume from chat"},
+    )
+    assert confirm_response.status_code == 200
+    confirm_payload = confirm_response.json()
+    assert confirm_payload["chat_events"][0]["message_type"] == "confirmation_result"
+    assert confirm_payload["action_result"]["run"]["run_id"] == run_id
+    assert confirm_payload["action_result"]["run"]["status"] in {"awaiting_review", "completed", "failed"}
+
+    updated_stream_response = client.get(f"/interaction/sessions/{session_id}/stream")
+    assert "event: confirmation_result" in updated_stream_response.text
+    assert "event: run_update" in updated_stream_response.text
+    assert "event: timeline_event" in updated_stream_response.text
+    assert "event: pr_ready_summary" in updated_stream_response.text
+
+
+def test_api_chat_plain_confirmation_advances_pending_action(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post(
+        "/interaction/chat/messages",
+        json={"content": "Build a tiny artifact through chat confirmation"},
+    )
+    assert create_response.status_code == 201
+    session_id = create_response.json()["session"]["session_id"]
+
+    launch_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "launch"},
+    )
+    assert launch_response.status_code == 201
+    run_id = launch_response.json()["session"]["active_run_id"]
+
+    resume_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "resume"},
+    )
+    assert resume_response.status_code == 201
+    assert resume_response.json()["pending_confirmation"]["status"] == "pending_confirmation"
+
+    confirm_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "confirm"},
+    )
+    assert confirm_response.status_code == 201, confirm_response.text
+    confirm_payload = confirm_response.json()
+    assert confirm_payload["pending_confirmation"] is None
+    assert confirm_payload["chat_events"][0]["role"] == "user"
+    assert confirm_payload["chat_events"][-1]["message_type"] == "confirmation_result"
+    assert confirm_payload["action_result"]["run"]["run_id"] == run_id
+    assert confirm_payload["action_result"]["run"]["status"] in {"awaiting_review", "completed", "failed"}
+
+
+def test_api_chat_launch_keyword_confirms_pending_launch_execute(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post(
+        "/interaction/chat/messages",
+        json={"content": "启动并执行，生成 Build a tiny artifact from a pending launch_execute confirmation"},
+    )
+    assert create_response.status_code == 201
+    session_id = create_response.json()["session"]["session_id"]
+    pending_confirmation = create_response.json()["pending_confirmation"]
+    assert pending_confirmation["action_type"] == "launch_execute"
+
+    confirm_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "launch"},
+    )
+
+    assert confirm_response.status_code == 201, confirm_response.text
+    confirm_payload = confirm_response.json()
+    assert confirm_payload["pending_confirmation"] is None
+    assert confirm_payload["chat_events"][0]["role"] == "user"
+    assert confirm_payload["chat_events"][-1]["message_type"] == "confirmation_result"
+    assert confirm_payload["chat_events"][-1]["action_type"] == "launch_execute"
+    assert confirm_payload["session"]["active_run_id"] is not None
+
+
+def test_api_chat_plain_confirmation_resumes_prepared_active_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path)
+
+    create_response = client.post(
+        "/interaction/chat/messages",
+        json={"content": "Build an artifact and wait for chat confirmation"},
+    )
+    assert create_response.status_code == 201
+    session_id = create_response.json()["session"]["session_id"]
+
+    launch_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "launch"},
+    )
+    assert launch_response.status_code == 201
+    run_id = launch_response.json()["session"]["active_run_id"]
+    assert client.get(f"/runs/{run_id}/status-detail").json()["run"]["status"] == "prepared"
+
+    confirm_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "confirm"},
+    )
+    assert confirm_response.status_code == 201
+    payload = confirm_response.json()
+    assert payload["chat_events"][-1]["message_type"] == "confirmation_result"
+    assert payload["chat_events"][-1]["action_type"] == "resume_run"
+    assert payload["action_result"]["run"]["run_id"] == run_id
+    assert payload["action_result"]["run"]["status"] in {"awaiting_review", "completed", "failed"}
+
+
+def test_api_chat_new_plan_request_switches_to_new_session(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path, chat_llm_runtime=_SwitchingChatRuntime())
+
+    first_response = client.post("/interaction/chat/messages", json={"content": "你是谁？"})
+    assert first_response.status_code == 201
+    old_session_id = first_response.json()["session"]["session_id"]
+
+    new_plan_response = client.post(
+        "/interaction/chat/messages",
+        json={
+            "session_id": old_session_id,
+            "content": "启动一个新计划：Build a local snake game artifact with visible evidence",
+        },
+    )
+    assert new_plan_response.status_code == 201
+    payload = new_plan_response.json()
+    new_session_id = payload["session"]["session_id"]
+
+    assert new_session_id != old_session_id
+    assert payload["session"]["status"] == "launched"
+    assert payload["action_result"]["action_type"] == "launch_prepare"
+    assert payload["session"]["active_run_id"] is not None
+    assert [item["role"] for item in payload["chat_messages"]] == ["user", "assistant"]
+    assert payload["chat_messages"][-1]["message_type"] == "text"
+
+
+def test_api_chat_action_failure_returns_visible_error_message(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    client = build_client(db_path, chat_llm_runtime=_SwitchingChatRuntime())
+
+    first_response = client.post("/interaction/chat/messages", json={"content": "你是谁？"})
+    assert first_response.status_code == 201
+    session_id = first_response.json()["session"]["session_id"]
+
+    launch_response = client.post(
+        "/interaction/chat/messages",
+        json={"session_id": session_id, "content": "launch"},
+    )
+    assert launch_response.status_code == 201
+    payload = launch_response.json()
+
+    assert payload["chat_messages"][-1]["message_type"] == "error"
+    assert payload["chat_messages"][-1]["status"] == "failed"
+    assert payload["action_result"]["failed"] is True
+    assert any(item["event_type"] == "error" for item in payload["chat_stream_events"])
 
 
 def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
@@ -695,8 +970,8 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["source_contract"] == "structured_json"
-    assert payload["open_debt_count"] == 4
-    assert payload["status_counts"] == {"partially_repaid": 3, "active": 1}
+    assert payload["open_debt_count"] == 7
+    assert payload["status_counts"] == {"partially_repaid": 4, "active": 3}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
@@ -1124,10 +1399,10 @@ def test_api_local_only_mode_exposes_disabled_scheduler_cluster_by_default(tmp_p
     assert operator_payload["cluster_overview"]["authority_term_no"] == cluster_payload["authority_term_no"]
     assert operator_payload["cluster_overview"]["decision_index"] == cluster_payload["decision_index"]
     assert len(runs_response.json()) >= 1
-    assert "Authority Topology" in dashboard_html
-    assert "Authority Topology" in governance_html
-    assert "Scheduler authority cluster disabled (local-only mode)." in dashboard_html
-    assert "Scheduler authority cluster disabled (local-only mode)." in governance_html
+    assert "调度权威拓扑" in dashboard_html
+    assert "调度权威拓扑" in governance_html
+    assert "调度权威集群已关闭，当前为本地单机模式。" in dashboard_html
+    assert "调度权威集群已关闭，当前为本地单机模式。" in governance_html
 
 
 def test_api_exposes_run_replay_packet(tmp_path: Path) -> None:
@@ -1196,7 +1471,7 @@ def test_api_compile_rejects_unknown_adapter(tmp_path: Path) -> None:
     assert compile_response.status_code == 422
     error = compile_response.json()["error"]
     assert error["code"] == "capability_adapter_not_found"
-    assert error["details"]["available_adapters"] == ["shell", "codex", "opencode"]
+    assert error["details"]["available_adapters"] == AVAILABLE_SHELL_EXEC_ADAPTERS
 
 
 def test_api_status_detail_projects_runtime_gateway_brief_when_openai_gateway_is_active(tmp_path: Path) -> None:

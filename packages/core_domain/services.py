@@ -122,6 +122,8 @@ from packages.core_domain.evidence_builder import EvidenceBuilder
 from packages.core_domain.repositories import (
     BudgetLedgerRepository,
     AutomationWatchdogRepository,
+    ChatMessageRepository,
+    ChatStreamEventRepository,
     EventRepository,
     EvidenceRepository,
     FollowupRequestRepository,
@@ -183,12 +185,19 @@ from packages.runtime_langgraph.durable_pilot import (
 )
 from packages.core_domain.service_audit_replay import AuditReplayService
 from packages.runtime_langgraph.gateway import build_runtime_gateway_from_env, resolve_runtime_gateway
+from packages.runtime_langgraph.chat_control_graph import ChatControlGraph
+from packages.runtime_langgraph.chat_runtime import ChatLLMRuntime, build_chat_llm_runtime_from_env
 from packages.core_domain.service_ownership_lease import OwnershipLeaseService
 from packages.core_domain.service_review_policy import ReviewPolicyService
 from packages.core_domain.service_run_lifecycle import RunLifecycleService
 from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.base import ExecutionResult
 from packages.worker_adapters.codex_adapter import CodexAdapter
+from packages.worker_adapters.external_artifact_adapters import (
+    ClaudeArchitectAdapter,
+    MMXMultimodalAdapter,
+    VertexMultimodalAdapter,
+)
 from packages.worker_adapters.noop_adapter import NoopAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
@@ -232,6 +241,8 @@ class OrchestratorService(
         trace_exporter: TraceExporter | None = None,
         durable_runtime_pilot: DurableRuntimePilot | None = None,
         external_worker_gateway: ExternalWorkerGateway | None = None,
+        chat_llm_runtime: ChatLLMRuntime | None = None,
+        chat_control_graph: ChatControlGraph | None = None,
     ):
         self.db_path = Path(db_path) if db_path is not None else None
         self.effective_config = build_effective_config(
@@ -256,10 +267,14 @@ class OrchestratorService(
         self.memory_item_repo = MemoryItemRepository(self.db_path)
         self.intent_session_repo = IntentSessionRepository(self.db_path)
         self.followup_request_repo = FollowupRequestRepository(self.db_path)
+        self.chat_message_repo = ChatMessageRepository(self.db_path)
+        self.chat_stream_event_repo = ChatStreamEventRepository(self.db_path)
         self.generated_agent_profile_repo = GeneratedAgentProfileRepository(self.db_path)
         self.automation_watchdog_repo = AutomationWatchdogRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
         self.runtime_gateway = runtime_gateway or build_runtime_gateway_from_env()
+        self.chat_llm_runtime = chat_llm_runtime or build_chat_llm_runtime_from_env()
+        self.chat_control_graph = chat_control_graph or ChatControlGraph()
         runtime_gateway_description = self.runtime_gateway.describe()
         self.effective_config["runtime_gateway"]["provider"] = runtime_gateway_description.get("provider")
         self.effective_config["runtime_gateway"]["provider_source"] = (
@@ -283,7 +298,15 @@ class OrchestratorService(
             )
         self.effective_config["execution_defaults"] = build_effective_execution_defaults(self.effective_config)
         self.capability_plane = capability_plane or CapabilityPlane(workspace_root=self._workspace_root())
-        adapters = [shell_adapter or ShellAdapter(), CodexAdapter(), OpenCodeAdapter(), NoopAdapter()]
+        adapters = [
+            shell_adapter or ShellAdapter(),
+            CodexAdapter(),
+            OpenCodeAdapter(),
+            ClaudeArchitectAdapter(),
+            MMXMultimodalAdapter(),
+            VertexMultimodalAdapter(),
+            NoopAdapter(),
+        ]
         if is_sessionful_external_agents_enabled():
             adapters.append(OpenCodeSessionAdapter())
         if is_agent_lane_enabled():
@@ -725,8 +748,17 @@ class OrchestratorService(
             )
         return plan
 
-    def _default_orchestration_plan_for_preset(self, preset_id: str, run_id: str) -> OrchestrationPlan | None:
-        return self.orchestration_service.default_orchestration_plan_for_preset(preset_id, run_id)
+    def _default_orchestration_plan_for_preset(
+        self,
+        preset_id: str,
+        run_id: str,
+        preferred_cluster_template_ids: list[str] | None = None,
+    ) -> OrchestrationPlan | None:
+        return self.orchestration_service.default_orchestration_plan_for_preset(
+            preset_id,
+            run_id,
+            preferred_cluster_template_ids=preferred_cluster_template_ids,
+        )
 
     def _capability_descriptor_index(self) -> dict[str, CapabilityDescriptor]:
         descriptors = self.capability_plane.list_capability_descriptors(

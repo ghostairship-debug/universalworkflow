@@ -54,6 +54,18 @@ class FollowupRequestPayload(BaseModel):
     run_id: str | None = None
 
 
+class ChatMessageRequest(BaseModel):
+    content: str = Field(min_length=1)
+    session_id: str | None = None
+    run_id: str | None = None
+    mode: str = Field(default="llm_assisted", min_length=1)
+    client_message_id: str | None = None
+
+
+class ChatActionConfirmRequest(BaseModel):
+    rationale: str | None = None
+
+
 class TaskKindOverrideRequest(BaseModel):
     task_kind: str | None = Field(default=None)
     adapter_name: str | None = Field(default=None)

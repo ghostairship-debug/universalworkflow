@@ -157,6 +157,16 @@ class ResolvedExecutionProfile(ContractModel):
     selected_model: str | None = None
     selected_model_kind: str | None = None
     model_variant: str | None = None
+    model_selection_source: str | None = None
+    model_selection_reason: str | None = None
+    dogfood_strong_model_enabled: bool = False
+    dogfood_execution_backend: str | None = None
+    langchain_agent_provider: str | None = None
+    langchain_agent_model: str | None = None
+    langchain_agent_degraded_reason: str | None = None
+    role_responsibilities: list[str] = Field(default_factory=list)
+    claude_architect_call_count: int = 0
+    multimodal_evidence_refs: list[str] = Field(default_factory=list)
     agent_model: str | None = None
     codex_model: str | None = None
     codex_reasoning_effort: str | None = None
@@ -942,6 +952,74 @@ class FollowupRequest(PersistedContractModel):
     intent: str = "continue"
     blocking: bool = False
     status: str = "pending"
+
+
+class ChatMessageRole(StrEnum):
+    user = "user"
+    assistant = "assistant"
+    system = "system"
+    tool = "tool"
+
+
+class ChatMessageType(StrEnum):
+    text = "text"
+    workflow_event = "workflow_event"
+    confirmation_required = "confirmation_required"
+    confirmation_result = "confirmation_result"
+    error = "error"
+
+
+class ChatMessageStatus(StrEnum):
+    posted = "posted"
+    pending_confirmation = "pending_confirmation"
+    confirmed = "confirmed"
+    blocked = "blocked"
+    failed = "failed"
+
+
+class ChatMessage(PersistedContractModel):
+    message_id: str = Field(default_factory=lambda: new_id("chatmsg"))
+    session_id: str
+    run_id: str | None = None
+    role: ChatMessageRole = ChatMessageRole.assistant
+    content: str
+    message_type: ChatMessageType = ChatMessageType.text
+    action_type: str | None = None
+    status: ChatMessageStatus = ChatMessageStatus.posted
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+    provider_message_id: str | None = None
+    parent_message_id: str | None = None
+    stream_status: str | None = None
+    graph_node: str | None = None
+    token_usage: dict[str, Any] | None = None
+    client_message_id: str | None = None
+
+
+class ChatStreamEventType(StrEnum):
+    user_message = "user_message"
+    assistant_delta = "assistant_delta"
+    assistant_final = "assistant_final"
+    tool_action_proposed = "tool_action_proposed"
+    confirmation_required = "confirmation_required"
+    confirmation_result = "confirmation_result"
+    graph_update = "graph_update"
+    run_update = "run_update"
+    status_patch = "status_patch"
+    timeline_event = "timeline_event"
+    test_evidence = "test_evidence"
+    pr_ready_summary = "pr_ready_summary"
+    heartbeat = "heartbeat"
+    error = "error"
+
+
+class ChatStreamEvent(PersistedContractModel):
+    event_id: str = Field(default_factory=lambda: new_id("chatevt"))
+    session_id: str
+    run_id: str | None = None
+    message_id: str | None = None
+    event_type: ChatStreamEventType
+    sequence_no: int = Field(default=0, ge=0)
+    payload_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class AutomationWatchdog(PersistedContractModel):

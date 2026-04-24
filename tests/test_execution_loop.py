@@ -42,6 +42,7 @@ from packages.core_domain.errors import (
     WorkflowError,
 )
 from packages.core_domain.evidence_builder import EvidenceBuilder
+from packages.core_domain.compile import compile_run as compile_run_snapshot
 from packages.core_domain.observability import InMemoryTraceExporter, TraceExporter, TraceRecord
 from packages.core_domain.repo_mutation import (
     TEST_COMMAND_BLOCKED_EXIT_CODE,
@@ -96,7 +97,7 @@ def _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeou
 
 
 def _fake_codex_runner(command, cwd, env, capture_output, text, check, timeout):
-    prompt = command[2]
+    prompt = command[-1]
     artifact_path = Path(command[command.index("--output-last-message") + 1])
     content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", prompt, re.DOTALL)
     assert content_match is not None
@@ -152,6 +153,10 @@ def _fake_patch_runner(command, cwd, env, capture_output, text, check, timeout):
 
 def _fake_timeout_runner(command, cwd, env, capture_output, text, check, timeout):
     raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
+
+
+def _raising_codex_runner(command, cwd, env, capture_output, text, check, timeout):
+    raise RuntimeError("codex runner exploded")
 
 
 def _fake_session_runner(command, cwd, env, capture_output, text, check, timeout):
@@ -745,6 +750,65 @@ def test_compile_run_uses_current_interpreter_for_generated_command(tmp_path: Pa
     assert prepared.task_packet.command[0] == sys.executable
 
 
+def test_compile_run_can_materialize_local_snake_game_artifacts(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    preset_repo = PresetRepository(db_path)
+    preset_repo.seed_defaults()
+    preset = preset_repo.get("advisory_delivery")
+    assert preset is not None
+
+    snapshot = compile_run_snapshot(
+        "生成一个文件夹：snake_game，并在其中生成 snake game",
+        preset,
+        "run_snake_local",
+        working_directory=str(tmp_path),
+    )
+    result = ShellAdapter().launch(snapshot.task_packet)
+
+    game_file = tmp_path / "state" / "artifacts" / "generated" / "snake_game" / "index.html"
+    readme_file = tmp_path / "state" / "artifacts" / "generated" / "snake_game" / "README.md"
+    assert result.return_code == 0
+    assert game_file.exists()
+    assert readme_file.exists()
+    assert "贪吃蛇小游戏" in game_file.read_text(encoding="utf-8")
+    assert game_file.resolve().as_posix() in result.artifact_paths
+    assert readme_file.resolve().as_posix() in result.artifact_paths
+
+
+def test_compile_run_can_materialize_block_puzzle_vertical_slice(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    preset_repo = PresetRepository(db_path)
+    preset_repo.seed_defaults()
+    preset = preset_repo.get("advisory_delivery")
+    assert preset is not None
+
+    snapshot = compile_run_snapshot(
+        "生成一个文件夹：block_puzzle_shop，基于俄罗斯方块消除策划文档做商业化小游戏",
+        preset,
+        "run_block_puzzle_local",
+        working_directory=str(tmp_path),
+    )
+    result = ShellAdapter().launch(snapshot.task_packet)
+
+    output_dir = tmp_path / "state" / "artifacts" / "generated" / "block_puzzle_shop"
+    game_file = output_dir / "index.html"
+    readme_file = output_dir / "README.md"
+    trace_file = output_dir / "design_trace.md"
+    html = game_file.read_text(encoding="utf-8")
+    assert result.return_code == 0
+    assert game_file.exists()
+    assert readme_file.exists()
+    assert trace_file.exists()
+    assert "方块艺境" in html
+    assert "data-testid=\"game-board\"" in html
+    assert "classic-mode" in html
+    assert "revive-button" in html
+    assert game_file.resolve().as_posix() in result.artifact_paths
+    assert trace_file.resolve().as_posix() in result.artifact_paths
+
+
 def test_worker_router_uses_noop_adapter_for_noop_task(tmp_path: Path) -> None:
     packet = TaskPacket(
         runtime_task_id="task_noop",
@@ -1330,6 +1394,26 @@ def test_service_can_execute_codex_adapter_with_fake_runner(tmp_path: Path) -> N
     assert bundle.run.status == "completed"
     assert evidence.raw_execution["adapter_name"] == "codex"
     assert "adapter: codex" in content
+
+
+def test_resume_run_converts_worker_adapter_exception_to_failed_evidence(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([CodexAdapter(runner=_raising_codex_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    run = service.create_run("Adapter exception should close cleanly", "feature_delivery")
+    service.compile_run(run.run_id, adapter_name="codex")
+    executed = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert str(executed.run.status) == "failed"
+    assert executed.execution_result.return_code == 1
+    assert "codex runner exploded" in executed.execution_result.stderr
+    assert detail["run_metrics"]["counts"]["active_claims"] == 0
+    assert detail["run_metrics"]["counts"]["active_worker_leases"] == 0
+    assert detail["latest_runtime_attempt"]["status"] == "failed"
 
 
 def test_preview_tool_projection_includes_mcp_subset_for_reviewable_pilot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

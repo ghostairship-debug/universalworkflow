@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -24,6 +25,7 @@ from packages.contracts import (
 )
 from packages.core_domain.capability_plane import TOOL_PROJECTION_MANIFEST_ENV_KEY, dump_tool_projection_manifest
 from packages.core_domain.domain_packs import DOMAIN_PACK_RESOLUTION_ENV_KEY, dump_domain_pack_resolution
+from packages.core_domain.local_game_artifacts import local_artifacts_for_goal
 from packages.core_domain.memory import MEMORY_RETRIEVAL_PREVIEW_ENV_KEY, dump_memory_retrieval_preview
 
 
@@ -128,6 +130,14 @@ def _python_command_for(
         "projected_tools=projected_tools"
         ")\n"
         "path.write_text(content, encoding='utf-8')\n"
+        "from packages.core_domain.local_game_artifacts import local_artifacts_for_goal\n"
+        "for local_path, local_content in local_artifacts_for_goal("
+        f"{effective_goal!r}"
+        "):\n"
+        "    local_target = Path(local_path)\n"
+        "    local_target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    local_target.write_text(local_content, encoding='utf-8')\n"
+        "    print(local_target.as_posix())\n"
         "print(path.as_posix())\n"
     )
     return [sys.executable, "-c", body]
@@ -199,6 +209,11 @@ def compile_run(
         if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply
         else _artifact_path_for(run_id, preset.preset_id, domain_pack=domain_pack)
     )
+    local_artifacts = (
+        local_artifacts_for_goal(goal)
+        if resolved_task_kind == TaskKind.shell_exec and mutation_contract is None
+        else []
+    )
     command = (
         []
         if resolved_task_kind == TaskKind.noop or (
@@ -238,6 +253,70 @@ def compile_run(
                 "WORKFLOW_RUNTIME_REASONING_EFFORT": (
                     (resolved_execution.runtime_reasoning_effort or "") if resolved_execution is not None else ""
                 ),
+                "WORKFLOW_LLM_MODEL": (
+                    (resolved_execution.selected_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_MODEL_SELECTION_SOURCE": (
+                    (resolved_execution.model_selection_source or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_MODEL_SELECTION_REASON": (
+                    (resolved_execution.model_selection_reason or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_DOGFOOD_STRONG_MODEL_ENABLED": (
+                    str(resolved_execution.dogfood_strong_model_enabled).lower()
+                    if resolved_execution is not None
+                    else "false"
+                ),
+                "WORKFLOW_DOGFOOD_EXECUTION_BACKEND": (
+                    (resolved_execution.dogfood_execution_backend or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_LANGCHAIN_AGENT_PROVIDER": (
+                    (resolved_execution.langchain_agent_provider or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_LANGCHAIN_AGENT_MODEL": (
+                    (resolved_execution.langchain_agent_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_LANGCHAIN_AGENT_DEGRADED_REASON": (
+                    (resolved_execution.langchain_agent_degraded_reason or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_AGENT_PROFILE_ID": (
+                    (resolved_execution.scope_context.agent_profile_id or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_CLUSTER_TEMPLATE_ID": (
+                    (resolved_execution.scope_context.cluster_template_id or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_CLUSTER_MEMBER_ID": (
+                    (resolved_execution.scope_context.cluster_member_id or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_PUBLIC_ROLE": (
+                    str(resolved_execution.scope_context.public_role or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_ROLE_LABEL": (
+                    (resolved_execution.scope_context.role_label or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_ROLE_RESPONSIBILITIES": (
+                    json.dumps(resolved_execution.role_responsibilities, ensure_ascii=False)
+                    if resolved_execution is not None
+                    else "[]"
+                ),
+                "WORKFLOW_CLAUDE_ARCHITECT_CALL_COUNT": (
+                    str(resolved_execution.claude_architect_call_count) if resolved_execution is not None else "0"
+                ),
+                "WORKFLOW_MULTIMODAL_EVIDENCE_REFS": (
+                    json.dumps(resolved_execution.multimodal_evidence_refs, ensure_ascii=False)
+                    if resolved_execution is not None
+                    else "[]"
+                ),
                 "WORKFLOW_AGENT_MODEL": (resolved_execution.agent_model or "") if resolved_execution is not None else "",
                 "WORKFLOW_CODEX_MODEL": (resolved_execution.codex_model or "") if resolved_execution is not None else "",
                 "WORKFLOW_CODEX_REASONING_EFFORT": (
@@ -273,6 +352,70 @@ def compile_run(
                 "WORKFLOW_RUNTIME_REASONING_EFFORT": (
                     (resolved_execution.runtime_reasoning_effort or "") if resolved_execution is not None else ""
                 ),
+                "WORKFLOW_LLM_MODEL": (
+                    (resolved_execution.selected_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_MODEL_SELECTION_SOURCE": (
+                    (resolved_execution.model_selection_source or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_MODEL_SELECTION_REASON": (
+                    (resolved_execution.model_selection_reason or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_DOGFOOD_STRONG_MODEL_ENABLED": (
+                    str(resolved_execution.dogfood_strong_model_enabled).lower()
+                    if resolved_execution is not None
+                    else "false"
+                ),
+                "WORKFLOW_DOGFOOD_EXECUTION_BACKEND": (
+                    (resolved_execution.dogfood_execution_backend or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_LANGCHAIN_AGENT_PROVIDER": (
+                    (resolved_execution.langchain_agent_provider or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_LANGCHAIN_AGENT_MODEL": (
+                    (resolved_execution.langchain_agent_model or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_LANGCHAIN_AGENT_DEGRADED_REASON": (
+                    (resolved_execution.langchain_agent_degraded_reason or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_AGENT_PROFILE_ID": (
+                    (resolved_execution.scope_context.agent_profile_id or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_CLUSTER_TEMPLATE_ID": (
+                    (resolved_execution.scope_context.cluster_template_id or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_CLUSTER_MEMBER_ID": (
+                    (resolved_execution.scope_context.cluster_member_id or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_PUBLIC_ROLE": (
+                    str(resolved_execution.scope_context.public_role or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_ROLE_LABEL": (
+                    (resolved_execution.scope_context.role_label or "")
+                    if resolved_execution is not None and resolved_execution.scope_context is not None
+                    else ""
+                ),
+                "WORKFLOW_ROLE_RESPONSIBILITIES": (
+                    json.dumps(resolved_execution.role_responsibilities, ensure_ascii=False)
+                    if resolved_execution is not None
+                    else "[]"
+                ),
+                "WORKFLOW_CLAUDE_ARCHITECT_CALL_COUNT": (
+                    str(resolved_execution.claude_architect_call_count) if resolved_execution is not None else "0"
+                ),
+                "WORKFLOW_MULTIMODAL_EVIDENCE_REFS": (
+                    json.dumps(resolved_execution.multimodal_evidence_refs, ensure_ascii=False)
+                    if resolved_execution is not None
+                    else "[]"
+                ),
                 "WORKFLOW_AGENT_MODEL": (resolved_execution.agent_model or "") if resolved_execution is not None else "",
                 "WORKFLOW_CODEX_MODEL": (resolved_execution.codex_model or "") if resolved_execution is not None else "",
                 "WORKFLOW_CODEX_REASONING_EFFORT": (
@@ -289,7 +432,7 @@ def compile_run(
                 MEMORY_RETRIEVAL_PREVIEW_ENV_KEY: dump_memory_retrieval_preview(memory_preview),
             }
         ),
-        expected_artifacts=[artifact_path.as_posix()],
+        expected_artifacts=[artifact_path.as_posix(), *[path.as_posix() for path, _content in local_artifacts]],
         mutation_contract=mutation_contract,
     )
     handoff = HandoffLite(

@@ -108,7 +108,7 @@ def build_ui_router(
         form = await request.form()
         goal = str(form.get("goal") or "").strip()
         if not goal:
-            return _redirect_with_notice("/ui/workbench", "preview skipped: goal is required")
+            return _redirect_with_notice("/ui/workbench", "预览已跳过：目标不能为空")
         preset_id = str(form.get("preset_id") or "").strip() or None
         cluster_template_id = str(form.get("cluster_template_id") or "").strip()
         payload = service.create_intent_session(
@@ -122,7 +122,34 @@ def build_ui_router(
         )
         return _redirect_with_notice(
             f"/ui/workbench?session_id={payload['session']['session_id']}",
-            "workbench preview refreshed",
+            "工作台预览已刷新",
+        )
+
+    @router.post("/ui/workbench/chat")
+    async def web_workbench_chat(request: Request) -> RedirectResponse:
+        form = await request.form()
+        message = str(form.get("message") or "").strip()
+        session_id = str(form.get("session_id") or "").strip() or None
+        run_id = str(form.get("run_id") or "").strip() or None
+        if not message:
+            target = f"/ui/workbench?session_id={session_id}" if session_id else "/ui/workbench"
+            return _redirect_with_notice(target, "聊天已跳过：消息不能为空")
+        payload = service.post_chat_message(session_id=session_id, run_id=run_id, content=message)
+        target_session_id = payload["session"]["session_id"]
+        return _redirect_with_notice(
+            f"/ui/workbench?session_id={target_session_id}",
+            "聊天消息已处理",
+        )
+
+    @router.post("/ui/workbench/chat/actions/{action_id}/confirm")
+    async def web_workbench_chat_confirm(action_id: str, request: Request) -> RedirectResponse:
+        form = await request.form()
+        rationale = str(form.get("rationale") or "").strip() or None
+        payload = service.confirm_chat_action(action_id, rationale=rationale)
+        session_id = payload["session"]["session_id"]
+        return _redirect_with_notice(
+            f"/ui/workbench?session_id={session_id}",
+            "聊天动作已确认",
         )
 
     @router.post("/ui/workbench/{session_id}/clarify")
@@ -141,7 +168,7 @@ def build_ui_router(
             preferred_preset_id=preset_id,
             preferred_cluster_template_ids=[cluster_template_id] if cluster_template_id else None,
         )
-        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "clarifications updated")
+        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "澄清信息已更新")
 
     @router.post("/ui/workbench/{session_id}/launch")
     async def web_workbench_launch(session_id: str, request: Request) -> RedirectResponse:
@@ -151,13 +178,13 @@ def build_ui_router(
         run_id = payload["launch_payload"]["run"]["run_id"]
         return _redirect_with_notice(
             f"/ui/runs/{run_id}",
-            f"launch completed: preset={payload['launch_payload']['selected_preset_id']}",
+            f"启动完成：预设={payload['launch_payload']['selected_preset_id']}",
         )
 
     @router.post("/ui/workbench/{session_id}/generate-profiles")
     def web_workbench_generate_profiles(session_id: str) -> RedirectResponse:
         service.generate_session_profiles(session_id)
-        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "generated profiles refreshed")
+        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "会话角色配置已刷新")
 
     @router.post("/ui/workbench/{session_id}/followup")
     async def web_workbench_followup(session_id: str, request: Request) -> RedirectResponse:
@@ -166,7 +193,7 @@ def build_ui_router(
         if not instruction:
             return _redirect_with_notice(
                 f"/ui/workbench?session_id={session_id}",
-                "follow-up skipped: instruction is required",
+                "后续事项已跳过：指令不能为空",
             )
         intent = str(form.get("intent") or "continue").strip() or "continue"
         blocking = str(form.get("blocking") or "").lower() in {"1", "true", "on", "yes"}
@@ -178,14 +205,14 @@ def build_ui_router(
             blocking=blocking,
             run_id=run_id,
         )
-        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "follow-up queued")
+        return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "后续事项已加入队列")
 
     @router.post("/ui/actions/{run_id}/resume")
     def web_resume_run(run_id: str) -> RedirectResponse:
         bundle = service.resume_run(run_id)
         return _redirect_with_notice(
             f"/ui/runs/{run_id}",
-            f"resume completed: status={bundle.run.status} evidence={bundle.evidence.evidence_id}",
+            f"继续执行完成：状态={bundle.run.status} 证据={bundle.evidence.evidence_id}",
         )
 
     @router.post("/ui/actions/{run_id}/approve")
@@ -193,7 +220,7 @@ def build_ui_router(
         bundle = service.approve_run_review(run_id)
         return _redirect_with_notice(
             f"/ui/runs/{run_id}",
-            f"approve completed: review={bundle.review_verdict.decision} status={bundle.run.status}",
+            f"通过审查完成：审查={bundle.review_verdict.decision} 状态={bundle.run.status}",
         )
 
     @router.post("/ui/actions/{run_id}/reject")
@@ -201,7 +228,7 @@ def build_ui_router(
         bundle = service.reject_run_review(run_id)
         return _redirect_with_notice(
             f"/ui/runs/{run_id}",
-            f"reject completed: review={bundle.review_verdict.decision} status={bundle.run.status}",
+            f"拒绝审查完成：审查={bundle.review_verdict.decision} 状态={bundle.run.status}",
         )
 
     @router.post("/ui/actions/{run_id}/reconcile")
@@ -209,24 +236,24 @@ def build_ui_router(
         result = service.reconcile_run(run_id)
         return _redirect_with_notice(
             f"/ui/runs/{run_id}",
-            f"reconcile inspected: passed={result['passed']} problems={result['problem_count']}",
+            f"状态对账完成：通过={result['passed']} 问题={result['problem_count']}",
         )
 
     @router.post("/ui/actions/{run_id}/cancel")
     def web_cancel_run(run_id: str) -> RedirectResponse:
         run = service.cancel_run(run_id)
-        return _redirect_with_notice(f"/ui/runs/{run_id}", f"cancel completed: status={run.status}")
+        return _redirect_with_notice(f"/ui/runs/{run_id}", f"取消完成：状态={run.status}")
 
     @router.post("/ui/actions/batch-resume")
     async def web_batch_resume_runs(request: Request) -> RedirectResponse:
         form = await request.form()
         run_ids = [str(item) for item in form.getlist("run_id") if str(item).strip()]
         if not run_ids:
-            return _redirect_with_notice("/ui/reviews", "batch-resume skipped: no runs selected")
+            return _redirect_with_notice("/ui/reviews", "批量继续已跳过：没有选中运行")
         result = service.resume_runs_parallel(run_ids, max_workers=min(len(run_ids), 4))
         return _redirect_with_notice(
             "/ui/reviews",
-            f"batch-resume completed: requested={len(run_ids)} results={len(result['results'])}",
+            f"批量继续完成：请求={len(run_ids)} 结果={len(result['results'])}",
         )
 
     return router

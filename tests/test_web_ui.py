@@ -52,13 +52,13 @@ def test_api_and_web_ui_expose_operator_surfaces(tmp_path: Path) -> None:
     assert operator_response.json()["run"]["run_id"] == review_run["run_id"]
     assert operator_response.json()["status_detail"]["effective_review_state"] == "human_pending"
     assert operator_response.json()["cluster_overview"]["enabled"] is False
-    assert "Run Explorer" in runs_page_response.text
-    assert "Pending Review Console" in reviews_page_response.text
-    assert "Governance" in governance_page_response.text
-    assert "Effective Configuration" in config_page_response.text
-    assert "Operator Dashboard" in dashboard_response.text
-    assert "Scheduler authority cluster disabled (local-only mode)." in dashboard_response.text
-    assert "Scheduler authority cluster disabled (local-only mode)." in governance_page_response.text
+    assert "运行目录" in runs_page_response.text
+    assert "待审查控制台" in reviews_page_response.text
+    assert "治理" in governance_page_response.text
+    assert "有效配置" in config_page_response.text
+    assert "操作台总览" in dashboard_response.text
+    assert "调度权威集群已关闭，当前为本地单机模式。" in dashboard_response.text
+    assert "调度权威集群已关闭，当前为本地单机模式。" in governance_page_response.text
     assert review_run["run_id"] in run_page_response.text
 
 
@@ -113,15 +113,42 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     preview_query = parse_qs(urlparse(preview_location).query)
     session_id = preview_query["session_id"][0]
     assert urlparse(preview_location).path == "/ui/workbench"
-    assert preview_query["notice"] == ["workbench preview refreshed"]
+    assert preview_query["notice"] == ["工作台预览已刷新"]
 
     workbench_response = client.get(preview_location)
     assert workbench_response.status_code == 200
-    assert "Interaction Workbench" in workbench_response.text
+    assert "交互式工作台" in workbench_response.text
+    assert "流式聊天工作台" in workbench_response.text
+    assert "EventSource" in workbench_response.text
+    assert "chat-stream" in workbench_response.text
+    assert "data-message-id" in workbench_response.text
+    assert "after_event_id" in workbench_response.text
+    assert "heartbeatReceived" in workbench_response.text
+    assert "assistant_delta" in workbench_response.text
+    assert 'eventId.indexOf("chatevt_") === 0' in workbench_response.text
+    assert "data-chat-confirm-action" in workbench_response.text
+    assert 'dataset.streaming !== "true"' in workbench_response.text
+    assert "chat-llm-status" in workbench_response.text
+    assert "workflow-status-feed" in workbench_response.text
+    assert "事件流已断开" not in workbench_response.text
     assert session_id in workbench_response.text
-    assert "ready_to_launch" in workbench_response.text
-    assert "Execution Defaults" in workbench_response.text
-    assert "Recent Sessions" in workbench_response.text
+    assert "可启动" in workbench_response.text
+    assert "执行默认值" in workbench_response.text
+    assert "最近会话" in workbench_response.text
+
+    chat_response = client.post(
+        "/ui/workbench/chat",
+        data={"session_id": session_id, "message": "plan"},
+        follow_redirects=False,
+    )
+    assert chat_response.status_code == 303
+    chat_location = chat_response.headers["location"]
+    chat_query = parse_qs(urlparse(chat_location).query)
+    assert chat_query["session_id"] == [session_id]
+    assert chat_query["notice"] == ["聊天消息已处理"]
+    chat_page_response = client.get(chat_location)
+    assert "计划预览" in chat_page_response.text
+    assert "流式聊天工作台" in chat_page_response.text
 
     clarify_response = client.post(
         f"/ui/workbench/{session_id}/clarify",
@@ -138,12 +165,12 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     clarify_query = parse_qs(urlparse(clarify_location).query)
     assert urlparse(clarify_location).path == "/ui/workbench"
     assert clarify_query["session_id"] == [session_id]
-    assert clarify_query["notice"] == ["clarifications updated"]
+    assert clarify_query["notice"] == ["澄清信息已更新"]
 
     clarified_workbench_response = client.get(clarify_location)
     assert clarified_workbench_response.status_code == 200
     assert session_id in clarified_workbench_response.text
-    assert "Plan Draft" in clarified_workbench_response.text
+    assert "计划草案" in clarified_workbench_response.text
 
     launch_response = client.post(
         f"/ui/workbench/{session_id}/launch",
@@ -157,7 +184,7 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     launch_query = parse_qs(parsed_launch.query)
     run_id = parsed_launch.path.removeprefix("/ui/runs/")
     assert parsed_launch.path == f"/ui/runs/{run_id}"
-    assert launch_query["notice"] == ["launch completed: preset=project_delivery"]
+    assert launch_query["notice"] == ["启动完成：预设=project_delivery"]
 
     run_page_response = client.get(launch_location)
     operator_response = client.get(f"/runs/{run_id}/operator-view")
@@ -167,6 +194,16 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     assert operator_response.json()["run"]["run_id"] == run_id
     assert operator_response.json()["run"]["status"] == "prepared"
 
+    resume_chat_response = client.post(
+        "/ui/workbench/chat",
+        data={"session_id": session_id, "message": "resume"},
+        follow_redirects=False,
+    )
+    assert resume_chat_response.status_code == 303
+    resume_chat_page = client.get(resume_chat_response.headers["location"])
+    assert "需要确认" in resume_chat_page.text
+    assert "继续运行" in resume_chat_page.text
+
     generate_profiles_response = client.post(
         f"/ui/workbench/{session_id}/generate-profiles",
         follow_redirects=False,
@@ -174,8 +211,8 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     assert generate_profiles_response.status_code == 303
     generated_profiles_page = client.get(generate_profiles_response.headers["location"])
     assert generated_profiles_page.status_code == 200
-    assert "Generated Profiles" in generated_profiles_page.text
-    assert "Automation Watchdogs" in generated_profiles_page.text
+    assert "已生成角色配置" in generated_profiles_page.text
+    assert "自动化观察器" in generated_profiles_page.text
 
     followup_response = client.post(
         f"/ui/workbench/{session_id}/followup",
@@ -193,13 +230,13 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
     followup_query = parse_qs(urlparse(followup_location).query)
     assert urlparse(followup_location).path == "/ui/workbench"
     assert followup_query["session_id"] == [session_id]
-    assert followup_query["notice"] == ["follow-up queued"]
+    assert followup_query["notice"] == ["后续事项已加入队列"]
 
     followup_page_response = client.get(followup_location)
     assert followup_page_response.status_code == 200
-    assert "Follow-Up Queue" in followup_page_response.text
-    assert "Active Run Checkpoint" in followup_page_response.text
-    assert "Generated Profiles" in followup_page_response.text
-    assert "Automation Watchdogs" in followup_page_response.text
+    assert "后续事项队列" in followup_page_response.text
+    assert "当前运行检查点" in followup_page_response.text
+    assert "已生成角色配置" in followup_page_response.text
+    assert "自动化观察器" in followup_page_response.text
     assert "review_gate" in followup_page_response.text
     assert run_id in followup_page_response.text

@@ -17,6 +17,9 @@ def validate_smoke_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             {"capability": "noop", "adapter_name": "noop", "adapter_class": "NoopAdapter"},
             {"capability": "shell_exec", "adapter_name": "shell", "adapter_class": "ShellAdapter"},
             {"capability": "shell_exec", "adapter_name": "codex", "adapter_class": "CodexAdapter"},
+            {"capability": "shell_exec", "adapter_name": "claude_architect", "adapter_class": "ClaudeArchitectAdapter"},
+            {"capability": "shell_exec", "adapter_name": "mmx_multimodal", "adapter_class": "MMXMultimodalAdapter"},
+            {"capability": "shell_exec", "adapter_name": "vertex_multimodal", "adapter_class": "VertexMultimodalAdapter"},
             {"capability": "shell_exec", "adapter_name": "opencode", "adapter_class": "OpenCodeAdapter"},
         ]
         and payload.get("auto_run", {}).get("status") == "completed"

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, status
+from fastapi.responses import StreamingResponse
 
 from apps.orchestrator_api.request_models import (
+    ChatActionConfirmRequest,
+    ChatMessageRequest,
     ClarificationUpdateRequest,
     CreateIntentSessionRequest,
     FollowupRequestPayload,
@@ -58,9 +63,46 @@ def build_interaction_router(service: OrchestratorService) -> APIRouter:
             followup_context=payload.followup_context,
         )
 
+    @router.post("/interaction/chat/messages", status_code=status.HTTP_201_CREATED)
+    def post_chat_message(payload: ChatMessageRequest) -> dict:
+        return service.post_chat_message(
+            session_id=payload.session_id,
+            run_id=payload.run_id,
+            content=payload.content,
+            mode=payload.mode,
+            client_message_id=payload.client_message_id,
+        )
+
+    @router.post("/interaction/chat/actions/{action_id}/confirm")
+    def confirm_chat_action(action_id: str, payload: ChatActionConfirmRequest | None = None) -> dict:
+        return service.confirm_chat_action(
+            action_id,
+            rationale=payload.rationale if payload is not None else None,
+        )
+
     @router.get("/interaction/sessions/{session_id}")
     def get_intent_session(session_id: str) -> dict:
         return service.get_intent_session_payload(session_id)
+
+    @router.get("/interaction/sessions/{session_id}/stream")
+    def stream_intent_session(
+        session_id: str,
+        after_message_id: str | None = None,
+        after_event_id: str | None = None,
+    ) -> StreamingResponse:
+        def _event_stream():
+            for item in service.build_interaction_stream_events(
+                session_id,
+                after_message_id=after_message_id,
+                after_event_id=after_event_id,
+            ):
+                event_id = item.get("id")
+                if event_id is not None:
+                    yield f"id: {event_id}\n"
+                yield f"event: {item['event']}\n"
+                yield f"data: {json.dumps(item['data'], ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
     @router.get("/interaction/sessions/{session_id}/generated-profiles")
     def list_session_generated_profiles(session_id: str, limit: int = 20) -> list[dict]:

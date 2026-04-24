@@ -40,12 +40,38 @@ from packages.core_domain.errors import (
     MutationContractError,
     ParallelBarrierBrokenError,
     PresetNotFoundError,
+    RepoMutationScopeError,
     WorkflowError,
 )
 from packages.core_domain.service_types import ExecutedRunBundle, PreparedRunBundle, ReviewedRunBundle
+from packages.worker_adapters.base import ExecutionResult
 
 
 class LifecycleServiceMixin:
+    def _execution_result_from_exception(
+        self,
+        *,
+        runtime_task_id: str,
+        adapter_name: str,
+        exc: Exception,
+    ) -> ExecutionResult:
+        now = self._utc_now()
+        return ExecutionResult(
+            runtime_task_id=runtime_task_id,
+            return_code=1,
+            stdout="",
+            stderr=f"{type(exc).__name__}: {exc}",
+            started_at=now,
+            finished_at=now,
+            duration_ms=0,
+            artifact_paths=[],
+            adapter_name=adapter_name,
+            metadata={
+                "failure_stage": "worker_adapter_execution",
+                "exception_type": type(exc).__name__,
+            },
+        )
+
     def _parallel_batch_payload(self, barrier_id: str, member_count: int, state: str) -> dict[str, Any]:
         return {
             "barrier_id": barrier_id,
@@ -190,6 +216,9 @@ class LifecycleServiceMixin:
             run_id=run.run_id,
             adapter_name=capability_route.adapter_name if capability_route is not None else selected_adapter,
             task_kind=resolved_task_kind,
+            preferred_cluster_template_ids=(
+                [cluster_template_id] if cluster_template_id and cluster_member_id is None else None
+            ),
         )
         snapshot.task_packet = TaskPacket.model_validate(
             {
@@ -212,7 +241,13 @@ class LifecycleServiceMixin:
                     },
                 }
             )
-        orchestration_plan = self._default_orchestration_plan_for_preset(preset.preset_id, run.run_id)
+        orchestration_plan = None
+        if cluster_member_id is None:
+            orchestration_plan = self._default_orchestration_plan_for_preset(
+                preset.preset_id,
+                run.run_id,
+                preferred_cluster_template_ids=[cluster_template_id] if cluster_template_id else None,
+            )
         if orchestration_plan is not None:
             snapshot.task_packet = TaskPacket.model_validate(
                 {
@@ -1037,48 +1072,67 @@ class LifecycleServiceMixin:
                     connection=connection,
                 )
                 connection.commit()
-            if self._default_orchestration_plan_for_preset(preset.preset_id, run.run_id) is not None:
-                connection.commit()
-                execution_result = self._execute_project_delivery_orchestration(execution_packet)
-            elif worker_pool_profile is not None:
-                if execution_packet.mutation_contract is not None and execution_packet.mutation_contract.mutation_mode == MutationMode.patch_apply:
-                    raise MutationContractError(
-                        "repo mutation tasks must run against the local workspace and cannot be dispatched to worker pools",
-                        {"worker_pool_id": worker_pool_profile.worker_pool_id},
-                    )
-                if worker_pool_profile.dispatch_mode == "remote_http":
+            try:
+                is_cluster_member_run = bool(execution_packet.env.get("WORKFLOW_CLUSTER_MEMBER_ID"))
+                if not is_cluster_member_run and self._default_orchestration_plan_for_preset(
+                    preset.preset_id,
+                    run.run_id,
+                    preferred_cluster_template_ids=[
+                        execution_packet.env["WORKFLOW_CLUSTER_TEMPLATE_ID"]
+                    ] if execution_packet.env.get("WORKFLOW_CLUSTER_TEMPLATE_ID") else None,
+                ) is not None:
                     connection.commit()
-                dispatch_result = self.external_worker_gateway.dispatch(
-                    packet=execution_packet,
-                    profile=worker_pool_profile,
-                    lease_id=worker_lease.lease_id,
-                    launch_local=adapter.launch,
-                    scheduler_context=scheduler_context,
+                    execution_result = self._execute_project_delivery_orchestration(execution_packet)
+                elif worker_pool_profile is not None:
+                    if (
+                        execution_packet.mutation_contract is not None
+                        and execution_packet.mutation_contract.mutation_mode == MutationMode.patch_apply
+                    ):
+                        raise MutationContractError(
+                            "repo mutation tasks must run against the local workspace and cannot be dispatched to worker pools",
+                            {"worker_pool_id": worker_pool_profile.worker_pool_id},
+                        )
+                    if worker_pool_profile.dispatch_mode == "remote_http":
+                        connection.commit()
+                    dispatch_result = self.external_worker_gateway.dispatch(
+                        packet=execution_packet,
+                        profile=worker_pool_profile,
+                        lease_id=worker_lease.lease_id,
+                        launch_local=adapter.launch,
+                        scheduler_context=scheduler_context,
+                    )
+                    execution_result = dispatch_result.execution_result
+                    if worker_pool_profile.dispatch_mode == "remote_http":
+                        refreshed_state = self.runtime_state_repo.get_by_task(runtime_task.runtime_task_id, connection=connection)
+                        if refreshed_state is not None:
+                            resumed_state = refreshed_state
+                    self.event_repo.append(
+                        RunEvent(
+                            run_id=run.run_id,
+                            event_type=RunEventType.worker_dispatch_accepted,
+                            object_type="worker_lease",
+                            object_id=worker_lease.lease_id,
+                            summary="Worker dispatch accepted",
+                            payload_json={
+                                "run_id": run.run_id,
+                                "runtime_task_id": runtime_task.runtime_task_id,
+                                "lease_id": worker_lease.lease_id,
+                                "worker_pool_id": worker_pool_profile.worker_pool_id,
+                                "dispatch_id": dispatch_result.execution_target.dispatch_id,
+                            },
+                        ),
+                        connection=connection,
+                    )
+                else:
+                    execution_result = self._execute_repo_mutation(adapter, execution_packet)
+            except RepoMutationScopeError:
+                raise
+            except Exception as exc:
+                execution_result = self._execution_result_from_exception(
+                    runtime_task_id=runtime_task.runtime_task_id,
+                    adapter_name=adapter_name,
+                    exc=exc,
                 )
-                execution_result = dispatch_result.execution_result
-                if worker_pool_profile.dispatch_mode == "remote_http":
-                    refreshed_state = self.runtime_state_repo.get_by_task(runtime_task.runtime_task_id, connection=connection)
-                    if refreshed_state is not None:
-                        resumed_state = refreshed_state
-                self.event_repo.append(
-                    RunEvent(
-                        run_id=run.run_id,
-                        event_type=RunEventType.worker_dispatch_accepted,
-                        object_type="worker_lease",
-                        object_id=worker_lease.lease_id,
-                        summary="Worker dispatch accepted",
-                        payload_json={
-                            "run_id": run.run_id,
-                            "runtime_task_id": runtime_task.runtime_task_id,
-                            "lease_id": worker_lease.lease_id,
-                            "worker_pool_id": worker_pool_profile.worker_pool_id,
-                            "dispatch_id": dispatch_result.execution_target.dispatch_id,
-                        },
-                    ),
-                    connection=connection,
-                )
-            else:
-                execution_result = self._execute_repo_mutation(adapter, execution_packet)
             if isinstance(execution_result.metadata.get("execution_target"), dict):
                 resumed_state = self._state_ref_with_payload_updates(
                     resumed_state,
