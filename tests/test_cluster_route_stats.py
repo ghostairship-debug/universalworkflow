@@ -27,6 +27,9 @@ def test_cluster_route_decisions_are_recorded_and_summarized(tmp_path: Path) -> 
     stats = service.get_cluster_route_stats(days=30)
 
     assert stats["decision_count"] >= 1
+    assert stats["source_counts"]["cluster_router"] >= 1
+    assert stats["dynamic_decision_count"] == 0
+    assert stats["window"]["days"] == 30
     assert stats["template_counts"]["search_cluster"] >= 1
     assert stats["recent_decisions"][0]["selected_template_ids"] == ["search_cluster"]
 
@@ -50,5 +53,8 @@ def test_api_and_cli_expose_cluster_route_stats(tmp_path: Path) -> None:
     )
 
     assert api_payload["template_counts"]["design_cluster"] >= 1
+    assert api_payload["source_counts"]["cluster_router"] >= 1
     assert cli_result.exit_code == 0
-    assert json.loads(cli_result.stdout)["template_counts"]["design_cluster"] >= 1
+    cli_payload = json.loads(cli_result.stdout)
+    assert cli_payload["template_counts"]["design_cluster"] >= 1
+    assert cli_payload["window"]["days"] == 30

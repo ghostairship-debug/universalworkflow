@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Barrier, BrokenBarrierError
 from typing import Any
@@ -33,7 +35,7 @@ from packages.contracts import (
 )
 from packages.contracts.models import new_id
 from packages.core_domain.compile import CompileSnapshot, compile_run as build_compile_snapshot
-from packages.core_domain.db import unit_of_work
+from packages.core_domain.db import get_connection, unit_of_work
 from packages.core_domain.errors import (
     BudgetExhaustedError,
     EntityNotFoundError,
@@ -43,6 +45,7 @@ from packages.core_domain.errors import (
     RepoMutationScopeError,
     WorkflowError,
 )
+from packages.core_domain.parallel_execution_contract import build_parallel_batch_plan, build_partial_failure_resume
 from packages.core_domain.service_types import ExecutedRunBundle, PreparedRunBundle, ReviewedRunBundle
 from packages.worker_adapters.base import ExecutionResult
 
@@ -77,6 +80,123 @@ class LifecycleServiceMixin:
             "barrier_id": barrier_id,
             "member_count": member_count,
             "state": state,
+        }
+
+    def _parallel_run_contracts(self, run_ids: list[str]) -> list[dict[str, Any]]:
+        contracts: list[dict[str, Any]] = []
+        for run_id in run_ids:
+            runtime_tasks = self.task_repo.list_runtime_tasks_for_run(run_id)
+            runtime_task = runtime_tasks[-1] if runtime_tasks else None
+            task_packet = self.task_repo.get_task_packet(runtime_task.runtime_task_id) if runtime_task else None
+            mutation_contract = task_packet.mutation_contract if task_packet is not None else None
+            contracts.append(
+                {
+                    "run_id": run_id,
+                    "runtime_task_id": runtime_task.runtime_task_id if runtime_task is not None else None,
+                    "task_packet_id": task_packet.task_packet_id if task_packet is not None else None,
+                    "mutation_mode": str(mutation_contract.mutation_mode) if mutation_contract is not None else "artifact_only",
+                    "write_set": list(mutation_contract.write_set) if mutation_contract is not None else [],
+                }
+            )
+        return contracts
+
+    def _parallel_git_dirty_check(self) -> dict[str, Any]:
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=self._workspace_root(),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
+            )
+        except Exception as exc:
+            return {
+                "available": False,
+                "paths": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        paths: list[str] = []
+        for line in result.stdout.splitlines():
+            raw_path = line[3:].strip() if len(line) > 3 else ""
+            if " -> " in raw_path:
+                paths.extend(item.strip() for item in raw_path.split(" -> ") if item.strip())
+            elif raw_path:
+                paths.append(raw_path)
+        return {
+            "available": result.returncode == 0,
+            "paths": paths if result.returncode == 0 else [],
+            "return_code": result.returncode,
+            "stderr": result.stderr.strip(),
+        }
+
+    def _parallel_sqlite_check(self) -> dict[str, Any]:
+        try:
+            with get_connection(self.db_path) as connection:
+                connection.execute("SELECT 1").fetchone()
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                return {"ready": False, "error": str(exc)}
+            return {"ready": True, "warning": str(exc)}
+        except Exception as exc:
+            return {"ready": True, "warning": f"{type(exc).__name__}: {exc}"}
+        return {"ready": True, "error": None}
+
+    def _serial_resume_batch(
+        self,
+        run_ids: list[str],
+        *,
+        barrier_id: str,
+        max_workers: int | None,
+        plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        for run_id in run_ids:
+            try:
+                bundle = self.resume_run(run_id)
+                results.append(
+                    {
+                        "run": bundle.run.model_dump(mode="json"),
+                        "evidence_id": bundle.evidence.evidence_id,
+                        "review_decision": bundle.review_verdict.decision if bundle.review_verdict is not None else None,
+                    }
+                )
+            except WorkflowError as exc:
+                errors.append(
+                    {
+                        "run_id": run_id,
+                        "code": exc.code,
+                        "message": exc.message,
+                        "details": exc.details,
+                    }
+                )
+            except Exception as exc:
+                errors.append(
+                    {
+                        "run_id": run_id,
+                        "code": "unexpected_serial_batch_error",
+                        "message": str(exc),
+                        "details": {},
+                    }
+                )
+        results.sort(key=lambda item: item["run"]["run_id"])
+        errors.sort(key=lambda item: item["run_id"])
+        return {
+            "barrier_id": barrier_id,
+            "member_count": len(run_ids),
+            "max_workers": plan["effective_max_workers"],
+            "status": "completed" if not errors else "failed",
+            "results": results,
+            "errors": errors,
+            **plan,
+            "partial_failure_resume": build_partial_failure_resume(
+                run_ids=run_ids,
+                errors=errors,
+                requested_max_workers=max_workers,
+            ),
         }
 
     def _snapshot_for_run(
@@ -1621,6 +1741,18 @@ class LifecycleServiceMixin:
                 normalized_run_ids.append(run_id)
                 seen.add(run_id)
         barrier_id = new_id("barrier")
+        run_contracts = self._parallel_run_contracts(normalized_run_ids)
+        git_dirty_check = self._parallel_git_dirty_check()
+        sqlite_check = self._parallel_sqlite_check()
+        plan = build_parallel_batch_plan(
+            run_contracts,
+            requested_max_workers=max_workers,
+            dirty_paths=git_dirty_check.get("paths", []),
+            sqlite_ready=bool(sqlite_check.get("ready", True)),
+            sqlite_error=sqlite_check.get("error"),
+        )
+        plan["audit"]["git_dirty_check"] = git_dirty_check
+        plan["audit"]["sqlite_check"] = sqlite_check
         if not normalized_run_ids:
             return {
                 "barrier_id": barrier_id,
@@ -1629,9 +1761,23 @@ class LifecycleServiceMixin:
                 "status": "completed",
                 "results": [],
                 "errors": [],
+                **plan,
+                "partial_failure_resume": build_partial_failure_resume(
+                    run_ids=[],
+                    errors=[],
+                    requested_max_workers=max_workers,
+                ),
             }
 
-        worker_count = min(max_workers or len(normalized_run_ids), len(normalized_run_ids))
+        if not plan["barrier_enabled"]:
+            return self._serial_resume_batch(
+                normalized_run_ids,
+                barrier_id=barrier_id,
+                max_workers=max_workers,
+                plan=plan,
+            )
+
+        worker_count = plan["effective_max_workers"]
         sync_barrier = Barrier(len(normalized_run_ids))
         results: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -1690,4 +1836,10 @@ class LifecycleServiceMixin:
             "status": "completed" if not errors else "failed",
             "results": results,
             "errors": errors,
+            **plan,
+            "partial_failure_resume": build_partial_failure_resume(
+                run_ids=normalized_run_ids,
+                errors=errors,
+                requested_max_workers=max_workers,
+            ),
         }

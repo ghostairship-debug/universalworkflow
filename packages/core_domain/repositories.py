@@ -730,13 +730,24 @@ class ClusterRouteDecisionRepository(RepositoryBase):
             if datetime.fromisoformat(row["created_at"]).timestamp() >= cutoff
         ]
         template_counts: dict[str, int] = {}
+        source_counts: dict[str, int] = {}
+        dynamic_decision_count = 0
         for decision in decisions:
+            source_counts[decision.source] = source_counts.get(decision.source, 0) + 1
+            if decision.dynamic_enabled:
+                dynamic_decision_count += 1
             for template_id in decision.selected_template_ids:
                 template_counts[template_id] = template_counts.get(template_id, 0) + 1
         return {
             "days": days,
+            "window": {
+                "days": days,
+                "cutoff_timestamp": cutoff,
+            },
             "decision_count": len(decisions),
             "template_counts": dict(sorted(template_counts.items())),
+            "source_counts": dict(sorted(source_counts.items())),
+            "dynamic_decision_count": dynamic_decision_count,
             "recent_decisions": [item.model_dump(mode="json") for item in decisions[:20]],
         }
 

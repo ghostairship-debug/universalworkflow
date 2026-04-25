@@ -1809,6 +1809,10 @@ def test_cli_batch_resume_returns_parallel_batch_summary(tmp_path: Path) -> None
     payload = json.loads(batch_result.stdout)
     assert payload["status"] == "completed"
     assert payload["member_count"] == 2
+    assert payload["execution_mode"] == "parallel"
+    assert payload["barrier_enabled"] is True
+    assert payload["degraded_to_serial"] is False
+    assert payload["partial_failure_resume"]["enabled"] is False
     assert len(payload["results"]) == 2
     assert json.loads(first_status_result.stdout)["parallel_batch"]["barrier_id"] == payload["barrier_id"]
     assert json.loads(first_detail_result.stdout)["parallel_batch"]["barrier_id"] == payload["barrier_id"]
