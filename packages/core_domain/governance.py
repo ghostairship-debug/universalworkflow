@@ -22,6 +22,7 @@ DEFAULT_REVIEW_DECISION_TABLE_PATH = REPO_ROOT / "docs" / "reviews" / "m1_review
 DEFAULT_TECH_DEBT_CANONICAL_PATH = REPO_ROOT / "docs" / "governance" / "tech_debt_registry.json"
 DEFAULT_REVIEW_DECISION_CANONICAL_PATH = REPO_ROOT / "docs" / "governance" / "review_policy_cases.json"
 DEFAULT_VALIDATION_REPORT_PATH = REPO_ROOT / "state" / "offline_validation_report.json"
+VALIDATION_REPORT_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 def _extract_numbered_section(text: str, section_number: int) -> str:
@@ -344,6 +345,26 @@ def _load_validation_report(validation_report_path: str | Path | None = None) ->
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _validation_report_freshness(report: dict[str, Any] | None) -> dict[str, Any]:
+    if report is None:
+        return {"is_fresh": False, "stale_reason": "report_missing", "age_seconds": None}
+    generated_at = report.get("generated_at")
+    if not generated_at:
+        return {"is_fresh": False, "stale_reason": "missing_generated_at", "age_seconds": None}
+    try:
+        generated = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except ValueError:
+        return {"is_fresh": False, "stale_reason": "invalid_generated_at", "age_seconds": None}
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=UTC)
+    age_seconds = int((datetime.now(UTC) - generated.astimezone(UTC)).total_seconds())
+    if age_seconds < -300:
+        return {"is_fresh": False, "stale_reason": "generated_at_in_future", "age_seconds": age_seconds}
+    if age_seconds > VALIDATION_REPORT_MAX_AGE_SECONDS:
+        return {"is_fresh": False, "stale_reason": "stale_generated_at", "age_seconds": age_seconds}
+    return {"is_fresh": True, "stale_reason": None, "age_seconds": max(age_seconds, 0)}
+
+
 def _load_capability_routes() -> list[dict[str, str]]:
     return WorkerRouter().routes()
 
@@ -553,6 +574,7 @@ def build_governance_metrics_report(
         registry_path=registry_path,
     )
     validation_report = _load_validation_report(validation_report_path)
+    validation_freshness = _validation_report_freshness(validation_report)
     capability_routes = _load_capability_routes()
     domain_packs = _load_domain_pack_catalog()
     runtime_inventory = _load_runtime_inventory(db_path)
@@ -592,6 +614,11 @@ def build_governance_metrics_report(
         "validation": {
             "report_present": validation_report is not None,
             "overall_passed": bool((validation_report or {}).get("overall_passed")),
+            "fresh_success": bool((validation_report or {}).get("overall_passed")) and validation_freshness["is_fresh"] is True,
+            "is_fresh": validation_freshness["is_fresh"],
+            "stale_reason": validation_freshness["stale_reason"],
+            "age_seconds": validation_freshness["age_seconds"],
+            "generated_at": (validation_report or {}).get("generated_at"),
             "check_count": len(checks),
             "passed_check_count": passed_check_count,
             "failed_or_missing_check_count": len(checks) - passed_check_count,
@@ -630,6 +657,19 @@ def build_governance_alert_report(
                 "severity": "blocking",
                 "message": "offline validation report is missing",
                 "recommended_action": "run offline validation before freeze or release",
+            }
+        )
+    elif metrics["validation"]["is_fresh"] is False:
+        alerts.append(
+            {
+                "alert_id": "validation_report_stale",
+                "severity": "blocking",
+                "message": "offline validation report is missing freshness proof or is too old",
+                "recommended_action": "rerun offline validation and use the fresh report for release readiness",
+                "details": {
+                    "stale_reason": metrics["validation"].get("stale_reason"),
+                    "age_seconds": metrics["validation"].get("age_seconds"),
+                },
             }
         )
     elif metrics["validation"]["overall_passed"] is False:
@@ -704,6 +744,7 @@ def build_governance_alert_report(
             "blocking_open_count": metrics["tech_debt"].get("blocking_open_count", 0),
             "supported_policy_count": metrics["review_policy"]["supported_policy_count"],
             "validation_overall_passed": metrics["validation"]["overall_passed"],
+            "validation_is_fresh": metrics["validation"].get("is_fresh"),
             "cluster_flow_passed": metrics["validation"].get("cluster_flow_passed"),
             "awaiting_review_runs": awaiting_review_runs,
         },
@@ -735,6 +776,7 @@ def build_release_readiness_report(
         registry_path=registry_path,
     )
     validation_report = _load_validation_report(validation_report_path)
+    validation_freshness = _validation_report_freshness(validation_report)
     capability_routes = _load_capability_routes()
     domain_packs = _load_domain_pack_catalog()
     validation_summary = None
@@ -747,6 +789,9 @@ def build_release_readiness_report(
         "source_mode": "explicit_arg" if validation_report_path is not None else "default_path",
         "report_present": validation_report is not None,
         "generated_at": validation_report.get("generated_at") if validation_report is not None else None,
+        "is_fresh": validation_freshness["is_fresh"],
+        "stale_reason": validation_freshness["stale_reason"],
+        "age_seconds": validation_freshness["age_seconds"],
         "available_checks": sorted((validation_report or {}).get("checks", {}).keys()),
     }
     if validation_report is not None:
@@ -759,6 +804,9 @@ def build_release_readiness_report(
             "cluster_flow_passed": checks.get("cluster_flow", {}).get("passed"),
             "source_path": validation_evidence["source_path"],
             "generated_at": validation_evidence["generated_at"],
+            "is_fresh": validation_evidence["is_fresh"],
+            "stale_reason": validation_evidence["stale_reason"],
+            "age_seconds": validation_evidence["age_seconds"],
         }
 
     presets = _load_policy_presets(db_path)
@@ -770,8 +818,12 @@ def build_release_readiness_report(
     gates = [
         {
             "gate": "offline_validation",
-            "passed": validation_summary is not None and validation_summary["overall_passed"] is True,
-            "detail": "latest offline validation report is present and fully green",
+            "passed": (
+                validation_summary is not None
+                and validation_summary["overall_passed"] is True
+                and validation_summary["is_fresh"] is True
+            ),
+            "detail": "latest offline validation report is present, fresh, and fully green",
         },
         {
             "gate": "review_policy_runtime",

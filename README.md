@@ -83,7 +83,7 @@ workflowctl --db-path state/workflow.db run from-task-card examples/local_task_c
 ## Historical Recovery Notes
 
 - Historical recovery plan: [M48_M51_RECOVERY_PLAN.md](docs/archive/evaluations/M48_M51_RECOVERY_PLAN.md). Current closeout truth is the M61-M66 issue register/report above.
-- Prefer `make test-fast`, `make test-core`, and `make test-full`; these targets create a unique pytest basetemp under `state/.pytest-tmp-m48m51/`.
+- Prefer `make test-fast`, `make test-core`, and `make test-full`; these targets create a unique pytest basetemp under `state/.pytest-tmp-workflow/`.
 - High-risk API actions require a single-use, scope-bound `OperatorActionReceipt` in the `X-Operator-Action-Receipt` header. Workbench confirmation cards create and consume receipts automatically.
 - Use `--workspace-root` or `WORKFLOW_WORKSPACE_ROOT` for file-mutating work; implicit cwd is only a fallback.
 
@@ -134,7 +134,7 @@ M43 生成的本地小游戏示例：
 
 ```powershell
 python -m infra.scripts.check_doc_links
-python -m infra.scripts.offline_validation --skip-offline-probe
+python -m infra.scripts.offline_validation --suite full --skip-offline-probe
 pytest -q
 ```
 

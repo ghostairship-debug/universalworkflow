@@ -62,13 +62,41 @@ def _operator_action_for_post(path: str, payload: dict[str, Any] | None = None) 
     return None
 
 
+def _operator_action_scope_for_post(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    normalized = path.split("?", 1)[0].rstrip("/")
+    payload = payload or {}
+    parts = [item for item in normalized.split("/") if item]
+    if normalized == "/runs/batch-resume":
+        return {"run_ids": payload.get("run_ids", []), "max_workers": payload.get("max_workers")}
+    if len(parts) >= 3 and parts[0] == "runs":
+        run_id = parts[1]
+        action = parts[2]
+        if action in {"resume", "approve", "reject", "cancel"}:
+            return {"run_id": run_id}
+        if action == "reconcile" and payload.get("apply"):
+            return {"run_id": run_id, "apply": True, "action": payload.get("action")}
+    if normalized == "/runs/launch" and payload.get("execute"):
+        return {"goal": payload.get("goal"), "preset_id": payload.get("preset_id"), "execute": True}
+    if len(parts) >= 4 and parts[0] == "interaction" and parts[1] == "sessions" and parts[3] == "launch":
+        return {
+            "session_id": parts[2],
+            "execute": True,
+            "selected_preset_id": payload.get("selected_preset_id"),
+            "selected_cluster_template_ids": payload.get("selected_cluster_template_ids", []),
+        }
+    return {}
+
+
 class ReceiptAwareTestClient(TestClient):
     def post(self, url, *args, **kwargs):  # type: ignore[override]
         headers = dict(kwargs.pop("headers", {}) or {})
         payload = kwargs.get("json") if isinstance(kwargs.get("json"), dict) else None
         action_type = _operator_action_for_post(str(url), payload)
         if action_type and "X-Operator-Action-Receipt" not in headers:
-            receipt = super().post("/operator-action-receipts", json={"action_type": action_type})
+            receipt = super().post(
+                "/operator-action-receipts",
+                json={"action_type": action_type, "scope_payload": _operator_action_scope_for_post(str(url), payload)},
+            )
             if receipt.status_code == 201:
                 headers["X-Operator-Action-Receipt"] = receipt.json()["receipt_id"]
         if headers:

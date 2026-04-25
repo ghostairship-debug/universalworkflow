@@ -24,5 +24,11 @@ jobs:
         run: make doctor-strict
       - name: Core tests
         run: make test-core
+      - name: Test matrix smoke
+        run: workflowctl --db-path state/workflow.db --workspace-root "$GITHUB_WORKSPACE" test matrix --suite core --dry-run
+      - name: Capability probe parser tests
+        run: python -m pytest tests/test_capability_probe.py -q
+      - name: Scoped receipt smoke
+        run: python -m pytest tests/test_operator_action_receipt.py -q
       - name: Offline validation
-        run: python -m infra.scripts.offline_validation --skip-offline-probe
+        run: python -m infra.scripts.offline_validation --suite quick --skip-offline-probe

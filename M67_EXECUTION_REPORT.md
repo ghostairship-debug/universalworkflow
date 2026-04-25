@@ -59,7 +59,7 @@ Bug-first observation:
 | --- | --- | --- |
 | P2 | completed | `OperatorActionReceipt` v2 / scope hash / bounded autonomy policy first slice |
 | P3 | completed | capability live-proof hard gate |
-| P4 | pending | validation / CI reliability |
+| P4 | completed | validation / CI reliability |
 | P5 | pending | Web and browser surface hardening |
 | P6 | pending | scheduler semantics and boot path |
 | P7 | pending | hot-file slimming |
@@ -67,7 +67,7 @@ Bug-first observation:
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P4-P8 blocking items 尚未完成。
+当前结论：`NO-GO`，因为 P5-P8 blocking items 尚未完成。
 
 M67 通过后，M68 才允许恢复能力层开发。
 
@@ -126,3 +126,37 @@ M67 通过后，M68 才允许恢复能力层开发。
 
 - `M67-PROBE-001` 已偿还。
 - M67 仍为 `NO-GO`，因为 P4-P8 blocking items 尚未完成。
+
+## P4: Validation And CI Reliability
+
+状态：`completed`
+
+完成动作：
+
+- 创建 P4 多 task-card：`P4A_validation_timeout_root_cause.md`、`P4B_validation_matrix_ci.md`、`P4C_validation_evidence_review.md`。
+- 使用 workflow 预演 P4 编排，输出 `p4_plan_graph.json`、`p4_policy_preview.json`、`p4_goal_packet.json`。
+- 修复 offline validation 子进程在 Windows 上通过 `multiprocessing.Queue` 传递大 payload 时可能卡住父进程 join 的 bug，改为 result JSON 文件传递。
+- 为 validation flow 增加 command trace、`last_command` 和 `flow_result_path`，timeout/failure 不再只留下模糊超时。
+- 将 `quick` CLI validation 从完整 CLI closeout 拆为短 smoke；完整 CLI/API/smoke/cluster 覆盖保留在 `full` 和 shards。
+- 修复 offline API/cluster validation helper，使自动申请的 `OperatorActionReceipt` 带上与真实请求一致的 `scope_payload`。
+- 修正 validation 中过期的 “zero open debt / release ready” 断言；M67 未收口期间验证治理字段真实性，不伪装 ready。
+- test matrix basetemp 已统一到 milestone-neutral `state/.pytest-tmp-workflow/`。
+
+验证：
+
+- `python -m pytest tests/test_offline_validation_runner.py tests/test_test_matrix.py -q --basetemp state/.pytest-tmp-workflow/p4-targeted`：11 passed。
+- `python -m pytest tests/test_governance.py -q --basetemp state/.pytest-tmp-workflow/p4-governance`：12 passed。
+- `workflowctl ... validation run --suite quick --skip-offline-probe --timeout-seconds 120`：passed，报告 `state/m67_workflow_closeout/evidence/p4_offline_validation_quick_pass.json`。
+- `workflowctl ... test matrix --suite unit`：57 passed。
+- `workflowctl ... test matrix --suite core`：87 passed。
+- `workflowctl ... validation run --suite full --shard 1/4`：passed，报告 `p4_full_shard_1of4_after_assertion.json`。
+- `workflowctl ... validation run --suite full --shard 2/4`：passed，报告 `p4_full_shard_2of4.json`。
+- `workflowctl ... validation run --suite full --shard 3/4`：passed，报告 `p4_full_shard_3of4_after_receipt.json`。
+- `workflowctl ... validation run --suite full --shard 4/4`：passed，报告 `p4_full_shard_4of4_after_receipt.json`。
+- `python -m infra.scripts.check_doc_links`：passed。
+- `workflowctl ... doctor --strict`：ok。
+
+剩余：
+
+- `M67-VAL-001` 已偿还。
+- M67 仍为 `NO-GO`，因为 P5-P8 blocking items 尚未完成。

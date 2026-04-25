@@ -54,7 +54,7 @@ class MatrixSelection:
 
 
 def _unique_basetemp(workspace_root: Path) -> Path:
-    root = workspace_root / "state" / ".pytest-tmp-m61m66"
+    root = workspace_root / "state" / ".pytest-tmp-workflow"
     root.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix="matrix-", dir=root)).resolve()
 

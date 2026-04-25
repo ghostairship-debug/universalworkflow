@@ -155,7 +155,7 @@ python -m infra.scripts.check_doc_links
 涉及运行路径、API、UI、验证脚本或活跃真相源时再运行：
 
 ```powershell
-python -m infra.scripts.offline_validation --skip-offline-probe
+python -m infra.scripts.offline_validation --suite full --skip-offline-probe
 pytest -q
 ```
 

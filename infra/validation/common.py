@@ -103,6 +103,18 @@ def sanitized_env() -> tuple[dict[str, str], list[str]]:
 
 
 def run_command(command: list[str], env: dict[str, str], *, timeout_seconds: float = 120.0) -> CommandResult:
+    trace_path = env.get("WORKFLOW_OFFLINE_VALIDATION_TRACE")
+    trace_event_id = f"{int(time.time() * 1000)}-{os.getpid()}"
+    _append_command_trace(
+        trace_path,
+        {
+            "event": "command_started",
+            "event_id": trace_event_id,
+            "command": command,
+            "started_at": utc_now_iso(),
+            "timeout_seconds": timeout_seconds,
+        },
+    )
     try:
         completed = subprocess.run(
             command,
@@ -116,13 +128,42 @@ def run_command(command: list[str], env: dict[str, str], *, timeout_seconds: flo
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
+        _append_command_trace(
+            trace_path,
+            {
+                "event": "command_timeout",
+                "event_id": trace_event_id,
+                "command": command,
+                "finished_at": utc_now_iso(),
+                "returncode": 124,
+            },
+        )
         return CommandResult(
             command=command,
             returncode=124,
             stdout=exc.stdout or "",
             stderr=f"{exc.stderr or ''}\ncommand timed out after {timeout_seconds}s".strip(),
         )
+    _append_command_trace(
+        trace_path,
+        {
+            "event": "command_finished",
+            "event_id": trace_event_id,
+            "command": command,
+            "finished_at": utc_now_iso(),
+            "returncode": completed.returncode,
+        },
+    )
     return CommandResult(command=command, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
+
+
+def _append_command_trace(trace_path: str | None, event: dict[str, Any]) -> None:
+    if not trace_path:
+        return
+    path = Path(trace_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def run_json_command(command: list[str], env: dict[str, str]) -> tuple[dict[str, Any] | list[Any], CommandResult]:
@@ -220,7 +261,12 @@ def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: flo
         receipt_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/operator-action-receipts", "", "", ""))
         receipt = http_post_json(
             receipt_url,
-            {"action_type": receipt_action, "risk_level": "high", "metadata": {"source": "offline_validation"}},
+            {
+                "action_type": receipt_action,
+                "risk_level": "high",
+                "scope_payload": _operator_action_scope_for_post(url, payload),
+                "metadata": {"source": "offline_validation"},
+            },
             timeout=timeout,
         )
         headers["X-Operator-Action-Receipt"] = receipt["receipt_id"]
@@ -254,6 +300,32 @@ def _operator_action_for_post(url: str, payload: dict[str, Any] | None = None) -
     if "/interaction/sessions/" in path and path.endswith("/launch") and payload and payload.get("execute"):
         return "launch_execute"
     return None
+
+
+def _operator_action_scope_for_post(url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.rstrip("/")
+    payload = payload or {}
+    parts = [item for item in path.split("/") if item]
+    if path == "/runs/batch-resume":
+        return {"run_ids": payload.get("run_ids", []), "max_workers": payload.get("max_workers")}
+    if len(parts) >= 3 and parts[0] == "runs":
+        run_id = parts[1]
+        action = parts[2]
+        if action in {"resume", "approve", "reject", "cancel"}:
+            return {"run_id": run_id}
+        if action == "reconcile" and payload.get("apply"):
+            return {"run_id": run_id, "apply": True, "action": payload.get("action")}
+    if path == "/runs/launch" and payload.get("execute"):
+        return {"goal": payload.get("goal"), "preset_id": payload.get("preset_id"), "execute": True}
+    if len(parts) >= 4 and parts[0] == "interaction" and parts[1] == "sessions" and parts[3] == "launch":
+        return {
+            "session_id": parts[2],
+            "execute": True,
+            "selected_preset_id": payload.get("selected_preset_id"),
+            "selected_cluster_template_ids": payload.get("selected_cluster_template_ids", []),
+        }
+    return {}
 
 
 def wait_for_api(base_url: str, timeout_seconds: float = 10.0) -> None:

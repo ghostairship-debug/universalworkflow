@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
-from packages.core_domain.test_matrix import select_matrix
+from packages.core_domain.test_matrix import build_pytest_command, select_matrix
 
 
 def test_test_matrix_selects_slow_shards_without_overlap() -> None:
@@ -46,4 +46,15 @@ def test_cli_test_matrix_dry_run_uses_workspace_root(tmp_path: Path) -> None:
     assert payload["dry_run"] is True
     assert payload["suite"] == "unit"
     assert str(tmp_path).replace("\\", "/") in payload["basetemp"]
+    assert ".pytest-tmp-workflow" in payload["basetemp"]
+    assert "m61m66" not in payload["basetemp"]
     assert "tests/test_service_decomposition.py" in payload["targets"]
+
+
+def test_test_matrix_uses_milestone_neutral_basetemp(tmp_path: Path) -> None:
+    _, _, basetemp = build_pytest_command(suite="unit", workspace_root=tmp_path)
+
+    basetemp_text = basetemp.as_posix()
+    assert ".pytest-tmp-workflow" in basetemp_text
+    assert "m48m51" not in basetemp_text
+    assert "m61m66" not in basetemp_text

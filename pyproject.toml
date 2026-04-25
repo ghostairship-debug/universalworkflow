@@ -37,7 +37,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apps*", "packages*"]
+include = ["apps*", "packages*", "infra*"]
 namespaces = true
 
 [tool.pytest.ini_options]

@@ -266,6 +266,13 @@
       "introduced_in": "M64/M66 capability closeout",
       "repaid_in": "M67 P3",
       "result": "Added provider-specific M67 live-proof contracts, rejected generic/simulated/dry-run/fallback-only evidence, forced Codex/OpenCode/Claude/LangChain probe paths to emit scoped proof after real backend execution, and passed require-live probes for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain"
+    },
+    {
+      "debt_id": "M67-VAL-001",
+      "description": "offline validation was not shardable/freshness-safe enough; timeout paths could leave stale success reports available to operators",
+      "introduced_in": "M61-M66 validation closeout",
+      "repaid_in": "M67 P4",
+      "result": "Added quick/full/shard validation entrypoints, per-flow timeout reports with command traces and last-command evidence, result-file subprocess transfer to avoid Windows multiprocessing Queue deadlocks, a quick CLI smoke path separate from the full closeout flow, scoped receipt v2 helpers for API/cluster validation, and milestone-neutral pytest basetemp"
     }
   ],
   "open_items": [
@@ -277,14 +284,6 @@
       "current_status": "blocking_open",
       "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
       "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
-    },
-    {
-      "debt_id": "M67-VAL-001",
-      "description": "offline validation is not yet shardable/freshness-safe enough; timeout paths can leave stale success reports available to operators",
-      "introduced_in": "M61-M66 validation closeout",
-      "planned_repayment_phase": "M67 P4",
-      "current_status": "blocking_open",
-      "blocking_impact": "blocks reliable closeout gates and bug-first recovery when validation hangs or times out"
     },
     {
       "debt_id": "M67-WEB-001",

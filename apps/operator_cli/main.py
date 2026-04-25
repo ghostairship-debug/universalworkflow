@@ -18,12 +18,14 @@ from apps.operator_cli.run_commands import run_app
 from apps.operator_cli.scheduler_commands import scheduler_app
 from apps.operator_cli.shared import _emit_json, _service
 from apps.operator_cli.test_commands import test_app
+from apps.operator_cli.validation_commands import validation_app
 from apps.operator_tui.dashboard import run_dashboard
 from packages.core_domain.config import build_effective_config
 
 app = typer.Typer(help="Workflow operator CLI.")
 
 app.add_typer(test_app, name="test")
+app.add_typer(validation_app, name="validation")
 app.add_typer(run_app, name="run")
 app.add_typer(interaction_app, name="interaction")
 app.add_typer(task_app, name="task")

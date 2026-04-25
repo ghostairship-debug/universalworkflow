@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from packages.core_domain import governance as governance_module
@@ -13,7 +14,6 @@ from packages.core_domain.governance import (
 
 OPEN_DEBT_IDS: list[str] = [
     "M67-WF-001",
-    "M67-VAL-001",
     "M67-WEB-001",
     "M67-SCHED-001",
     "M67-ARCH-001",
@@ -331,6 +331,36 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert report["validation_evidence"]["report_present"] is True
     assert report["validation_evidence"]["source_mode"] == "explicit_arg"
     assert report["validation_summary"]["generated_at"] is None
+    assert report["validation_summary"]["is_fresh"] is False
+
+
+def test_build_release_readiness_report_rejects_stale_validation_success(tmp_path: Path) -> None:
+    validation_report_path = tmp_path / "offline_validation_report.json"
+    validation_report_path.write_text(
+        json.dumps(
+            {
+                "generated_at": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+                "overall_passed": True,
+                "checks": {
+                    "cli_flow": {"passed": True},
+                    "smoke_flow": {"passed": True},
+                    "api_flow": {"passed": True},
+                    "cluster_flow": {"passed": True},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_release_readiness_report(validation_report_path=validation_report_path)
+    offline_gate = next(gate for gate in report["gates"] if gate["gate"] == "offline_validation")
+
+    assert offline_gate["passed"] is False
+    assert report["validation_summary"]["overall_passed"] is True
+    assert report["validation_summary"]["is_fresh"] is False
+    assert report["validation_summary"]["stale_reason"] == "stale_generated_at"
+    assert any(alert["alert_id"] == "validation_report_stale" for alert in report["governance_alerts"]["alerts"])
 
 
 def test_build_domain_pack_platform_report_projects_platform_sections() -> None:

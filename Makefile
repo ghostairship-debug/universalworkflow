@@ -3,7 +3,7 @@
 PYTHON ?= python
 DB_PATH ?= state/workflow.db
 WORKSPACE_ROOT ?= $(CURDIR)
-PYTEST_BASETEMP ?= $(shell $(PYTHON) -c "from pathlib import Path; import tempfile; root=Path('state/.pytest-tmp-m48m51'); root.mkdir(parents=True, exist_ok=True); print(tempfile.mkdtemp(prefix='run-', dir=root).replace('\\\\','/'))")
+PYTEST_BASETEMP ?= $(shell $(PYTHON) -c "from pathlib import Path; import tempfile; root=Path('state/.pytest-tmp-workflow'); root.mkdir(parents=True, exist_ok=True); print(tempfile.mkdtemp(prefix='run-', dir=root).replace('\\\\','/'))")
 
 dev:
 	$(PYTHON) -m infra.scripts.manage --db-path $(DB_PATH) dev
@@ -21,14 +21,14 @@ logs-tail:
 	$(PYTHON) -m infra.scripts.manage --db-path $(DB_PATH) logs-tail
 
 offline-validation:
-	$(PYTHON) -m infra.scripts.offline_validation --skip-offline-probe
+	$(PYTHON) -m infra.scripts.offline_validation --suite quick --skip-offline-probe
 
 check-doc-links:
 	$(PYTHON) -m infra.scripts.check_doc_links
 
 doc-command-smoke:
 	$(PYTHON) -m infra.scripts.check_doc_links
-	$(PYTHON) -m infra.scripts.offline_validation --skip-offline-probe
+	$(PYTHON) -m infra.scripts.offline_validation --suite quick --skip-offline-probe
 
 doctor-strict:
 	$(PYTHON) -c "from pathlib import Path; Path('state').mkdir(exist_ok=True)"
