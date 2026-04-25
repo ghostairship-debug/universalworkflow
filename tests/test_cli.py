@@ -475,6 +475,35 @@ def test_cli_exposes_plan_graph_and_launch_surfaces(tmp_path: Path) -> None:
     assert operator_packet_payload["cluster_policy_preview"]["selected_cluster_template_ids"] == ["dev_cluster"]
 
 
+def test_cli_run_langgraph_focus_writes_advisory_evidence(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "langgraph_evidence"
+
+    result = _invoke(
+        tmp_path,
+        "run",
+        "langgraph-focus",
+        "--goal",
+        "Compare workflow route with focused LangGraph runtime",
+        "--preset",
+        "project_delivery",
+        "--evidence-dir",
+        evidence_dir.as_posix(),
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["comparison"]["passed"] is True
+    assert payload["comparison"]["mutation_allowed"] is False
+    assert payload["comparison"]["direct_mutation_disabled"] is True
+    assert payload["comparison"]["workflow_latency_ms"] >= 0
+    assert payload["workflow_route"]["selected_preset_id"] == "project_delivery"
+    assert payload["langgraph_route"]["provider"] in {"langgraph", "linear"}
+    assert payload["langgraph_route"]["path"] == ["planning", "review", "evidence"]
+    evidence_path = Path(payload["evidence"]["evidence_path"])
+    assert evidence_path.exists()
+    assert evidence_path.parent == evidence_dir.resolve()
+
+
 def test_cli_config_show_reads_workflow_toml_and_worker_pools(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "workflow.toml").write_text(

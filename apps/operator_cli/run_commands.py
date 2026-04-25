@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -220,6 +221,37 @@ def run_goal_packet(
             )
         )
     )
+
+
+@run_app.command("langgraph-focus")
+def run_langgraph_focus(
+    ctx: typer.Context,
+    goal: str = typer.Option(..., "--goal"),
+    preset: Optional[str] = typer.Option(None, "--preset"),
+    evidence_dir: Optional[str] = typer.Option(None, "--evidence-dir", help="Directory for advisory evidence JSON."),
+) -> None:
+    service = _service(ctx)
+    route_started = time.perf_counter()
+    workflow_route = _run_workflow_action(
+        lambda: service.preview_orchestration_plan_graph(
+            goal=goal,
+            preset_id=preset,
+        )
+    )
+    workflow_latency_ms = max(int((time.perf_counter() - route_started) * 1000), 0)
+    from packages.runtime_langgraph.focused_runtime import FocusedLangGraphRuntime
+
+    runtime = FocusedLangGraphRuntime()
+    payload = runtime.compare_with_workflow_route(
+        goal=goal,
+        preset_id=preset,
+        workflow_route=workflow_route,
+        workflow_latency_ms=workflow_latency_ms,
+        evidence_dir=evidence_dir,
+    )
+    _emit_json(payload)
+    if not payload.get("comparison", {}).get("passed"):
+        raise typer.Exit(code=1)
 
 
 @run_app.command("launch")
