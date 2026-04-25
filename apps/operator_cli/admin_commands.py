@@ -24,6 +24,10 @@ from packages.core_domain.governance import (
     build_tech_debt_report,
 )
 from packages.core_domain.repositories import PresetRepository
+from packages.core_domain.self_development_manifest import (
+    DEFAULT_SELF_DEVELOPMENT_MILESTONES,
+    build_self_development_manifest,
+)
 
 task_app = typer.Typer(help="Task inspection commands.")
 db_app = typer.Typer(help="Development database commands.")
@@ -167,6 +171,29 @@ def governance_release_readiness(
 @governance_app.command("domain-pack")
 def governance_domain_pack() -> None:
     _emit_json(build_domain_pack_platform_report())
+
+
+@governance_app.command("self-development-manifest")
+def governance_self_development_manifest(
+    ctx: typer.Context,
+    milestone: Optional[list[str]] = typer.Option(
+        None,
+        "--milestone",
+        help="Milestone id to include. Repeat to override the default M67-M72 set.",
+    ),
+    state_root: str = typer.Option("state", "--state-root", help="State root containing milestone evidence."),
+    output_path: Optional[str] = typer.Option(None, "--output-path", help="Optional JSON output path."),
+    min_task_cards: int = typer.Option(3, "--min-task-cards", min=1),
+) -> None:
+    _emit_json(
+        build_self_development_manifest(
+            _workspace_root_from_context(ctx),
+            milestones=list(milestone or DEFAULT_SELF_DEVELOPMENT_MILESTONES),
+            state_root=state_root,
+            output_path=output_path,
+            min_task_cards_per_phase=min_task_cards,
+        )
+    )
 
 
 @config_app.command("show")
