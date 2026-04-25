@@ -184,6 +184,30 @@ def capability_control_plane(
         raise typer.Exit(code=1)
 
 
+@capability_app.command("provider-contracts")
+def capability_provider_contracts(
+    provider: Optional[str] = typer.Option(None, "--provider", help="Optional provider key to inspect."),
+) -> None:
+    from packages.core_domain.capability_control_plane import list_provider_contracts, provider_contract_for_key
+
+    if provider is None:
+        _emit_json(list_provider_contracts())
+        return
+    contract = provider_contract_for_key(provider)
+    if contract is None:
+        _emit_json(
+            {
+                "error": {
+                    "code": "provider_contract_not_found",
+                    "provider": provider,
+                    "available_providers": [item["provider"] for item in list_provider_contracts()],
+                }
+            }
+        )
+        raise typer.Exit(code=1)
+    _emit_json(contract)
+
+
 @capability_app.command("mcp-profiles")
 def capability_mcp_profiles(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).list_mcp_server_profiles()))

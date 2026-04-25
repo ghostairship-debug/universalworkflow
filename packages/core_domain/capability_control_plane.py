@@ -16,6 +16,87 @@ ADAPTER_PROVIDER_KEYS = {
     "agent": "langchain",
 }
 
+PROVIDER_CONTRACTS: dict[str, dict[str, Any]] = {
+    "shell": {
+        "provider": "shell",
+        "adapter_name": "shell",
+        "cli_dependency": "local_python",
+        "auth_sources": ["local_process"],
+        "route_role": "local deterministic shell/noop baseline",
+        "failure_taxonomy": ["execution_failed", "artifact_missing", "timeout", "process_launch_failed"],
+        "notes": ["Shell is local-only and does not require external credentials."],
+    },
+    "codex": {
+        "provider": "codex",
+        "adapter_name": "codex",
+        "cli_dependency": "codex",
+        "auth_sources": ["codex_cli_login", "OPENAI_API_KEY"],
+        "route_role": "strong coding fallback and complex local CLI worker",
+        "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "provider_timeout", "execution_failed"],
+        "notes": ["Codex remains the medium/complex fallback when cheaper lanes fail."],
+    },
+    "opencode": {
+        "provider": "opencode",
+        "adapter_name": "opencode",
+        "cli_dependency": "opencode",
+        "auth_sources": ["MINIMAX_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
+        "route_role": "simple/free-model coding lane through OpenCode",
+        "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "artifact_output_mismatch", "execution_failed"],
+        "notes": ["Default simple lane model is minimax/MiniMax-M2.7 unless overridden."],
+    },
+    "mmx": {
+        "provider": "mmx",
+        "adapter_name": "mmx_multimodal",
+        "cli_dependency": "mmx",
+        "auth_sources": ["MINIMAX_API_KEY", "MINIMAX_TOKEN"],
+        "route_role": "MiniMax multimodal evidence lane",
+        "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "multimodal_probe_failed", "execution_failed"],
+        "notes": ["MMX is a provider/adapter lane, not the same as OpenCode using a MiniMax text model."],
+    },
+    "vertex": {
+        "provider": "vertex",
+        "adapter_name": "vertex_multimodal",
+        "cli_dependency": "gcloud",
+        "auth_sources": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"],
+        "route_role": "Vertex/GCP Gemini-family multimodal entrypoint",
+        "failure_taxonomy": ["adapter_unavailable", "gcloud_missing", "provider_auth_missing", "vertex_probe_failed"],
+        "notes": [
+            "Gemini CLI is not currently an adapter.",
+            "Gemini-family access currently goes through Vertex.",
+            "gcloud is a credential/environment tool, not an independent worker adapter.",
+        ],
+    },
+    "claude": {
+        "provider": "claude",
+        "adapter_name": "claude_architect",
+        "cli_dependency": "claude",
+        "auth_sources": ["ANTHROPIC_API_KEY", "claude_cli_login"],
+        "route_role": "architect/review artifact lane",
+        "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "artifact_missing", "execution_failed"],
+        "notes": ["Claude is an external artifact adapter and should not mutate repo state directly."],
+    },
+    "langchain": {
+        "provider": "langchain",
+        "adapter_name": "langchain_agent",
+        "cli_dependency": "python_langchain_deps",
+        "auth_sources": ["MINIMAX_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
+        "route_role": "agent fallback abstraction over configured chat providers",
+        "failure_taxonomy": ["dependency_missing", "provider_auth_missing", "agent_runtime_failed", "fallback_route_failed"],
+        "notes": ["LangChain provider selection is route-dependent; fallback-only output is not verified_ready."],
+    },
+}
+
+
+def provider_contract_for_key(provider_key: str | None) -> dict[str, Any] | None:
+    if provider_key is None:
+        return None
+    contract = PROVIDER_CONTRACTS.get(str(provider_key).strip().lower())
+    return dict(contract) if contract is not None else None
+
+
+def list_provider_contracts() -> list[dict[str, Any]]:
+    return [dict(PROVIDER_CONTRACTS[key]) for key in sorted(PROVIDER_CONTRACTS)]
+
 
 def provider_key_for_descriptor(descriptor: CapabilityDescriptor) -> str:
     if descriptor.provider_kind == "adapter_route" and descriptor.adapter_name:
@@ -86,6 +167,7 @@ def evaluate_capability_policy(
         "schema_version": "m69_capability_policy_v1",
         "decision": decision,
         "provider_key": provider_key,
+        "provider_contract": provider_contract_for_key(provider_key),
         "provider_kind": descriptor.provider_kind,
         "capability_id": descriptor.capability_id,
         "adapter_name": descriptor.adapter_name,

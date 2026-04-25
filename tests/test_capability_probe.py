@@ -257,6 +257,30 @@ def test_cli_capability_control_plane_reports_write_set_and_live_gate(tmp_path: 
     assert "patch_apply_requires_write_set" in blocked_payload["reasons"]
 
 
+def test_cli_capability_provider_contracts_explain_vertex_and_gcloud(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "capability",
+            "provider-contracts",
+            "--provider",
+            "vertex",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["provider"] == "vertex"
+    assert payload["adapter_name"] == "vertex_multimodal"
+    assert payload["cli_dependency"] == "gcloud"
+    assert any("Gemini CLI is not currently an adapter" in note for note in payload["notes"])
+    assert any("not an independent worker adapter" in note for note in payload["notes"])
+
+
 def test_capability_probe_sets_adapter_timeout_below_outer_watchdog(tmp_path: Path, monkeypatch) -> None:
     adapter = _ProbeTimeoutAdapter()
     monkeypatch.setenv("WORKFLOW_CAPABILITY_PROBE_TIMEOUT_SECONDS", "30")

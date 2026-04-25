@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from packages.contracts import CapabilityDescriptor, CapabilityProbeResult, MutationMode, TaskKind
-from packages.core_domain.capability_control_plane import evaluate_capability_policy, provider_key_for_descriptor
+from packages.core_domain.capability_plane import CapabilityPlane
+from packages.core_domain.capability_control_plane import (
+    evaluate_capability_policy,
+    list_provider_contracts,
+    provider_contract_for_key,
+    provider_key_for_descriptor,
+)
 
 
 def _descriptor(adapter_name: str = "opencode") -> CapabilityDescriptor:
@@ -70,6 +76,7 @@ def test_capability_policy_allows_verified_provider_with_write_set() -> None:
     assert decision["operator_receipt_status"] == "present"
     assert decision["requested_write_set"] == ["packages/example.py"]
     assert decision["live_proof"]["status"] == "verified_ready"
+    assert decision["provider_contract"]["route_role"] == "simple/free-model coding lane through OpenCode"
 
 
 def test_capability_policy_requires_receipt_for_patch_apply() -> None:
@@ -91,3 +98,23 @@ def test_provider_key_maps_external_adapter_aliases() -> None:
     assert provider_key_for_descriptor(_descriptor("vertex_multimodal")) == "vertex"
     assert provider_key_for_descriptor(_descriptor("claude_architect")) == "claude"
     assert provider_key_for_descriptor(_descriptor("langchain_agent")) == "langchain"
+
+
+def test_provider_contract_registry_explains_vertex_and_gcloud_boundary() -> None:
+    vertex = provider_contract_for_key("vertex")
+
+    assert vertex is not None
+    assert vertex["adapter_name"] == "vertex_multimodal"
+    assert vertex["cli_dependency"] == "gcloud"
+    assert any("Gemini CLI is not currently an adapter" in note for note in vertex["notes"])
+    assert any("gcloud is a credential/environment tool" in note for note in vertex["notes"])
+    assert "vertex_probe_failed" in vertex["failure_taxonomy"]
+    assert {item["provider"] for item in list_provider_contracts()} >= {"codex", "opencode", "vertex", "mmx"}
+
+
+def test_capability_plane_uses_provider_contract_failure_taxonomy() -> None:
+    plane = CapabilityPlane()
+
+    failure_classes = plane._failure_classes_for_descriptor(_descriptor("vertex_multimodal"))
+
+    assert failure_classes == provider_contract_for_key("vertex")["failure_taxonomy"]

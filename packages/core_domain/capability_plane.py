@@ -26,6 +26,7 @@ from packages.contracts import (
     WorkerPoolProfile,
 )
 from packages.core_domain.agent_tools import built_in_tool_specs
+from packages.core_domain.capability_control_plane import provider_contract_for_key, provider_key_for_descriptor
 
 
 DEFAULT_MCP_PROFILE_SEED_PATH = Path("infra/seeds/mcp_server_profiles.json")
@@ -629,6 +630,9 @@ class CapabilityPlane:
         return None
 
     def _failure_classes_for_descriptor(self, descriptor: CapabilityDescriptor) -> list[str]:
+        contract = provider_contract_for_key(provider_key_for_descriptor(descriptor))
+        if contract is not None and contract.get("failure_taxonomy"):
+            return [str(item) for item in contract["failure_taxonomy"]]
         if descriptor.provider_kind == "mcp_profile":
             return ["profile_disabled", "tool_unavailable", "startup_failed", "call_timeout"]
         if descriptor.provider_kind == "worker_pool":
