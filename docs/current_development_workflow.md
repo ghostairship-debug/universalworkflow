@@ -30,14 +30,15 @@
 
 ## Phase / Task 协议
 
-每个新 M 或 active phase 按 task-card 协议推进：
+日常 plan / phase / task 以 `state/workflow.db` 中的 `runs`、`phases`、`task_cards`、`runtime_tasks`、`run_events` 和 evidence 为主记录。Markdown 只保留三类用途：`examples/local_task_cards/` 的手工导入示例、阶段收口后的摘要、以及需要人工审阅的少量活跃文档。
 
-1. 先写当前 phase doc。
-2. 再写当前 phase task-card index。
-3. 再写必要的 detailed task cards。
-4. 执行时同步记录真实结果、run id、artifact path 和失败/fallback 证据。
-5. 收口时把结论吸收到 README、当前工作流、里程碑历史和技术债文档。
-6. 关闭阶段的详细 phase/task 临时材料默认删除或不再作为活跃真相源。
+1. 新 M 或 active phase 优先创建 DB run / phase / task-card 记录。
+2. 执行时同步记录真实结果、run id、artifact path 和失败/fallback 证据。
+3. 需要人工交接时从 DB 导出临时 Markdown，不作为长期事实源。
+4. 收口时只把结论吸收到 README、当前工作流、里程碑历史和技术债文档。
+5. 关闭阶段的详细 phase/task 临时材料默认删除或保留在 git 历史中，不恢复到工作树。
+
+DB 保留策略：当前 `state/workflow.db` 体量很小，日常开发不需要按天清理。后续只在 DB 超过约 200MB、run 数明显堆积、或 chat stream / run event 查询变慢时做归档式清理；保留最近活跃 session、已接受 M 的摘要证据和 release-ready 结果，优先清理旧的 failed/superseded attempt、重复 stream event 和临时 artifact 引用。
 
 ## Agent / Cluster 现状
 

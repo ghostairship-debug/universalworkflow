@@ -80,5 +80,7 @@ M43-M47 完成了用户要求的 5 个 M 后停止：
 - 旧 `docs/archive/`
 - 旧 `docs/m2m/`
 - 旧根目录重复计划或交接文档
+- 关闭后的 `m41_phase_docs/` 到 `m47_phase_docs/`
+- 关闭后的 `docs/task_cards/` 生成型任务卡
 
 如需逐字审计旧材料，请使用 git 历史查看对应文件。
