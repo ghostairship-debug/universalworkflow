@@ -62,12 +62,12 @@ Bug-first observation:
 | P4 | completed | validation / CI reliability |
 | P5 | completed | Web and browser surface hardening |
 | P6 | completed | scheduler semantics and boot path |
-| P7 | pending | hot-file slimming |
+| P7 | completed | hot-file slimming |
 | P8 | pending | workflow E2E closeout and go/no-go |
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P7-P8 blocking items 尚未完成。
+当前结论：`NO-GO`，因为 P8 blocking items 尚未完成。
 
 M67 通过后，M68 才允许恢复能力层开发。
 
@@ -206,4 +206,34 @@ Bug-first observation：
 
 剩余：
 - `M67-SCHED-001` 已偿还。
-- M67 仍为 `NO-GO`，因为 P7-P8 blocking items 尚未完成。
+- M67 仍为 `NO-GO`，因为 P8 blocking items 尚未完成。
+
+## P7: Hot-File Slimming
+
+???`completed`
+
+?????
+- ?? P7 ?? task card?`P7A_repository_worker_bundles.md`?`P7B_hot_file_module_splits.md`?`P7C_test_matrix_facade_governance.md`?
+- ?? workflow ?? P7 ????? `p7_plan_graph.txt`?`p7_policy_preview.txt`?`p7_goal_packet.txt`?
+- ?? `RepositoryBundle` ? `WorkerRuntimeBundle`?? `OrchestratorService.__init__` ?????? repository ? worker runtime?
+- ?? `InspectionServiceMixin` ? `ChatLLMInteractionMixin`??? service ? chat ?????????
+- ?? `LocalSchedulerHandoffMixin`?? local scheduler ????????????
+- ? local game artifact ???? arcade template/script ? PDF helper ???????? 1200+ ??
+- ? test matrix ???? `infra/test_matrix.py`??? `packages.core_domain.test_matrix` ?? wrapper?CLI ?? infra ???
+- chat runtime package facade ?? re-export ????? helper??????????????? helper?
+
+???
+- `python -m compileall packages/core_domain packages/contributions/games apps/operator_cli packages/runtime_langgraph -q`?passed?
+- `python -m pytest tests/test_service_decomposition.py tests/test_scheduler_flag_off_isolation.py tests/test_chat_llm_runtime.py tests/test_test_matrix.py tests/test_m43_game_artifacts.py -q --basetemp state/.pytest-tmp-workflow/p7-targeted`?30 passed?
+
+?????
+- `packages/core_domain/services.py`?1801 ???? 2050 / stretch 1950?
+- `packages/core_domain/service_interaction_chat.py`?883 ???? 1000 / stretch 900?
+- `packages/core_domain/local_scheduler_lease_arbiter.py`?679 ???????
+- `apps/orchestrator_api/web_ui_components.py`?354 ???? 450?
+- `packages/contributions/games/local_game_artifacts.py`?107 ??????? game template ????? 650 ??
+- `packages/core_domain/test_matrix.py`?23 ??? wrapper??????? `infra/test_matrix.py`?
+
+???
+- `M67-ARCH-001` ????
+- M67 ?? `NO-GO`??? P8 ??? workflow E2E??? `batch-resume` ??? closeout gate ?????

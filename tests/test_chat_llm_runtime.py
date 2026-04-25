@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import packages.runtime_langgraph.chat_runtime as chat_runtime_facade
 from packages.runtime_langgraph.chat_control_graph import CHAT_CONTROL_NODES, ChatControlGraph
 from packages.runtime_langgraph.chat_runtime import (
     ChatActionDecision,
@@ -10,12 +11,12 @@ from packages.runtime_langgraph.chat_runtime import (
     FallbackChatLLMRuntime,
     MiniMaxChatLLMRuntime,
     OpenAIChatLLMRuntime,
-    _iter_chat_completion_deltas,
-    _minimax_base_url_from_env,
-    _strip_reasoning_markup,
     build_chat_llm_runtime_from_env,
     infer_rule_based_chat_action,
 )
+from packages.runtime_langgraph.chat_runtime.builder import _minimax_base_url_from_env
+from packages.runtime_langgraph.chat_runtime.reasoning_filter import _strip_reasoning_markup
+from packages.runtime_langgraph.chat_runtime.response_utils import _iter_chat_completion_deltas
 
 
 def test_rule_based_chat_action_understands_chinese_control_words() -> None:
@@ -26,6 +27,12 @@ def test_rule_based_chat_action_understands_chinese_control_words() -> None:
     assert resume_decision.action_type == "resume_run"
     assert resume_decision.requires_confirmation is True
     assert resume_decision.degraded is True
+
+
+def test_chat_runtime_facade_does_not_export_private_helpers() -> None:
+    assert "_strip_reasoning_markup" not in chat_runtime_facade.__all__
+    assert "_iter_chat_completion_deltas" not in chat_runtime_facade.__all__
+    assert "_minimax_base_url_from_env" not in chat_runtime_facade.__all__
 
 
 def test_degraded_chat_runtime_streams_clear_fallback_chunks() -> None:

@@ -51,7 +51,6 @@ M61-M66 计划内债务已经收口，但 M67 重新登记了当前仍可证实�
 | ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
 | M67-WF-001 | workflow 自身参与开发的 task-card / route / evidence / operator-packet 证据仍需跑完整 | M67 intake | M67 | blocking_open | 阻塞后续能力层开发的可信共同开发基线 |
-| M67-ARCH-001 | M67 指定热点文件仍需瘦身并拆出 `RepositoryBundle` / `WorkerRuntimeBundle` / infra test matrix | M62-M66 carry-forward | M67 P7 | blocking_open | 阻塞恢复能力层开发前的结构基线 |
 | M67-AUTO-001 | `execute=true` / auto-apply 等自动化边界缺少统一 Command / PolicyEngine / AutomationLease 语义 | M67 autonomy-policy evaluation | M67 P2/P5 | blocking_open | 阻塞安全长程自开发，不应靠路由各自判断 |
 | M67-ROUTE-001 | 动态/自适应路由只有 P0 预演，还需要 simple/medium/complex E2E 和并发 batch-resume proof | M67 workflow-dogfood plan | M67 P8 | blocking_open | 阻塞声明 MiniMax/OpenCode/adaptive routing 可支撑真实共同开发 |
 | M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | M47-M66 structure evaluation | Post-M67 decision | carry_forward | 非阻塞维护债；M67 后按实际疼痛决定是否继续拆 |

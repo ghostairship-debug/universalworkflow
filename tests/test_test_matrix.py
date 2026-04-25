@@ -7,7 +7,8 @@ import pytest
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
-from packages.core_domain.test_matrix import build_pytest_command, select_matrix
+from infra.test_matrix import build_pytest_command, select_matrix
+from packages.core_domain.test_matrix import select_matrix as select_matrix_compat
 
 
 def test_test_matrix_selects_slow_shards_without_overlap() -> None:
@@ -23,6 +24,10 @@ def test_test_matrix_selects_slow_shards_without_overlap() -> None:
 def test_test_matrix_rejects_invalid_shard() -> None:
     with pytest.raises(ValueError):
         select_matrix("slow", "3/2")
+
+
+def test_core_domain_test_matrix_import_remains_compatible() -> None:
+    assert select_matrix_compat("unit").targets == select_matrix("unit").targets
 
 
 def test_cli_test_matrix_dry_run_uses_workspace_root(tmp_path: Path) -> None:

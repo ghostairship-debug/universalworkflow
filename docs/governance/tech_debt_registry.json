@@ -287,6 +287,13 @@
       "introduced_in": "M65/M66 scheduler rename",
       "repaid_in": "M67 P6",
       "result": "Changed default Web and CLI wording to local scheduler lease arbiter semantics, kept legacy scheduler-authority JSON/API names compatible, moved default support import to SchedulerLeaseProjectionService, and verified flag-off construction avoids scheduler_authority and legacy support modules while flag-on lazy imports the cluster runtime."
+    },
+    {
+      "debt_id": "M67-ARCH-001",
+      "description": "hot-file slimming remains incomplete: services.py, service_interaction_chat.py, local_scheduler_lease_arbiter.py, web_ui_components.py, local_game_artifacts.py, and core_domain/test_matrix.py still exceed the M67 target shape",
+      "introduced_in": "M62-M66 decomposition carry-forward",
+      "repaid_in": "M67 P7",
+      "result": "Extracted RepositoryBundle/WorkerRuntimeBundle and service inspection/chat LLM mixins, split local scheduler handoff helpers and game templates into smaller modules, moved test matrix implementation to infra with a compatibility wrapper, removed private helper re-exports from the chat runtime facade, and verified targeted P7 tests plus line-count ratchets."
     }
   ],
   "open_items": [
@@ -298,14 +305,6 @@
       "current_status": "blocking_open",
       "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
       "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
-    },
-    {
-      "debt_id": "M67-ARCH-001",
-      "description": "hot-file slimming remains incomplete: services.py, service_interaction_chat.py, local_scheduler_lease_arbiter.py, web_ui_components.py, local_game_artifacts.py, and core_domain/test_matrix.py still exceed the M67 target shape",
-      "introduced_in": "M62-M66 decomposition carry-forward",
-      "planned_repayment_phase": "M67 P7",
-      "current_status": "blocking_open",
-      "blocking_impact": "blocks a stable architecture baseline for renewed capability-layer work"
     },
     {
       "debt_id": "M67-AUTO-001",

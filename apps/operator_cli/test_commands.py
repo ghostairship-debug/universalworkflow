@@ -15,7 +15,7 @@ def test_matrix(
     shard: Optional[str] = typer.Option(None, "--shard", help="Optional shard in N/M form, for example 1/4."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the selected pytest command without running it."),
 ) -> None:
-    from packages.core_domain.test_matrix import run_matrix
+    from infra.test_matrix import run_matrix
 
     payload = run_matrix(
         suite=suite,
