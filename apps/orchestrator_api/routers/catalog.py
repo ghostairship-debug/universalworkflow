@@ -50,6 +50,10 @@ def build_catalog_router(service: OrchestratorService, effective_config: dict[st
     def list_capability_health() -> list[dict]:
         return service.list_capability_health()
 
+    @router.get("/cluster-routes/stats")
+    def cluster_route_stats(days: int = 30) -> dict:
+        return service.get_cluster_route_stats(days=days)
+
     @router.get("/capability-sources/mcp-profiles")
     def list_mcp_server_profiles() -> list[dict]:
         return service.list_mcp_server_profiles()

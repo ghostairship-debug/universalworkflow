@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Header, status
 from fastapi.responses import StreamingResponse
 
 from apps.orchestrator_api.request_models import (
@@ -74,7 +74,10 @@ def build_interaction_router(service: OrchestratorService) -> APIRouter:
         )
 
     @router.post("/interaction/chat/actions/{action_id}/confirm")
-    def confirm_chat_action(action_id: str, payload: ChatActionConfirmRequest | None = None) -> dict:
+    def confirm_chat_action(
+        action_id: str,
+        payload: ChatActionConfirmRequest | None = None,
+    ) -> dict:
         return service.confirm_chat_action(
             action_id,
             rationale=payload.rationale if payload is not None else None,
@@ -153,10 +156,20 @@ def build_interaction_router(service: OrchestratorService) -> APIRouter:
         )
 
     @router.post("/interaction/sessions/{session_id}/launch")
-    def launch_intent_session(session_id: str, payload: IntentLaunchRequest | None = None) -> dict:
+    def launch_intent_session(
+        session_id: str,
+        payload: IntentLaunchRequest | None = None,
+        operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
+    ) -> dict:
+        execute = payload.execute if payload is not None else False
+        if execute:
+            service.consume_operator_action_receipt(
+                receipt_id=operator_action_receipt,
+                action_type="launch_execute",
+            )
         return service.launch_intent_session(
             session_id,
-            execute=payload.execute if payload is not None else False,
+            execute=execute,
             rationale=payload.rationale if payload is not None else None,
             selected_preset_id=payload.selected_preset_id if payload is not None else None,
             selected_cluster_template_ids=payload.selected_cluster_template_ids if payload is not None else None,

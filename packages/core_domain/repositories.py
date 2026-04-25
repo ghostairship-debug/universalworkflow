@@ -10,9 +10,13 @@ from typing import Any
 from packages.contracts import (
     AutomationWatchdog,
     BudgetLedger,
+    CapabilityExecutionReceipt,
+    CapabilityInvocationRecord,
+    CapabilityProbeResult,
     ChatMessage,
     ChatMessageStatus,
     ChatStreamEvent,
+    ClusterRouteDecision,
     ControlPlaneIdentity,
     Evidence,
     FollowupRequest,
@@ -20,6 +24,7 @@ from packages.contracts import (
     HandoffLite,
     IntentSession,
     MemoryItem,
+    OperatorActionReceipt,
     Phase,
     PresetDefinition,
     ReviewVerdict,
@@ -482,6 +487,341 @@ class ChatStreamEventRepository(RepositoryBase):
         if limit is not None:
             return events[:limit]
         return events
+
+
+class CapabilityInvocationRepository(RepositoryBase):
+    def create(
+        self,
+        record: CapabilityInvocationRecord,
+        connection: sqlite3.Connection | None = None,
+    ) -> CapabilityInvocationRecord:
+        payload = record.model_dump(mode="json")
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO capability_invocations (
+                  invocation_id, receipt_id, capability_id, provider_kind, run_id, runtime_task_id,
+                  status, return_code, adapter_name, duration_ms, failure_class, payload_json,
+                  schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.invocation_id,
+                    record.receipt_id,
+                    record.capability_id,
+                    record.provider_kind,
+                    record.run_id,
+                    record.runtime_task_id,
+                    record.status,
+                    record.return_code,
+                    record.adapter_name,
+                    record.duration_ms,
+                    record.failure_class,
+                    _json_dump(payload),
+                    record.schema_version,
+                    record.created_at.isoformat(),
+                ),
+            )
+        return record
+
+    def create_from_receipt(
+        self,
+        receipt: CapabilityExecutionReceipt,
+        connection: sqlite3.Connection | None = None,
+    ) -> CapabilityInvocationRecord:
+        descriptor = receipt.envelope.descriptor
+        return self.create(
+            CapabilityInvocationRecord(
+                receipt_id=receipt.receipt_id,
+                capability_id=descriptor.capability_id,
+                provider_kind=descriptor.provider_kind,
+                run_id=receipt.envelope.run_id,
+                runtime_task_id=receipt.envelope.runtime_task_id,
+                status=receipt.status,
+                return_code=receipt.return_code,
+                adapter_name=receipt.adapter_name,
+                duration_ms=receipt.duration_ms,
+                failure_class=receipt.failure_class,
+                payload_json=receipt.model_dump(mode="json"),
+            ),
+            connection=connection,
+        )
+
+    def summarize_recent(
+        self,
+        *,
+        limit: int = 200,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT capability_id, status, return_code, adapter_name, duration_ms, failure_class, created_at
+                FROM capability_invocations
+                ORDER BY created_at DESC, invocation_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        summaries: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            capability_id = str(row["capability_id"])
+            summary = summaries.setdefault(
+                capability_id,
+                {
+                    "recent_success_count": 0,
+                    "recent_failure_count": 0,
+                    "recent_invocation_count": 0,
+                    "last_status": None,
+                    "last_return_code": None,
+                    "last_duration_ms": None,
+                    "last_adapter_name": None,
+                    "last_failure_class": None,
+                    "last_invoked_at": None,
+                    "verified_by_runtime": False,
+                },
+            )
+            summary["recent_invocation_count"] += 1
+            status = str(row["status"])
+            return_code = row["return_code"]
+            if status == "completed" and return_code == 0:
+                summary["recent_success_count"] += 1
+            else:
+                summary["recent_failure_count"] += 1
+            if summary["last_invoked_at"] is None:
+                summary["last_status"] = status
+                summary["last_return_code"] = return_code
+                summary["last_duration_ms"] = row["duration_ms"]
+                summary["last_adapter_name"] = row["adapter_name"]
+                summary["last_failure_class"] = row["failure_class"]
+                summary["last_invoked_at"] = row["created_at"]
+            summary["verified_by_runtime"] = True
+        return summaries
+
+
+class CapabilityProbeResultRepository(RepositoryBase):
+    def create(
+        self,
+        result: CapabilityProbeResult,
+        connection: sqlite3.Connection | None = None,
+    ) -> CapabilityProbeResult:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO capability_probe_results (
+                  probe_id, provider, adapter_name, status, live_probe, auth_source, latency_ms,
+                  failure_class, evidence_path, fallback_route, return_code, stdout_preview,
+                  stderr_preview, metadata_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result.probe_id,
+                    result.provider,
+                    result.adapter_name,
+                    result.status,
+                    1 if result.live_probe else 0,
+                    result.auth_source,
+                    result.latency_ms,
+                    result.failure_class,
+                    result.evidence_path,
+                    result.fallback_route,
+                    result.return_code,
+                    result.stdout_preview,
+                    result.stderr_preview,
+                    _json_dump(result.metadata),
+                    result.schema_version,
+                    result.created_at.isoformat(),
+                ),
+            )
+        return result
+
+    def latest_by_provider(
+        self,
+        *,
+        limit: int = 200,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, CapabilityProbeResult]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM capability_probe_results
+                ORDER BY created_at DESC, probe_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        results: dict[str, CapabilityProbeResult] = {}
+        for row in rows:
+            provider = str(row["provider"])
+            if provider in results:
+                continue
+            results[provider] = self._row_to_model(row)
+        return results
+
+    def _row_to_model(self, row: Any) -> CapabilityProbeResult:
+        return CapabilityProbeResult(
+            probe_id=row["probe_id"],
+            provider=row["provider"],
+            adapter_name=row["adapter_name"],
+            status=row["status"],
+            live_probe=bool(row["live_probe"]),
+            auth_source=row["auth_source"],
+            latency_ms=int(row["latency_ms"]),
+            failure_class=row["failure_class"],
+            evidence_path=row["evidence_path"],
+            fallback_route=row["fallback_route"],
+            return_code=row["return_code"],
+            stdout_preview=row["stdout_preview"],
+            stderr_preview=row["stderr_preview"],
+            metadata=_json_load(row["metadata_json"]),
+            schema_version=row["schema_version"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+
+class ClusterRouteDecisionRepository(RepositoryBase):
+    def create(
+        self,
+        decision: ClusterRouteDecision,
+        connection: sqlite3.Connection | None = None,
+    ) -> ClusterRouteDecision:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO cluster_route_decisions (
+                  decision_id, goal, preset_id, selected_template_ids_json, preferred_template_ids_json,
+                  source, dynamic_enabled, metadata_json, schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision.decision_id,
+                    decision.goal,
+                    decision.preset_id,
+                    _json_dump(decision.selected_template_ids),
+                    _json_dump(decision.preferred_template_ids),
+                    decision.source,
+                    1 if decision.dynamic_enabled else 0,
+                    _json_dump(decision.metadata),
+                    decision.schema_version,
+                    decision.created_at.isoformat(),
+                ),
+            )
+        return decision
+
+    def summarize_recent(
+        self,
+        *,
+        days: int = 30,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        cutoff = datetime.now(UTC).timestamp() - max(days, 0) * 86400
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM cluster_route_decisions
+                ORDER BY created_at DESC, decision_id DESC
+                """
+            ).fetchall()
+        decisions = [
+            self._row_to_model(row)
+            for row in rows
+            if datetime.fromisoformat(row["created_at"]).timestamp() >= cutoff
+        ]
+        template_counts: dict[str, int] = {}
+        for decision in decisions:
+            for template_id in decision.selected_template_ids:
+                template_counts[template_id] = template_counts.get(template_id, 0) + 1
+        return {
+            "days": days,
+            "decision_count": len(decisions),
+            "template_counts": dict(sorted(template_counts.items())),
+            "recent_decisions": [item.model_dump(mode="json") for item in decisions[:20]],
+        }
+
+    def _row_to_model(self, row: Any) -> ClusterRouteDecision:
+        return ClusterRouteDecision(
+            decision_id=row["decision_id"],
+            goal=row["goal"],
+            preset_id=row["preset_id"],
+            selected_template_ids=_json_load(row["selected_template_ids_json"]),
+            preferred_template_ids=_json_load(row["preferred_template_ids_json"]),
+            source=row["source"],
+            dynamic_enabled=bool(row["dynamic_enabled"]),
+            metadata=_json_load(row["metadata_json"]),
+            schema_version=row["schema_version"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+
+class OperatorActionReceiptRepository(RepositoryBase):
+    def create(
+        self,
+        receipt: OperatorActionReceipt,
+        connection: sqlite3.Connection | None = None,
+    ) -> OperatorActionReceipt:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO operator_action_receipts (
+                  receipt_id, action_type, workspace_root, risk_level, operator_id, requested_write_set_json,
+                  nonce, status, expires_at, consumed_at, metadata_json, schema_version, created_at, audit_timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.receipt_id,
+                    receipt.action_type,
+                    receipt.workspace_root,
+                    receipt.risk_level,
+                    receipt.operator_id,
+                    _json_dump(receipt.requested_write_set),
+                    receipt.nonce,
+                    receipt.status,
+                    receipt.expires_at.isoformat(),
+                    receipt.consumed_at.isoformat() if receipt.consumed_at is not None else None,
+                    _json_dump(receipt.metadata),
+                    receipt.schema_version,
+                    receipt.created_at.isoformat(),
+                    receipt.audit_timestamp.isoformat(),
+                ),
+            )
+        return receipt
+
+    def get(
+        self,
+        receipt_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> OperatorActionReceipt | None:
+        with self._connection(connection) as conn:
+            row = conn.execute(
+                "SELECT * FROM operator_action_receipts WHERE receipt_id = ?",
+                (receipt_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["requested_write_set"] = _json_load(data.pop("requested_write_set_json"))
+        data["metadata"] = _json_load(data.pop("metadata_json"))
+        return OperatorActionReceipt.model_validate(data)
+
+    def mark_consumed(
+        self,
+        receipt_id: str,
+        *,
+        consumed_at: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> OperatorActionReceipt | None:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute(
+                """
+                UPDATE operator_action_receipts
+                SET status = 'consumed', consumed_at = ?
+                WHERE receipt_id = ? AND status = 'issued'
+                """,
+                (consumed_at, receipt_id),
+            )
+        return self.get(receipt_id, connection=connection)
 
 
 class GeneratedAgentProfileRepository(RepositoryBase):

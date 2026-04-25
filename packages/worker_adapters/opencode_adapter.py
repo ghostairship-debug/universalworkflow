@@ -12,7 +12,12 @@ from packages.core_domain.config import build_effective_config
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.cli_base import CliAdapterBase, CompletedProcessRunner
 from packages.worker_adapters.base import ExecutionResult, utc_now
-from packages.worker_adapters.subprocess_support import build_subprocess_env, completed_process_from_timeout
+from packages.worker_adapters.subprocess_support import (
+    build_subprocess_env,
+    completed_process_from_timeout,
+    decode_subprocess_stream,
+    run_subprocess_with_tree_timeout,
+)
 
 
 DEFAULT_OPENCODE_MODEL = "minimax/MiniMax-M2.7"
@@ -33,6 +38,7 @@ class OpenCodeAdapter(CliAdapterBase):
         runner: CompletedProcessRunner | None = None,
         executable: str | None = None,
     ):
+        self._uses_custom_runner = runner is not None
         super().__init__(runner=runner)
         effective = build_effective_config()
         self.model = model or str(effective["opencode"]["model"] or os.getenv("WORKFLOW_OPENCODE_MODEL", DEFAULT_OPENCODE_MODEL))
@@ -57,6 +63,16 @@ class OpenCodeAdapter(CliAdapterBase):
             "opencode executable was not found on PATH",
             {"executable": self.executable},
         )
+
+    def _resolved_command_prefix(self) -> list[str]:
+        resolved = self._resolved_executable()
+        resolved_path = Path(resolved)
+        if os.name == "nt" and resolved_path.suffix.lower() == ".cmd":
+            script_path = resolved_path.parent / "node_modules" / "opencode-ai" / "bin" / "opencode"
+            node_executable = shutil.which("node")
+            if node_executable and script_path.exists():
+                return [node_executable, str(script_path)]
+        return [resolved]
 
     def _artifact_path_for(self, packet: TaskPacket) -> str:
         artifact = packet.expected_artifacts[0] if packet.expected_artifacts else "state/artifacts/opencode_output.md"
@@ -131,7 +147,8 @@ class OpenCodeAdapter(CliAdapterBase):
             "<<<END_WORKFLOW_FILE>>>\n"
         )
 
-    def _extract_output_text(self, stdout: str) -> str:
+    def _extract_output_text(self, stdout: str | bytes | None) -> str:
+        stdout = decode_subprocess_stream(stdout)
         parts: list[str] = []
         for raw_line in stdout.splitlines():
             raw_line = raw_line.strip()
@@ -157,11 +174,9 @@ class OpenCodeAdapter(CliAdapterBase):
         artifact_path.write_text(content, encoding="utf-8")
 
     def build_command(self, packet: TaskPacket) -> list[str]:
-        resolved_executable = self._resolved_executable()
         command = [
-            resolved_executable,
+            *self._resolved_command_prefix(),
             "run",
-            self._prompt_for(packet),
             "--format",
             "json",
             "--dir",
@@ -177,6 +192,7 @@ class OpenCodeAdapter(CliAdapterBase):
             command.extend(["--variant", variant])
         if self.auto_approve:
             command.append("--dangerously-skip-permissions")
+        command.append(self._prompt_for(packet))
         return command
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
@@ -184,7 +200,8 @@ class OpenCodeAdapter(CliAdapterBase):
         command = self.build_command(packet)
         env = build_subprocess_env(packet.env)
         try:
-            completed = self._runner(
+            runner = self._runner if self._uses_custom_runner else run_subprocess_with_tree_timeout
+            completed = runner(
                 command,
                 cwd=packet.working_directory,
                 env=env,
@@ -195,7 +212,9 @@ class OpenCodeAdapter(CliAdapterBase):
             )
         except subprocess.TimeoutExpired as exc:
             completed = completed_process_from_timeout(exc, command=command, timeout_seconds=self.timeout_seconds)
-        output_text = self._extract_output_text(completed.stdout)
+        stdout = decode_subprocess_stream(completed.stdout)
+        stderr = decode_subprocess_stream(completed.stderr)
+        output_text = self._extract_output_text(stdout)
         if completed.returncode == 0 and output_text:
             self._write_artifact(packet, output_text)
         finished_at = utc_now()
@@ -207,8 +226,8 @@ class OpenCodeAdapter(CliAdapterBase):
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=stdout,
+            stderr=stderr,
             started_at=started_at,
             finished_at=finished_at,
             duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),

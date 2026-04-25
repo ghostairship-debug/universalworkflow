@@ -235,12 +235,13 @@ class LangChainAgentAdapter(WorkerAdapter):
         manifest = load_tool_projection_manifest(packet.env.get(TOOL_PROJECTION_MANIFEST_ENV_KEY))
         runner = self._runner or self._run_langchain_agent
         response = runner(packet, manifest)
-        self._write_artifact(packet, response.content, manifest)
+        content = response.content or ""
+        self._write_artifact(packet, content, manifest)
         finished_at = utc_now()
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=0,
-            stdout=response.content,
+            stdout=content,
             stderr="",
             started_at=started_at,
             finished_at=finished_at,
@@ -264,9 +265,10 @@ class LangChainAgentAdapter(WorkerAdapter):
             path = Path(packet.working_directory) / path
         return path.resolve()
 
-    def _write_artifact(self, packet: TaskPacket, content: str, manifest: Any | None) -> None:
+    def _write_artifact(self, packet: TaskPacket, content: str | None, manifest: Any | None) -> None:
         artifact_path = self._artifact_path_for(packet)
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        content = content or ""
         if not content.strip():
             tool_names = [item.tool_name for item in manifest.tools] if manifest is not None else []
             content = build_artifact_content(
@@ -392,17 +394,28 @@ class LangChainAgentAdapter(WorkerAdapter):
     def _extract_content(self, result: Any) -> str:
         if isinstance(result, str):
             return result
+        messages = []
         if isinstance(result, dict):
             messages = result.get("messages") or []
-            for message in reversed(messages):
-                content = message.get("content")
-                if isinstance(content, str) and content.strip():
-                    return content
-                if isinstance(content, list):
-                    parts = []
-                    for item in content:
-                        if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
-                            parts.append(str(item["text"]))
-                    if parts:
-                        return "\n".join(parts)
+        elif hasattr(result, "messages"):
+            messages = getattr(result, "messages") or []
+        for message in reversed(messages):
+            content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+            extracted = self._extract_text_content(content)
+            if extracted:
+                return extracted
+        return ""
+
+    def _extract_text_content(self, content: Any) -> str:
+        if isinstance(content, str) and content.strip():
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+                item_text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+                if item_type == "text" and item_text:
+                    parts.append(str(item_text))
+            if parts:
+                return "\n".join(parts)
         return ""

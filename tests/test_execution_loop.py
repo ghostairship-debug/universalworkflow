@@ -993,6 +993,54 @@ def test_codex_adapter_projects_reasoning_effort_into_command(tmp_path: Path) ->
     assert 'model_reasoning_effort="xhigh"' in command
 
 
+def test_codex_dogfood_artifact_prompt_is_compact_and_records_role_telemetry(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _runner(command, cwd, env, capture_output, text, check, timeout):
+        captured["prompt"] = command[-1]
+        artifact_path = Path(command[command.index("--output-last-message") + 1])
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("# Artifact\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout='{"event":"completed"}\n', stderr="")
+
+    packet = TaskPacket(
+        runtime_task_id="task_codex_dogfood",
+        run_id="run_codex_dogfood",
+        task_kind=TaskKind.shell_exec,
+        command=[],
+        working_directory=str(tmp_path),
+        expected_artifacts=["state/artifacts/codex-dogfood.md"],
+        env={
+            "WORKFLOW_DOGFOOD_STRONG_MODEL_ENABLED": "true",
+            "WORKFLOW_DOGFOOD_EXECUTION_BACKEND": "codex_cli",
+            "WORKFLOW_MODEL_SELECTION_SOURCE": "dogfood_strong_codex_cli",
+            "WORKFLOW_MUTATION_MODE": "artifact_only",
+            "WORKFLOW_RUN_GOAL": "summarize an artifact-only review",
+            "WORKFLOW_RUNTIME_BRIEF": "B" * 3000,
+            "WORKFLOW_ORCHESTRATION_PLAN_GRAPH": "H" * 5000,
+            "WORKFLOW_ROLE_RESPONSIBILITIES": json.dumps([f"responsibility-{index}" for index in range(12)]),
+            "WORKFLOW_ROLE_LABEL": "quality_gate",
+            "WORKFLOW_PUBLIC_ROLE": "reviewer",
+            "WORKFLOW_CLUSTER_TEMPLATE_ID": "review_cluster",
+            "WORKFLOW_CLUSTER_MEMBER_ID": "quality_gate",
+        },
+    )
+
+    result = CodexAdapter(runner=_runner, executable="codex").launch(packet)
+    prompt = str(captured["prompt"])
+
+    assert result.return_code == 0
+    assert len(prompt) < 3600
+    assert "B" * 1300 not in prompt
+    assert "H" * 1700 not in prompt
+    assert "responsibility-6" not in prompt
+    assert result.metadata["prompt_family"] == "dogfood_artifact_agent"
+    assert result.metadata["role_label"] == "quality_gate"
+    assert result.metadata["public_role"] == "reviewer"
+    assert result.metadata["cluster_template_id"] == "review_cluster"
+    assert result.metadata["prompt_chars"] == len(prompt)
+
+
 def test_opencode_adapter_enforces_timeout_budget(tmp_path: Path) -> None:
     packet = TaskPacket(
         runtime_task_id="task_opencode_timeout",

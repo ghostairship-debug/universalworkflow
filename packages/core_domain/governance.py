@@ -803,7 +803,12 @@ def build_release_readiness_report(
         "remaining_gaps": remaining_gaps,
         "governance_metrics": governance_metrics,
         "governance_alerts": governance_alerts,
-        "recommended_next_step": "use the accepted M31 Phase 0 freeze as the baseline, carry the remaining TD-STRUCT items into M32, and explicitly open an interaction-first M32 phase before new breadth work",
+        "recommended_next_step": (
+            "M61-M66 blocking debt is clear; keep bug-first gates active and open new feature milestones only "
+            "after doc links, offline validation, test matrix, and live capability probes remain green"
+            if not tech_debt["open_items"]
+            else "repay the remaining open technical debt before expanding feature breadth"
+        ),
         "source_paths": {
             "validation_report": validation_evidence["source_path"],
             "tech_debt_registry": tech_debt["source_path"],

@@ -4,7 +4,6 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
 
 from apps.orchestrator_api.main import create_app
@@ -20,6 +19,7 @@ from packages.worker_adapters.codex_adapter import CodexAdapter
 from packages.worker_adapters.langchain_agent_adapter import LangChainAgentAdapter
 from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.opencode_session_adapter import OpenCodeSessionAdapter
+from conftest import ReceiptAwareTestClient
 
 
 pytestmark = pytest.mark.slow
@@ -39,15 +39,7 @@ class _FakeApiClient:
         self.responses = _FakeApiResponses()
 
 
-OPEN_DEBT_IDS = [
-    "TD-STRUCT-001",
-    "TD-STRUCT-003",
-    "TD-STRUCT-005",
-    "TD-STRUCT-006",
-    "TD-DOGFOOD-001",
-    "TD-CODEX-LATENCY-001",
-    "TD-MULTIMODAL-001",
-]
+OPEN_DEBT_IDS: list[str] = []
 
 AVAILABLE_SHELL_EXEC_ADAPTERS = [
     "shell",
@@ -63,10 +55,10 @@ def build_client(
     db_path: Path,
     runtime_gateway: RuntimeGateway | None = None,
     chat_llm_runtime: ChatLLMRuntime | None = None,
-) -> TestClient:
+) -> ReceiptAwareTestClient:
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
-    return TestClient(
+    return ReceiptAwareTestClient(
         create_app(
             db_path,
             runtime_gateway=runtime_gateway,
@@ -685,6 +677,8 @@ def test_api_lists_capability_descriptors_and_health(tmp_path: Path) -> None:
     assert health_response.status_code == 200
     assert any(item["descriptor"]["provider_kind"] == "runtime_gateway" for item in health_response.json())
     assert all("recent_call_summary" in item for item in health_response.json())
+    assert all("readiness_state" in item for item in health_response.json())
+    assert all("runtime_ledger_summary" in item for item in health_response.json())
     assert all("runtime_probe_status" in item for item in health_response.json())
 
 
@@ -970,8 +964,8 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["source_contract"] == "structured_json"
-    assert payload["open_debt_count"] == 7
-    assert payload["status_counts"] == {"partially_repaid": 5, "active": 2}
+    assert payload["open_debt_count"] == 0
+    assert payload["status_counts"] == {}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
@@ -1027,7 +1021,7 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
     assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
     assert payload["remaining_gaps"] == []
-    assert payload["governance_alerts"]["overall_status"] == "degraded"
+    assert payload["governance_alerts"]["overall_status"] == "clear"
 
 
 def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -1059,8 +1053,8 @@ def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> No
     assert metrics_response.json()["automation"]["governance_metrics_available"] is True
 
     assert alerts_response.status_code == 200
-    assert alerts_response.json()["overall_status"] == "degraded"
-    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
+    assert alerts_response.json()["overall_status"] == "clear"
+    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
 
 
 def test_api_exposes_governance_domain_pack_platform_report(tmp_path: Path) -> None:

@@ -321,6 +321,7 @@ def apply_unified_diff(
 ) -> list[str]:
     root = _workspace_root(workspace_root)
     touched_paths: list[str] = []
+    planned_writes: list[tuple[Path, str | None]] = []
     for file_patch in parse_unified_diff(patch_text):
         if not file_patch.touched_path:
             raise ValueError("patch is missing a target path")
@@ -330,16 +331,21 @@ def apply_unified_diff(
         target = root / rel_path
         touched_paths.append(rel_path)
         if file_patch.new_path is None:
-            if target.exists():
-                target.unlink()
+            planned_writes.append((target, None))
             continue
         original_text = target.read_text(encoding="utf-8") if target.exists() else ""
         original_lines = original_text.splitlines()
         updated_lines = _apply_hunks(original_lines, file_patch.hunks)
-        target.parent.mkdir(parents=True, exist_ok=True)
         new_text = "\n".join(updated_lines)
         if updated_lines:
             new_text += "\n"
+        planned_writes.append((target, new_text))
+    for target, new_text in planned_writes:
+        if new_text is None:
+            if target.exists():
+                target.unlink()
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(new_text, encoding="utf-8")
     return sorted(set(touched_paths))
 

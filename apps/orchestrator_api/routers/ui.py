@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from apps.orchestrator_api.routers.governance import build_governance_reports
 from apps.orchestrator_api.web_ui import (
+    render_action_confirmation as render_action_confirmation_page,
     render_config as render_config_page,
     render_dashboard as render_dashboard_page,
     render_governance as render_governance_page,
@@ -37,6 +38,47 @@ def build_ui_router(
     def _redirect_with_notice(path: str, notice: str) -> RedirectResponse:
         separator = "&" if "?" in path else "?"
         return RedirectResponse(url=f"{path}{separator}{urlencode({'notice': notice})}", status_code=status.HTTP_303_SEE_OTHER)
+
+    def _issue_local_ui_receipt(action_type: str, *, run_id: str | None = None) -> str:
+        receipt = service.issue_operator_action_receipt(
+            action_type=action_type,
+            risk_level="high",
+            metadata={"source": "web_ui_form", "run_id": run_id},
+        )
+        return receipt.receipt_id
+
+    def _redirect_to_confirmation(receipt_id: str) -> RedirectResponse:
+        query = urlencode({"receipt_id": receipt_id})
+        return RedirectResponse(f"/ui/actions/confirm?{query}", status_code=status.HTTP_303_SEE_OTHER)
+
+    def _execute_receipted_action(receipt_id: str) -> tuple[str, str]:
+        receipt = service.operator_action_receipt_repo.get(receipt_id)
+        if receipt is None:
+            return "/ui", "Receipt 不存在或已过期"
+        action_type = receipt.action_type
+        metadata = receipt.metadata or {}
+        run_id = str(metadata.get("run_id") or "")
+        if action_type == "batch_resume_runs":
+            run_ids = [str(item) for item in metadata.get("run_ids", []) if str(item).strip()]
+            service.consume_operator_action_receipt(receipt_id=receipt_id, action_type=action_type)
+            result = service.resume_runs_parallel(run_ids, max_workers=min(len(run_ids), 4) if run_ids else None)
+            return "/ui/reviews", f"批量继续完成：请求 {len(run_ids)} 结果={len(result['results'])}"
+        if not run_id:
+            return "/ui", "Receipt 缺少 run_id"
+        service.consume_operator_action_receipt(receipt_id=receipt_id, action_type=action_type)
+        if action_type == "resume_run":
+            bundle = service.resume_run(run_id)
+            return f"/ui/runs/{run_id}", f"继续执行完成：状态 {bundle.run.status} 证据={bundle.evidence.evidence_id}"
+        if action_type == "approve_run":
+            bundle = service.approve_run_review(run_id)
+            return f"/ui/runs/{run_id}", f"通过审查完成：审查 {bundle.review_verdict.decision} 状态 {bundle.run.status}"
+        if action_type == "reject_run":
+            bundle = service.reject_run_review(run_id)
+            return f"/ui/runs/{run_id}", f"拒绝审查完成：审查 {bundle.review_verdict.decision} 状态 {bundle.run.status}"
+        if action_type == "cancel_run":
+            run = service.cancel_run(run_id)
+            return f"/ui/runs/{run_id}", f"取消完成：状态 {run.status}"
+        return f"/ui/runs/{run_id}", f"Receipt 动作不支持：{action_type}"
 
     @router.get("/ui", response_class=HTMLResponse)
     def web_dashboard(notice: str | None = None) -> HTMLResponse:
@@ -207,53 +249,62 @@ def build_ui_router(
         )
         return _redirect_with_notice(f"/ui/workbench?session_id={session_id}", "后续事项已加入队列")
 
+
+    @router.get("/ui/actions/confirm", response_class=HTMLResponse)
+    def web_action_confirmation(receipt_id: str = Query(...)) -> HTMLResponse:
+        receipt = service.operator_action_receipt_repo.get(receipt_id)
+        if receipt is None:
+            return HTMLResponse(
+                render_action_confirmation_page(
+                    receipt={"receipt_id": receipt_id, "action_type": "missing", "status": "missing"},
+                    notice="Receipt ???????",
+                ),
+                status_code=404,
+            )
+        return HTMLResponse(render_action_confirmation_page(receipt=receipt.model_dump(mode="json")))
+
+    @router.post("/ui/actions/confirm")
+    async def web_action_confirm_execute(request: Request) -> RedirectResponse:
+        form = await request.form()
+        receipt_id = str(form.get("receipt_id") or "").strip()
+        path, notice = _execute_receipted_action(receipt_id)
+        return _redirect_with_notice(path, notice)
+
     @router.post("/ui/actions/{run_id}/resume")
     def web_resume_run(run_id: str) -> RedirectResponse:
-        bundle = service.resume_run(run_id)
-        return _redirect_with_notice(
-            f"/ui/runs/{run_id}",
-            f"继续执行完成：状态={bundle.run.status} 证据={bundle.evidence.evidence_id}",
-        )
+        return _redirect_to_confirmation(_issue_local_ui_receipt("resume_run", run_id=run_id))
 
     @router.post("/ui/actions/{run_id}/approve")
     def web_approve_run(run_id: str) -> RedirectResponse:
-        bundle = service.approve_run_review(run_id)
-        return _redirect_with_notice(
-            f"/ui/runs/{run_id}",
-            f"通过审查完成：审查={bundle.review_verdict.decision} 状态={bundle.run.status}",
-        )
+        return _redirect_to_confirmation(_issue_local_ui_receipt("approve_run", run_id=run_id))
 
     @router.post("/ui/actions/{run_id}/reject")
     def web_reject_run(run_id: str) -> RedirectResponse:
-        bundle = service.reject_run_review(run_id)
-        return _redirect_with_notice(
-            f"/ui/runs/{run_id}",
-            f"拒绝审查完成：审查={bundle.review_verdict.decision} 状态={bundle.run.status}",
-        )
+        return _redirect_to_confirmation(_issue_local_ui_receipt("reject_run", run_id=run_id))
 
     @router.post("/ui/actions/{run_id}/reconcile")
     def web_reconcile_run(run_id: str) -> RedirectResponse:
         result = service.reconcile_run(run_id)
         return _redirect_with_notice(
             f"/ui/runs/{run_id}",
-            f"状态对账完成：通过={result['passed']} 问题={result['problem_count']}",
+            f"?????????={result['passed']} ??={result['problem_count']}",
         )
 
     @router.post("/ui/actions/{run_id}/cancel")
     def web_cancel_run(run_id: str) -> RedirectResponse:
-        run = service.cancel_run(run_id)
-        return _redirect_with_notice(f"/ui/runs/{run_id}", f"取消完成：状态={run.status}")
+        return _redirect_to_confirmation(_issue_local_ui_receipt("cancel_run", run_id=run_id))
 
     @router.post("/ui/actions/batch-resume")
     async def web_batch_resume_runs(request: Request) -> RedirectResponse:
         form = await request.form()
         run_ids = [str(item) for item in form.getlist("run_id") if str(item).strip()]
         if not run_ids:
-            return _redirect_with_notice("/ui/reviews", "批量继续已跳过：没有选中运行")
-        result = service.resume_runs_parallel(run_ids, max_workers=min(len(run_ids), 4))
-        return _redirect_with_notice(
-            "/ui/reviews",
-            f"批量继续完成：请求={len(run_ids)} 结果={len(result['results'])}",
+            return _redirect_with_notice("/ui/reviews", "??????????????")
+        receipt = service.issue_operator_action_receipt(
+            action_type="batch_resume_runs",
+            risk_level="high",
+            requested_write_set=run_ids,
+            metadata={"source": "web_ui_form", "run_ids": run_ids},
         )
-
+        return _redirect_to_confirmation(receipt.receipt_id)
     return router

@@ -186,6 +186,11 @@ class PatchApplyError(WorkflowError):
     status_code = 409
 
 
+class OperatorActionReceiptError(WorkflowError):
+    code = "operator_action_receipt_invalid"
+    status_code = 403
+
+
 class SchedulerArbitrationError(WorkflowError):
     code = "scheduler_arbitration_error"
     status_code = 409

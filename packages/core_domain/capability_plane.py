@@ -498,6 +498,8 @@ class CapabilityPlane:
         runtime_gateway_description: dict[str, Any] | None = None,
         capability_routes: list[dict[str, Any]] | None = None,
         default_worker_pool_id: str | None = None,
+        recent_call_summaries: dict[str, dict[str, Any]] | None = None,
+        latest_probe_results: dict[str, dict[str, Any]] | None = None,
     ) -> list[CapabilityHealth]:
         descriptors = self.list_capability_descriptors(
             worker_pool_profiles=worker_pool_profiles,
@@ -507,32 +509,124 @@ class CapabilityPlane:
         )
         health: list[CapabilityHealth] = []
         for descriptor in descriptors:
+            recent_call_summary = (recent_call_summaries or {}).get(
+                descriptor.capability_id,
+                {
+                    "recent_success_count": 0,
+                    "recent_failure_count": 0,
+                    "recent_invocation_count": 0,
+                    "verified_by_runtime": False,
+                },
+            )
             failure_classes = self._failure_classes_for_descriptor(descriptor)
             probe_status, probe_reason, probe_detail = self._runtime_probe_for_descriptor(descriptor)
+            probe_evidence = self._probe_evidence_for_descriptor(descriptor, latest_probe_results or {})
             if descriptor.enabled and probe_status in {"ready", "assumed_ready", "runtime_ready"}:
                 status = "ready"
             elif descriptor.enabled:
                 status = "degraded"
             else:
                 status = "disabled"
+            if probe_evidence.get("status") == "blocked":
+                status = "degraded"
+            readiness_state = self._readiness_state_for_descriptor(descriptor, status, recent_call_summary, probe_status)
+            if probe_evidence.get("status") == "verified_ready":
+                readiness_state = "verified_ready"
+            elif probe_evidence.get("status") == "blocked":
+                readiness_state = "degraded"
+            runtime_ledger_summary = self._runtime_ledger_summary_for_descriptor(recent_call_summary)
             reason = None if descriptor.enabled and status == "ready" else probe_reason or "descriptor_disabled"
             health.append(
                 CapabilityHealth(
                     descriptor=descriptor,
                     status=status,
                     reason=reason,
+                    readiness_state=readiness_state,
                     tool_count=len(descriptor.scopes),
                     failure_classes=failure_classes,
-                    recent_call_summary={
-                        "recent_success_count": 0,
-                        "recent_failure_count": 0,
-                    },
+                    recent_call_summary=recent_call_summary,
+                    runtime_ledger_summary=runtime_ledger_summary,
+                    probe_evidence=probe_evidence,
+                    provider_route=self._provider_route_for_descriptor(descriptor, runtime_ledger_summary),
+                    fallback_route=self._fallback_route_for_descriptor(descriptor, runtime_ledger_summary),
                     runtime_probe_status=probe_status,
                     runtime_probe_reason=probe_reason,
                     runtime_probe_detail=probe_detail,
                 )
             )
         return health
+
+    def _probe_evidence_for_descriptor(
+        self,
+        descriptor: CapabilityDescriptor,
+        latest_probe_results: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        keys = [descriptor.adapter_name, descriptor.profile_id]
+        if descriptor.provider_kind == "runtime_gateway" and descriptor.scopes:
+            keys.append(str(descriptor.scopes[0]))
+        keys.append(descriptor.provider_kind)
+        for key in keys:
+            if key and key in latest_probe_results:
+                return latest_probe_results[key]
+        return {}
+
+    def _readiness_state_for_descriptor(
+        self,
+        descriptor: CapabilityDescriptor,
+        status: str,
+        recent_call_summary: dict[str, Any],
+        probe_status: str,
+    ) -> str:
+        if not descriptor.enabled or status == "disabled":
+            return "disabled"
+        if status == "degraded":
+            return "degraded"
+        if int(recent_call_summary.get("recent_success_count") or 0) > 0:
+            return "recently_successful"
+        if bool(recent_call_summary.get("verified_by_runtime")) or probe_status in {"runtime_ready", "ready"}:
+            return "verified_ready"
+        return "configured"
+
+    def _runtime_ledger_summary_for_descriptor(self, recent_call_summary: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "verified_by_runtime": bool(recent_call_summary.get("verified_by_runtime")),
+            "recent_invocation_count": int(recent_call_summary.get("recent_invocation_count") or 0),
+            "recent_success_count": int(recent_call_summary.get("recent_success_count") or 0),
+            "recent_failure_count": int(recent_call_summary.get("recent_failure_count") or 0),
+            "last_status": recent_call_summary.get("last_status"),
+            "last_return_code": recent_call_summary.get("last_return_code"),
+            "last_duration_ms": recent_call_summary.get("last_duration_ms"),
+            "last_adapter_name": recent_call_summary.get("last_adapter_name"),
+            "last_failure_class": recent_call_summary.get("last_failure_class"),
+            "last_invoked_at": recent_call_summary.get("last_invoked_at"),
+        }
+
+    def _provider_route_for_descriptor(
+        self,
+        descriptor: CapabilityDescriptor,
+        runtime_ledger_summary: dict[str, Any],
+    ) -> str | None:
+        if descriptor.adapter_name:
+            return str(runtime_ledger_summary.get("last_adapter_name") or descriptor.adapter_name)
+        if descriptor.profile_id:
+            return descriptor.profile_id
+        if descriptor.scopes:
+            return str(descriptor.scopes[0])
+        return descriptor.provider_kind
+
+    def _fallback_route_for_descriptor(
+        self,
+        descriptor: CapabilityDescriptor,
+        runtime_ledger_summary: dict[str, Any],
+    ) -> str | None:
+        failure_class = runtime_ledger_summary.get("last_failure_class")
+        if not failure_class:
+            return None
+        if descriptor.provider_kind == "adapter_route" and descriptor.adapter_name != "shell":
+            return "adapter_route:shell_exec:shell"
+        if descriptor.provider_kind == "runtime_gateway":
+            return "runtime_gateway:null"
+        return None
 
     def _failure_classes_for_descriptor(self, descriptor: CapabilityDescriptor) -> list[str]:
         if descriptor.provider_kind == "mcp_profile":

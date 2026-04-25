@@ -1,14 +1,54 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 from packages.contracts import ExecutionClusterTemplate
 from packages.core_domain.interaction_catalog import cluster_template_ids_for_preset
 
 
+CLUSTER_ROUTE_MARKERS_PATH = Path(__file__).resolve().parents[2] / "infra" / "seeds" / "cluster_route_markers.json"
+DEFAULT_DYNAMIC_CLUSTER_ORDER = [
+    "multimodal_cluster",
+    "search_cluster",
+    "design_cluster",
+    "architecture_delivery_cluster",
+    "dev_cluster",
+    "review_cluster",
+    "management_cluster",
+]
+DEFAULT_STATIC_CLUSTER_ORDER = [
+    "architecture_delivery_cluster",
+    "multimodal_cluster",
+    "search_cluster",
+    "design_cluster",
+    "review_cluster",
+    "management_cluster",
+    "research_cluster",
+    "dev_cluster",
+]
+
+
+def load_cluster_route_markers(path: Path | None = None) -> dict[str, set[str]]:
+    marker_path = path or CLUSTER_ROUTE_MARKERS_PATH
+    with marker_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return {
+        str(template_id): {str(marker).lower() for marker in markers if str(marker).strip()}
+        for template_id, markers in payload.items()
+        if isinstance(markers, list)
+    }
+
+
 class ClusterRouter:
-    def __init__(self, templates: list[ExecutionClusterTemplate]):
+    def __init__(
+        self,
+        templates: list[ExecutionClusterTemplate],
+        marker_catalog: dict[str, set[str]] | None = None,
+    ):
         self._template_index = {template.template_id: template for template in templates}
+        self._marker_catalog = marker_catalog or load_cluster_route_markers()
 
     def suggest_template_ids(
         self,
@@ -34,147 +74,37 @@ class ClusterRouter:
             return mapped_from_preset
 
         normalized_goal = goal.lower()
-        architecture_markers = {
-            "architecture",
-            "architect",
-            "claude",
-            "dogfood",
-            "m41",
-            "架构",
-            "能力层",
-            "自开发",
-        }
-        multimodal_markers = {
-            "multimodal",
-            "pdf",
-            "image",
-            "screenshot",
-            "picture",
-            "mmx",
-            "vertex",
-            "多模态",
-            "图片",
-            "截图",
-            "设计稿",
-            "文档图片",
-        }
-        search_markers = {
-            "search",
-            "web",
-            "source",
-            "citation",
-            "evidence",
-            "retrieval",
-            "搜索",
-            "检索",
-            "资料",
-            "来源",
-            "引用",
-            "信息检索",
-        }
-        design_markers = {
-            "design",
-            "ui",
-            "ux",
-            "frontend",
-            "interface",
-            "interaction",
-            "设计",
-            "界面",
-            "交互",
-            "视觉",
-            "前端",
-        }
-        review_markers = {
-            "review",
-            "qa",
-            "test",
-            "regression",
-            "quality",
-            "验收",
-            "审查",
-            "测试",
-            "回归",
-            "质量",
-        }
-        management_markers = {
-            "roadmap",
-            "phase",
-            "task",
-            "milestone",
-            "closeout",
-            "管理",
-            "计划",
-            "任务卡",
-            "收口",
-            "里程碑",
-        }
-        research_markers = {"research", "investigate", "compare", "evaluate", "analyze", "研究", "调研", "评估", "分析"}
-        delivery_markers = {
-            "project",
-            "delivery",
-            "implement",
-            "build",
-            "integration",
-            "feature",
-            "refactor",
-            "cluster",
-            "game",
-            "develop",
-            "实现",
-            "开发",
-            "交付",
-            "小游戏",
-        }
-        dynamic_enabled = str(os.getenv("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED") or "").strip().lower() in {
+        if self._dynamic_routing_enabled():
+            dynamic_candidates = self._matching_template_ids(normalized_goal, DEFAULT_DYNAMIC_CLUSTER_ORDER)
+            if not dynamic_candidates and "research_cluster" in self._template_index:
+                dynamic_candidates = self._matching_template_ids(normalized_goal, ["research_cluster"])
+            if dynamic_candidates:
+                return dynamic_candidates
+
+        static_candidates = self._matching_template_ids(normalized_goal, DEFAULT_STATIC_CLUSTER_ORDER)
+        return static_candidates[:1]
+
+    def _matching_template_ids(self, normalized_goal: str, template_order: list[str]) -> list[str]:
+        dynamic_candidates: list[str] = []
+        for template_id in template_order:
+            if template_id not in self._template_index:
+                continue
+            if any(marker in normalized_goal for marker in self._marker_catalog.get(template_id, set())):
+                dynamic_candidates.append(template_id)
+        unique_candidates: list[str] = []
+        for template_id in dynamic_candidates:
+            if template_id not in unique_candidates:
+                unique_candidates.append(template_id)
+        return unique_candidates
+
+    def _dynamic_routing_enabled(self) -> bool:
+        return str(os.getenv("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED") or "").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
             "enabled",
         }
-        if dynamic_enabled:
-            dynamic_candidates: list[str] = []
-            marker_map = [
-                (multimodal_markers, "multimodal_cluster"),
-                (search_markers, "search_cluster"),
-                (design_markers, "design_cluster"),
-                (architecture_markers, "architecture_delivery_cluster"),
-                (delivery_markers, "dev_cluster"),
-                (review_markers, "review_cluster"),
-                (management_markers, "management_cluster"),
-            ]
-            for markers, template_id in marker_map:
-                if template_id not in self._template_index:
-                    continue
-                if any(marker in normalized_goal for marker in markers):
-                    dynamic_candidates.append(template_id)
-            if not dynamic_candidates and "research_cluster" in self._template_index:
-                if any(marker in normalized_goal for marker in research_markers):
-                    dynamic_candidates.append("research_cluster")
-            if dynamic_candidates:
-                unique_candidates: list[str] = []
-                for template_id in dynamic_candidates:
-                    if template_id not in unique_candidates:
-                        unique_candidates.append(template_id)
-                return unique_candidates
-        if any(marker in normalized_goal for marker in architecture_markers):
-            return ["architecture_delivery_cluster"] if "architecture_delivery_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in multimodal_markers):
-            return ["multimodal_cluster"] if "multimodal_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in search_markers):
-            return ["search_cluster"] if "search_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in design_markers):
-            return ["design_cluster"] if "design_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in review_markers):
-            return ["review_cluster"] if "review_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in management_markers):
-            return ["management_cluster"] if "management_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in research_markers):
-            return ["research_cluster"] if "research_cluster" in self._template_index else []
-        if any(marker in normalized_goal for marker in delivery_markers):
-            return ["dev_cluster"] if "dev_cluster" in self._template_index else []
-        return []
 
     def get_template(self, template_id: str) -> ExecutionClusterTemplate | None:
         return self._template_index.get(template_id)

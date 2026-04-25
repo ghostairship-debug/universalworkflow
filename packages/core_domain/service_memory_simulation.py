@@ -97,6 +97,11 @@ class MemorySimulationServiceMixin:
                 runtime_gateway_description=self.runtime_gateway.describe(),
                 capability_routes=self.list_capability_routes(),
                 default_worker_pool_id=self.effective_config["worker_pools"]["default_pool_id"],
+                recent_call_summaries=self.capability_invocation_repo.summarize_recent(),
+                latest_probe_results={
+                    provider: result.model_dump(mode="json")
+                    for provider, result in self.capability_probe_result_repo.latest_by_provider().items()
+                },
             )
         ]
 

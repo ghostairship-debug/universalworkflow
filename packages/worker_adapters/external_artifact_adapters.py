@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from packages.contracts import MutationMode, TaskKind, TaskPacket
@@ -12,7 +13,11 @@ from packages.core_domain.config import build_effective_config
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.base import ExecutionResult, resolve_artifact_paths, utc_now
 from packages.worker_adapters.cli_base import CliAdapterBase, CompletedProcessRunner
-from packages.worker_adapters.subprocess_support import build_subprocess_env, completed_process_from_timeout
+from packages.worker_adapters.subprocess_support import (
+    build_subprocess_env,
+    completed_process_from_timeout,
+    decode_subprocess_stream,
+)
 
 
 class ArtifactCliAdapter(CliAdapterBase):
@@ -29,6 +34,7 @@ class ArtifactCliAdapter(CliAdapterBase):
         runner: CompletedProcessRunner | None = None,
         executable: str | None = None,
     ):
+        self._uses_custom_runner = runner is not None
         super().__init__(runner=runner)
         self.executable = executable or self._configured_executable()
 
@@ -104,46 +110,57 @@ class ArtifactCliAdapter(CliAdapterBase):
         prompt = self._prompt_for(packet)
         return self._template_command(packet, artifact_path, prompt) or self._default_command(packet, artifact_path, prompt)
 
-    def _write_artifact(self, packet: TaskPacket, content: str, completed: subprocess.CompletedProcess[str]) -> None:
+    def _write_artifact(
+        self,
+        packet: TaskPacket,
+        content: str | bytes | None,
+        completed: subprocess.CompletedProcess[str],
+    ) -> None:
         artifact_path = self._artifact_path_for(packet)
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        if not content.strip():
-            content = json.dumps(
+        content_text = decode_subprocess_stream(content)
+        stderr_text = decode_subprocess_stream(completed.stderr)
+        if not content_text.strip():
+            content_text = json.dumps(
                 {
                     "adapter": self.normalized_name(),
                     "status": "empty_output",
                     "return_code": completed.returncode,
-                    "stderr_preview": (completed.stderr or "")[:2000],
+                    "stderr_preview": stderr_text[:2000],
                 },
                 ensure_ascii=False,
                 indent=2,
             )
-        artifact_path.write_text(content.rstrip("\n") + "\n", encoding="utf-8")
+        artifact_path.write_text(content_text.rstrip("\n") + "\n", encoding="utf-8")
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
         command = self.build_command(packet)
         env = build_subprocess_env(packet.env)
         try:
-            completed = self._runner(
-                command,
-                cwd=packet.working_directory,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=self.timeout_seconds,
-            )
+            run_kwargs = {
+                "cwd": packet.working_directory,
+                "env": env,
+                "capture_output": True,
+                "text": True,
+                "check": False,
+                "timeout": self.timeout_seconds,
+            }
+            if not self._uses_custom_runner:
+                run_kwargs.update({"encoding": "utf-8", "errors": "replace"})
+            completed = self._runner(command, **run_kwargs)
         except subprocess.TimeoutExpired as exc:
             completed = completed_process_from_timeout(exc, command=command, timeout_seconds=self.timeout_seconds)
+        stdout = decode_subprocess_stream(completed.stdout)
+        stderr = decode_subprocess_stream(completed.stderr)
         if completed.returncode == 0:
-            self._write_artifact(packet, completed.stdout, completed)
+            self._write_artifact(packet, stdout, completed)
         finished_at = utc_now()
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=stdout,
+            stderr=stderr,
             started_at=started_at,
             finished_at=finished_at,
             duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
@@ -220,7 +237,22 @@ class MMXMultimodalAdapter(ArtifactCliAdapter):
     output_label = "primary multimodal evidence extractor"
 
     def _default_command(self, packet: TaskPacket, artifact_path: Path, prompt: str) -> list[str]:
-        return [self._resolved_executable(), "run", prompt]
+        model = packet.env.get("WORKFLOW_MMX_MODEL") or os.getenv("WORKFLOW_MMX_MODEL") or os.getenv("MINIMAX_MODEL") or "MiniMax-M2.7"
+        base_url = packet.env.get("MINIMAX_BASE_URL") or os.getenv("MINIMAX_BASE_URL") or "https://api.minimaxi.com/v1"
+        prompt_path = artifact_path.with_suffix(".prompt.txt")
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prompt, encoding="utf-8")
+        return [
+            sys.executable,
+            "-m",
+            "packages.worker_adapters.minimax_openai_cli",
+            "--model",
+            str(model),
+            "--base-url",
+            str(base_url).rstrip("/"),
+            "--prompt-path",
+            prompt_path.as_posix(),
+        ]
 
 
 class VertexMultimodalAdapter(ArtifactCliAdapter):
@@ -232,11 +264,40 @@ class VertexMultimodalAdapter(ArtifactCliAdapter):
     output_label = "fallback complex multimodal evidence extractor"
 
     def _default_command(self, packet: TaskPacket, artifact_path: Path, prompt: str) -> list[str]:
-        template = packet.env.get(self.command_template_env_key) or os.getenv(self.command_template_env_key)
-        if not template:
+        project = (
+            packet.env.get("WORKFLOW_VERTEX_PROJECT")
+            or os.getenv("WORKFLOW_VERTEX_PROJECT")
+            or os.getenv("GOOGLE_CLOUD_PROJECT")
+            or os.getenv("GCLOUD_PROJECT")
+        )
+        if not project:
             raise WorkerAdapterUnavailableError(
                 self.normalized_name(),
-                "Vertex adapter requires WORKFLOW_VERTEX_COMMAND_TEMPLATE for the first local integration",
-                {"env": self.command_template_env_key},
+                "Vertex adapter requires GOOGLE_CLOUD_PROJECT, GCLOUD_PROJECT, or WORKFLOW_VERTEX_PROJECT",
+                {"env": "GOOGLE_CLOUD_PROJECT"},
             )
-        return self._template_command(packet, artifact_path, prompt) or []
+        location = (
+            packet.env.get("WORKFLOW_VERTEX_LOCATION")
+            or os.getenv("WORKFLOW_VERTEX_LOCATION")
+            or os.getenv("GOOGLE_VERTEX_LOCATION")
+            or os.getenv("GOOGLE_CLOUD_LOCATION")
+            or os.getenv("VERTEX_LOCATION")
+            or "global"
+        )
+        model = packet.env.get("WORKFLOW_VERTEX_MODEL") or os.getenv("WORKFLOW_VERTEX_MODEL") or "gemini-2.5-flash"
+        prompt_path = artifact_path.with_suffix(".prompt.txt")
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prompt, encoding="utf-8")
+        return [
+            sys.executable,
+            "-m",
+            "packages.worker_adapters.vertex_genai_cli",
+            "--project",
+            str(project),
+            "--location",
+            str(location),
+            "--model",
+            str(model),
+            "--prompt-path",
+            prompt_path.as_posix(),
+        ]

@@ -200,6 +200,7 @@ class LifecycleServiceMixin:
             run.goal,
             preset,
             run.run_id,
+            working_directory=self._workspace_root().as_posix(),
             task_kind=resolved_task_kind,
             domain_pack=domain_pack,
             capability_route=capability_route,
@@ -1156,6 +1157,7 @@ class LifecycleServiceMixin:
                 execution_result=execution_result,
             )
             if capability_receipt is not None:
+                self.capability_invocation_repo.create_from_receipt(capability_receipt, connection=connection)
                 execution_result.metadata["capability_execution_receipt"] = capability_receipt.model_dump(mode="json")
                 resumed_state = self._state_ref_with_payload_updates(
                     resumed_state,

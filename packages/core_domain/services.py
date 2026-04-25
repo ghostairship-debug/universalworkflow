@@ -122,8 +122,11 @@ from packages.core_domain.evidence_builder import EvidenceBuilder
 from packages.core_domain.repositories import (
     BudgetLedgerRepository,
     AutomationWatchdogRepository,
+    CapabilityInvocationRepository,
+    CapabilityProbeResultRepository,
     ChatMessageRepository,
     ChatStreamEventRepository,
+    ClusterRouteDecisionRepository,
     EventRepository,
     EvidenceRepository,
     FollowupRequestRepository,
@@ -131,6 +134,7 @@ from packages.core_domain.repositories import (
     HandoffRepository,
     IntentSessionRepository,
     MemoryItemRepository,
+    OperatorActionReceiptRepository,
     PresetRepository,
     ReviewRepository,
     RunSnapshotRepository,
@@ -146,14 +150,20 @@ from packages.core_domain.repositories import (
     WorkerLeaseRepository,
 )
 from packages.core_domain.resolver import PresetResolver
+from packages.core_domain.service_core_helpers import CoreHelperServiceMixin
 from packages.core_domain.service_lifecycle import LifecycleServiceMixin
 from packages.core_domain.service_interaction import InteractionServiceMixin
 from packages.core_domain.service_memory_simulation import MemorySimulationServiceMixin
 from packages.core_domain.service_orchestration import OrchestrationExecutionService
+from packages.core_domain.service_operator_action import OperatorActionServiceMixin
+from packages.core_domain.service_operator_action_guard import OperatorActionGuard
 from packages.core_domain.service_projection import ProjectionServiceMixin
 from packages.core_domain.service_execution_resolution import resolve_execution_profile_for_service
-from packages.core_domain.service_repo_mutation import execute_repo_mutation
+from packages.core_domain.service_repair import RepairServiceMixin
+from packages.core_domain.service_repo_mutation import RepoMutationCoordinator
+from packages.core_domain.service_scheduler import SchedulerServiceMixin
 from packages.core_domain.service_scheduler_authority_support import SchedulerAuthoritySupportService
+from packages.core_domain.service_worker_callbacks import WorkerCallbackServiceMixin
 from packages.core_domain.service_types import (
     ExecutedRunBundle,
     PreparedRunBundle,
@@ -165,7 +175,7 @@ from packages.core_domain.external_workers import (
     load_worker_pool_profiles,
     resolve_worker_pool_profile,
 )
-from packages.core_domain.scheduler_authority import NullSchedulerAuthorityCluster, SchedulerAuthorityClusterService
+from packages.core_domain.local_scheduler_lease_arbiter import LocalSchedulerLeaseArbiter
 from packages.core_domain.skills import export_domain_pack_skill_bundle
 from packages.core_domain.m8_flags import (
     active_feature_flags,
@@ -206,10 +216,15 @@ from packages.worker_adapters.shell_adapter import ShellAdapter
 
 
 class OrchestratorService(
+    CoreHelperServiceMixin,
+    RepairServiceMixin,
     LifecycleServiceMixin,
     MemorySimulationServiceMixin,
     InteractionServiceMixin,
     ProjectionServiceMixin,
+    SchedulerServiceMixin,
+    WorkerCallbackServiceMixin,
+    OperatorActionServiceMixin,
 ):
     CLAIM_LEASE_SECONDS = 300
     WORKER_LEASE_SECONDS = 300
@@ -243,10 +258,12 @@ class OrchestratorService(
         external_worker_gateway: ExternalWorkerGateway | None = None,
         chat_llm_runtime: ChatLLMRuntime | None = None,
         chat_control_graph: ChatControlGraph | None = None,
+        workspace_root: str | Path | None = None,
     ):
         self.db_path = Path(db_path) if db_path is not None else None
         self.effective_config = build_effective_config(
-            explicit_db_path=self.db_path.as_posix() if self.db_path is not None else None
+            explicit_db_path=self.db_path.as_posix() if self.db_path is not None else None,
+            explicit_workspace_root=workspace_root,
         )
         self.run_repo = RunRepository(self.db_path)
         self.preset_repo = PresetRepository(self.db_path)
@@ -269,6 +286,10 @@ class OrchestratorService(
         self.followup_request_repo = FollowupRequestRepository(self.db_path)
         self.chat_message_repo = ChatMessageRepository(self.db_path)
         self.chat_stream_event_repo = ChatStreamEventRepository(self.db_path)
+        self.cluster_route_decision_repo = ClusterRouteDecisionRepository(self.db_path)
+        self.capability_invocation_repo = CapabilityInvocationRepository(self.db_path)
+        self.capability_probe_result_repo = CapabilityProbeResultRepository(self.db_path)
+        self.operator_action_receipt_repo = OperatorActionReceiptRepository(self.db_path)
         self.generated_agent_profile_repo = GeneratedAgentProfileRepository(self.db_path)
         self.automation_watchdog_repo = AutomationWatchdogRepository(self.db_path)
         self.simulation_record_repo = SimulationRecordRepository(self.db_path)
@@ -334,11 +355,12 @@ class OrchestratorService(
             status="active",
         )
         self.scheduler_authority_cluster_enabled = bool(self.effective_config["scheduler_authority"]["enabled"])
-        scheduler_authority_cluster_cls = (
-            SchedulerAuthorityClusterService
-            if self.scheduler_authority_cluster_enabled
-            else NullSchedulerAuthorityCluster
-        )
+        if self.scheduler_authority_cluster_enabled:
+            from packages.core_domain.scheduler_authority import SchedulerAuthorityClusterService
+
+            scheduler_authority_cluster_cls = SchedulerAuthorityClusterService
+        else:
+            scheduler_authority_cluster_cls = LocalSchedulerLeaseArbiter
         self.scheduler_authority_cluster = scheduler_authority_cluster_cls(
             self.db_path,
             node_id=self.effective_config["scheduler_authority"]["node_id"],
@@ -356,382 +378,11 @@ class OrchestratorService(
         self.review_policy_service = ReviewPolicyService(self)
         self.audit_replay_service = AuditReplayService(self)
         self.ownership_lease_service = OwnershipLeaseService(self)
-
-    def _resolver(self) -> PresetResolver:
-        return PresetResolver(self.preset_repo.list())
-
-    def _require_status(self, run: Run, action: str, allowed_statuses: list[RunStatus | str]) -> None:
-        allowed = [str(status) for status in allowed_statuses]
-        if str(run.status) not in allowed:
-            raise InvalidStateTransitionError(action, str(run.status), allowed)
-
-    def _transition_run_status(
-        self,
-        run: Run,
-        action: str,
-        target_status: RunStatus | str,
-        *,
-        connection=None,
-    ) -> Run:
-        normalized_target = RunStatus(target_status)
-        if not can_transition_run_status(run.status, normalized_target):
-            raise InvalidStateTransitionError(
-                action,
-                str(run.status),
-                [str(status) for status in allowed_run_status_transitions(run.status)],
-                str(normalized_target),
-            )
-        updated_run = self.run_repo.update_status(run.run_id, normalized_target, connection=connection)
-        assert updated_run is not None
-        return updated_run
-
-    def _next_action_for(self, status: str) -> str:
-        if status == RunStatus.pending:
-            return "compile"
-        if status == RunStatus.prepared:
-            return "resume"
-        if status == RunStatus.awaiting_review:
-            return "human_review"
-        if status == RunStatus.running:
-            return "observe"
-        return "none"
-
-    def _review_policy_for_context(
-        self,
-        context: RunDiagnosticContext,
-        *,
-        last_runtime_state: RuntimeStateRef | None = None,
-    ) -> str:
-        if context.preset is not None:
-            return str(context.preset.default_review_policy)
-        state_ref = last_runtime_state or self._last_runtime_state(context)
-        if state_ref is not None and state_ref.state_payload.get("review_policy"):
-            return str(state_ref.state_payload["review_policy"])
-        return str(ReviewPolicy.auto_only)
-
-    def _effective_review_state(
-        self,
-        run: Run,
-        latest_review_verdict: ReviewVerdict | None,
-        review_policy: ReviewPolicy | str | None = None,
-    ) -> str:
-        normalized_policy = str(review_policy or ReviewPolicy.auto_only)
-        if str(run.status) == RunStatus.awaiting_review:
-            if latest_review_verdict is None:
-                return "human_pending"
-            if str(latest_review_verdict.reviewer_type) != ReviewerType.human:
-                return "human_pending"
-        if latest_review_verdict is None:
-            return "not_requested"
-        if str(latest_review_verdict.reviewer_type) == ReviewerType.human:
-            return "human_approved" if str(latest_review_verdict.decision) == ReviewDecision.pass_ else "human_rejected"
-        if normalized_policy == str(ReviewPolicy.optional):
-            return "advisory_passed" if str(latest_review_verdict.decision) == ReviewDecision.pass_ else "advisory_failed"
-        return "auto_passed" if str(latest_review_verdict.decision) == ReviewDecision.pass_ else "auto_failed"
-
-    def _serialize_contract(self, value: Evidence | ReviewVerdict | RuntimeStateRef | None) -> dict[str, Any] | None:
-        return value.model_dump(mode="json") if value is not None else None
-
-    def _serialize_claim(self, value: RuntimeClaim | None) -> dict[str, Any] | None:
-        return value.model_dump(mode="json") if value is not None else None
-
-    def _serialize_snapshot(self, value: RunSnapshot | None) -> dict[str, Any] | None:
-        return value.model_dump(mode="json") if value is not None else None
-
-    def _serialize_worker_lease(self, value: WorkerLease | None) -> dict[str, Any] | None:
-        return value.model_dump(mode="json") if value is not None else None
-
-    def _serialize_attempt(self, value: RuntimeAttempt | None) -> dict[str, Any] | None:
-        return value.model_dump(mode="json") if value is not None else None
-
-    def _control_plane_identity(self) -> tuple[str, str, str]:
-        return (
-            str(OwnershipActorKind.control_plane),
-            "control_plane_local",
-            "local_orchestrator",
+        self.repo_mutation_coordinator = RepoMutationCoordinator()
+        self.operator_action_guard = OperatorActionGuard(
+            self.operator_action_receipt_repo,
+            workspace_root=self._workspace_root(),
         )
-
-    def _worker_identity(self, adapter_name: str, *, worker_name: str | None = None) -> tuple[str, str, str]:
-        normalized_adapter = (adapter_name or "worker").strip().lower().replace(" ", "_")
-        return (
-            str(OwnershipActorKind.worker),
-            f"worker_{normalized_adapter}_local",
-            worker_name or "local_worker",
-        )
-
-    def _ownership_domain_for(
-        self,
-        runtime_task_id: str,
-        *,
-        domain_kind: OwnershipDomainKind | str = OwnershipDomainKind.runtime_task,
-        domain_key: str | None = None,
-    ) -> tuple[str, str]:
-        normalized_kind = str(OwnershipDomainKind(domain_kind))
-        return normalized_kind, domain_key or runtime_task_id
-
-    def _utc_now(self) -> datetime:
-        return datetime.now(UTC)
-
-    def _parse_iso_datetime(self, value: str | None) -> datetime | None:
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            return None
-
-    def _workspace_root(self) -> Path:
-        return Path.cwd().resolve()
-
-    def _feature_flags(self) -> dict[str, bool]:
-        return active_feature_flags()
-
-    def get_effective_config(self) -> dict[str, Any]:
-        return self.effective_config
-
-    def list_worker_pool_profiles(self) -> list[dict[str, Any]]:
-        return [
-            {
-                **profile.model_dump(mode="json"),
-                "feature_flag_enabled": is_external_worker_pools_enabled(),
-                "default_selected": profile.worker_pool_id == self.effective_config["worker_pools"]["default_pool_id"],
-            }
-            for profile in self.worker_pool_profiles
-        ]
-
-    def _selected_worker_pool_profile(self, worker_pool_id: str | None = None) -> Any | None:
-        if not is_external_worker_pools_enabled():
-            return None
-        return resolve_worker_pool_profile(
-            self.worker_pool_profiles,
-            worker_pool_id or self.effective_config["worker_pools"]["default_pool_id"],
-        )
-
-    def _runtime_gateway_for_task_packet(self, task_packet: TaskPacket):
-        return resolve_runtime_gateway(
-            self.runtime_gateway,
-            provider=task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_PROVIDER") or None,
-            model=(
-                task_packet.env.get("WORKFLOW_RUNTIME_GATEWAY_MODEL")
-                or task_packet.env.get("WORKFLOW_LLM_MODEL")
-                or None
-            ),
-            reasoning_effort=task_packet.env.get("WORKFLOW_RUNTIME_REASONING_EFFORT") or None,
-        )
-
-    def _scheduler_authority_payload(self, state_ref: RuntimeStateRef | None) -> dict[str, Any]:
-        return self.scheduler_authority_support.authority_payload(state_ref)
-
-    def _scheduler_decision_history(
-        self,
-        payload: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        return self.scheduler_authority_support.decision_history(payload)
-
-    def _scheduler_conflicts(
-        self,
-        payload: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        return self.scheduler_authority_support.conflicts(payload)
-
-    def _scheduler_handoff_history(
-        self,
-        payload: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        return self.scheduler_authority_support.handoff_history(payload)
-
-    def _cluster_summary_payload(
-        self,
-        *,
-        cluster: dict[str, Any] | None = None,
-        term: SchedulerConsensusTerm | dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        return self.scheduler_authority_support.cluster_summary_payload(cluster=cluster, term=term)
-
-    def _scheduler_context_for_dispatch(
-        self,
-        committed_lease: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        return self.scheduler_authority_support.scheduler_context_for_dispatch(committed_lease)
-
-    def _scheduler_committed_lease_payload(
-        self,
-        committed_lease: SchedulerCommittedLease | dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        return self.scheduler_authority_support.committed_lease_payload(committed_lease)
-
-    def _scheduler_handoff_envelope_payload(
-        self,
-        handoff_envelope: ControlPlaneHandoffEnvelope | dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        return self.scheduler_authority_support.handoff_envelope_payload(handoff_envelope)
-
-    def _scheduler_arbitration_updates(
-        self,
-        state_ref: RuntimeStateRef | None,
-        *,
-        control_plane_id: str,
-        proposal: SchedulerLeaseProposal | None = None,
-        decision: SchedulerLeaseDecision | None = None,
-        committed_lease: SchedulerCommittedLease | dict[str, Any] | None = None,
-        term: SchedulerConsensusTerm | dict[str, Any] | None = None,
-        votes: list[SchedulerVoteRecord | dict[str, Any]] | None = None,
-        handoff_envelope: ControlPlaneHandoffEnvelope | dict[str, Any] | None = None,
-        heartbeat: SchedulerPeerHeartbeat | None = None,
-        cluster: dict[str, Any] | None = None,
-        conflict: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return self.scheduler_authority_support.arbitration_updates(
-            state_ref,
-            control_plane_id=control_plane_id,
-            proposal=proposal,
-            decision=decision,
-            committed_lease=committed_lease,
-            term=term,
-            votes=votes,
-            handoff_envelope=handoff_envelope,
-            heartbeat=heartbeat,
-            cluster=cluster,
-            conflict=conflict,
-        )
-
-    def _create_control_plane_handoff_envelope(
-        self,
-        *,
-        run_id: str,
-        runtime_task_id: str,
-        from_control_plane_id: str,
-        to_control_plane_id: str,
-        committed_lease: SchedulerCommittedLease,
-        connection=None,
-    ) -> ControlPlaneHandoffEnvelope:
-        snapshots = self.snapshot_repo.list_for_run(run_id)
-        latest_snapshot = snapshots[-1] if snapshots else None
-        latest_review_verdict = self.review_repo.latest_for_run(run_id)
-        state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
-        replay_excerpt = {}
-        try:
-            replay = self.get_run_replay_packet(run_id)
-            replay_excerpt = {
-                "headline": replay["summary"]["headline"],
-                "next_action": replay["summary"]["next_action"],
-                "failure_taxonomy": replay["summary"]["failure_taxonomy"],
-            }
-        except WorkflowError:
-            replay_excerpt = {}
-        envelope = self.scheduler_authority_cluster.create_handoff_envelope(
-            run_id=run_id,
-            runtime_task_id=runtime_task_id,
-            from_control_plane_id=from_control_plane_id,
-            to_control_plane_id=to_control_plane_id,
-            committed_lease_id=committed_lease.committed_lease_id,
-            term_no=committed_lease.term_no,
-            commit_index=committed_lease.commit_index,
-            snapshot_payload=latest_snapshot.snapshot_payload if latest_snapshot is not None else {},
-            review_state=(
-                latest_review_verdict.model_dump(mode="json")
-                if latest_review_verdict is not None
-                else {"effective_review_state": "not_requested"}
-            ),
-            durable_refs=self._durable_refs_for_state(state_ref),
-            replay_excerpt=replay_excerpt,
-            connection=connection,
-        )
-        return envelope
-
-    def _ensure_committed_scheduler_lease(
-        self,
-        *,
-        run: Run,
-        runtime_task: RuntimeTask,
-        connection=None,
-    ) -> tuple[dict[str, Any], ControlPlaneHandoffEnvelope | None]:
-        result = self.scheduler_authority_cluster.submit_proposal(
-            control_plane_id=self.control_plane_identity.control_plane_id,
-            run_id=run.run_id,
-            runtime_task_id=runtime_task.runtime_task_id,
-            domain_kind="runtime_task",
-            domain_key=runtime_task.runtime_task_id,
-            connection=connection,
-        )
-        if not result.get("granted"):
-            raise SchedulerArbitrationError(
-                "control plane does not own a committed scheduler lease for the runtime task",
-                {
-                    "run_id": run.run_id,
-                    "runtime_task_id": runtime_task.runtime_task_id,
-                    "result": result,
-                },
-            )
-        previous = result.get("previous_committed_lease")
-        current = result.get("committed_lease")
-        handoff_envelope = None
-        if (
-            isinstance(previous, dict)
-            and isinstance(current, dict)
-            and previous.get("control_plane_id") is not None
-            and previous.get("control_plane_id") != current.get("control_plane_id")
-        ):
-            handoff_envelope = self._create_control_plane_handoff_envelope(
-                run_id=run.run_id,
-                runtime_task_id=runtime_task.runtime_task_id,
-                from_control_plane_id=str(previous["control_plane_id"]),
-                to_control_plane_id=str(current["control_plane_id"]),
-                committed_lease=SchedulerCommittedLease.model_validate(current),
-                connection=connection,
-            )
-            result["handoff_envelope"] = self._scheduler_handoff_envelope_payload(handoff_envelope)
-        return result, handoff_envelope
-
-    def _validate_callback_scheduler_context(
-        self,
-        *,
-        runtime_task_id: str,
-        execution_target: dict[str, Any] | None,
-        connection=None,
-    ) -> SchedulerCommittedLease:
-        current_committed = self.scheduler_authority_cluster.get_active_committed_lease_for_domain(
-            domain_kind="runtime_task",
-            domain_key=runtime_task_id,
-            connection=connection,
-        )
-        if current_committed is None:
-            raise SchedulerArbitrationError(
-                "worker callback arrived without an active committed scheduler lease",
-                {"runtime_task_id": runtime_task_id},
-            )
-        if current_committed.control_plane_id != self.control_plane_identity.control_plane_id:
-            raise SchedulerArbitrationError(
-                "worker callback was received by a stale control plane",
-                {
-                    "runtime_task_id": runtime_task_id,
-                    "active_control_plane_id": current_committed.control_plane_id,
-                    "local_control_plane_id": self.control_plane_identity.control_plane_id,
-                },
-            )
-        target = execution_target or {}
-        if (
-            target.get("committed_lease_id")
-            and str(target.get("committed_lease_id")) != current_committed.committed_lease_id
-        ):
-            raise SchedulerArbitrationError(
-                "worker callback committed lease does not match the active committed lease",
-                {
-                    "runtime_task_id": runtime_task_id,
-                    "callback_committed_lease_id": target.get("committed_lease_id"),
-                    "active_committed_lease_id": current_committed.committed_lease_id,
-                },
-            )
-        if target.get("fencing_token") and str(target.get("fencing_token")) != current_committed.fencing_token:
-            raise SchedulerArbitrationError(
-                "worker callback fencing token does not match the active committed lease",
-                {
-                    "runtime_task_id": runtime_task_id,
-                    "callback_fencing_token": target.get("fencing_token"),
-                    "active_fencing_token": current_committed.fencing_token,
-                },
-            )
-        return current_committed
 
     def _default_project_delivery_plan(self, run_id: str) -> OrchestrationPlan:
         plan = self.orchestration_service.default_orchestration_plan_for_preset("project_delivery", run_id)
@@ -971,7 +622,7 @@ class OrchestratorService(
         adapter,
         packet: TaskPacket,
     ) -> ExecutionResult:
-        return execute_repo_mutation(adapter, packet)
+        return self.repo_mutation_coordinator.execute(adapter, packet)
 
     def _execute_project_delivery_orchestration(self, packet: TaskPacket) -> ExecutionResult:
         return self.orchestration_service.execute_orchestration_packet(packet)
@@ -1066,7 +717,7 @@ class OrchestratorService(
                 run_id="mutation_probe",
                 task_kind=TaskKind.shell_exec,
                 command=[],
-                working_directory=".",
+                working_directory=self._workspace_root().as_posix(),
                 env={"WORKFLOW_CAPABILITY_ADAPTER": adapter_name},
             )
         )
@@ -2285,406 +1936,6 @@ class OrchestratorService(
                     )
         return problems
 
-    def _recoverability_hint_for(
-        self,
-        context: RunDiagnosticContext,
-        problems: list[dict[str, Any]] | None = None,
-    ) -> str:
-        if problems:
-            return str(problems[0]["next_action"])
-        status = str(context.run.status)
-        if status == RunStatus.pending:
-            return "compile_run"
-        if status == RunStatus.prepared:
-            return "resume_run"
-        if status == RunStatus.awaiting_review:
-            return "approve_or_reject_review"
-        if status == RunStatus.failed:
-            return "inspect_evidence_then_recompile"
-        if status == RunStatus.cancelled:
-            return "create_new_run"
-        return "none"
-
-    def _available_repair_actions(self, problems: list[dict[str, Any]]) -> list[str]:
-        return [
-            str(problem["repair_action"])
-            for problem in problems
-            if problem.get("repairable") and problem.get("repair_action") is not None
-        ]
-
-    def _failure_taxonomy_for(self, detail: dict[str, Any], inspection: dict[str, Any]) -> dict[str, Any]:
-        run_status = str(detail["run"]["status"])
-        failure_reason = detail.get("failure_reason")
-        waiting_reason = detail.get("waiting_reason")
-        problem_codes = [str(problem["problem"]) for problem in inspection["problems"]]
-
-        if inspection["problem_count"] > 0:
-            category = "inconsistent_state"
-            primary_reason = problem_codes[0]
-            is_failure = True
-        elif run_status == RunStatus.completed:
-            category = "success"
-            primary_reason = "completed"
-            is_failure = False
-        elif run_status == RunStatus.failed:
-            category = "review_failure" if failure_reason in {"human_review_rejected", "auto_review_failed"} else "runtime_failure"
-            primary_reason = failure_reason or "run_failed"
-            is_failure = True
-        elif run_status == RunStatus.cancelled:
-            category = "operator_cancelled"
-            primary_reason = "cancelled_by_operator"
-            is_failure = True
-        elif run_status == RunStatus.awaiting_review:
-            category = "review_pending"
-            primary_reason = waiting_reason or "awaiting_human_review"
-            is_failure = False
-        else:
-            category = "pending_work"
-            primary_reason = waiting_reason or detail.get("next_action") or "awaiting_progress"
-            is_failure = False
-
-        return {
-            "category": category,
-            "primary_reason": primary_reason,
-            "is_failure": is_failure,
-            "is_terminal": run_status in {RunStatus.completed, RunStatus.failed, RunStatus.cancelled},
-            "problem_codes": problem_codes,
-        }
-
-    def _select_repair_problem(self, run_id: str, problems: list[dict[str, Any]], action: str | None) -> dict[str, Any]:
-        available_actions = self._available_repair_actions(problems)
-        if action is not None and action not in self.SUPPORTED_REPAIR_ACTIONS:
-            raise UnsupportedRepairActionError(action, list(self.SUPPORTED_REPAIR_ACTIONS))
-        if not available_actions:
-            raise RepairActionNotAvailableError(run_id, action, available_actions)
-        selected_action = action or available_actions[0]
-        for problem in problems:
-            if problem.get("repairable") and problem.get("repair_action") == selected_action:
-                return problem
-        raise RepairActionNotAvailableError(run_id, selected_action, available_actions)
-
-    def _runtime_terminal_graph_step_for_run_status(self, run_status: RunStatus | str) -> RuntimeGraphStep:
-        normalized = RunStatus(run_status)
-        mapping = {
-            RunStatus.completed: RuntimeGraphStep.completed,
-            RunStatus.failed: RuntimeGraphStep.failed,
-            RunStatus.cancelled: RuntimeGraphStep.cancelled,
-        }
-        return mapping[normalized]
-
-    def _task_terminal_status_for_run_status(self, run_status: RunStatus | str) -> TaskStatus:
-        normalized = RunStatus(run_status)
-        mapping = {
-            RunStatus.completed: TaskStatus.completed,
-            RunStatus.failed: TaskStatus.failed,
-            RunStatus.cancelled: TaskStatus.cancelled,
-        }
-        return mapping[normalized]
-
-    def _append_repair_event(
-        self,
-        run_id: str,
-        action: str,
-        problem: str,
-        repaired_runtime_task_ids: list[str],
-        *,
-        connection=None,
-    ) -> None:
-        self.event_repo.append(
-            RunEvent(
-                run_id=run_id,
-                event_type=RunEventType.repair_applied,
-                object_type="run",
-                object_id=run_id,
-                summary=f"Repair applied: {action}",
-                payload_json={
-                    "run_id": run_id,
-                    "action": action,
-                    "problem": problem,
-                    "repaired_runtime_task_ids": repaired_runtime_task_ids,
-                },
-            ),
-            connection=connection,
-        )
-
-    def _capture_run_snapshot(
-        self,
-        run_id: str,
-        stage: RunSnapshotStage | str,
-        summary: str,
-        *,
-        runtime_task_id: str | None = None,
-        connection=None,
-        payload_extra: dict[str, Any] | None = None,
-    ) -> RunSnapshot:
-        context = self._load_run_context(run_id, connection=connection)
-        last_runtime_state = self._last_runtime_state(context)
-        last_attempt = self._last_attempt(context)
-        current_attempt = self._current_attempt(context)
-        last_claim = self._last_claim(context)
-        last_worker_lease = self._last_worker_lease(context)
-        review_policy = self._review_policy_for_context(context, last_runtime_state=last_runtime_state)
-        snapshot = RunSnapshot(
-            run_id=run_id,
-            stage=RunSnapshotStage(stage),
-            run_status=context.run.status,
-            runtime_task_id=runtime_task_id or (context.runtime_tasks[0].runtime_task_id if context.runtime_tasks else None),
-            summary=summary,
-            snapshot_payload={
-                "effective_review_state": self._effective_review_state(
-                    context.run,
-                    context.latest_review_verdict,
-                    review_policy,
-                ),
-                "review_policy": review_policy,
-                "runtime_task_ids": [task.runtime_task_id for task in context.runtime_tasks],
-                "latest_runtime_graph_step": str(last_runtime_state.graph_step) if last_runtime_state is not None else None,
-                "latest_runtime_state_ref_id": last_runtime_state.state_ref_id if last_runtime_state is not None else None,
-                "durable_lineage": self._durable_lineage_for_state(last_runtime_state),
-                "latest_attempt_id": last_attempt.attempt_id if last_attempt is not None else None,
-                "current_attempt_id": current_attempt.attempt_id if current_attempt is not None else None,
-                "latest_review_verdict_id": (
-                    context.latest_review_verdict.verdict_id if context.latest_review_verdict is not None else None
-                ),
-                "latest_claim_id": last_claim.claim_id if last_claim is not None else None,
-                "active_claim_ids": [claim.claim_id for claim in self._active_claims_for(context)],
-                "latest_worker_lease_id": last_worker_lease.lease_id if last_worker_lease is not None else None,
-                "active_worker_lease_ids": [lease.lease_id for lease in self._active_worker_leases_for(context)],
-                **(payload_extra or {}),
-            },
-        )
-        self.snapshot_repo.create(snapshot, connection=connection)
-        self.event_repo.append(
-            RunEvent(
-                run_id=run_id,
-                event_type=RunEventType.run_snapshot_created,
-                object_type="run_snapshot",
-                object_id=snapshot.snapshot_id,
-                summary=summary,
-                payload_json={
-                    "run_id": run_id,
-                    "snapshot_id": snapshot.snapshot_id,
-                    "stage": snapshot.stage,
-                    "run_status": snapshot.run_status,
-                    "runtime_task_id": snapshot.runtime_task_id,
-                },
-            ),
-            connection=connection,
-        )
-        return snapshot
-
-    def _task_kind_for_recompile(self, run_id: str) -> TaskKind | str | None:
-        runtime_tasks = self.task_repo.list_runtime_tasks_for_run(run_id)
-        if runtime_tasks:
-            return runtime_tasks[0].task_kind
-        timeline = self.get_timeline(run_id)
-        for event in reversed(timeline):
-            if event.event_type == RunEventType.runtime_task_created:
-                task_kind = event.payload_json.get("task_kind")
-                if task_kind is not None:
-                    return task_kind
-        return None
-
-    def _apply_align_terminal_runtime_state(self, run: Run, action: str, problem: str) -> list[str]:
-        with unit_of_work(self.db_path) as connection:
-            live_states = self.runtime_state_repo.list_live_for_run(run.run_id, connection=connection)
-            if not live_states:
-                raise RepairActionNotAvailableError(run.run_id, action, [action])
-            target_graph_step = self._runtime_terminal_graph_step_for_run_status(run.status)
-            target_task_status = self._task_terminal_status_for_run_status(run.status)
-            repaired_runtime_task_ids: list[str] = []
-            for state_ref in live_states:
-                repaired_state = RuntimeStateRef(
-                    state_ref_id=state_ref.state_ref_id,
-                    run_id=state_ref.run_id,
-                    runtime_task_id=state_ref.runtime_task_id,
-                    graph_step=target_graph_step,
-                    state_payload={
-                        **state_ref.state_payload,
-                        "repaired_action": action,
-                        "repaired_problem": problem,
-                    },
-                    is_terminal=True,
-                    created_at=state_ref.created_at,
-                )
-                self.runtime_state_repo.upsert(repaired_state, connection=connection)
-                self.task_repo.update_runtime_task_status(
-                    state_ref.runtime_task_id,
-                    target_task_status,
-                    connection=connection,
-                )
-                repaired_runtime_task_ids.append(state_ref.runtime_task_id)
-            self._append_repair_event(
-                run.run_id,
-                action,
-                problem,
-                repaired_runtime_task_ids,
-                connection=connection,
-            )
-        return repaired_runtime_task_ids
-
-    def _apply_recompile_prepared_run(self, run_id: str, action: str, problem: str) -> list[str]:
-        task_kind = self._task_kind_for_recompile(run_id)
-        prepared = self.recompile_run(run_id, task_kind=task_kind, ignore_budget=True)
-        self._append_repair_event(
-            run_id,
-            action,
-            problem,
-            [prepared.task_packet.runtime_task_id],
-        )
-        return [prepared.task_packet.runtime_task_id]
-
-    def _apply_claim_release_repair(
-        self,
-        run_id: str,
-        action: str,
-        problem: str,
-        *,
-        status: RuntimeClaimStatus | str,
-        reason: str,
-    ) -> list[str]:
-        with unit_of_work(self.db_path) as connection:
-            active_claims = self.runtime_claim_repo.list_active_for_run(run_id, connection=connection)
-            if not active_claims:
-                raise RepairActionNotAvailableError(run_id, action, [action])
-            repaired_runtime_task_ids: list[str] = []
-            for claim in active_claims:
-                self._release_runtime_claim(
-                    claim,
-                    status=status,
-                    reason=reason,
-                    connection=connection,
-                )
-                repaired_runtime_task_ids.append(claim.runtime_task_id)
-            self._append_repair_event(
-                run_id,
-                action,
-                problem,
-                repaired_runtime_task_ids,
-                connection=connection,
-            )
-        return repaired_runtime_task_ids
-
-    def _apply_worker_lease_release_repair(
-        self,
-        run_id: str,
-        action: str,
-        problem: str,
-        *,
-        status: WorkerLeaseStatus | str,
-        reason: str,
-    ) -> list[str]:
-        with unit_of_work(self.db_path) as connection:
-            active_leases = self.worker_lease_repo.list_active_for_run(run_id, connection=connection)
-            if not active_leases:
-                raise RepairActionNotAvailableError(run_id, action, [action])
-            repaired_runtime_task_ids: list[str] = []
-            for lease in active_leases:
-                self._release_worker_lease(
-                    lease,
-                    status=status,
-                    reason=reason,
-                    connection=connection,
-                )
-                repaired_runtime_task_ids.append(lease.runtime_task_id)
-            self._append_repair_event(
-                run_id,
-                action,
-                problem,
-                repaired_runtime_task_ids,
-                connection=connection,
-            )
-        return repaired_runtime_task_ids
-
-    def _apply_close_current_attempt_terminal(
-        self,
-        run: Run,
-        action: str,
-        problem: str,
-    ) -> list[str]:
-        with unit_of_work(self.db_path) as connection:
-            current_attempt = self.runtime_attempt_repo.current_for_run(run.run_id, connection=connection)
-            if current_attempt is None:
-                raise RepairActionNotAvailableError(run.run_id, action, [action])
-            status_mapping = {
-                RunStatus.completed: RuntimeAttemptStatus.completed,
-                RunStatus.failed: RuntimeAttemptStatus.failed,
-                RunStatus.cancelled: RuntimeAttemptStatus.cancelled,
-            }
-            close_reason_mapping = {
-                RunStatus.completed: "reconciled_terminal_run_completed",
-                RunStatus.failed: "reconciled_terminal_run_failed",
-                RunStatus.cancelled: "reconciled_terminal_run_cancelled",
-            }
-            attempt_status = status_mapping[RunStatus(run.status)]
-            self._close_runtime_attempt(
-                current_attempt,
-                status=attempt_status,
-                reason=close_reason_mapping[RunStatus(run.status)],
-                connection=connection,
-            )
-            repaired_runtime_task_ids = [current_attempt.runtime_task_id]
-            self._append_repair_event(
-                run.run_id,
-                action,
-                problem,
-                repaired_runtime_task_ids,
-                connection=connection,
-            )
-        return repaired_runtime_task_ids
-
-    def _apply_interrupt_current_attempt(
-        self,
-        run_id: str,
-        action: str,
-        problem: str,
-    ) -> list[str]:
-        with unit_of_work(self.db_path) as connection:
-            current_attempt = self.runtime_attempt_repo.current_for_run(run_id, connection=connection)
-            if current_attempt is None:
-                raise RepairActionNotAvailableError(run_id, action, [action])
-            self._close_runtime_attempt(
-                current_attempt,
-                status=RuntimeAttemptStatus.interrupted,
-                reason=f"reconciled_{problem}",
-                connection=connection,
-            )
-            repaired_runtime_task_ids = [current_attempt.runtime_task_id]
-            self._append_repair_event(
-                run_id,
-                action,
-                problem,
-                repaired_runtime_task_ids,
-                connection=connection,
-            )
-        return repaired_runtime_task_ids
-
-    def _apply_create_repair_attempt(
-        self,
-        run_id: str,
-        action: str,
-        problem: str,
-    ) -> list[str]:
-        with unit_of_work(self.db_path) as connection:
-            run_context = self._load_run_context(run_id, connection=connection)
-            if self._current_attempt(run_context) is not None or not run_context.runtime_tasks:
-                raise RepairActionNotAvailableError(run_id, action, [action])
-            runtime_task = run_context.runtime_tasks[0]
-            self._ensure_current_runtime_attempt(
-                run_id,
-                runtime_task.runtime_task_id,
-                trigger=RuntimeAttemptTrigger.repair,
-                connection=connection,
-                reason_if_superseded="repair_recreated_current_attempt",
-            )
-            repaired_runtime_task_ids = [runtime_task.runtime_task_id]
-            self._append_repair_event(
-                run_id,
-                action,
-                problem,
-                repaired_runtime_task_ids,
-                connection=connection,
-            )
         return repaired_runtime_task_ids
 
     def list_presets(self) -> list[PresetDefinition]:
@@ -3066,172 +2317,6 @@ class OrchestratorService(
         self.get_run(run_id)
         return self.worker_lease_repo.list_for_run(run_id)
 
-    def submit_scheduler_proposal(
-        self,
-        *,
-        control_plane_id: str,
-        run_id: str,
-        runtime_task_id: str,
-        domain_kind: str = "runtime_task",
-        domain_key: str,
-        requested_lease_seconds: int = 300,
-        requested_epoch: int = 1,
-    ) -> dict[str, Any]:
-        self.get_run(run_id)
-        with unit_of_work(self.db_path) as connection:
-            state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
-            result = self.scheduler_authority_cluster.submit_proposal(
-                control_plane_id=control_plane_id,
-                run_id=run_id,
-                runtime_task_id=runtime_task_id,
-                domain_kind=domain_kind,
-                domain_key=domain_key,
-                requested_lease_seconds=requested_lease_seconds,
-                requested_epoch=requested_epoch,
-                connection=connection,
-            )
-            proposal = (
-                SchedulerLeaseProposal.model_validate(result["proposal"])
-                if isinstance(result.get("proposal"), dict)
-                else None
-            )
-            decision = (
-                SchedulerLeaseDecision.model_validate(result["decision"])
-                if isinstance(result.get("decision"), dict)
-                else None
-            )
-            committed_lease = (
-                SchedulerCommittedLease.model_validate(result["committed_lease"])
-                if isinstance(result.get("committed_lease"), dict)
-                else None
-            )
-            term = (
-                SchedulerConsensusTerm.model_validate(result["term"])
-                if isinstance(result.get("term"), dict)
-                else None
-            )
-            votes = [
-                SchedulerVoteRecord.model_validate(item)
-                for item in result.get("votes", [])
-                if isinstance(item, dict)
-            ]
-            handoff_envelope_payload = result.get("handoff_envelope") if isinstance(result.get("handoff_envelope"), dict) else None
-            handoff_envelope = (
-                ControlPlaneHandoffEnvelope.model_validate(result["handoff_envelope"])
-                if isinstance(result.get("handoff_envelope"), dict)
-                else None
-            )
-            if state_ref is not None:
-                updates = self._scheduler_arbitration_updates(
-                    state_ref,
-                    control_plane_id=control_plane_id,
-                    proposal=proposal,
-                    decision=decision,
-                    committed_lease=committed_lease,
-                    term=term,
-                    votes=votes,
-                    handoff_envelope=handoff_envelope_payload or handoff_envelope,
-                    cluster=result.get("cluster"),
-                    conflict=result.get("conflict"),
-                )
-                self.runtime_state_repo.upsert(
-                    self._state_ref_with_payload_updates(state_ref, updates),
-                    connection=connection,
-                )
-            return result
-
-    def record_scheduler_peer_heartbeat(
-        self,
-        *,
-        control_plane_id: str,
-        status: str = "active",
-        lease_count: int = 0,
-        observed_at: str | None = None,
-    ) -> dict[str, Any]:
-        heartbeat = self.scheduler_peer_heartbeat_repo.create(
-            SchedulerPeerHeartbeat(
-                control_plane_id=control_plane_id,
-                status=status,
-                lease_count=lease_count,
-                observed_at=datetime.fromisoformat(observed_at) if observed_at is not None else self._utc_now(),
-            )
-        )
-        cluster = self.scheduler_authority_cluster.heartbeat_node(
-            node_id=control_plane_id,
-            bind_url=f"internal://{control_plane_id}",
-            status=status,
-            role="control_plane",
-            observed_at=heartbeat.observed_at.isoformat(),
-        )
-        return {
-            "heartbeat": heartbeat.model_dump(mode="json"),
-            "cluster": cluster["cluster"],
-        }
-
-    def release_scheduler_lease(
-        self,
-        lease_id: str,
-        *,
-        release_reason: str = "control_plane_release",
-    ) -> dict[str, Any]:
-        with unit_of_work(self.db_path) as connection:
-            released = self.scheduler_authority_cluster.release_lease(
-                lease_id,
-                release_reason=release_reason,
-                connection=connection,
-            )
-            decision = (
-                SchedulerLeaseDecision.model_validate(released["decision"])
-                if isinstance(released.get("decision"), dict)
-                else None
-            )
-            if decision is None:
-                raise EntityNotFoundError("scheduler_lease", lease_id)
-            state_ref = self.runtime_state_repo.get_by_task(decision.runtime_task_id, connection=connection)
-            if state_ref is not None:
-                updates = self._scheduler_arbitration_updates(
-                    state_ref,
-                    control_plane_id=decision.control_plane_id,
-                    decision=decision,
-                    committed_lease=released.get("committed_lease"),
-                    cluster=released.get("cluster"),
-                )
-                self.runtime_state_repo.upsert(
-                    self._state_ref_with_payload_updates(state_ref, updates),
-                    connection=connection,
-                )
-            latest_heartbeat = self.scheduler_peer_heartbeat_repo.latest_for_control_plane(
-                decision.control_plane_id,
-                connection=connection,
-            )
-            return {
-                "decision": decision.model_dump(mode="json"),
-                "committed_lease": released.get("committed_lease"),
-                "cluster": released.get("cluster"),
-                "latest_peer_heartbeat": (
-                    latest_heartbeat.model_dump(mode="json") if latest_heartbeat is not None else None
-                ),
-            }
-
-    def get_scheduler_lease(self, lease_id: str) -> dict[str, Any]:
-        payload = self.scheduler_authority_cluster.get_lease(lease_id)
-        decision = (
-            SchedulerLeaseDecision.model_validate(payload["decision"])
-            if isinstance(payload.get("decision"), dict)
-            else None
-        )
-        latest_heartbeat = (
-            self.scheduler_peer_heartbeat_repo.latest_for_control_plane(decision.control_plane_id)
-            if decision is not None
-            else None
-        )
-        return {
-            **payload,
-            "latest_peer_heartbeat": (
-                latest_heartbeat.model_dump(mode="json") if latest_heartbeat is not None else None
-            ),
-        }
-
     def list_runtime_attempts(self, run_id: str) -> list[RuntimeAttempt]:
         self.get_run(run_id)
         return self.runtime_attempt_repo.list_for_run(run_id)
@@ -3246,307 +2331,4 @@ class OrchestratorService(
         if ledger is None:
             raise EntityNotFoundError("budget_ledger", run_id)
         return ledger
-
-    def _worker_callback_registry(self, state_ref: RuntimeStateRef | None) -> dict[str, list[str]]:
-        if state_ref is None:
-            return {"heartbeat": [], "completion": []}
-        callbacks = state_ref.state_payload.get("worker_callbacks")
-        if not isinstance(callbacks, dict):
-            return {"heartbeat": [], "completion": []}
-        heartbeat = callbacks.get("heartbeat")
-        completion = callbacks.get("completion")
-        return {
-            "heartbeat": [str(item) for item in heartbeat] if isinstance(heartbeat, list) else [],
-            "completion": [str(item) for item in completion] if isinstance(completion, list) else [],
-        }
-
-    def _append_worker_callback(
-        self,
-        state_ref: RuntimeStateRef,
-        *,
-        callback_type: str,
-        callback_id: str,
-        payload: dict[str, Any],
-    ) -> RuntimeStateRef:
-        registry = self._worker_callback_registry(state_ref)
-        callback_ids = registry.setdefault(callback_type, [])
-        if callback_id not in callback_ids:
-            callback_ids.append(callback_id)
-        callback_history = list(state_ref.state_payload.get("worker_callback_history") or [])
-        callback_history.append({"type": callback_type, "callback_id": callback_id, **payload})
-        return self._state_ref_with_payload_updates(
-            state_ref,
-            {
-                "worker_callbacks": registry,
-                "worker_callback_history": callback_history[-20:],
-            },
-        )
-
-    def record_worker_heartbeat(
-        self,
-        *,
-        callback_id: str,
-        dispatch_id: str,
-        run_id: str,
-        runtime_task_id: str,
-        lease_id: str,
-        worker_pool_id: str,
-        heartbeat_at: str,
-        lease_expires_at: str,
-        execution_target: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        with unit_of_work(self.db_path) as connection:
-            state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
-            if state_ref is None:
-                raise EntityNotFoundError("runtime_state_ref", runtime_task_id)
-            committed_lease = self._validate_callback_scheduler_context(
-                runtime_task_id=runtime_task_id,
-                execution_target=execution_target,
-                connection=connection,
-            )
-            registry = self._worker_callback_registry(state_ref)
-            if callback_id in registry["heartbeat"]:
-                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
-            lease = self.worker_lease_repo.touch(
-                lease_id,
-                heartbeat_at=heartbeat_at,
-                lease_expires_at=lease_expires_at,
-                connection=connection,
-            )
-            if lease is None:
-                raise EntityNotFoundError("worker_lease", lease_id)
-            renewed_at = datetime.fromisoformat(heartbeat_at)
-            renewal = LeaseRenewalRecord(
-                run_id=run_id,
-                runtime_task_id=runtime_task_id,
-                worker_pool_id=worker_pool_id,
-                lease_id=lease_id,
-                status="renewed",
-                renewed_at=renewed_at,
-                heartbeat_at=renewed_at,
-                lease_expires_at=datetime.fromisoformat(lease_expires_at),
-                callback_id=callback_id,
-                source="worker_callback",
-            )
-            current_renewals = self._lease_renewals_for(state_ref, None)
-            if callback_id not in {item.get("callback_id") for item in current_renewals if isinstance(item, dict)}:
-                current_renewals.append(renewal.model_dump(mode="json"))
-            payload_updates: dict[str, Any] = {
-                "lease_renewals": current_renewals[-20:],
-            }
-            if execution_target is not None:
-                payload_updates["execution_target"] = {
-                    **execution_target,
-                    "last_callback_at": heartbeat_at,
-                }
-                payload_updates["committed_scheduler_lease"] = self._scheduler_committed_lease_payload(committed_lease)
-            updated_state = self._append_worker_callback(
-                self._state_ref_with_payload_updates(state_ref, payload_updates),
-                callback_type="heartbeat",
-                callback_id=callback_id,
-                payload={
-                    "dispatch_id": dispatch_id,
-                    "lease_id": lease_id,
-                    "heartbeat_at": heartbeat_at,
-                    "lease_expires_at": lease_expires_at,
-                },
-            )
-            self.runtime_state_repo.upsert(updated_state, connection=connection)
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run_id,
-                    event_type=RunEventType.worker_heartbeat_received,
-                    object_type="worker_lease",
-                    object_id=lease_id,
-                    summary="Worker heartbeat received",
-                    payload_json={
-                        "run_id": run_id,
-                        "runtime_task_id": runtime_task_id,
-                        "lease_id": lease_id,
-                        "worker_pool_id": worker_pool_id,
-                        "callback_id": callback_id,
-                        "heartbeat_at": heartbeat_at,
-                        "lease_expires_at": lease_expires_at,
-                    },
-                ),
-                connection=connection,
-            )
-        return {"accepted": True, "duplicate": False, "callback_id": callback_id}
-
-    def record_worker_completion(
-        self,
-        *,
-        callback_id: str,
-        dispatch_id: str,
-        run_id: str,
-        runtime_task_id: str,
-        lease_id: str,
-        worker_pool_id: str,
-        execution_target: dict[str, Any],
-        lease_renewals: list[dict[str, Any]] | None = None,
-        execution_result: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        with unit_of_work(self.db_path) as connection:
-            state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
-            if state_ref is None:
-                raise EntityNotFoundError("runtime_state_ref", runtime_task_id)
-            committed_lease = self._validate_callback_scheduler_context(
-                runtime_task_id=runtime_task_id,
-                execution_target=execution_target,
-                connection=connection,
-            )
-            registry = self._worker_callback_registry(state_ref)
-            if callback_id in registry["completion"]:
-                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
-            payload_updates: dict[str, Any] = {
-                "execution_target": {
-                    **execution_target,
-                    "last_callback_at": self._utc_now().isoformat(),
-                },
-                "committed_scheduler_lease": self._scheduler_committed_lease_payload(committed_lease),
-            }
-            if lease_renewals is not None:
-                merged_renewals = self._lease_renewals_for(state_ref, None)
-                seen_callback_ids = {
-                    item.get("callback_id")
-                    for item in merged_renewals
-                    if isinstance(item, dict)
-                }
-                for renewal in lease_renewals:
-                    callback_ref = renewal.get("callback_id") if isinstance(renewal, dict) else None
-                    if callback_ref and callback_ref in seen_callback_ids:
-                        continue
-                    if isinstance(renewal, dict):
-                        merged_renewals.append(renewal)
-                        if callback_ref:
-                            seen_callback_ids.add(callback_ref)
-                payload_updates["lease_renewals"] = merged_renewals[-20:]
-            if execution_result is not None:
-                payload_updates["remote_execution_result"] = execution_result
-            updated_state = self._append_worker_callback(
-                self._state_ref_with_payload_updates(state_ref, payload_updates),
-                callback_type="completion",
-                callback_id=callback_id,
-                payload={
-                    "dispatch_id": dispatch_id,
-                    "lease_id": lease_id,
-                    "return_code": execution_result.get("return_code") if execution_result is not None else None,
-                },
-            )
-            self.runtime_state_repo.upsert(updated_state, connection=connection)
-            self.event_repo.append(
-                RunEvent(
-                    run_id=run_id,
-                    event_type=RunEventType.worker_completion_recorded,
-                    object_type="runtime_task",
-                    object_id=runtime_task_id,
-                    summary="Worker completion callback recorded",
-                    payload_json={
-                        "run_id": run_id,
-                        "runtime_task_id": runtime_task_id,
-                        "lease_id": lease_id,
-                        "worker_pool_id": worker_pool_id,
-                        "callback_id": callback_id,
-                        "dispatch_id": dispatch_id,
-                        "return_code": execution_result.get("return_code") if execution_result is not None else None,
-                    },
-                ),
-                connection=connection,
-            )
-        return {"accepted": True, "duplicate": False, "callback_id": callback_id}
-
-    def apply_run_repair(self, run_id: str, action: str | None = None) -> dict[str, Any]:
-        run = self.get_run(run_id)
-        inspection_before = self.inspect_run_state(run_id)
-        selected_problem = self._select_repair_problem(run_id, inspection_before["problems"], action)
-        selected_action = str(selected_problem["repair_action"])
-
-        if selected_action == "align_completed_runtime_state":
-            repaired_runtime_task_ids = self._apply_align_terminal_runtime_state(
-                run,
-                selected_action,
-                str(selected_problem["problem"]),
-            )
-        elif selected_action == "align_cancelled_runtime_state":
-            repaired_runtime_task_ids = self._apply_align_terminal_runtime_state(
-                run,
-                selected_action,
-                str(selected_problem["problem"]),
-            )
-        elif selected_action == "close_current_runtime_attempt_terminal":
-            repaired_runtime_task_ids = self._apply_close_current_attempt_terminal(
-                run,
-                selected_action,
-                str(selected_problem["problem"]),
-            )
-        elif selected_action == "create_repair_runtime_attempt":
-            repaired_runtime_task_ids = self._apply_create_repair_attempt(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-            )
-        elif selected_action == "recompile_prepared_run":
-            repaired_runtime_task_ids = self._apply_recompile_prepared_run(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-            )
-        elif selected_action == "interrupt_current_runtime_attempt":
-            repaired_runtime_task_ids = self._apply_interrupt_current_attempt(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-            )
-        elif selected_action == "release_runtime_claim":
-            repaired_runtime_task_ids = self._apply_claim_release_repair(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-                status=RuntimeClaimStatus.released,
-                reason="reconciled_non_running_active_claim",
-            )
-        elif selected_action == "expire_runtime_claim":
-            repaired_runtime_task_ids = self._apply_claim_release_repair(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-                status=RuntimeClaimStatus.expired,
-                reason="reconciled_expired_claim",
-            )
-        elif selected_action == "release_worker_lease":
-            repaired_runtime_task_ids = self._apply_worker_lease_release_repair(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-                status=WorkerLeaseStatus.released,
-                reason="reconciled_non_running_active_worker_lease",
-            )
-        elif selected_action == "expire_worker_lease":
-            repaired_runtime_task_ids = self._apply_worker_lease_release_repair(
-                run_id,
-                selected_action,
-                str(selected_problem["problem"]),
-                status=WorkerLeaseStatus.expired,
-                reason="reconciled_expired_worker_lease",
-            )
-        else:
-            raise UnsupportedRepairActionError(selected_action, list(self.SUPPORTED_REPAIR_ACTIONS))
-
-        self._capture_run_snapshot(
-            run_id,
-            RunSnapshotStage.repaired,
-            f"Repair snapshot captured: {selected_action}",
-            payload_extra={"repair_action": selected_action, "problem": str(selected_problem["problem"])},
-        )
-        inspection_after = self.inspect_run_state(run_id)
-        updated_run = self.get_run(run_id)
-        return {
-            "run": updated_run.model_dump(mode="json"),
-            "applied": True,
-            "action": selected_action,
-            "problem": selected_problem["problem"],
-            "repaired_runtime_task_ids": repaired_runtime_task_ids,
-            "inspection_before": inspection_before,
-            "inspection_after": inspection_after,
-        }
 

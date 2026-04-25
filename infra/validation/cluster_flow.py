@@ -41,6 +41,41 @@ def _client_post(client: TestClient, url: str, payload: dict[str, Any], headers:
     return response.json()
 
 
+def _operator_action_for_post(path: str, payload: dict[str, Any] | None = None) -> str | None:
+    normalized = path.split("?", 1)[0].rstrip("/")
+    if normalized == "/operator-action-receipts":
+        return None
+    if normalized == "/runs/batch-resume":
+        return "batch_resume_runs"
+    if normalized.startswith("/runs/") and normalized.endswith("/resume"):
+        return "resume_run"
+    if normalized.startswith("/runs/") and normalized.endswith("/approve"):
+        return "approve_run"
+    if normalized.startswith("/runs/") and normalized.endswith("/reject"):
+        return "reject_run"
+    if normalized.startswith("/runs/") and normalized.endswith("/cancel"):
+        return "cancel_run"
+    if normalized.startswith("/runs/") and normalized.endswith("/reconcile") and payload and payload.get("apply"):
+        return "reconcile_apply"
+    if normalized.startswith("/interaction/sessions/") and normalized.endswith("/launch") and payload and payload.get("execute"):
+        return "launch_execute"
+    return None
+
+
+class ReceiptAwareTestClient(TestClient):
+    def post(self, url, *args, **kwargs):  # type: ignore[override]
+        headers = dict(kwargs.pop("headers", {}) or {})
+        payload = kwargs.get("json") if isinstance(kwargs.get("json"), dict) else None
+        action_type = _operator_action_for_post(str(url), payload)
+        if action_type and "X-Operator-Action-Receipt" not in headers:
+            receipt = super().post("/operator-action-receipts", json={"action_type": action_type})
+            if receipt.status_code == 201:
+                headers["X-Operator-Action-Receipt"] = receipt.json()["receipt_id"]
+        if headers:
+            kwargs["headers"] = headers
+        return super().post(url, *args, **kwargs)
+
+
 def run_cluster_cutover_demo(db_path: Path) -> dict[str, Any]:
     db_path = Path(db_path)
     base_env = {
@@ -86,7 +121,7 @@ def run_cluster_cutover_demo(db_path: Path) -> dict[str, Any]:
         )
 
         with _temporary_env({"WORKFLOW_CONTROL_PLANE_ID": "control_plane_alpha"}):
-            alpha_client = TestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
+            alpha_client = ReceiptAwareTestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
         control_plane_holder["client"] = alpha_client
 
         dogfood_run = alpha_client.post(
@@ -129,7 +164,7 @@ def run_cluster_cutover_demo(db_path: Path) -> dict[str, Any]:
             )
 
         with _temporary_env({"WORKFLOW_CONTROL_PLANE_ID": "control_plane_beta"}):
-            beta_client = TestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
+            beta_client = ReceiptAwareTestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
         beta_proposal = beta_client.post(
             "/scheduler/proposals",
             json={

@@ -4,10 +4,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.orchestrator_api.main import create_app as create_control_plane_app
 from apps.remote_worker_api.main import create_app as create_remote_worker_app
+from conftest import ReceiptAwareTestClient
+from packages.contracts import TaskKind, TaskPacket, WorkerPoolProfile
 from packages.core_domain.db import migrate
 from packages.core_domain.db import unit_of_work
 from packages.core_domain.external_workers import ExternalWorkerGateway
@@ -18,6 +21,69 @@ def _client_post(client: TestClient, url: str, payload: dict, headers: dict | No
     response = client.post(urlsplit(url).path, json=payload, headers=headers or {})
     response.raise_for_status()
     return response.json()
+
+
+def test_external_worker_gateway_rejects_disallowed_callback_origin(tmp_path: Path) -> None:
+    def unexpected_post(*args, **kwargs):
+        raise AssertionError("dispatch should stop before contacting the remote worker")
+
+    gateway = ExternalWorkerGateway(http_post=unexpected_post)
+    packet = TaskPacket(
+        runtime_task_id="task_bad_callback",
+        run_id="run_bad_callback",
+        task_kind=TaskKind.shell_exec,
+        command=["python", "-c", "print('ok')"],
+        working_directory=str(tmp_path),
+    )
+    profile = WorkerPoolProfile(
+        worker_pool_id="remote_bad_callback",
+        name="Remote Bad Callback",
+        description="Remote worker with a disallowed callback origin.",
+        dispatch_mode="remote_http",
+        base_url="http://127.0.0.1:8011",
+        callback_base_url="https://example.invalid",
+    )
+
+    with pytest.raises(RuntimeError, match="callback_base_url origin is not allowed"):
+        gateway.dispatch(
+            packet=packet,
+            profile=profile,
+            lease_id="lease_bad_callback",
+            launch_local=lambda item: unexpected_post(item),
+        )
+
+
+def test_remote_worker_rejects_disallowed_callback_origin(tmp_path: Path) -> None:
+    remote_client = TestClient(create_remote_worker_app())
+    packet = TaskPacket(
+        runtime_task_id="task_bad_callback",
+        run_id="run_bad_callback",
+        task_kind=TaskKind.shell_exec,
+        command=["python", "-c", "print('ok')"],
+        working_directory=str(tmp_path),
+    )
+    profile = WorkerPoolProfile(
+        worker_pool_id="remote_bad_callback",
+        name="Remote Bad Callback",
+        description="Remote worker with a disallowed callback origin.",
+        dispatch_mode="remote_http",
+        base_url="http://127.0.0.1:8011",
+    )
+
+    response = remote_client.post(
+        "/dispatches",
+        json={
+            "dispatch_id": "dispatch_bad_callback",
+            "lease_id": "lease_bad_callback",
+            "packet": packet.model_dump(mode="json"),
+            "profile": profile.model_dump(mode="json"),
+            "callback_base_url": "https://example.invalid",
+            "timeout_seconds": 1,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "callback_base_url origin is not allowed" in response.json()["detail"]
 
 
 def test_remote_worker_dispatch_and_callbacks_roundtrip(tmp_path: Path, monkeypatch) -> None:
@@ -44,7 +110,7 @@ def test_remote_worker_dispatch_and_callbacks_roundtrip(tmp_path: Path, monkeypa
     gateway = ExternalWorkerGateway(
         http_post=lambda url, payload, headers, timeout: _client_post(remote_client, url, payload, headers, timeout)
     )
-    control_client = TestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
+    control_client = ReceiptAwareTestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
     control_plane_holder["client"] = control_client
 
     run = control_client.post("/runs", json={"goal": "Remote worker roundtrip", "preset_id": "feature_delivery"}).json()
@@ -106,7 +172,7 @@ def test_remote_worker_completion_callback_is_idempotent(tmp_path: Path, monkeyp
     gateway = ExternalWorkerGateway(
         http_post=lambda url, payload, headers, timeout: _client_post(remote_client, url, payload, headers, timeout)
     )
-    control_client = TestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
+    control_client = ReceiptAwareTestClient(create_control_plane_app(db_path, external_worker_gateway=gateway))
     control_plane_holder["client"] = control_client
 
     run = control_client.post("/runs", json={"goal": "Duplicate callback", "preset_id": "feature_delivery"}).json()

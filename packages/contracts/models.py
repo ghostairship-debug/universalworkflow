@@ -457,9 +457,14 @@ class CapabilityHealth(ContractModel):
     descriptor: CapabilityDescriptor
     status: str = "ready"
     reason: str | None = None
+    readiness_state: str = "configured"
     tool_count: int = Field(default=0, ge=0)
     failure_classes: list[str] = Field(default_factory=list)
     recent_call_summary: dict[str, Any] = Field(default_factory=dict)
+    runtime_ledger_summary: dict[str, Any] = Field(default_factory=dict)
+    probe_evidence: dict[str, Any] = Field(default_factory=dict)
+    provider_route: str | None = None
+    fallback_route: str | None = None
     runtime_probe_status: str = "not_probed"
     runtime_probe_reason: str | None = None
     runtime_probe_detail: dict[str, Any] = Field(default_factory=dict)
@@ -532,6 +537,64 @@ class CapabilityExecutionReceipt(ContractModel):
     authority_term_no: int | None = None
     commit_index: int | None = None
     decision_index: int | None = None
+
+
+class CapabilityInvocationRecord(PersistedContractModel):
+    invocation_id: str = Field(default_factory=lambda: new_id("capinv"))
+    receipt_id: str | None = None
+    capability_id: str
+    provider_kind: str
+    run_id: str | None = None
+    runtime_task_id: str | None = None
+    status: str
+    return_code: int | None = None
+    adapter_name: str | None = None
+    duration_ms: int = Field(default=0, ge=0)
+    failure_class: str | None = None
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilityProbeResult(PersistedContractModel):
+    probe_id: str = Field(default_factory=lambda: new_id("capprobe"))
+    provider: str
+    adapter_name: str | None = None
+    status: str
+    live_probe: bool = False
+    auth_source: str | None = None
+    latency_ms: int = Field(default=0, ge=0)
+    failure_class: str | None = None
+    evidence_path: str | None = None
+    fallback_route: str | None = None
+    return_code: int | None = None
+    stdout_preview: str | None = None
+    stderr_preview: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClusterRouteDecision(PersistedContractModel):
+    decision_id: str = Field(default_factory=lambda: new_id("clroute"))
+    goal: str
+    preset_id: str | None = None
+    selected_template_ids: list[str] = Field(default_factory=list)
+    preferred_template_ids: list[str] = Field(default_factory=list)
+    source: str = "cluster_router"
+    dynamic_enabled: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OperatorActionReceipt(PersistedContractModel):
+    receipt_id: str = Field(default_factory=lambda: new_id("opreceipt"))
+    action_type: str
+    workspace_root: str
+    risk_level: str = "high"
+    operator_id: str = "local_operator"
+    requested_write_set: list[str] = Field(default_factory=list)
+    nonce: str = Field(default_factory=lambda: new_id("nonce"))
+    status: str = "issued"
+    expires_at: datetime
+    consumed_at: datetime | None = None
+    audit_timestamp: datetime = Field(default_factory=utc_now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class LeaseRenewalRecord(ContractModel):

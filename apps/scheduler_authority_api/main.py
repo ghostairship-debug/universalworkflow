@@ -13,6 +13,19 @@ from packages.core_domain.errors import WorkflowError
 from packages.core_domain.scheduler_authority import SchedulerAuthorityClusterService
 
 
+class LazyASGIApp:
+    def __init__(self):
+        self._app: FastAPI | None = None
+
+    def _get_app(self) -> FastAPI:
+        if self._app is None:
+            self._app = create_app()
+        return self._app
+
+    async def __call__(self, scope, receive, send):
+        await self._get_app()(scope, receive, send)
+
+
 class AuthorityHeartbeatRequest(BaseModel):
     node_id: str | None = None
     bind_url: str | None = None
@@ -140,7 +153,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+app = LazyASGIApp()
 
 
 def run() -> None:

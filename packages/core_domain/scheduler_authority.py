@@ -1644,3 +1644,7 @@ class NullSchedulerAuthorityCluster(SchedulerAuthorityClusterService):
             (run_id,),
         ).fetchall()
         return [self._row_to_handoff(row) for row in rows]
+
+
+class LocalSchedulerLeaseArbiter(NullSchedulerAuthorityCluster):
+    """Local-only lease arbiter name for the flag-off scheduler path."""

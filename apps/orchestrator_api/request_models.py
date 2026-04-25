@@ -66,6 +66,15 @@ class ChatActionConfirmRequest(BaseModel):
     rationale: str | None = None
 
 
+class OperatorActionReceiptRequest(BaseModel):
+    action_type: str = Field(min_length=1)
+    risk_level: str = Field(default="high", min_length=1)
+    operator_id: str = Field(default="local_operator", min_length=1)
+    requested_write_set: list[str] = Field(default_factory=list)
+    ttl_seconds: int | None = Field(default=None, ge=1)
+    metadata: dict = Field(default_factory=dict)
+
+
 class TaskKindOverrideRequest(BaseModel):
     task_kind: str | None = Field(default=None)
     adapter_name: str | None = Field(default=None)

@@ -23,6 +23,13 @@ from packages.core_domain.repo_mutation import (
 from packages.worker_adapters.base import ExecutionResult
 
 
+class RepoMutationCoordinator:
+    """Coordinates guarded patch application outside the OrchestratorService facade."""
+
+    def execute(self, adapter: Any, packet: TaskPacket) -> ExecutionResult:
+        return execute_repo_mutation(adapter, packet)
+
+
 def task_card_content_for_mutation(contract: MutationContract | None, *, working_directory: str) -> str | None:
     if contract is None or not contract.task_card_path:
         return None
@@ -162,6 +169,12 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
                 allowed_paths=allowed_paths,
             )
         except ValueError as exc:
+            restore_workspace_snapshot(
+                packet.working_directory,
+                baseline_snapshot,
+                extra_paths=last_touched_paths,
+            )
+            last_touched_paths = []
             failure_feedback = str(exc)
             final_test_status = "patch_apply_failed"
             if attempt_index < attempt_limit:

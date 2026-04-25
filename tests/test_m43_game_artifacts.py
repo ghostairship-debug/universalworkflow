@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from packages.core_domain.local_game_artifacts import local_artifacts_for_goal
+from packages.contributions.games.local_game_artifacts import local_artifacts_for_goal
 
 
 def _artifact_map(goal: str) -> dict[str, str]:

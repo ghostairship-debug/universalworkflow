@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install package
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip install -e .
+      - name: Check docs
+        run: python -m infra.scripts.check_doc_links
+      - name: Doc command smoke
+        run: make doc-command-smoke
+      - name: Doctor strict
+        run: make doctor-strict
+      - name: Core tests
+        run: make test-core
+      - name: Offline validation
+        run: python -m infra.scripts.offline_validation --skip-offline-probe

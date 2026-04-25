@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,18 @@ from infra.validation.cli_flow import validate_cli_flow
 from infra.validation.cluster_flow import validate_cluster_flow
 from infra.validation.common import DEFAULT_REPORT_PATH, PROJECT_ROOT, sanitized_env, tcp_probe, utc_now_iso
 from infra.validation.smoke_flow import validate_smoke_flow
+
+
+def _with_elapsed(key: str, fn: Any, fn_args: tuple[Any, ...]) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        payload = fn(*fn_args)
+        if not isinstance(payload, dict):
+            payload = {"passed": False, "error": f"{key} did not return a dict"}
+    except Exception as exc:  # noqa: BLE001
+        payload = {"passed": False, "error": str(exc)}
+    payload["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    return payload
 
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
@@ -55,10 +68,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         ("api_flow", validate_api_flow, (env, api_db_path, args.api_port)),
         ("cluster_flow", validate_cluster_flow, (env, cluster_db_path)),
     ]:
-        try:
-            checks[key] = fn(*fn_args)
-        except Exception as exc:  # noqa: BLE001
-            checks[key] = {"passed": False, "error": str(exc)}
+        checks[key] = _with_elapsed(key, fn, fn_args)
 
     report["checks"] = checks
     offline_probe_pass = checks["offline_probe"]["passed"]

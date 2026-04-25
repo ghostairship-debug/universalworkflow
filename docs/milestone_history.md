@@ -5,10 +5,10 @@
 ## 当前基线
 
 - 日期：2026-04-25
-- 最新接受基线：`M47`
+- 最新接受基线：`M66`
 - 当前产品前提：个人自用 / 本地 operator runtime
 - 当前主入口：`/ui/workbench` LLM streaming chat workbench
-- 下一步建议：继续围绕真实 MMX/Vertex 多模态接入、Claude architect gate 低频实测、Workbench 体验和 `OrchestratorService` 收缩做小步开发
+- 下一步建议：在 M66 bug-first gate 继续保持绿色的前提下，再开启 M67+ 功能型小步开发；dynamic/adaptive routing 仍保持 opt-in。
 
 ## 历史里程碑
 
@@ -33,6 +33,9 @@
 | M45 | 新增动态多集群编排 opt-in，复杂目标可组合多模态、搜索、设计、开发和 review 集群 | 已接受 |
 | M46 | 扩展 operator 可见性，修复动态 cluster graph 只显示首个集群的问题 | 已接受 |
 | M47 | 中文文档、验证、git 收口 | 已接受 |
+| M48-M51 | 恢复计划执行：workspace root、receipt gate、repo mutation atomicity、capability invocation ledger 和 local lease naming | 已吸收并归档 |
+| M52-M60 | Bug-first 清债：测试矩阵、service decomposition、capability probes、cluster route stats 和治理报告 | 已吸收 |
+| M61-M66 | 全量清债收口：Chat runtime package、CLI command families、Web UI receipt confirmation、zero-open-debt governance 和 all-provider live probe | 当前基线 |
 | M2M 修复 | 完成根目录历史文档归档、scheduler-authority flag 双态兼容、默认 local-only 语义修正 | 结论已吸收 |
 
 ## M41 关键结论

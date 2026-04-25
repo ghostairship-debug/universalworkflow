@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import ipaddress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -22,6 +24,50 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _origin_for_url(url: str) -> str:
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.hostname:
+        raise ValueError("callback URL must include scheme and host")
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("callback URL must use http or https")
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = parsed.port or default_port
+    return f"{parsed.scheme}://{parsed.hostname.lower()}:{port}"
+
+
+def _is_loopback_or_private_host(hostname: str) -> bool:
+    normalized = hostname.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
+
+
+def callback_origin_allowed(callback_base_url: str, allowed_origins: list[str] | None = None) -> bool:
+    parsed = urlparse(callback_base_url)
+    if not parsed.hostname:
+        return False
+    callback_origin = _origin_for_url(callback_base_url)
+    configured = {_origin_for_url(item) for item in allowed_origins or []}
+    if configured:
+        return callback_origin in configured
+    return _is_loopback_or_private_host(parsed.hostname)
+
+
+def validate_callback_base_url(callback_base_url: str | None, allowed_origins: list[str] | None = None) -> None:
+    if not callback_base_url:
+        return
+    if not callback_origin_allowed(callback_base_url, allowed_origins):
+        allowed = sorted({_origin_for_url(item) for item in allowed_origins or []})
+        raise RuntimeError(
+            "callback_base_url origin is not allowed: "
+            f"{_origin_for_url(callback_base_url)}; allowed_origins={allowed or ['loopback/private']}"
+        )
 
 
 def load_worker_pool_profiles(seed_path: str | Path | None = None) -> list[WorkerPoolProfile]:
@@ -178,7 +224,9 @@ class ExternalWorkerGateway:
     ) -> ExternalDispatchResult:
         if not profile.base_url:
             raise RuntimeError(f"worker pool `{profile.worker_pool_id}` requires base_url for remote_http dispatch")
-        callback_base_url = profile.callback_base_url or build_effective_config()["worker_pools"]["callback_base_url"]
+        effective = build_effective_config()
+        callback_base_url = profile.callback_base_url or effective["worker_pools"]["callback_base_url"]
+        validate_callback_base_url(callback_base_url, effective["worker_pools"]["allowed_callback_origins"])
         dispatch_id = f"dispatch_{uuid4().hex[:12]}"
         headers: dict[str, str] = {}
         if profile.auth_mode == "shared_secret" and profile.shared_secret_env:

@@ -18,6 +18,7 @@ from packages.contracts import (
     TaskPacket,
     WorkerPoolProfile,
 )
+from packages.core_domain.external_workers import validate_callback_base_url
 from packages.worker_adapters.codex_adapter import CodexAdapter
 from packages.worker_adapters.external_artifact_adapters import (
     ClaudeArchitectAdapter,
@@ -56,6 +57,11 @@ def _default_json_post(
         raise RuntimeError(f"callback request failed: {exc}") from exc
 
 
+def _allowed_callback_origins_from_env() -> list[str]:
+    raw = os.getenv("WORKFLOW_WORKER_POOL_ALLOWED_CALLBACK_ORIGINS") or ""
+    return [segment.strip() for segment in raw.split(",") if segment.strip()]
+
+
 class DispatchRequest(BaseModel):
     dispatch_id: str = Field(min_length=1)
     lease_id: str = Field(min_length=1)
@@ -70,8 +76,10 @@ def create_app(
     *,
     callback_post: Callable[[str, dict[str, Any], dict[str, str] | None, int], dict[str, Any]] | None = None,
     worker_router: WorkerRouter | None = None,
+    allowed_callback_origins: list[str] | None = None,
 ) -> FastAPI:
     post_json = callback_post or _default_json_post
+    resolved_allowed_callback_origins = allowed_callback_origins if allowed_callback_origins is not None else _allowed_callback_origins_from_env()
     router = worker_router or WorkerRouter(
         [
             ShellAdapter(),
@@ -162,6 +170,13 @@ def create_app(
 
         callback_headers = {"X-Workflow-Shared-Secret": x_workflow_shared_secret} if x_workflow_shared_secret else {}
         if payload.callback_base_url:
+            try:
+                validate_callback_base_url(payload.callback_base_url, resolved_allowed_callback_origins)
+            except RuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
             post_json(
                 f"{payload.callback_base_url.rstrip('/')}/worker-callbacks/heartbeat",
                 {

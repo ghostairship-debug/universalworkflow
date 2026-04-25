@@ -31,18 +31,19 @@
 | TD-CODEX-PROCESS-001 | Windows 上 Codex CLI 的 node/native 子进程可能在 timeout 后残留并卡住 workflow | M42 | 已为真实 Codex CLI 路径加入进程树 timeout 清理，并用 8 秒 tree-timeout smoke 验证 |
 | TD-SHELL-UTF8-001 | Windows ShellAdapter 用系统默认文本模式捕获输出，遇到中文/UTF-8 artifact stdout 可能解码失败 | M43 | 已改为 bytes 捕获并按 UTF-8/系统编码 fallback 解码 |
 | TD-CLUSTER-GRAPH-001 | 动态多集群目标在 status detail 中只投影首个 cluster graph | M45/M46 | 已改为 composite cluster graph，保留全部 selected cluster |
+| TD-STRUCT-001 | Orchestrator/CLI/Web/chat surface 过大 | M62/M63 | 已用 facade ratchet、interaction split、chat runtime package、CLI command families 和 Web UI receipt split 收口 |
+| TD-STRUCT-003 | scheduler-authority 命名可能高估 consensus 语义 | M65/M66 | 已收敛为 `LocalSchedulerLeaseArbiter` local-first 语义，旧名称仅兼容 |
+| TD-STRUCT-005 | capability health 缺少真实 runtime probe 支撑 | M64 | 已加入 `CapabilityProbeResult` ledger，并完成 all-provider require-live probe |
+| TD-STRUCT-006 | M31 future platform objects 缺少 promotion path | M66 | 已归类为 archive/reference material；未来采用前必须另开治理任务 |
+| TD-DOGFOOD-001 | 多 provider dogfood 仍依赖 degraded/fallback | M64 | 已完成 shell/Codex/OpenCode/MMX/Vertex/Claude/LangChain require-live probes |
+| TD-CODEX-LATENCY-001 | Codex artifact-only prompt 偏大且缺少 role telemetry | M66 | 已收缩 dogfood artifact prompt，并在 metadata 中记录 role/prompt telemetry |
+| TD-MULTIMODAL-001 | MMX/Vertex 缺少 live multimodal evidence | M64 | 已通过 require-live probe 产生真实 evidence，fallback 不再算完成 |
 
 ## 未偿还债务
 
 | ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
-| TD-STRUCT-001 | `OrchestratorService` 仍是大型 facade，集中跨平面 wiring 和大量 helper 逻辑 | M31 | 持续偿还 | partially_repaid | 阻塞服务边界诚实性和后续安全抽取 |
-| TD-STRUCT-003 | scheduler-authority 内部表名、事件名和旧措辞仍带有过强 consensus 暗示 | M20-M31 | bounded carry-forward | partially_repaid | 阻塞语义诚实和 operator 理解 |
-| TD-STRUCT-005 | capability health 仍部分依赖 descriptor，尚未被完整 runtime telemetry 支撑 | M30-M31 | M43+ | active | 阻塞可信 capability readiness 和路由决策 |
-| TD-STRUCT-006 | M31 bundle/ZIP 的未来平台对象仍是 reference material，缺少治理式 promotion path | M31 | M43+ | partially_repaid | 阻塞未来对象安全进入主线类型系统 |
-| TD-DOGFOOD-001 | workflow dogfood 已有真实 Codex CLI E2E、M42 cluster smoke 和 M43 PDF artifact 闭环，但 MMX/Claude 仍主要是 degraded/fallback 验证 | M41 | M48+ | partially_repaid | 阻塞声称完整多 agent 能力层已经生产可用 |
-| TD-CODEX-LATENCY-001 | Codex CLI review/doc artifact-only 角色仍可能慢，当前靠 timeout/fallback 控制风险 | M41 Phase 13 | M43+ | active | 放慢个人 dogfood loop，影响 role-level telemetry 解读 |
-| TD-MULTIMODAL-001 | MMX/Vertex 已建模为多模态 evidence lane；M43 已用真实 PDF text extraction 跑通项目闭环，但 MMX/Vertex 仍未承担主路径 | M41 | M48+ | partially_repaid | 阻塞复杂图片/截图/设计稿输入的自动可信处理 |
+| 无 | M61-M66 范围内可证实的阻塞性 open debt 已清零 | M66 | N/A | repaid | 新债务必须先进入 issue register，并附 evidence / unblock condition |
 
 ## M47 新观察
 

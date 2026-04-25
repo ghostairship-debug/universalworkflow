@@ -267,17 +267,9 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in report["gates"][3]["detail"]
     assert report["remaining_gaps"] == []
-    assert report["open_debt_ids"] == [
-        "TD-STRUCT-001",
-        "TD-STRUCT-003",
-        "TD-STRUCT-005",
-        "TD-STRUCT-006",
-        "TD-DOGFOOD-001",
-        "TD-CODEX-LATENCY-001",
-        "TD-MULTIMODAL-001",
-    ]
-    assert report["governance_alerts"]["overall_status"] == "degraded"
-    assert any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["governance_alerts"]["alerts"])
+    assert report["open_debt_ids"] == []
+    assert report["governance_alerts"]["overall_status"] == "clear"
+    assert not any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["governance_alerts"]["alerts"])
     assert report["governance_metrics"]["review_policy"]["supported_policy_count"] == 5
     assert report["validation_evidence"]["report_present"] is True
     assert report["validation_evidence"]["source_mode"] == "explicit_arg"
@@ -337,22 +329,14 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
     )
 
     assert report["metrics_version"] == "m20_core_complete_v1"
-    assert report["tech_debt"]["open_debt_ids"] == [
-        "TD-STRUCT-001",
-        "TD-STRUCT-003",
-        "TD-STRUCT-005",
-        "TD-STRUCT-006",
-        "TD-DOGFOOD-001",
-        "TD-CODEX-LATENCY-001",
-        "TD-MULTIMODAL-001",
-    ]
+    assert report["tech_debt"]["open_debt_ids"] == []
     assert report["review_policy"]["supported_policy_count"] == 5
     assert report["review_policy"]["reference_only_candidates"] == []
     assert report["validation"]["overall_passed"] is True
     assert report["automation"]["governance_alerts_available"] is True
 
 
-def test_build_governance_alert_report_flags_open_debt_as_degraded(tmp_path: Path) -> None:
+def test_build_governance_alert_report_is_clear_when_open_debt_is_repaid(tmp_path: Path) -> None:
     validation_report_path = tmp_path / "offline_validation_report.json"
     validation_report_path.write_text(
         json.dumps(
@@ -375,6 +359,6 @@ def test_build_governance_alert_report_flags_open_debt_as_degraded(tmp_path: Pat
         validation_report_path=validation_report_path,
     )
 
-    assert report["overall_status"] == "degraded"
-    assert any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["alerts"])
+    assert report["overall_status"] == "clear"
+    assert not any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["alerts"])
     assert not any(alert["alert_id"] == "reference_only_review_policy_remaining" for alert in report["alerts"])

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from packages.contracts import AgentRoleType, MutationContract, MutationMode, TaskKind, TaskPacket
 from packages.core_domain.cluster_router import ClusterRouter
@@ -22,6 +23,7 @@ from packages.worker_adapters.langchain_agent_adapter import (
     LangChainAgentAdapter,
     resolve_langchain_agent_llm_selection,
 )
+from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.router import WorkerRouter
 from packages.worker_adapters.shell_adapter import ShellAdapter
 from packages.worker_adapters.subprocess_support import build_subprocess_env
@@ -38,6 +40,10 @@ def _fake_timeout_runner(command, cwd, env, capture_output, text, check, timeout
 
 def _fake_failure_runner(command, cwd, env, capture_output, text, check, timeout):
     return subprocess.CompletedProcess(command, 2, stdout="", stderr="external adapter failed")
+
+
+def _fake_empty_success_runner(command, cwd, env, capture_output, text, check, timeout):
+    return subprocess.CompletedProcess(command, 0, stdout=None, stderr=None)
 
 
 def _packet(tmp_path: Path, *, env: dict[str, str] | None = None, artifact: str = "evidence.md") -> TaskPacket:
@@ -156,6 +162,33 @@ def test_external_artifact_adapters_write_artifacts_without_repo_mutation(tmp_pa
         assert artifact_path.read_text(encoding="utf-8") == "生成的 evidence artifact\n"
 
 
+def test_external_artifact_adapter_handles_empty_completed_streams(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("WORKFLOW_CLAUDE_ARCHITECT_ENABLED", "1")
+    adapter = ClaudeArchitectAdapter(runner=_fake_empty_success_runner, executable=sys.executable)
+    packet = _packet(tmp_path, artifact="claude-empty.md")
+
+    result = adapter.launch(packet)
+
+    payload = json.loads((tmp_path / "claude-empty.md").read_text(encoding="utf-8"))
+    assert result.return_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert payload["status"] == "empty_output"
+
+
+def test_mmx_multimodal_default_command_uses_minimax_openai_cli(tmp_path: Path) -> None:
+    adapter = MMXMultimodalAdapter(executable=sys.executable)
+    packet = _packet(tmp_path, artifact="mmx.md")
+
+    command = adapter.build_command(packet)
+
+    assert "run" not in command
+    assert command[:3] == [sys.executable, "-m", "packages.worker_adapters.minimax_openai_cli"]
+    assert command[command.index("--model") + 1] == "MiniMax-M2.7"
+    assert command[command.index("--base-url") + 1] == "https://api.minimaxi.com/v1"
+    assert "--prompt-path" in command
+
+
 def test_claude_architect_quota_guard_blocks_second_call(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("WORKFLOW_CLAUDE_ARCHITECT_ENABLED", "1")
     adapter = ClaudeArchitectAdapter(runner=_fake_success_runner, executable=sys.executable)
@@ -172,17 +205,34 @@ def test_claude_architect_quota_guard_blocks_second_call(tmp_path: Path, monkeyp
     assert "max_calls_per_session=1" in result.stderr
 
 
-def test_vertex_multimodal_requires_explicit_command_template(tmp_path: Path, monkeypatch) -> None:
+def test_vertex_multimodal_requires_project_for_default_genai_command(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("WORKFLOW_VERTEX_COMMAND_TEMPLATE", raising=False)
+    monkeypatch.delenv("WORKFLOW_VERTEX_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GCLOUD_PROJECT", raising=False)
     adapter = VertexMultimodalAdapter(runner=_fake_success_runner, executable=sys.executable)
     packet = _packet(tmp_path, artifact="vertex.md")
 
     try:
         adapter.launch(packet)
     except WorkerAdapterUnavailableError as exc:
-        assert "WORKFLOW_VERTEX_COMMAND_TEMPLATE" in str(exc)
+        assert "GOOGLE_CLOUD_PROJECT" in str(exc)
     else:
-        raise AssertionError("Vertex adapter should require a local command template before first use")
+        raise AssertionError("Vertex adapter should require a project before default live smoke")
+
+
+def test_vertex_multimodal_default_command_uses_genai_cli(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_VERTEX_LOCATION", "global")
+    adapter = VertexMultimodalAdapter(runner=_fake_success_runner, executable=sys.executable)
+    packet = _packet(tmp_path, artifact="vertex.md")
+
+    command = adapter.build_command(packet)
+
+    assert command[:3] == [sys.executable, "-m", "packages.worker_adapters.vertex_genai_cli"]
+    assert command[command.index("--project") + 1] == "test-project"
+    assert command[command.index("--location") + 1] == "global"
+    assert command[command.index("--model") + 1] == "gemini-2.5-flash"
 
 
 def test_langchain_agent_reports_missing_provider_keys_for_strong_dogfood(tmp_path: Path, monkeypatch) -> None:
@@ -207,6 +257,89 @@ def test_langchain_agent_reports_missing_provider_keys_for_strong_dogfood(tmp_pa
         assert exc.details["degraded_reason"]
     else:
         raise AssertionError("LangChain agent should report missing provider keys before dogfood execution")
+
+
+def test_langchain_agent_extracts_content_from_ai_message_like_objects() -> None:
+    adapter = LangChainAgentAdapter(model="gpt-5.5")
+    ai_message = SimpleNamespace(content=[{"type": "text", "text": "object message artifact"}])
+
+    content = adapter._extract_content({"messages": [ai_message]})
+
+    assert content == "object message artifact"
+
+
+def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    def _fake_tree_runner(command, cwd, env, capture_output, text, check, timeout):
+        calls.append(
+            {
+                "command": command,
+                "cwd": cwd,
+                "capture_output": capture_output,
+                "text": text,
+                "check": check,
+                "timeout": timeout,
+            }
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": "opencode artifact"}}),
+            stderr=None,
+        )
+
+    monkeypatch.setattr(
+        "packages.worker_adapters.opencode_adapter.run_subprocess_with_tree_timeout",
+        _fake_tree_runner,
+    )
+    adapter = OpenCodeAdapter(executable=sys.executable, model="minimax/MiniMax-M2.7")
+    packet = _packet(tmp_path, artifact="opencode.md")
+
+    result = adapter.launch(packet)
+
+    assert calls
+    assert calls[0]["timeout"] == adapter.timeout_seconds
+    assert result.stderr == ""
+    assert (tmp_path / "opencode.md").read_text(encoding="utf-8") == "opencode artifact\n"
+
+
+def test_opencode_command_places_options_before_prompt(tmp_path: Path) -> None:
+    adapter = OpenCodeAdapter(executable=sys.executable, model="minimax/MiniMax-M2.7")
+    packet = _packet(tmp_path, artifact="opencode.md")
+
+    command = adapter.build_command(packet)
+
+    assert command[-1].startswith("You are executing a local workflow task")
+    assert command.index("--model") < len(command) - 1
+    assert command.index("--format") < len(command) - 1
+    assert command.index("--dir") < len(command) - 1
+
+
+def test_opencode_resolves_windows_npm_cmd_shim_to_node_script(tmp_path: Path, monkeypatch) -> None:
+    npm_dir = tmp_path / "npm"
+    script_path = npm_dir / "node_modules" / "opencode-ai" / "bin" / "opencode"
+    shim_path = npm_dir / "opencode.CMD"
+    node_path = tmp_path / "node.exe"
+    script_path.parent.mkdir(parents=True)
+    script_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    shim_path.write_text("@echo off\n", encoding="utf-8")
+    node_path.write_text("", encoding="utf-8")
+
+    def _fake_which(name: str):
+        if name == "opencode":
+            return str(shim_path)
+        if name == "node":
+            return str(node_path)
+        return None
+
+    monkeypatch.setattr("packages.worker_adapters.opencode_adapter.shutil.which", _fake_which)
+    adapter = OpenCodeAdapter(executable="opencode", model="minimax/MiniMax-M2.7")
+    packet = _packet(tmp_path, artifact="opencode.md")
+
+    command = adapter.build_command(packet)
+
+    assert command[:2] == [str(node_path), str(script_path)]
 
 
 def test_langchain_agent_provider_selection_prefers_minimax_with_deepseek_fallback(monkeypatch) -> None:
@@ -504,3 +637,24 @@ def test_orchestration_rejects_nonzero_human_required_child_before_fallback(tmp_
     assert recovered_shell_children
     assert {item["run"]["status"] for item in failed_mmx_children} == {"failed"}
     assert {item["latest_review_verdict"]["decision"] for item in failed_mmx_children} == {"fail"}
+
+
+def test_capability_health_uses_runtime_invocation_ledger(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    service = OrchestratorService(db_path, workspace_root=tmp_path)
+    run = service.create_run("Record capability runtime invocation", "feature_delivery")
+    service.compile_run(run.run_id)
+    service.resume_run(run.run_id)
+
+    health = service.list_capability_health()
+    shell_route = next(
+        item for item in health if item["descriptor"]["capability_id"] == "adapter_route:shell_exec:shell"
+    )
+
+    assert shell_route["recent_call_summary"]["verified_by_runtime"] is True
+    assert shell_route["recent_call_summary"]["recent_success_count"] >= 1
+    assert shell_route["readiness_state"] == "recently_successful"
+    assert shell_route["runtime_ledger_summary"]["verified_by_runtime"] is True
+    assert shell_route["runtime_ledger_summary"]["last_duration_ms"] is not None
+    assert shell_route["provider_route"] == "shell"

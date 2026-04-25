@@ -10,6 +10,7 @@ from packages.core_domain.execution_profiles import build_effective_execution_de
 
 
 DEFAULT_CONFIG_FILE_NAME = "workflow.toml"
+WORKFLOW_ROOT_ENV_KEY = "WORKFLOW_WORKSPACE_ROOT"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,29 @@ def _coerce_int(value: Any) -> int:
     return int(str(value).strip())
 
 
+def _find_pyproject_path(*, cwd: str | Path | None = None) -> Path | None:
+    current = Path(cwd or Path.cwd()).resolve()
+    for candidate in (current, *current.parents):
+        pyproject_path = candidate / "pyproject.toml"
+        if pyproject_path.exists():
+            return pyproject_path
+    return None
+
+
+def _load_pyproject_workflow_config(*, cwd: str | Path | None = None) -> tuple[Path | None, dict[str, Any]]:
+    path = _find_pyproject_path(cwd=cwd)
+    if path is None:
+        return None, {}
+    with path.open("rb") as handle:
+        payload = tomllib.load(handle)
+    workflow = _get_nested(payload, "tool.workflow")
+    return path, workflow if isinstance(workflow, dict) else {}
+
+
+def _coerce_workspace_root(value: Any) -> str:
+    return Path(str(value)).expanduser().resolve().as_posix()
+
+
 def _resolve_value(
     *,
     explicit: Any = None,
@@ -116,6 +140,7 @@ def _resolve_value(
 def build_effective_config(
     *,
     explicit_db_path: str | Path | None = None,
+    explicit_workspace_root: str | Path | None = None,
     explicit_runtime_gateway_provider: str | None = None,
     explicit_scheduler_authority_cluster_enabled: bool | None = None,
     explicit_config_path: str | Path | None = None,
@@ -128,6 +153,7 @@ def build_effective_config(
         env=environment,
         cwd=cwd,
     )
+    pyproject_path, pyproject_workflow = _load_pyproject_workflow_config(cwd=cwd)
 
     db_path = _resolve_value(
         explicit=Path(explicit_db_path).as_posix() if explicit_db_path is not None else None,
@@ -137,6 +163,20 @@ def build_effective_config(
         config_key="db.path",
         default="state/workflow.db",
         coerce=lambda item: Path(str(item)).as_posix(),
+    )
+    workspace_config = raw_config
+    workspace_config_key = "workspace.root"
+    if _get_nested(raw_config, workspace_config_key) is None and _get_nested(pyproject_workflow, "workspace_root") is not None:
+        workspace_config = {"workspace": {"root": pyproject_workflow["workspace_root"]}}
+        workspace_config_key = "workspace.root"
+    workspace_root = _resolve_value(
+        explicit=explicit_workspace_root.as_posix() if isinstance(explicit_workspace_root, Path) else explicit_workspace_root,
+        env=environment,
+        env_key=WORKFLOW_ROOT_ENV_KEY,
+        config=workspace_config,
+        config_key=workspace_config_key,
+        default=Path(cwd or Path.cwd()).resolve().as_posix(),
+        coerce=_coerce_workspace_root,
     )
     runtime_gateway_provider = _resolve_value(
         explicit=explicit_runtime_gateway_provider,
@@ -646,6 +686,12 @@ def build_effective_config(
 
     effective = {
         "config_path": config_path.as_posix() if config_path is not None else None,
+        "pyproject_path": pyproject_path.as_posix() if pyproject_path is not None else None,
+        "workspace": {
+            "root": workspace_root.value,
+            "root_source": workspace_root.source if workspace_root.source != "default" else "default:cwd",
+            "implicit_cwd_fallback": workspace_root.source == "default",
+        },
         "db": config_values["db"],
         "control_plane": {
             "id": config_values["control_plane"]["id"].value,

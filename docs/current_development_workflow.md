@@ -1,5 +1,35 @@
 # 当前开发工作流
 
+## Current Version: M66 Closeout
+
+- Package version: `0.66.0`.
+- Current accepted baseline: `M66`.
+- M61-M66 blocking open debt is zero; new work should keep bug-first gates active.
+- Active truth set: [README.md](../README.md), [M61_M66_ISSUE_REGISTER.md](../M61_M66_ISSUE_REGISTER.md), [M61_M66_EXECUTION_REPORT.md](../M61_M66_EXECUTION_REPORT.md), this workflow guide, and the governance debt registry.
+- Historical evaluations and older milestone plans/reports are archived under [docs/archive/evaluations/](archive/evaluations/); they are evidence, not active entrypoints.
+- Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
+- PR boundary is manual by default. The workflow may produce PR-ready summaries, but commit, push, and pull-request creation require explicit operator action.
+- M63 maintainability ratchets are active: `packages.runtime_langgraph.chat_runtime` is a package facade, `apps/operator_cli/main.py` stays below 500 lines, and `apps/orchestrator_api/web_ui.py` stays below 700 lines with no `innerHTML`.
+
+## M48-M51 Recovery Rules
+
+- `M48_M51_RECOVERY_PLAN.md` has been absorbed into the M61-M66 issue register and archived as historical recovery evidence.
+- `pyproject.toml` no longer pins a shared pytest basetemp. Use `make test-fast`, `make test-core`, or `make test-full` for unique temp directories.
+- `workflowctl --db-path state/workflow.db doctor --strict` is the strict preflight form; any issue returns a non-zero exit code.
+- File mutation must resolve an explicit workspace root from `--workspace-root`, `WORKFLOW_WORKSPACE_ROOT`, config, or cwd fallback in that order.
+- High-risk API actions require `OperatorActionReceipt`; receipts must match action/workspace, be unexpired, and be consumed once.
+- Capability health reads the `capability_invocations` runtime ledger, so recent success/failure counts reflect real executions rather than descriptor-only readiness.
+
+## M52-M60 Bug-First Carry-Forward
+
+- Scheduler flag-off construction must stay local-only: `packages.core_domain.scheduler_authority` is not imported unless `WORKFLOW_SCHEDULER_AUTHORITY_CLUSTER_ENABLED=1`.
+- Orchestrator facade ratchets are active: `OrchestratorService` direct methods must stay at or below 140, with scheduler and worker-callback logic owned by dedicated mixins.
+- Web/API local security boundaries include CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and receipt gates for high-risk actions.
+- Remote worker callback origins are allowlisted. Without an explicit allowlist, only loopback/private callback hosts are accepted; public callback origins are rejected before execution/callback dispatch.
+- Capability health now exposes `readiness_state`, `runtime_ledger_summary`, `provider_route`, and `fallback_route`; `status=ready` alone is not enough to claim a capability was recently verified.
+- Cluster route markers live in `infra/seeds/cluster_route_markers.json`; dynamic cluster routing remains opt-in through `WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED=1`.
+- Preferred local validation entrypoints are `make test-unit`, `make test-core`, `make test-integration`, and `make test-full`; on Windows shells without `make`, run the equivalent `python -m pytest ...` commands from `Makefile`.
+
 本文档是后续开发的最高优先级操作说明。项目当前仍然是个人自用的本地 operator runtime；所有计划、文档和验证都服务于“我能不能稳定继续使用它”，而不是服务外部用户、公开 SaaS、开源 onboarding 或第三方生态。
 
 ## 活跃真相源
@@ -11,14 +41,14 @@
 3. [docs/milestone_history.md](milestone_history.md)
 4. [docs/tech-debt-registry.md](tech-debt-registry.md)
 5. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
-6. [M38_REPAIR_AND_DEVELOPMENT_PLAN.md](../M38_REPAIR_AND_DEVELOPMENT_PLAN.md)
-7. [PROJECT_DEEP_EVALUATION_M37.md](../PROJECT_DEEP_EVALUATION_M37.md)
+6. [M61_M66_ISSUE_REGISTER.md](../M61_M66_ISSUE_REGISTER.md)
+7. [M61_M66_EXECUTION_REPORT.md](../M61_M66_EXECUTION_REPORT.md)
 
 关闭阶段的 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。需要历史细节时从 git 历史查看，不恢复到工作树。
 
 ## 当前仓库状态
 
-- 最新接受基线：`M47`
+- 最新接受基线：`M66`
 - 当前产品前提：个人自用 / 本地 operator runtime
 - 当前主入口：CLI、API、Web operator console、`/ui/workbench`
 - 当前 workbench 形态：LLM-assisted streaming chat workbench，主区域只显示真实对话、assistant delta/final 和确认卡；右侧显示 session、active run、graph node、evidence、review 和 PR-ready summary

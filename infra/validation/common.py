@@ -102,17 +102,26 @@ def sanitized_env() -> tuple[dict[str, str], list[str]]:
     return env, sorted(removed)
 
 
-def run_command(command: list[str], env: dict[str, str]) -> CommandResult:
-    completed = subprocess.run(
-        command,
-        cwd=PROJECT_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+def run_command(command: list[str], env: dict[str, str], *, timeout_seconds: float = 120.0) -> CommandResult:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return CommandResult(
+            command=command,
+            returncode=124,
+            stdout=exc.stdout or "",
+            stderr=f"{exc.stderr or ''}\ncommand timed out after {timeout_seconds}s".strip(),
+        )
     return CommandResult(command=command, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
 
 
@@ -204,15 +213,47 @@ def http_get_text(url: str, timeout: float = 10.0) -> str:
 
 
 def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: float = 10.0) -> Any:
+    headers = {"Content-Type": "application/json"}
+    receipt_action = _operator_action_for_post(url, payload)
+    if receipt_action is not None:
+        parsed = urllib.parse.urlparse(url)
+        receipt_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/operator-action-receipts", "", "", ""))
+        receipt = http_post_json(
+            receipt_url,
+            {"action_type": receipt_action, "risk_level": "high", "metadata": {"source": "offline_validation"}},
+            timeout=timeout,
+        )
+        headers["X-Operator-Action-Receipt"] = receipt["receipt_id"]
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         return json.loads(response.read().decode("utf-8"))
+
+
+def _operator_action_for_post(url: str, payload: dict[str, Any] | None = None) -> str | None:
+    path = urllib.parse.urlparse(url).path.rstrip("/")
+    if path == "/operator-action-receipts":
+        return None
+    if path == "/runs/batch-resume":
+        return "batch_resume_runs"
+    if path.endswith("/resume") and path.startswith("/runs/"):
+        return "resume_run"
+    if path.endswith("/approve") and path.startswith("/runs/"):
+        return "approve_run"
+    if path.endswith("/reject") and path.startswith("/runs/"):
+        return "reject_run"
+    if path.endswith("/cancel") and path.startswith("/runs/"):
+        return "cancel_run"
+    if path.endswith("/reconcile") and path.startswith("/runs/") and payload and payload.get("apply"):
+        return "reconcile_apply"
+    if "/interaction/sessions/" in path and path.endswith("/launch") and payload and payload.get("execute"):
+        return "launch_execute"
+    return None
 
 
 def wait_for_api(base_url: str, timeout_seconds: float = 10.0) -> None:

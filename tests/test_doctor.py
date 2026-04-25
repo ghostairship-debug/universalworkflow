@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-import apps.operator_cli.main as cli_main
+import apps.operator_cli.doctor_payload as cli_doctor_payload
 from apps.operator_cli.main import app
 
 
@@ -18,7 +18,7 @@ def test_workflowctl_doctor_reports_degraded_without_optional_commands_and_redac
 ) -> None:
     db_path = tmp_path / "workflow.db"
     monkeypatch.setenv("OPENAI_API_KEY", "sk-doctor-secret")
-    monkeypatch.setattr(cli_main.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(cli_doctor_payload.shutil, "which", lambda _name: None)
 
     result = runner.invoke(app, ["--db-path", str(db_path), "doctor"])
 
@@ -49,7 +49,7 @@ def test_workflowctl_doctor_reports_strong_dogfood_codex_backend_without_openai_
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.delenv("MINIMAX_TOKEN", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setattr(cli_main.shutil, "which", lambda name: f"C:/fake/{name}.exe")
+    monkeypatch.setattr(cli_doctor_payload.shutil, "which", lambda name: f"C:/fake/{name}.exe")
 
     result = runner.invoke(app, ["--db-path", str(db_path), "doctor"])
 
@@ -79,7 +79,7 @@ def test_workflowctl_doctor_reports_agent_lane_auth_when_selected(
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.delenv("MINIMAX_TOKEN", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setattr(cli_main.shutil, "which", lambda name: f"C:/fake/{name}.exe")
+    monkeypatch.setattr(cli_doctor_payload.shutil, "which", lambda name: f"C:/fake/{name}.exe")
 
     result = runner.invoke(app, ["--db-path", str(db_path), "doctor"])
 
@@ -88,3 +88,40 @@ def test_workflowctl_doctor_reports_agent_lane_auth_when_selected(
     assert payload["external_capabilities"]["dogfood_strong_model"]["execution_backend"] == "agent_lane"
     assert payload["external_capabilities"]["dogfood_strong_model"]["status"] == "missing_auth"
     assert payload["external_capabilities"]["langchain_agent"]["degraded_reason"]
+
+
+def test_workflowctl_doctor_strict_exits_nonzero_when_issues_exist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "workflow.db"
+    monkeypatch.setattr(cli_doctor_payload.shutil, "which", lambda _name: None)
+
+    result = runner.invoke(app, ["--db-path", str(db_path), "doctor", "--strict"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "degraded"
+    assert payload["issues"]
+
+
+def test_workflowctl_doctor_reports_explicit_workspace_root(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "--db-path",
+            str(db_path),
+            "--workspace-root",
+            str(workspace_root),
+            "doctor",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["workspace"]["root"] == workspace_root.resolve().as_posix()
+    assert payload["workspace"]["root_source"] == "explicit"

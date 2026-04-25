@@ -465,17 +465,8 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                     "delivery_consistency_simulation",
                     "research_no_simulation",
                 ],
-                result["governance_open_debt_count"] == 7,
-                result["governance_active_gate_focus_ids"]
-                == [
-                    "TD-STRUCT-001",
-                    "TD-STRUCT-003",
-                    "TD-STRUCT-005",
-                    "TD-STRUCT-006",
-                    "TD-DOGFOOD-001",
-                    "TD-CODEX-LATENCY-001",
-                    "TD-MULTIMODAL-001",
-                ],
+                result["governance_open_debt_count"] == 0,
+                result["governance_active_gate_focus_ids"] == [],
                 result["governance_supported_review_policies"]
                 == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
                 result["governance_review_policy_debt_id"] == "TD-006",

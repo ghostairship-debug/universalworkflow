@@ -21,6 +21,9 @@ from packages.worker_adapters.subprocess_support import (
 
 DEFAULT_CODEX_MODEL = "gpt-5.4"
 DEFAULT_CODEX_REASONING_EFFORT = "xhigh"
+DOGFOOD_ARTIFACT_RUNTIME_BRIEF_LIMIT = 1200
+DOGFOOD_ARTIFACT_HANDOFF_LIMIT = 1400
+DOGFOOD_ARTIFACT_RESPONSIBILITY_LIMIT = 6
 
 
 def _coerce_codex_timeout_seconds(raw_value: str | None, default: int) -> int:
@@ -117,7 +120,7 @@ class CodexAdapter(CliAdapterBase):
         try:
             parsed = json.loads(packet.env.get("WORKFLOW_ROLE_RESPONSIBILITIES", "[]"))
             if isinstance(parsed, list):
-                responsibilities = [str(item) for item in parsed]
+                responsibilities = [str(item) for item in parsed[:DOGFOOD_ARTIFACT_RESPONSIBILITY_LIMIT]]
         except json.JSONDecodeError:
             responsibilities = []
         role_label = packet.env.get("WORKFLOW_ROLE_LABEL") or "workflow_role"
@@ -126,6 +129,8 @@ class CodexAdapter(CliAdapterBase):
         cluster_member_id = packet.env.get("WORKFLOW_CLUSTER_MEMBER_ID") or "unknown_member"
         handoff_context = packet.env.get("WORKFLOW_ORCHESTRATION_PLAN_GRAPH") or "{}"
         runtime_brief = packet.env.get("WORKFLOW_RUNTIME_BRIEF") or ""
+        compact_runtime_brief = runtime_brief[:DOGFOOD_ARTIFACT_RUNTIME_BRIEF_LIMIT]
+        compact_handoff_context = handoff_context[:DOGFOOD_ARTIFACT_HANDOFF_LIMIT]
         return (
             "You are a Codex CLI artifact-only workflow agent in a local personal operator runtime.\n"
             "Do not mutate repository files. Produce a concise, useful markdown artifact only.\n"
@@ -137,8 +142,8 @@ class CodexAdapter(CliAdapterBase):
             f"Public role: {public_role}\n"
             f"Role label: {role_label}\n"
             f"Responsibilities JSON: {json.dumps(responsibilities, ensure_ascii=False)}\n"
-            f"Runtime brief: {runtime_brief}\n"
-            f"Handoff context JSON: {handoff_context[:4000]}\n"
+            f"Runtime brief: {compact_runtime_brief}\n"
+            f"Handoff context JSON: {compact_handoff_context}\n"
             "Return markdown with these headings exactly:\n"
             "# Artifact\n"
             "## Role Output\n"
@@ -267,6 +272,17 @@ class CodexAdapter(CliAdapterBase):
             "ephemeral": self.ephemeral,
             "timeout_seconds": timeout_seconds,
         }
+        if self._is_dogfood_artifact_agent(packet):
+            metadata.update(
+                {
+                    "prompt_family": "dogfood_artifact_agent",
+                    "prompt_chars": len(self._prompt_for(packet)),
+                    "role_label": packet.env.get("WORKFLOW_ROLE_LABEL") or "workflow_role",
+                    "public_role": packet.env.get("WORKFLOW_PUBLIC_ROLE") or "unknown",
+                    "cluster_template_id": packet.env.get("WORKFLOW_CLUSTER_TEMPLATE_ID") or "unknown_cluster",
+                    "cluster_member_id": packet.env.get("WORKFLOW_CLUSTER_MEMBER_ID") or "unknown_member",
+                }
+            )
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=completed.returncode,

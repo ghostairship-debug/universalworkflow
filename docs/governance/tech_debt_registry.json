@@ -203,70 +203,62 @@
       "introduced_in": "M45 dynamic routing smoke",
       "repaid_in": "M46",
       "result": "Cluster preview now builds a composite graph with all selected cluster_template_ids and per-cluster subgraphs"
-    }
-  ],
-  "open_items": [
+    },
     {
       "debt_id": "TD-STRUCT-001",
-      "description": "`OrchestratorService` now exposes initial seam delegates, but the public facade still concentrates cross-plane wiring and a large amount of helper logic behind one surface",
+      "description": "`OrchestratorService` and adjacent CLI/Web/chat surfaces still concentrated too much behavior behind large facade files",
       "introduced_in": "M31",
-      "planned_repayment_phase": "bounded carry-forward",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks honest service-boundary claims and safe follow-on extraction"
+      "repaid_in": "M62/M63",
+      "result": "Reduced `services.py` below the 2600-line ratchet, capped direct facade methods at <=120, split interaction services, converted chat runtime into a package facade, split CLI command families, and split the Web UI shell with receipt-gated high-risk actions"
     },
     {
       "debt_id": "TD-STRUCT-003",
-      "description": "scheduler-authority public semantics are now corrected, but internal tables, event names, and legacy wording still retain consensus-era naming that can overstate the real guarantee",
+      "description": "scheduler-authority naming and docs could overstate consensus-style guarantees beyond the local-first lease semantics",
       "introduced_in": "M20-M31",
-      "planned_repayment_phase": "bounded carry-forward",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks semantic honesty and operator comprehension"
+      "repaid_in": "M65/M66",
+      "result": "Documented `LocalSchedulerLeaseArbiter` as the default local lease arbiter and retained scheduler-authority names only as legacy compatibility or explicit cluster-on surfaces"
     },
     {
       "debt_id": "TD-STRUCT-005",
-      "description": "capability health is still partly descriptor-based and assumption-driven; additive probe fields exist, but they are not yet backed by full runtime telemetry across every provider lane",
+      "description": "capability health still relied too much on descriptor readiness instead of runtime probe evidence",
       "introduced_in": "M30-M31",
-      "planned_repayment_phase": "M38-M39",
-      "current_status": "active",
-      "blocking_impact": "blocks fully trustworthy capability readiness and routing decisions"
+      "repaid_in": "M64",
+      "result": "Added `CapabilityProbeResult`, runtime ledger evidence, API/CLI health projection, and require-live probes that passed for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain"
     },
     {
       "debt_id": "TD-STRUCT-006",
-      "description": "future platform objects from the M31 bundle and ZIP remain vision/reference material and do not yet have a governed promotion path back into current contracts",
+      "description": "future platform objects from the M31 bundle and ZIP lacked a governed promotion path into current contracts",
       "introduced_in": "M31",
-      "planned_repayment_phase": "M39",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks safe promotion of M32+ platform objects into the mainline type system"
+      "repaid_in": "M66 governance classification",
+      "result": "Classified these objects as archived reference material outside the active local-personal runtime scope; no current contract claims them ready, and any future promotion must start with a new explicit governance task"
     },
     {
       "debt_id": "TD-DOGFOOD-001",
-      "description": "workflow dogfood has real Codex CLI E2E, M42 cluster smoke, and an M43 PDF artifact loop, but MMX/Claude are still verified mainly through degraded/fallback paths",
+      "description": "multi-agent dogfood capability claims still depended on degraded/fallback paths for several provider lanes",
       "introduced_in": "M41",
-      "planned_repayment_phase": "M48+",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks claiming the full multi-agent capability layer is production-ready"
+      "repaid_in": "M64",
+      "result": "`workflowctl capability probe --provider all --require-live` passed for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain with evidence under `state/m61_m66_execution/capability_probes/`"
     },
     {
       "debt_id": "TD-CODEX-LATENCY-001",
-      "description": "Codex CLI review/doc artifact-only roles can fail to converge quickly and rely on timeout/fallback rather than prompt-level reliability",
+      "description": "Codex CLI review/doc artifact-only roles could be slow and lacked role-level latency diagnostics",
       "introduced_in": "M41 Phase 13",
-      "planned_repayment_phase": "M42+",
-      "current_status": "active",
-      "blocking_impact": "slows personal dogfood loops and makes long-running role telemetry harder to interpret"
+      "repaid_in": "M66",
+      "result": "Shrank dogfood artifact prompts by capping runtime brief, handoff context, and responsibility lists, and added role-level prompt telemetry to Codex execution metadata with regression coverage"
     },
     {
       "debt_id": "TD-MULTIMODAL-001",
-      "description": "MMX/Vertex are modeled as multimodal evidence lanes; M43 validated real PDF text extraction into a game artifact loop, but MMX/Vertex still have not handled the primary path",
+      "description": "MMX/Vertex multimodal lanes were modeled but lacked live primary-path evidence",
       "introduced_in": "M41",
-      "planned_repayment_phase": "M48+",
-      "current_status": "partially_repaid",
-      "blocking_impact": "blocks relying on image/screenshot/design multimodal evidence without manual verification"
+      "repaid_in": "M64",
+      "result": "Require-live capability probes produced successful MMX and Vertex evidence; missing credentials or fallback-only results are no longer accepted as closeout success"
     }
   ],
+  "open_items": [],
   "freeze_review_questions": [
-    "Are all accepted cross-milestone debts from `M0` through the current cycle recorded here?",
-    "Does any active debt item now block the next milestone entry gate?",
-    "Have all pre-entry hardening debts been repaid before feature breadth resumes?",
-    "Were any completed debts retired with explicit review evidence rather than silently dropped?"
+    "Are any new post-M66 debts backed by concrete evidence rather than speculation?",
+    "Does every blocked external capability have an evidence path and unblock condition?",
+    "Do active docs avoid claiming commit, push, PR, scheduler consensus, or provider readiness beyond verified runtime facts?",
+    "Are new feature milestones gated by the M61-M66 test matrix and capability probe contracts?"
   ]
 }

@@ -3,20 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from fastapi.testclient import TestClient
 import pytest
 
 from apps.orchestrator_api.main import create_app
 from packages.core_domain.db import migrate
 from packages.core_domain.repositories import PresetRepository
+from conftest import ReceiptAwareTestClient
 
 
 pytestmark = pytest.mark.slow
 
-def build_client(db_path: Path) -> TestClient:
+def build_client(db_path: Path) -> ReceiptAwareTestClient:
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()
-    return TestClient(create_app(db_path))
+    return ReceiptAwareTestClient(create_app(db_path))
 
 
 def test_api_and_web_ui_expose_operator_surfaces(tmp_path: Path) -> None:
@@ -52,6 +52,9 @@ def test_api_and_web_ui_expose_operator_surfaces(tmp_path: Path) -> None:
     assert operator_response.json()["run"]["run_id"] == review_run["run_id"]
     assert operator_response.json()["status_detail"]["effective_review_state"] == "human_pending"
     assert operator_response.json()["cluster_overview"]["enabled"] is False
+    assert dashboard_response.headers["x-frame-options"] == "DENY"
+    assert dashboard_response.headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in dashboard_response.headers["content-security-policy"]
     assert "运行目录" in runs_page_response.text
     assert "待审查控制台" in reviews_page_response.text
     assert "治理" in governance_page_response.text
@@ -72,7 +75,27 @@ def test_web_ui_action_routes_redirect_and_mutate_run_state(tmp_path: Path) -> N
 
     approve_response = client.post(f"/ui/actions/{run['run_id']}/approve", follow_redirects=False)
     assert approve_response.status_code == 303
-    assert f"/ui/runs/{run['run_id']}?" in approve_response.headers["location"]
+    approve_location = approve_response.headers["location"]
+    approve_query = parse_qs(urlparse(approve_location).query)
+    assert urlparse(approve_location).path == "/ui/actions/confirm"
+    assert approve_query["receipt_id"][0].startswith("opreceipt_")
+
+    pre_confirm_operator_response = client.get(f"/runs/{run['run_id']}/operator-view")
+    assert pre_confirm_operator_response.status_code == 200
+    assert pre_confirm_operator_response.json()["run"]["status"] != "completed"
+
+    confirmation_page = client.get(approve_location)
+    assert confirmation_page.status_code == 200
+    assert "Confirm high-risk action" in confirmation_page.text
+    assert approve_query["receipt_id"][0] in confirmation_page.text
+
+    confirm_response = client.post(
+        "/ui/actions/confirm",
+        data={"receipt_id": approve_query["receipt_id"][0]},
+        follow_redirects=False,
+    )
+    assert confirm_response.status_code == 303
+    assert f"/ui/runs/{run['run_id']}?" in confirm_response.headers["location"]
 
     operator_response = client.get(f"/runs/{run['run_id']}/operator-view")
     assert operator_response.status_code == 200
@@ -87,7 +110,18 @@ def test_web_ui_action_routes_redirect_and_mutate_run_state(tmp_path: Path) -> N
         follow_redirects=False,
     )
     assert batch_resume_response.status_code == 303
-    assert "/ui/reviews?" in batch_resume_response.headers["location"]
+    batch_location = batch_resume_response.headers["location"]
+    batch_query = parse_qs(urlparse(batch_location).query)
+    assert urlparse(batch_location).path == "/ui/actions/confirm"
+    assert batch_query["receipt_id"][0].startswith("opreceipt_")
+
+    batch_confirm_response = client.post(
+        "/ui/actions/confirm",
+        data={"receipt_id": batch_query["receipt_id"][0]},
+        follow_redirects=False,
+    )
+    assert batch_confirm_response.status_code == 303
+    assert "/ui/reviews?" in batch_confirm_response.headers["location"]
 
 
 def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch(tmp_path: Path) -> None:

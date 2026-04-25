@@ -21,15 +21,7 @@ from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 pytestmark = pytest.mark.slow
 
 runner = CliRunner()
-OPEN_DEBT_IDS = [
-    "TD-STRUCT-001",
-    "TD-STRUCT-003",
-    "TD-STRUCT-005",
-    "TD-STRUCT-006",
-    "TD-DOGFOOD-001",
-    "TD-CODEX-LATENCY-001",
-    "TD-MULTIMODAL-001",
-]
+OPEN_DEBT_IDS: list[str] = []
 
 AVAILABLE_SHELL_EXEC_ADAPTERS = [
     "shell",
@@ -540,8 +532,8 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["source_contract"] == "structured_json"
-    assert payload["open_debt_count"] == 7
-    assert payload["status_counts"] == {"partially_repaid": 5, "active": 2}
+    assert payload["open_debt_count"] == 0
+    assert payload["status_counts"] == {}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
@@ -600,7 +592,7 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
     assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
     assert payload["remaining_gaps"] == []
-    assert payload["governance_alerts"]["overall_status"] == "degraded"
+    assert payload["governance_alerts"]["overall_status"] == "clear"
 
 
 def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -645,8 +637,8 @@ def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
 
     assert alerts_result.exit_code == 0
     alerts_payload = json.loads(alerts_result.stdout)
-    assert alerts_payload["overall_status"] == "degraded"
-    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
+    assert alerts_payload["overall_status"] == "clear"
+    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
 
 
 def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(tmp_path: Path) -> None:
