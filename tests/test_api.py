@@ -1407,10 +1407,10 @@ def test_api_local_only_mode_exposes_disabled_scheduler_cluster_by_default(tmp_p
     assert operator_payload["cluster_overview"]["authority_term_no"] == cluster_payload["authority_term_no"]
     assert operator_payload["cluster_overview"]["decision_index"] == cluster_payload["decision_index"]
     assert len(runs_response.json()) >= 1
-    assert "调度权威拓扑" in dashboard_html
-    assert "调度权威拓扑" in governance_html
-    assert "调度权威集群已关闭，当前为本地单机模式。" in dashboard_html
-    assert "调度权威集群已关闭，当前为本地单机模式。" in governance_html
+    assert "调度租约仲裁拓扑" in dashboard_html
+    assert "调度租约仲裁拓扑" in governance_html
+    assert "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。" in dashboard_html
+    assert "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。" in governance_html
 
 
 def test_api_exposes_run_replay_packet(tmp_path: Path) -> None:

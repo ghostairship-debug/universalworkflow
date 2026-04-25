@@ -72,8 +72,8 @@ def test_api_and_web_ui_expose_operator_surfaces(tmp_path: Path) -> None:
     assert "治理" in governance_page_response.text
     assert "有效配置" in config_page_response.text
     assert "操作台总览" in dashboard_response.text
-    assert "调度权威集群已关闭，当前为本地单机模式。" in dashboard_response.text
-    assert "调度权威集群已关闭，当前为本地单机模式。" in governance_page_response.text
+    assert "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。" in dashboard_response.text
+    assert "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。" in governance_page_response.text
     assert review_run["run_id"] in run_page_response.text
 
 

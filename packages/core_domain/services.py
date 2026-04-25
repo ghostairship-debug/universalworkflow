@@ -162,7 +162,7 @@ from packages.core_domain.service_execution_resolution import resolve_execution_
 from packages.core_domain.service_repair import RepairServiceMixin
 from packages.core_domain.service_repo_mutation import RepoMutationCoordinator
 from packages.core_domain.service_scheduler import SchedulerServiceMixin
-from packages.core_domain.service_scheduler_authority_support import SchedulerAuthoritySupportService
+from packages.core_domain.service_scheduler_lease_projection import SchedulerLeaseProjectionService
 from packages.core_domain.service_worker_callbacks import WorkerCallbackServiceMixin
 from packages.core_domain.service_types import (
     ExecutedRunBundle,
@@ -372,7 +372,7 @@ class OrchestratorService(
         )
         if not self.preset_repo.list():
             self.preset_repo.seed_defaults()
-        self.scheduler_authority_support = SchedulerAuthoritySupportService(self)
+        self.scheduler_authority_support = SchedulerLeaseProjectionService(self)
         self.orchestration_service = OrchestrationExecutionService(self)
         self.run_lifecycle_service = RunLifecycleService(self)
         self.review_policy_service = ReviewPolicyService(self)

@@ -61,13 +61,13 @@ Bug-first observation:
 | P3 | completed | capability live-proof hard gate |
 | P4 | completed | validation / CI reliability |
 | P5 | completed | Web and browser surface hardening |
-| P6 | pending | scheduler semantics and boot path |
+| P6 | completed | scheduler semantics and boot path |
 | P7 | pending | hot-file slimming |
 | P8 | pending | workflow E2E closeout and go/no-go |
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P6-P8 blocking items 尚未完成。
+当前结论：`NO-GO`，因为 P7-P8 blocking items 尚未完成。
 
 M67 通过后，M68 才允许恢复能力层开发。
 
@@ -185,3 +185,25 @@ Bug-first observation：
 剩余：
 - `M67-WEB-001` 已偿还。
 - M67 仍为 `NO-GO`，因为 P6-P8 blocking items 尚未完成。
+
+## P6: Scheduler Semantics And Boot Path
+
+状态：`completed`
+
+完成动作：
+- 创建 P6 三张 task-card：`P6A_scheduler_wording_local_lease.md`、`P6B_scheduler_flag_off_boot_path.md`、`P6C_scheduler_closeout_evidence.md`。
+- 使用 workflow 预演 P6 编排，输出 `p6_plan_graph.txt`、`p6_policy_preview.txt`、`p6_goal_packet.txt`。
+- 默认 Web UI 文案从“调度权威”改为“调度租约仲裁 / local scheduler lease arbiter”；旧 JSON/API 字段名保持兼容。
+- CLI scheduler help 改为 `Local scheduler lease arbiter and legacy cluster compatibility commands.`。
+- 默认服务构造路径改为 import `SchedulerLeaseProjectionService`；旧 `SchedulerAuthoritySupportService` 保留为兼容 alias，但默认 flag-off 构造不再 import legacy support module。
+- flag-off 子进程验证 `packages.core_domain.scheduler_authority` 与 `packages.core_domain.service_scheduler_authority_support` 均不在 `sys.modules`；flag-on 仍 lazy import `SchedulerAuthorityClusterService`。
+
+验证：
+- `python -m compileall packages/core_domain apps/operator_cli apps/orchestrator_api -q`：passed。
+- `python -m pytest tests/test_scheduler_flag_off_isolation.py -q --basetemp state/.pytest-tmp-workflow/p6-isolation`：2 passed。
+- `python -m pytest tests/test_web_ui.py tests/test_api.py::test_api_scheduler_authority_regrants_after_expiry_and_survives_restart -q --run-slow --basetemp state/.pytest-tmp-workflow/p6-wording`：5 passed。
+- `python -m apps.operator_cli.main scheduler --help`：help text shows local scheduler lease arbiter wording。
+
+剩余：
+- `M67-SCHED-001` 已偿还。
+- M67 仍为 `NO-GO`，因为 P7-P8 blocking items 尚未完成。

@@ -25,7 +25,7 @@ from packages.core_domain.governance import (
 )
 from packages.core_domain.repositories import PresetRepository
 
-scheduler_app = typer.Typer(help="Scheduler authority and cluster inspection commands.")
+scheduler_app = typer.Typer(help="Local scheduler lease arbiter and legacy cluster compatibility commands.")
 
 @scheduler_app.command("cluster")
 def scheduler_cluster(ctx: typer.Context) -> None:

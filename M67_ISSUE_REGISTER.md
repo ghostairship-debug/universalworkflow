@@ -29,7 +29,6 @@ M67 是一个完整 milestone，不再把每个小切片单独编号成新 M。�
 | ID | 来源 | 问题 | M67 Phase | 验收标准 |
 | --- | --- | --- | --- | --- |
 | M67-WF-001 | 用户计划 / P0 evidence | workflow 自身必须参与 M67 开发，不能只靠人工补丁；需要 task-card、route、evidence、operator packet、checkpoint | P0/P8 | 至少三类 workflow-executed task + tracked evidence manifest + operator packet |
-| M67-SCHED-001 | Opus / post-closeout | scheduler 默认文案和 flag-off boot path 未完全收敛到 local lease arbiter | P6 | flag-off 不 import/construct legacy cluster runtime/support；默认 UI/CLI 文案不称权威 |
 | M67-ARCH-001 | Opus / 用户 plan | 热点文件仍超目标；需要 `RepositoryBundle`、`WorkerRuntimeBundle`、test matrix 移出 core domain | P7 | 达到 M67 slimming target 或记录硬阻塞 evidence |
 | M67-AUTO-001 | `AGENTS_M67_universalworkflow.md` | `execute=true` / auto-apply 需要统一 Command/PolicyEngine/AutomationLease 语义，不能各入口自行判断 | P2/P5 | 高风险 execute/auto-apply 只有 receipt 或 lease 才执行；GET 不 mutate |
 | M67-ROUTE-001 | 用户 plan | 动态/自适应路由只有预演，需要真实 simple/medium/complex E2E 和并发 batch-resume evidence | P8 | opencode+MiniMax simple task、medium route、cluster strong fallback、`batch-resume --max-workers 2` 成功 |
@@ -49,6 +48,7 @@ M67 是一个完整 milestone，不再把每个小切片单独编号成新 M。�
 | M67-PROBE-001 | P3 已加入 provider-specific live-proof contract，拒绝 generic/simulated/dry-run/fallback-only false-positive；Codex/OpenCode/Claude/LangChain probe 路径输出带 provider/live_backend/no_fallback 的真实 proof | `tests/test_capability_probe.py`，`state/m67_workflow_closeout/capability_probes/` |
 | M67-VAL-001 | P4 已修复 offline validation 可靠性：quick 不再跑 full CLI closeout；flow 子进程大 payload 改为 result JSON 文件，避免 Windows multiprocessing Queue deadlock；timeout/failure 报告包含 trace 和 last command；API/cluster validation helper 按 receipt v2 scope_payload 申请 receipt；full suite 可分片运行 | `tests/test_offline_validation_runner.py`，`state/m67_workflow_closeout/evidence/p4_offline_validation_quick_pass.json`，`p4_full_shard_1of4_after_assertion.json`，`p4_full_shard_2of4.json`，`p4_full_shard_3of4_after_receipt.json`，`p4_full_shard_4of4_after_receipt.json` |
 | M67-WEB-001 | P5 已完成 Web/browser hardening：operator CSS/JS 改为 `/static/operator.css` 与 `/static/workbench.js`，CSP 移除 `unsafe-inline`，高风险 UI 动作继续两步 receipt confirmation，`reconcile` 也改为先签发 receipt，local game artifact 的 `.innerHTML` 清空路径改为 `replaceChildren()` | `tests/test_web_ui.py`，`tests/test_operator_action_receipt.py`，`state/m67_workflow_closeout/evidence/p5_offline_validation_quick.json` |
+| M67-SCHED-001 | P6 已完成 scheduler 默认语义收敛：Web/CLI 默认文案改为 local scheduler lease arbiter / 调度租约仲裁，legacy scheduler-authority JSON/API 字段保持兼容；默认 boot path 改用 `SchedulerLeaseProjectionService`，flag-off 子进程验证不 import `packages.core_domain.scheduler_authority` 或 legacy support module，flag-on 仍 lazy import cluster runtime | `tests/test_scheduler_flag_off_isolation.py`，`tests/test_web_ui.py`，`tests/test_api.py::test_api_scheduler_authority_regrants_after_expiry_and_survives_restart` |
 
 ## Closeout Gates
 

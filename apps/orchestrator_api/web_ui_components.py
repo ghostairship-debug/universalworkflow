@@ -89,7 +89,7 @@ def _cluster_status_banner(cluster: dict[str, Any] | None) -> str:
         return ""
     return (
         '<div class="notice notice-compact">'
-        "调度权威集群已关闭，当前为本地单机模式。"
+        "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。"
         "</div>"
     )
 

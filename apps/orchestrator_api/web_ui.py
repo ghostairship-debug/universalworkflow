@@ -83,12 +83,12 @@ def render_dashboard(
       </section>
     </div>
     <section class="panel mt-16">
-      <h2>调度权威拓扑</h2>
+      <h2>调度租约仲裁拓扑</h2>
       {_cluster_status_banner(cluster)}
       <div class="kv">
         <div class="kv-item"><strong>模式</strong>{_escape(cluster.get('mode', '-'))}</div>
-        <div class="kv-item"><strong>权威节点</strong>{_escape(cluster.get('authority_node_id', cluster.get('leader_node_id', '-')))}</div>
-        <div class="kv-item"><strong>权威任期</strong>{_escape(cluster.get('authority_term_no', cluster.get('term_no', '-')))}</div>
+        <div class="kv-item"><strong>仲裁节点</strong>{_escape(cluster.get('authority_node_id', cluster.get('leader_node_id', '-')))}</div>
+        <div class="kv-item"><strong>租约任期</strong>{_escape(cluster.get('authority_term_no', cluster.get('term_no', '-')))}</div>
         <div class="kv-item"><strong>仲裁数</strong>{_escape(cluster.get('quorum_size', '-'))}</div>
         <div class="kv-item"><strong>活跃节点</strong>{_escape(cluster.get('active_node_count', '-'))}</div>
         <div class="kv-item"><strong>决策索引</strong>{_escape(cluster.get('decision_index', cluster.get('commit_index', '-')))}</div>
@@ -197,11 +197,11 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
     </div>
     <div class="split mt-16">
       <section class="panel">
-        <h3>调度权威拓扑</h3>
+        <h3>调度租约仲裁拓扑</h3>
         {_cluster_status_banner(cluster_overview)}
         <div class="kv">
-          <div class="kv-item"><strong>权威节点</strong>{_escape(cluster_overview.get('authority_node_id', cluster_overview.get('leader_node_id', '-')))}</div>
-          <div class="kv-item"><strong>权威任期</strong>{_escape(cluster_overview.get('authority_term_no', cluster_overview.get('term_no', '-')))}</div>
+          <div class="kv-item"><strong>仲裁节点</strong>{_escape(cluster_overview.get('authority_node_id', cluster_overview.get('leader_node_id', '-')))}</div>
+          <div class="kv-item"><strong>租约任期</strong>{_escape(cluster_overview.get('authority_term_no', cluster_overview.get('term_no', '-')))}</div>
           <div class="kv-item"><strong>仲裁数</strong>{_escape(cluster_overview.get('quorum_size', '-'))}</div>
           <div class="kv-item"><strong>决策索引</strong>{_escape(cluster_overview.get('decision_index', cluster_overview.get('commit_index', '-')))}</div>
           <div class="kv-item"><strong>活跃节点</strong>{_escape(cluster_overview.get('active_node_count', '-'))}</div>
@@ -288,7 +288,7 @@ def render_governance(*, reports: dict[str, Any], cluster_overview: dict[str, An
       <section class="panel"><h2>告警</h2>{_json_block(reports['alerts'])}</section>
       <section class="panel"><h2>发布就绪</h2>{_json_block(reports['release_readiness'])}</section>
       <section class="panel"><h2>领域包</h2>{_json_block(reports['domain_packs'])}</section>
-      <section class="panel"><h2>调度权威拓扑</h2>{_cluster_status_banner(cluster)}{_json_block(cluster)}</section>
+      <section class="panel"><h2>调度租约仲裁拓扑</h2>{_cluster_status_banner(cluster)}{_json_block(cluster)}</section>
     </div>
     """
     return _layout("治理", body, notice=notice)

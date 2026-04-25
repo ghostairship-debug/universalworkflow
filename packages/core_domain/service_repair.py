@@ -160,7 +160,6 @@ from packages.core_domain.service_projection import ProjectionServiceMixin
 from packages.core_domain.service_execution_resolution import resolve_execution_profile_for_service
 from packages.core_domain.service_repo_mutation import RepoMutationCoordinator
 from packages.core_domain.service_scheduler import SchedulerServiceMixin
-from packages.core_domain.service_scheduler_authority_support import SchedulerAuthoritySupportService
 from packages.core_domain.service_worker_callbacks import WorkerCallbackServiceMixin
 from packages.core_domain.service_types import (
     ExecutedRunBundle,

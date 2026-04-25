@@ -32,6 +32,7 @@ print(json.dumps({
     "cluster_module": service.scheduler_authority_cluster.__class__.__module__,
     "cluster_class": service.scheduler_authority_cluster.__class__.__name__,
     "scheduler_authority_imported": "packages.core_domain.scheduler_authority" in sys.modules,
+    "legacy_support_imported": "packages.core_domain.service_scheduler_authority_support" in sys.modules,
 }))
 """
     script = script.replace("CLUSTER_ENABLED", "True" if cluster_enabled else "False")
@@ -56,6 +57,7 @@ def test_scheduler_flag_off_does_not_import_cluster_runtime() -> None:
         "cluster_module": "packages.core_domain.local_scheduler_lease_arbiter",
         "cluster_class": "LocalSchedulerLeaseArbiter",
         "scheduler_authority_imported": False,
+        "legacy_support_imported": False,
     }
 
 
@@ -66,3 +68,4 @@ def test_scheduler_flag_on_lazy_imports_cluster_runtime() -> None:
     assert payload["cluster_module"] == "packages.core_domain.scheduler_authority"
     assert payload["cluster_class"] == "SchedulerAuthorityClusterService"
     assert payload["scheduler_authority_imported"] is True
+    assert payload["legacy_support_imported"] is False
