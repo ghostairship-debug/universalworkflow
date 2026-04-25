@@ -67,7 +67,7 @@ def render_dashboard(
         {focus_block}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>待审查</h2>
         <ul class="timeline">{review_rows}</ul>
@@ -82,7 +82,7 @@ def render_dashboard(
         </div>
       </section>
     </div>
-    <section class="panel" style="margin-top:16px;">
+    <section class="panel mt-16">
       <h2>调度权威拓扑</h2>
       {_cluster_status_banner(cluster)}
       <div class="kv">
@@ -159,7 +159,7 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
         <div class="kv-item"><strong>执行通道</strong>{_escape(detail['execution_lane'])}</div>
       </div>
     </section>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h3>摘要</h3>
         <p><strong>{_escape(summary['headline'])}</strong></p>
@@ -172,10 +172,10 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
           <div class="kv-item"><strong>问题数</strong>{_escape(inspection['problem_count'])}</div>
           <div class="kv-item"><strong>建议动作</strong>{_escape(_display(inspection['recommended_action']))}</div>
         </div>
-        <ul class="timeline" style="margin-top:12px;">{problems}</ul>
+        <ul class="timeline mt-12">{problems}</ul>
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h3>最近时间线</h3>
         <ul class="timeline">{timeline_items}</ul>
@@ -185,7 +185,7 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
         {_json_block(operator_view['replay_packet_excerpt'])}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h3>编排信息</h3>
         {_json_block(operator_view['orchestration'])}
@@ -195,7 +195,7 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
         {_json_block(detail)}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h3>调度权威拓扑</h3>
         {_cluster_status_banner(cluster_overview)}
@@ -220,7 +220,7 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
         </div>
       </section>
     </div>
-    <section class="panel" style="margin-top:16px;">
+    <section class="panel mt-16">
       <h3>接管历史</h3>
       {_json_block(handoff_history)}
     </section>
@@ -231,7 +231,7 @@ def render_run_focus(*, operator_view: dict[str, Any], notice: str | None = None
 def render_reviews(*, rows: list[dict[str, Any]], notice: str | None = None) -> str:
     options = "".join(
         f"""
-        <label style="display:flex; gap:8px; align-items:flex-start; padding:8px 0;">
+        <label class="choice-row">
           <input type="checkbox" name="run_id" value="{_escape(row['run']['run_id'])}" checked>
           <span><strong>{_escape(row['run']['run_id'])}</strong><br>{_escape(row['run']['goal'])}</span>
         </label>
@@ -268,7 +268,7 @@ def render_reviews(*, rows: list[dict[str, Any]], notice: str | None = None) -> 
         <h2>批量继续</h2>
         <form method="post" action="/ui/actions/batch-resume">
           {options}
-          <div style="margin-top:14px;">
+          <div class="block-spaced">
             <button type="submit">批量继续选中运行</button>
           </div>
         </form>
@@ -318,15 +318,15 @@ def render_workbench(
       <p class="muted">创建意图会话、查看目标包和集群预览、确认执行默认值，然后进入现有操作员流程。</p>
       <form method="post" action="/ui/workbench/preview">
         <div class="kv">
-          <div class="kv-item"><strong>目标</strong><textarea name="goal" rows="4" style="width:100%;" placeholder="描述这次运行要产出的目标、文件或决策。"></textarea></div>
+          <div class="kv-item"><strong>目标</strong><textarea name="goal" rows="4" class="field-full" placeholder="描述这次运行要产出的目标、文件或决策。"></textarea></div>
           <div class="kv-item"><strong>偏好预设</strong><select name="preset_id"><option value="">自动</option>{preset_options}</select></div>
           <div class="kv-item"><strong>偏好集群</strong><select name="cluster_template_id"><option value="">自动</option>{cluster_options}</select></div>
-          <div class="kv-item"><strong>约束</strong><textarea name="constraints" rows="4" style="width:100%;" placeholder="每行一个约束。"></textarea></div>
-          <div class="kv-item"><strong>假设</strong><textarea name="assumptions" rows="4" style="width:100%;" placeholder="每行一个假设。"></textarea></div>
-          <div class="kv-item"><strong>相关文件路径</strong><textarea name="referenced_artifact_paths" rows="4" style="width:100%;" placeholder="每行一个相关路径。"></textarea></div>
-          <div class="kv-item"><strong>后续事项背景</strong><textarea name="followup_context" rows="4" style="width:100%;" placeholder="之前的决策、拒绝原因或操作员上下文。"></textarea></div>
+          <div class="kv-item"><strong>约束</strong><textarea name="constraints" rows="4" class="field-full" placeholder="每行一个约束。"></textarea></div>
+          <div class="kv-item"><strong>假设</strong><textarea name="assumptions" rows="4" class="field-full" placeholder="每行一个假设。"></textarea></div>
+          <div class="kv-item"><strong>相关文件路径</strong><textarea name="referenced_artifact_paths" rows="4" class="field-full" placeholder="每行一个相关路径。"></textarea></div>
+          <div class="kv-item"><strong>后续事项背景</strong><textarea name="followup_context" rows="4" class="field-full" placeholder="之前的决策、拒绝原因或操作员上下文。"></textarea></div>
         </div>
-        <div style="margin-top:14px;"><button type="submit">预览目标包</button></div>
+        <div class="block-spaced"><button type="submit">预览目标包</button></div>
       </form>
     </section>
     """
@@ -334,7 +334,7 @@ def render_workbench(
         body = f"""
         {chat_panel}
         {preview_form}
-        <div class="split" style="margin-top:16px;">
+        <div class="split mt-16">
           <section class="panel">
             <h2>执行默认值</h2>
             <p class="muted">当前执行默认值会投影到工作台中，便于启动前检查。</p>
@@ -451,7 +451,7 @@ def render_workbench(
     body = f"""
     {chat_panel}
     {preview_form}
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>会话</h2>
         <div class="kv">
@@ -463,9 +463,9 @@ def render_workbench(
           <div class="kv-item"><strong>集群模板 ID</strong>{_escape(selected_cluster_ids)}</div>
           <div class="kv-item"><strong>当前运行</strong>{active_run_link}</div>
         </div>
-        <form method="post" action="/ui/workbench/{_escape(session['session_id'])}/clarify" style="margin-top:16px;">
+        <form class="form-spaced-lg" method="post" action="/ui/workbench/{_escape(session['session_id'])}/clarify">
           <div class="kv">{clarification_inputs}</div>
-          <div class="actions" style="margin-top:14px;"><button type="submit">刷新计划草案</button></div>
+          <div class="actions mt-14"><button type="submit">刷新计划草案</button></div>
         </form>
         <div class="actions">{launch_block}</div>
       </section>
@@ -474,7 +474,7 @@ def render_workbench(
         {_json_block(plan_draft)}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>执行默认值</h2>
         {_json_block(effective_config.get('execution_defaults'))}
@@ -484,7 +484,7 @@ def render_workbench(
         {active_checkpoint}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>目标包</h2>
         {_json_block(goal_packet)}
@@ -494,7 +494,7 @@ def render_workbench(
         {_json_block(goal_packet.get('cluster_graph'))}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>策略预览</h2>
         {_json_block(goal_packet.get('capability_policy_preview'))}
@@ -504,7 +504,7 @@ def render_workbench(
         {_json_block(goal_packet.get('cluster_policy_preview'))}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>后续事项队列</h2>
         <table>
@@ -513,14 +513,14 @@ def render_workbench(
           </thead>
           <tbody>{followup_rows}</tbody>
         </table>
-        <form method="post" action="/ui/workbench/{_escape(session['session_id'])}/followup" style="margin-top:16px;">
+        <form class="form-spaced-lg" method="post" action="/ui/workbench/{_escape(session['session_id'])}/followup">
           <input type="hidden" name="run_id" value="{_escape(session.get('active_run_id') or '')}">
           <div class="kv">
-            <div class="kv-item"><strong>指令</strong><textarea name="instruction" rows="4" style="width:100%;" placeholder="记录下一条有边界的后续事项请求。"></textarea></div>
+            <div class="kv-item"><strong>指令</strong><textarea name="instruction" rows="4" class="field-full" placeholder="记录下一条有边界的后续事项请求。"></textarea></div>
             <div class="kv-item"><strong>意图</strong><input type="text" name="intent" value="continue"></div>
             <div class="kv-item"><strong>阻塞</strong><label><input type="checkbox" name="blocking" value="true"> 收口前需要操作员处理</label></div>
           </div>
-          <div class="actions" style="margin-top:14px;"><button type="submit">加入后续事项</button></div>
+          <div class="actions mt-14"><button type="submit">加入后续事项</button></div>
         </form>
       </section>
       <section class="panel">
@@ -528,11 +528,11 @@ def render_workbench(
         {_session_table(recent_sessions)}
       </section>
     </div>
-    <div class="split" style="margin-top:16px;">
+    <div class="split mt-16">
       <section class="panel">
         <h2>已生成角色配置</h2>
         <p class="muted">M37 的会话级角色物化保持 additive 和可审查。</p>
-        <form class="inline" method="post" action="/ui/workbench/{_escape(session['session_id'])}/generate-profiles" style="margin-bottom:12px;">
+        <form class="inline mb-12" method="post" action="/ui/workbench/{_escape(session['session_id'])}/generate-profiles">
           <button type="submit">生成会话角色配置</button>
         </form>
         <table>
@@ -551,7 +551,7 @@ def render_workbench(
           </thead>
           <tbody>{watchdog_rows}</tbody>
         </table>
-        <table style="margin-top:16px;">
+        <table class="table-spaced">
           <thead>
             <tr><th>触发器</th><th>动作</th><th>风险</th><th>审查</th><th>摘要</th></tr>
           </thead>
@@ -593,7 +593,7 @@ def render_action_confirmation(*, receipt: dict[str, Any], notice: str | None = 
         <div class="kv-item"><strong>Status</strong>{_escape(receipt.get('status') or '-')}</div>
         {run_block}
       </div>
-      <form method="post" action="/ui/actions/confirm" style="margin-top:16px;">
+      <form class="form-spaced-lg" method="post" action="/ui/actions/confirm">
         <input type="hidden" name="receipt_id" value="{_escape(receipt.get('receipt_id'))}">
         <div class="actions"><button class="warn" type="submit">Confirm execution</button></div>
       </form>

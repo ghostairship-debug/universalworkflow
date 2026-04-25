@@ -720,7 +720,7 @@ def _block_puzzle_html() -> str:
       return { row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
     }
     function renderMiniPiece(piece, target, cellSize = 20) {
-      target.innerHTML = '';
+      target.replaceChildren();
       const grid = document.createElement('div');
       grid.className = 'mini-grid';
       grid.style.gridTemplateColumns = 'repeat(' + piece.shape[0].length + ', ' + cellSize + 'px)';
@@ -943,7 +943,7 @@ def _block_puzzle_html() -> str:
       }
     }
     function renderBoard() {
-      $('board').innerHTML = '';
+      $('board').replaceChildren();
       for (let r = 0; r < SIZE; r++) {
         for (let c = 0; c < SIZE; c++) {
           const cell = document.createElement('button');
@@ -975,7 +975,7 @@ def _block_puzzle_html() -> str:
       }
     }
     function renderPieces() {
-      $('tray').innerHTML = '';
+      $('tray').replaceChildren();
       pieces.forEach((piece, index) => {
         const shell = document.createElement('button');
         shell.type = 'button';
@@ -1025,7 +1025,7 @@ def _block_puzzle_html() -> str:
       renderJigsaw();
     }
     function renderJigsaw() {
-      $('jigsaw').innerHTML = '';
+      $('jigsaw').replaceChildren();
       for (let i = 1; i <= 7; i++) {
         const piece = document.createElement('span');
         piece.className = i <= jigsaw ? 'unlocked' : '';

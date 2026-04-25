@@ -273,6 +273,13 @@
       "introduced_in": "M61-M66 validation closeout",
       "repaid_in": "M67 P4",
       "result": "Added quick/full/shard validation entrypoints, per-flow timeout reports with command traces and last-command evidence, result-file subprocess transfer to avoid Windows multiprocessing Queue deadlocks, a quick CLI smoke path separate from the full closeout flow, scoped receipt v2 helpers for API/cluster validation, and milestone-neutral pytest basetemp"
+    },
+    {
+      "debt_id": "M67-WEB-001",
+      "description": "operator Web UI still depends on inline CSS/JS allowances and contribution game templates still contain browser-surface innerHTML paths",
+      "introduced_in": "M63/M66 Web split",
+      "repaid_in": "M67 P5",
+      "result": "Moved operator UI CSS/JS to local static assets, removed unsafe-inline from CSP, gated reconcile/high-risk UI actions through receipt confirmation, and replaced contribution game template innerHTML clearing with DOM replaceChildren."
     }
   ],
   "open_items": [
@@ -284,14 +291,6 @@
       "current_status": "blocking_open",
       "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
       "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
-    },
-    {
-      "debt_id": "M67-WEB-001",
-      "description": "operator Web UI still depends on inline CSS/JS allowances and contribution game templates still contain browser-surface innerHTML paths",
-      "introduced_in": "M63/M66 Web split",
-      "planned_repayment_phase": "M67 P5",
-      "current_status": "blocking_open",
-      "blocking_impact": "weakens receipt-gated browser security and leaves generated browser artifacts outside the XSS regression net"
     },
     {
       "debt_id": "M67-SCHED-001",

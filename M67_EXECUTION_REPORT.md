@@ -60,14 +60,14 @@ Bug-first observation:
 | P2 | completed | `OperatorActionReceipt` v2 / scope hash / bounded autonomy policy first slice |
 | P3 | completed | capability live-proof hard gate |
 | P4 | completed | validation / CI reliability |
-| P5 | pending | Web and browser surface hardening |
+| P5 | completed | Web and browser surface hardening |
 | P6 | pending | scheduler semantics and boot path |
 | P7 | pending | hot-file slimming |
 | P8 | pending | workflow E2E closeout and go/no-go |
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P5-P8 blocking items 尚未完成。
+当前结论：`NO-GO`，因为 P6-P8 blocking items 尚未完成。
 
 M67 通过后，M68 才允许恢复能力层开发。
 
@@ -159,4 +159,29 @@ M67 通过后，M68 才允许恢复能力层开发。
 剩余：
 
 - `M67-VAL-001` 已偿还。
-- M67 仍为 `NO-GO`，因为 P5-P8 blocking items 尚未完成。
+- M67 仍为 `NO-GO`，因为 P6-P8 blocking items 尚未完成。
+
+## P5: Web And Browser Surface Hardening
+
+状态：`completed`
+
+完成动作：
+- 创建 P5 三张 task-card：`P5A_web_static_assets_csp.md`、`P5B_web_receipt_gate_review.md`、`P5C_game_template_dom_safety_evidence.md`。
+- 使用 workflow 预演 P5 编排，输出 `p5_plan_graph.txt`、`p5_policy_preview.txt`、`p5_goal_packet.txt`。
+- 将 operator UI CSS/JS 从 Python inline HTML 移到本地静态资源：`apps/orchestrator_api/static/operator.css` 与 `apps/orchestrator_api/static/workbench.js`。
+- CSP 移除 `unsafe-inline`，Operator UI 页面移除 inline `<style>` 与 `style=` 属性；Workbench 通过 static JS 保留 `EventSource`、chat confirmation 和 delta streaming 行为。
+- Web UI 高风险/状态动作继续走两步 receipt confirmation，并把原直接执行的 `reconcile` POST 改为先签发 `reconcile_run` receipt。
+- local game artifact 中的 `.innerHTML` 清空路径改为 `replaceChildren()`，保留生成游戏行为但移除 unsafe DOM sink。
+
+验证：
+- `python -m compileall apps/orchestrator_api packages/contributions/games -q`：passed。
+- `python -m pytest tests/test_web_ui.py tests/test_operator_action_receipt.py -q --run-slow --basetemp state/.pytest-tmp-workflow/p5-web-receipt`：10 passed。
+- `python -m infra.scripts.check_doc_links`：passed。
+- `workflowctl ... validation run --suite quick --skip-offline-probe --timeout-seconds 120 --report-path state/m67_workflow_closeout/evidence/p5_offline_validation_quick.json`：passed。
+
+Bug-first observation：
+- 原计划引用的 `tests/test_api.py::test_api_high_risk_paths_require_operator_receipt` 在当前代码库不存在；P5 将其视为过期 verification 指针，改用现存 `tests/test_operator_action_receipt.py` 覆盖 API receipt 契约，并在 `tests/test_web_ui.py` 补 Web/CSP/static/DOM regression。
+
+剩余：
+- `M67-WEB-001` 已偿还。
+- M67 仍为 `NO-GO`，因为 P6-P8 blocking items 尚未完成。

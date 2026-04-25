@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from apps.orchestrator_api.routers import (
     build_catalog_router,
@@ -44,8 +45,8 @@ def error_body(code: str, message: str, details: dict | None = None) -> dict:
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
+        "style-src 'self'; "
         "connect-src 'self'; "
         "img-src 'self' data:; "
         "base-uri 'self'; "
@@ -76,6 +77,11 @@ def create_app(
         chat_llm_runtime=chat_llm_runtime,
     )
     app = FastAPI(title="Universal Agentic Workflow Orchestrator API", version="0.1.0")
+    app.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).with_name("static")),
+        name="static",
+    )
 
     @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next):

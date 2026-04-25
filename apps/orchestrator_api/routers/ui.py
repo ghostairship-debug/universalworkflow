@@ -87,6 +87,9 @@ def build_ui_router(
         if action_type == "cancel_run":
             run = service.cancel_run(run_id)
             return f"/ui/runs/{run_id}", f"取消完成：状态 {run.status}"
+        if action_type == "reconcile_run":
+            result = service.reconcile_run(run_id)
+            return f"/ui/runs/{run_id}", f"状态对账完成：通过={result['passed']} 问题={result['problem_count']}"
         return f"/ui/runs/{run_id}", f"Receipt 动作不支持：{action_type}"
 
     @router.get("/ui", response_class=HTMLResponse)
@@ -293,11 +296,7 @@ def build_ui_router(
 
     @router.post("/ui/actions/{run_id}/reconcile")
     def web_reconcile_run(run_id: str) -> RedirectResponse:
-        result = service.reconcile_run(run_id)
-        return _redirect_with_notice(
-            f"/ui/runs/{run_id}",
-            f"?????????={result['passed']} ??={result['problem_count']}",
-        )
+        return _redirect_to_confirmation(_issue_local_ui_receipt("reconcile_run", run_id=run_id))
 
     @router.post("/ui/actions/{run_id}/cancel")
     def web_cancel_run(run_id: str) -> RedirectResponse:
