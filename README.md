@@ -84,11 +84,11 @@ workflowctl --db-path state/workflow.db run from-task-card examples/local_task_c
 
 - Historical recovery plan: [M48_M51_RECOVERY_PLAN.md](docs/archive/evaluations/M48_M51_RECOVERY_PLAN.md). Current closeout truth is the M61-M66 issue register/report above.
 - Prefer `make test-fast`, `make test-core`, and `make test-full`; these targets create a unique pytest basetemp under `state/.pytest-tmp-m48m51/`.
-- High-risk API actions require a single-use `OperatorActionReceipt` in the `X-Operator-Action-Receipt` header. Workbench confirmation cards create and consume receipts automatically.
+- High-risk API actions require a single-use, scope-bound `OperatorActionReceipt` in the `X-Operator-Action-Receipt` header. Workbench confirmation cards create and consume receipts automatically.
 - Use `--workspace-root` or `WORKFLOW_WORKSPACE_ROOT` for file-mutating work; implicit cwd is only a fallback.
 
 ```powershell
-$receipt = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/operator-action-receipts -ContentType "application/json" -Body '{"action_type":"resume_run"}'
+$receipt = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/operator-action-receipts -ContentType "application/json" -Body '{"action_type":"resume_run","scope_payload":{"run_id":"<run_id>"}}'
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/runs/<run_id>/resume" -Headers @{"X-Operator-Action-Receipt"=$receipt.receipt_id}
 ```
 

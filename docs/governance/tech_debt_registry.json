@@ -252,6 +252,13 @@
       "introduced_in": "M41",
       "repaid_in": "M64",
       "result": "Require-live capability probes produced successful MMX and Vertex evidence; missing credentials or fallback-only results are no longer accepted as closeout success"
+    },
+    {
+      "debt_id": "M67-SEC-001",
+      "description": "OperatorActionReceipt validated action/workspace/ttl/single-use but did not bind the confirmed receipt to the actual request scope through scope_hash or scope_payload",
+      "introduced_in": "M49/M66 receipt gate",
+      "repaid_in": "M67 P2",
+      "result": "Added scope_hash and scope_payload to the contract/DB/repository, bound high-risk API/UI/chat receipt consumption to actual run/body/session scope, rejected legacy receipts without scope_hash, and moved watchdog auto-apply from mutating GET to POST plus receipt"
     }
   ],
   "open_items": [
@@ -263,14 +270,6 @@
       "current_status": "blocking_open",
       "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
       "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
-    },
-    {
-      "debt_id": "M67-SEC-001",
-      "description": "OperatorActionReceipt validates action/workspace/ttl/single-use but does not bind the confirmed receipt to the actual request scope through scope_hash or scope_payload",
-      "introduced_in": "M49/M66 receipt gate",
-      "planned_repayment_phase": "M67 P2",
-      "current_status": "blocking_open",
-      "blocking_impact": "a confirmed high-risk action can be tampered by changing run ids, write sets, body fields, or session scope after receipt issue"
     },
     {
       "debt_id": "M67-PROBE-001",

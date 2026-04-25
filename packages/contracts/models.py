@@ -589,6 +589,8 @@ class OperatorActionReceipt(PersistedContractModel):
     risk_level: str = "high"
     operator_id: str = "local_operator"
     requested_write_set: list[str] = Field(default_factory=list)
+    scope_hash: str | None = None
+    scope_payload: dict[str, Any] = Field(default_factory=dict)
     nonce: str = Field(default_factory=lambda: new_id("nonce"))
     status: str = "issued"
     expires_at: datetime

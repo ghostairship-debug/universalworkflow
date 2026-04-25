@@ -41,7 +41,6 @@ class _FakeApiClient:
 
 OPEN_DEBT_IDS: list[str] = [
     "M67-WF-001",
-    "M67-SEC-001",
     "M67-PROBE-001",
     "M67-VAL-001",
     "M67-WEB-001",

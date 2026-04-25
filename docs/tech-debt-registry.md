@@ -38,6 +38,7 @@
 | TD-DOGFOOD-001 | 多 provider dogfood 仍依赖 degraded/fallback | M64 | 已完成 shell/Codex/OpenCode/MMX/Vertex/Claude/LangChain require-live probes |
 | TD-CODEX-LATENCY-001 | Codex artifact-only prompt 偏大且缺少 role telemetry | M66 | 已收缩 dogfood artifact prompt，并在 metadata 中记录 role/prompt telemetry |
 | TD-MULTIMODAL-001 | MMX/Vertex 缺少 live multimodal evidence | M64 | 已通过 require-live probe 产生真实 evidence，fallback 不再算完成 |
+| M67-SEC-001 | `OperatorActionReceipt` 缺少 request scope 绑定 | M67 P2 | 已加入 `scope_hash` / `scope_payload`，并覆盖 run/body/session/batch tamper 和 legacy receipt 拒绝 |
 
 ## 未偿还债务
 
@@ -46,7 +47,6 @@ M61-M66 计划内债务已经收口，但 M67 重新登记了当前仍可证实�
 | ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
 | M67-WF-001 | workflow 自身参与开发的 task-card / route / evidence / operator-packet 证据仍需跑完整 | M67 intake | M67 | blocking_open | 阻塞后续能力层开发的可信共同开发基线 |
-| M67-SEC-001 | `OperatorActionReceipt` 缺少 `scope_hash` / `scope_payload` 与实际请求绑定 | M49/M66 receipt gate | M67 P2 | blocking_open | 高风险动作可能在 receipt issue 后被篡改 scope |
 | M67-PROBE-001 | capability live probe 对非 Codex/OpenCode provider 仍可能接受 simulated / dry-run / generic evidence | M64/M66 capability closeout | M67 P3 | blocking_open | 阻塞 provider readiness 和自适应路由可信度 |
 | M67-VAL-001 | offline validation 缺少 shard/freshness/timeout 失败报告硬门禁 | M61-M66 validation closeout | M67 P4 | blocking_open | 门禁超时或中断时可能误读 stale success |
 | M67-WEB-001 | Web UI 仍依赖 inline CSP 例外，contribution game template 仍有 `innerHTML` browser surface | M63/M66 Web split | M67 P5 | blocking_open | 削弱 receipt-gated 浏览器安全兜底 |

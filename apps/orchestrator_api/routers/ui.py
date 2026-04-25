@@ -43,6 +43,7 @@ def build_ui_router(
         receipt = service.issue_operator_action_receipt(
             action_type=action_type,
             risk_level="high",
+            scope_payload={"run_id": run_id},
             metadata={"source": "web_ui_form", "run_id": run_id},
         )
         return receipt.receipt_id
@@ -60,12 +61,20 @@ def build_ui_router(
         run_id = str(metadata.get("run_id") or "")
         if action_type == "batch_resume_runs":
             run_ids = [str(item) for item in metadata.get("run_ids", []) if str(item).strip()]
-            service.consume_operator_action_receipt(receipt_id=receipt_id, action_type=action_type)
+            service.consume_operator_action_receipt(
+                receipt_id=receipt_id,
+                action_type=action_type,
+                scope_payload={"run_ids": run_ids, "requested_write_set": run_ids},
+            )
             result = service.resume_runs_parallel(run_ids, max_workers=min(len(run_ids), 4) if run_ids else None)
             return "/ui/reviews", f"批量继续完成：请求 {len(run_ids)} 结果={len(result['results'])}"
         if not run_id:
             return "/ui", "Receipt 缺少 run_id"
-        service.consume_operator_action_receipt(receipt_id=receipt_id, action_type=action_type)
+        service.consume_operator_action_receipt(
+            receipt_id=receipt_id,
+            action_type=action_type,
+            scope_payload={"run_id": run_id},
+        )
         if action_type == "resume_run":
             bundle = service.resume_run(run_id)
             return f"/ui/runs/{run_id}", f"继续执行完成：状态 {bundle.run.status} 证据={bundle.evidence.evidence_id}"
@@ -304,6 +313,7 @@ def build_ui_router(
             action_type="batch_resume_runs",
             risk_level="high",
             requested_write_set=run_ids,
+            scope_payload={"run_ids": run_ids},
             metadata={"source": "web_ui_form", "run_ids": run_ids},
         )
         return _redirect_to_confirmation(receipt.receipt_id)

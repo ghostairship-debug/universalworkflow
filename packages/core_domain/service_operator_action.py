@@ -17,6 +17,7 @@ class OperatorActionServiceMixin:
         risk_level: str = "high",
         operator_id: str = "local_operator",
         requested_write_set: list[str] | None = None,
+        scope_payload: dict[str, Any] | None = None,
         ttl_seconds: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> OperatorActionReceipt:
@@ -25,6 +26,7 @@ class OperatorActionServiceMixin:
             risk_level=risk_level,
             operator_id=operator_id,
             requested_write_set=requested_write_set,
+            scope_payload=scope_payload,
             ttl_seconds=ttl_seconds,
             metadata=metadata,
         )
@@ -34,9 +36,11 @@ class OperatorActionServiceMixin:
         *,
         receipt_id: str | None,
         action_type: str,
+        scope_payload: dict[str, Any] | None = None,
     ) -> OperatorActionReceipt:
         return self.operator_action_guard.consume_receipt(
             receipt_id=receipt_id,
             action_type=action_type,
+            scope_payload=scope_payload,
             workspace_root=Path(str(self.effective_config.get("workspace", {}).get("root") or Path.cwd())).resolve(),
         )

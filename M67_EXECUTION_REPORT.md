@@ -57,7 +57,7 @@ Bug-first observation:
 
 | Phase | 状态 | 目标 |
 | --- | --- | --- |
-| P2 | pending | `OperatorActionReceipt` v2 / scope hash / bounded autonomy policy first slice |
+| P2 | completed | `OperatorActionReceipt` v2 / scope hash / bounded autonomy policy first slice |
 | P3 | pending | capability live-proof hard gate |
 | P4 | pending | validation / CI reliability |
 | P5 | pending | Web and browser surface hardening |
@@ -67,6 +67,37 @@ Bug-first observation:
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P2-P8 blocking items 尚未完成。
+当前结论：`NO-GO`，因为 P3-P8 blocking items 尚未完成。
 
 M67 通过后，M68 才允许恢复能力层开发。
+
+## P2: OperatorActionReceipt v2
+
+状态：`completed`
+
+已完成动作：
+
+- 新增 migration：`infra/migrations/025_m67_operator_action_receipt_scope.sql`。
+- `OperatorActionReceipt` contract 增加 `scope_hash` / `scope_payload`。
+- `OperatorActionGuard` 在 issue 时 canonicalize scope 并写入 SHA-256 hash；consume 时对高风险动作校验实际 request scope。
+- 高风险 API 路径绑定 scope：
+  - `resume/approve/reject/cancel` 绑定 `run_id`。
+  - `batch-resume` 绑定 `run_ids` 与 `max_workers`。
+  - `reconcile apply` 绑定 `run_id/apply/action`。
+  - `/runs/launch execute=true` 绑定 `goal/preset_id/execute` 并要求 receipt。
+  - `/interaction/sessions/{session_id}/launch execute=true` 绑定 session 与 selected preset/cluster。
+- Web UI confirmation 和 chat confirmation 消费 receipt 时传入同一 scope。
+- `GET /interaction/watchdogs/evaluate?auto_apply=true` 改为 400 只读拒绝；新增 `POST /interaction/watchdogs/evaluate/apply`，要求 `watchdog_auto_apply` receipt。
+
+验证：
+
+- `python -m pytest tests/test_operator_action_receipt.py -q --basetemp state/.pytest-tmp-current/p2-receipt-final`：6 passed。
+- `python -m pytest --run-slow tests/test_web_ui.py -q --basetemp state/.pytest-tmp-current/p2-webui-rerun`：3 passed。
+- `python -m pytest --run-slow tests/test_api.py::test_api_chat_launch_keyword_confirms_pending_launch_execute tests/test_api.py::test_api_exposes_plan_graph_and_launch_surfaces tests/test_api.py::test_api_can_create_get_and_launch_interaction_session -q --basetemp state/.pytest-tmp-current/p2-api-rerun`：3 passed。
+- `python -m pytest tests/test_operator_action_receipt.py tests/test_web_ui.py -q --run-slow --basetemp state/.pytest-tmp-current/p2-receipt-web-combined`：9 passed。
+- `workflowctl --db-path state/.pytest-tmp-current/p2-migration/workflow.db db migrate`：25 migrations applied, pending 0。
+
+剩余：
+
+- `M67-SEC-001` 已偿还。
+- `M67-AUTO-001` 仍保持 blocking_open，因为 P2 只修了 execute/auto-apply 的硬边界，完整 Command / PolicyEngine / AutomationLease 语义仍需后续收敛。

@@ -766,8 +766,9 @@ class OperatorActionReceiptRepository(RepositoryBase):
                 """
                 INSERT INTO operator_action_receipts (
                   receipt_id, action_type, workspace_root, risk_level, operator_id, requested_write_set_json,
-                  nonce, status, expires_at, consumed_at, metadata_json, schema_version, created_at, audit_timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  scope_hash, scope_payload_json, nonce, status, expires_at, consumed_at, metadata_json,
+                  schema_version, created_at, audit_timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     receipt.receipt_id,
@@ -776,6 +777,8 @@ class OperatorActionReceiptRepository(RepositoryBase):
                     receipt.risk_level,
                     receipt.operator_id,
                     _json_dump(receipt.requested_write_set),
+                    receipt.scope_hash,
+                    _json_dump(receipt.scope_payload),
                     receipt.nonce,
                     receipt.status,
                     receipt.expires_at.isoformat(),
@@ -802,6 +805,7 @@ class OperatorActionReceiptRepository(RepositoryBase):
             return None
         data = dict(row)
         data["requested_write_set"] = _json_load(data.pop("requested_write_set_json"))
+        data["scope_payload"] = _json_load(data.pop("scope_payload_json", "{}"))
         data["metadata"] = _json_load(data.pop("metadata_json"))
         return OperatorActionReceipt.model_validate(data)
 

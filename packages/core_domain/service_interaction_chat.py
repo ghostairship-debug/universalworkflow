@@ -322,17 +322,7 @@ class ChatCommandControllerMixin:
         risk_level: str = "high",
     ) -> ChatMessage:
         target = run_id or session.active_run_id
-        receipt = self.issue_operator_action_receipt(
-            action_type=action_type,
-            risk_level=risk_level,
-            metadata={
-                "source": "chat_confirmation",
-                "session_id": session.session_id,
-                "run_id": target,
-                "source_message_id": source_message_id,
-            },
-        )
-        return self._create_chat_message(
+        message = self._create_chat_message(
             session_id=session.session_id,
             run_id=target,
             role=ChatMessageRole.assistant,
@@ -348,11 +338,41 @@ class ChatCommandControllerMixin:
                     "risk_level": risk_level,
                     "source_message_id": source_message_id,
                     "requires_confirmation": True,
-                    "operator_action_receipt_id": receipt.receipt_id,
-                    "operator_action_receipt_expires_at": receipt.expires_at.isoformat(),
                 }
             },
         )
+        receipt = self.issue_operator_action_receipt(
+            action_type=action_type,
+            risk_level=risk_level,
+            scope_payload={
+                "action_id": message.message_id,
+                "session_id": session.session_id,
+                "run_id": target,
+                "source_message_id": source_message_id,
+            },
+            metadata={
+                "source": "chat_confirmation",
+                "session_id": session.session_id,
+                "run_id": target,
+                "source_message_id": source_message_id,
+                "action_id": message.message_id,
+            },
+        )
+        payload_json = {
+            **message.payload_json,
+            "confirmation": {
+                **message.payload_json["confirmation"],
+                "operator_action_receipt_id": receipt.receipt_id,
+                "operator_action_receipt_expires_at": receipt.expires_at.isoformat(),
+            },
+        }
+        self.chat_message_repo.update_status(
+            message.message_id,
+            ChatMessageStatus.pending_confirmation,
+            payload_json=payload_json,
+        )
+        message.payload_json = payload_json
+        return message
 
     def _chat_no_active_run_message(self, session: IntentSession, action_type: str) -> ChatMessage:
         return self._create_chat_message(
@@ -1066,6 +1086,12 @@ class ChatCommandControllerMixin:
         self.consume_operator_action_receipt(
             receipt_id=str(confirmation.get("operator_action_receipt_id") or ""),
             action_type=action_type,
+            scope_payload={
+                "action_id": action_id,
+                "session_id": session_id,
+                "run_id": run_id if isinstance(run_id, str) else None,
+                "source_message_id": confirmation.get("source_message_id"),
+            },
         )
 
         try:

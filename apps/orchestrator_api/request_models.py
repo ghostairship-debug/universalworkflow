@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -71,8 +73,15 @@ class OperatorActionReceiptRequest(BaseModel):
     risk_level: str = Field(default="high", min_length=1)
     operator_id: str = Field(default="local_operator", min_length=1)
     requested_write_set: list[str] = Field(default_factory=list)
+    scope_payload: dict[str, Any] = Field(default_factory=dict)
     ttl_seconds: int | None = Field(default=None, ge=1)
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WatchdogEvaluateApplyRequest(BaseModel):
+    session_id: str | None = None
+    run_id: str | None = None
+    limit: int = Field(default=20, ge=1)
 
 
 class TaskKindOverrideRequest(BaseModel):

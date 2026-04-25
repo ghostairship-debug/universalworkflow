@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from apps.orchestrator_api.request_models import (
@@ -13,6 +13,7 @@ from apps.orchestrator_api.request_models import (
     FollowupRequestPayload,
     IntentLaunchRequest,
     IntentPlanDraftRequest,
+    WatchdogEvaluateApplyRequest,
 )
 from packages.core_domain.services import OrchestratorService
 
@@ -136,7 +137,32 @@ def build_interaction_router(service: OrchestratorService) -> APIRouter:
         auto_apply: bool = False,
         limit: int = 20,
     ) -> dict:
+        if auto_apply:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "watchdog_auto_apply_requires_post_receipt",
+                    "message": "GET /interaction/watchdogs/evaluate is read-only; use POST /interaction/watchdogs/evaluate/apply with a scoped operator receipt.",
+                },
+            )
         return service.evaluate_watchdogs(session_id=session_id, run_id=run_id, auto_apply=auto_apply, limit=limit)
+
+    @router.post("/interaction/watchdogs/evaluate/apply")
+    def evaluate_watchdogs_apply(
+        payload: WatchdogEvaluateApplyRequest,
+        operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
+    ) -> dict:
+        service.consume_operator_action_receipt(
+            receipt_id=operator_action_receipt,
+            action_type="watchdog_auto_apply",
+            scope_payload={"session_id": payload.session_id, "run_id": payload.run_id, "limit": payload.limit},
+        )
+        return service.evaluate_watchdogs(
+            session_id=payload.session_id,
+            run_id=payload.run_id,
+            auto_apply=True,
+            limit=payload.limit,
+        )
 
     @router.post("/interaction/sessions/{session_id}/clarifications")
     def update_intent_session_clarifications(session_id: str, payload: ClarificationUpdateRequest) -> dict:
@@ -166,6 +192,12 @@ def build_interaction_router(service: OrchestratorService) -> APIRouter:
             service.consume_operator_action_receipt(
                 receipt_id=operator_action_receipt,
                 action_type="launch_execute",
+                scope_payload={
+                    "session_id": session_id,
+                    "execute": True,
+                    "selected_preset_id": payload.selected_preset_id if payload is not None else None,
+                    "selected_cluster_template_ids": payload.selected_cluster_template_ids if payload is not None else [],
+                },
             )
         return service.launch_intent_session(
             session_id,

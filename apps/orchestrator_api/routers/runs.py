@@ -43,8 +43,12 @@ def _serialize_task_bundle(bundle) -> dict:
 def build_runs_router(service: OrchestratorService) -> APIRouter:
     router = APIRouter()
 
-    def _consume_receipt(action_type: str, receipt_id: str | None) -> None:
-        service.consume_operator_action_receipt(receipt_id=receipt_id, action_type=action_type)
+    def _consume_receipt(action_type: str, receipt_id: str | None, scope_payload: dict | None = None) -> None:
+        service.consume_operator_action_receipt(
+            receipt_id=receipt_id,
+            action_type=action_type,
+            scope_payload=scope_payload,
+        )
 
     @router.post("/operator-action-receipts", status_code=status.HTTP_201_CREATED)
     def create_operator_action_receipt(payload: OperatorActionReceiptRequest) -> dict:
@@ -53,6 +57,7 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
             risk_level=payload.risk_level,
             operator_id=payload.operator_id,
             requested_write_set=payload.requested_write_set,
+            scope_payload=payload.scope_payload,
             ttl_seconds=payload.ttl_seconds,
             metadata=payload.metadata,
         ).model_dump(mode="json")
@@ -87,7 +92,16 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         return service.preview_goal_packet(goal=payload.goal, preset_id=payload.preset_id)
 
     @router.post("/runs/launch")
-    def launch_goal(payload: LaunchGoalRequest) -> dict:
+    def launch_goal(
+        payload: LaunchGoalRequest,
+        operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
+    ) -> dict:
+        if payload.execute:
+            _consume_receipt(
+                "launch_execute",
+                operator_action_receipt,
+                {"goal": payload.goal, "preset_id": payload.preset_id, "execute": True},
+            )
         return service.launch_goal(goal=payload.goal, preset_id=payload.preset_id, execute=payload.execute)
 
     @router.get("/runs/{run_id}")
@@ -149,7 +163,7 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         run_id: str,
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
-        _consume_receipt("resume_run", operator_action_receipt)
+        _consume_receipt("resume_run", operator_action_receipt, {"run_id": run_id})
         bundle = service.resume_run(run_id)
         return {
             "run": bundle.run.model_dump(mode="json"),
@@ -162,7 +176,11 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         payload: BatchResumeRequest,
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
-        _consume_receipt("batch_resume_runs", operator_action_receipt)
+        _consume_receipt(
+            "batch_resume_runs",
+            operator_action_receipt,
+            {"run_ids": payload.run_ids, "max_workers": payload.max_workers},
+        )
         return service.resume_runs_parallel(payload.run_ids, max_workers=payload.max_workers)
 
     @router.post("/runs/{run_id}/approve")
@@ -170,7 +188,7 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         run_id: str,
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
-        _consume_receipt("approve_run", operator_action_receipt)
+        _consume_receipt("approve_run", operator_action_receipt, {"run_id": run_id})
         bundle = service.approve_run_review(run_id)
         return {
             "run": bundle.run.model_dump(mode="json"),
@@ -183,7 +201,7 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         run_id: str,
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
-        _consume_receipt("reject_run", operator_action_receipt)
+        _consume_receipt("reject_run", operator_action_receipt, {"run_id": run_id})
         bundle = service.reject_run_review(run_id)
         return {
             "run": bundle.run.model_dump(mode="json"),
@@ -303,7 +321,11 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
         if payload is not None and payload.apply:
-            _consume_receipt("reconcile_apply", operator_action_receipt)
+            _consume_receipt(
+                "reconcile_apply",
+                operator_action_receipt,
+                {"run_id": run_id, "apply": True, "action": payload.action},
+            )
             return service.apply_run_repair(run_id, action=payload.action)
         return service.reconcile_run(run_id)
 
@@ -312,7 +334,7 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         run_id: str,
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
-        _consume_receipt("cancel_run", operator_action_receipt)
+        _consume_receipt("cancel_run", operator_action_receipt, {"run_id": run_id})
         return service.cancel_run(run_id).model_dump(mode="json")
 
     @router.get("/runs/{run_id}/handoffs")
