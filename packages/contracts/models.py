@@ -512,6 +512,10 @@ class CapabilityInvocationEnvelope(ContractModel):
     worker_pool_id: str | None = None
     tool_projection_id: str | None = None
     mutation_mode: MutationMode | None = None
+    requested_write_set: list[str] = Field(default_factory=list)
+    operator_receipt_id: str | None = None
+    live_probe_required: bool = True
+    policy_decision: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityExecutionReceipt(ContractModel):
@@ -537,6 +541,10 @@ class CapabilityExecutionReceipt(ContractModel):
     authority_term_no: int | None = None
     commit_index: int | None = None
     decision_index: int | None = None
+    requested_write_set: list[str] = Field(default_factory=list)
+    operator_receipt_id: str | None = None
+    live_probe_status: str | None = None
+    policy_decision: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilityInvocationRecord(PersistedContractModel):

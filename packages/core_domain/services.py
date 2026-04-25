@@ -50,6 +50,7 @@ from packages.contracts import (
     WorkerLeaseStatus,
 )
 from packages.core_domain.auto_review import AutoReviewV0
+from packages.core_domain.capability_control_plane import evaluate_capability_policy
 from packages.core_domain.capability_plane import CapabilityPlane, TOOL_PROJECTION_MANIFEST_ENV_KEY, load_tool_projection_manifest
 from packages.core_domain.compile import CompileSnapshot
 from packages.core_domain.config import build_effective_config
@@ -302,6 +303,16 @@ class OrchestratorService(
         snapshot: CompileSnapshot,
     ) -> CapabilityInvocationEnvelope:
         worker_pool_id = snapshot.task_packet.env.get("WORKFLOW_WORKER_POOL_ID")
+        mutation_contract = snapshot.task_packet.mutation_contract
+        descriptor = self._capability_descriptor_for_snapshot(snapshot)
+        requested_write_set = list(mutation_contract.write_set) if mutation_contract is not None else []
+        policy_decision = evaluate_capability_policy(
+            descriptor=descriptor,
+            mutation_mode=mutation_contract.mutation_mode if mutation_contract is not None else None,
+            requested_write_set=requested_write_set,
+            latest_probe_results=self.capability_probe_result_repo.latest_by_provider(),
+            require_live=True,
+        )
         return CapabilityInvocationEnvelope(
             run_id=run.run_id,
             runtime_task_id=snapshot.runtime_task.runtime_task_id,
@@ -310,16 +321,14 @@ class OrchestratorService(
             lane_type=snapshot.execution_lane,
             review_policy=preset.default_review_policy,
             authority_mode=self.effective_config["scheduler_authority"]["authority_mode"],
-            descriptor=self._capability_descriptor_for_snapshot(snapshot),
+            descriptor=descriptor,
             worker_pool_id=worker_pool_id if isinstance(worker_pool_id, str) else None,
             tool_projection_id=(
                 snapshot.tool_projection_manifest.projection_id if snapshot.tool_projection_manifest is not None else None
             ),
-            mutation_mode=(
-                snapshot.task_packet.mutation_contract.mutation_mode
-                if snapshot.task_packet.mutation_contract is not None
-                else None
-            ),
+            mutation_mode=mutation_contract.mutation_mode if mutation_contract is not None else None,
+            requested_write_set=requested_write_set,
+            policy_decision=policy_decision,
         )
 
     def _capability_invocation_envelope_from_state(
@@ -373,6 +382,14 @@ class OrchestratorService(
         if envelope is None:
             return None
         execution_target = execution_result.metadata.get("execution_target")
+        policy_decision = evaluate_capability_policy(
+            descriptor=envelope.descriptor,
+            mutation_mode=envelope.mutation_mode,
+            requested_write_set=envelope.requested_write_set,
+            operator_receipt_id=envelope.operator_receipt_id,
+            latest_probe_results=self.capability_probe_result_repo.latest_by_provider(),
+            require_live=envelope.live_probe_required,
+        )
         return CapabilityExecutionReceipt(
             envelope=envelope,
             status="completed" if execution_result.return_code == 0 else "failed",
@@ -384,9 +401,14 @@ class OrchestratorService(
             artifact_paths=list(execution_result.artifact_paths),
             failure_class=self._capability_failure_class_for_result(envelope.descriptor, execution_result),
             execution_target=dict(execution_target) if isinstance(execution_target, dict) else None,
+            requested_write_set=list(envelope.requested_write_set),
+            operator_receipt_id=envelope.operator_receipt_id,
+            live_probe_status=str(policy_decision.get("live_proof", {}).get("status") or "not_probed"),
+            policy_decision=policy_decision,
             metadata={
                 "tool_projection_id": envelope.tool_projection_id,
                 "worker_pool_id": envelope.worker_pool_id,
+                "capability_policy_decision": policy_decision,
             },
         )
 

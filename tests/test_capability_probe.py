@@ -212,6 +212,51 @@ def test_cli_capability_probe_blocks_when_required_provider_is_unavailable(tmp_p
     assert payload["results"][0]["status"] == "blocked"
 
 
+def test_cli_capability_control_plane_reports_write_set_and_live_gate(tmp_path: Path) -> None:
+    allowed = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "capability",
+            "control-plane",
+            "--provider",
+            "shell",
+            "--mutation-mode",
+            "artifact_only",
+            "--no-require-live",
+        ],
+    )
+    assert allowed.exit_code == 0
+    allowed_payload = json.loads(allowed.stdout)
+    assert allowed_payload["decision"] == "allowed"
+    assert allowed_payload["provider_key"] == "shell"
+    assert allowed_payload["operator_receipt_status"] == "not_required"
+
+    blocked = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "capability",
+            "control-plane",
+            "--provider",
+            "shell",
+            "--mutation-mode",
+            "patch_apply",
+            "--no-require-live",
+        ],
+    )
+    assert blocked.exit_code == 1
+    blocked_payload = json.loads(blocked.stdout)
+    assert blocked_payload["decision"] == "blocked"
+    assert "patch_apply_requires_write_set" in blocked_payload["reasons"]
+
+
 def test_capability_probe_sets_adapter_timeout_below_outer_watchdog(tmp_path: Path, monkeypatch) -> None:
     adapter = _ProbeTimeoutAdapter()
     monkeypatch.setenv("WORKFLOW_CAPABILITY_PROBE_TIMEOUT_SECONDS", "30")

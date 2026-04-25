@@ -3330,6 +3330,9 @@ def test_compile_and_resume_project_capability_envelope_and_receipt(tmp_path: Pa
     assert compiled_detail["capability_invocation_envelope"] is not None
     assert compiled_detail["capability_invocation_envelope"]["authority_mode"] == expected_authority_mode
     assert compiled_detail["capability_invocation_envelope"]["descriptor"]["provider_kind"] == "adapter_route"
+    assert compiled_detail["capability_invocation_envelope"]["requested_write_set"] == []
+    assert compiled_detail["capability_invocation_envelope"]["policy_decision"]["schema_version"] == "m69_capability_policy_v1"
+    assert compiled_detail["capability_invocation_envelope"]["policy_decision"]["decision"] == "needs_live_probe"
 
     service.resume_run(run.run_id)
     detail = service.get_status_detail(run.run_id)
@@ -3338,6 +3341,9 @@ def test_compile_and_resume_project_capability_envelope_and_receipt(tmp_path: Pa
     assert detail["capability_execution_receipt"] is not None
     assert detail["capability_execution_receipt"]["status"] == "completed"
     assert detail["capability_execution_receipt"]["return_code"] == 0
+    assert detail["capability_execution_receipt"]["requested_write_set"] == []
+    assert detail["capability_execution_receipt"]["live_probe_status"] == "not_probed"
+    assert detail["capability_execution_receipt"]["policy_decision"]["decision"] == "needs_live_probe"
     assert audit_report["capability_execution_receipt"]["envelope"]["authority_mode"] == expected_authority_mode
 
 

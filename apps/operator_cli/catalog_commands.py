@@ -144,6 +144,46 @@ def capability_probe(
         raise typer.Exit(code=1)
 
 
+@capability_app.command("control-plane")
+def capability_control_plane(
+    ctx: typer.Context,
+    provider: str = typer.Option(..., "--provider", help="Provider key such as shell, codex, opencode, mmx, vertex, claude, or langchain."),
+    mutation_mode: str = typer.Option("artifact_only", "--mutation-mode", help="artifact_only or patch_apply."),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Writable paths requested by the invocation."),
+    operator_receipt_id: Optional[str] = typer.Option(None, "--operator-receipt-id", help="Receipt id attached to the invocation."),
+    require_live: bool = typer.Option(True, "--require-live/--no-require-live", help="Require verified live probe evidence."),
+) -> None:
+    from packages.contracts import CapabilityDescriptor
+    from packages.core_domain.capability_control_plane import evaluate_capability_policy, provider_key_for_descriptor
+
+    service = _service(ctx)
+    provider_key = provider.strip().lower()
+    descriptors = [CapabilityDescriptor.model_validate(item) for item in service.list_capability_descriptors()]
+    descriptor = next((item for item in descriptors if provider_key_for_descriptor(item) == provider_key), None)
+    if descriptor is None:
+        _emit_json(
+            {
+                "error": {
+                    "code": "capability_provider_not_found",
+                    "provider": provider_key,
+                    "available_providers": sorted({provider_key_for_descriptor(item) for item in descriptors}),
+                }
+            }
+        )
+        raise typer.Exit(code=1)
+    payload = evaluate_capability_policy(
+        descriptor=descriptor,
+        mutation_mode=mutation_mode,
+        requested_write_set=list(write_set or []),
+        operator_receipt_id=operator_receipt_id,
+        latest_probe_results=service.capability_probe_result_repo.latest_by_provider(),
+        require_live=require_live,
+    )
+    _emit_json(payload)
+    if payload["decision"] != "allowed":
+        raise typer.Exit(code=1)
+
+
 @capability_app.command("mcp-profiles")
 def capability_mcp_profiles(ctx: typer.Context) -> None:
     _emit_json(_run_workflow_action(lambda: _service(ctx).list_mcp_server_profiles()))
