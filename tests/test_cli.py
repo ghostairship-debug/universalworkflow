@@ -21,7 +21,19 @@ from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 pytestmark = pytest.mark.slow
 
 runner = CliRunner()
-OPEN_DEBT_IDS: list[str] = []
+OPEN_DEBT_IDS: list[str] = [
+    "M67-WF-001",
+    "M67-SEC-001",
+    "M67-PROBE-001",
+    "M67-VAL-001",
+    "M67-WEB-001",
+    "M67-SCHED-001",
+    "M67-ARCH-001",
+    "M67-AUTO-001",
+    "M67-ROUTE-001",
+    "M67-CARRY-001",
+]
+BLOCKING_OPEN_DEBT_IDS = OPEN_DEBT_IDS[:-1]
 
 AVAILABLE_SHELL_EXEC_ADAPTERS = [
     "shell",
@@ -532,9 +544,12 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["source_contract"] == "structured_json"
-    assert payload["open_debt_count"] == 0
-    assert payload["status_counts"] == {}
+    assert payload["open_debt_count"] == len(OPEN_DEBT_IDS)
+    assert payload["blocking_open_count"] == len(BLOCKING_OPEN_DEBT_IDS)
+    assert payload["carry_forward_count"] == 1
+    assert payload["status_counts"] == {"blocking_open": len(BLOCKING_OPEN_DEBT_IDS), "carry_forward": 1}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
+    assert [item["debt_id"] for item in payload["blocking_open_items"]] == BLOCKING_OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
 
@@ -584,7 +599,7 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["overall_ready"] is True
+    assert payload["overall_ready"] is False
     assert payload["validation_summary"]["overall_passed"] is True
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in payload["gates"][3]["detail"]
@@ -592,7 +607,7 @@ def test_cli_governance_release_readiness_report(tmp_path: Path) -> None:
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
     assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
     assert payload["remaining_gaps"] == []
-    assert payload["governance_alerts"]["overall_status"] == "clear"
+    assert payload["governance_alerts"]["overall_status"] == "blocking"
 
 
 def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -632,13 +647,14 @@ def test_cli_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
     assert metrics_result.exit_code == 0
     metrics_payload = json.loads(metrics_result.stdout)
     assert metrics_payload["tech_debt"]["open_debt_ids"] == OPEN_DEBT_IDS
+    assert metrics_payload["tech_debt"]["blocking_open_debt_ids"] == BLOCKING_OPEN_DEBT_IDS
     assert metrics_payload["review_policy"]["supported_policy_count"] == 5
     assert metrics_payload["automation"]["governance_alerts_available"] is True
 
     assert alerts_result.exit_code == 0
     alerts_payload = json.loads(alerts_result.stdout)
-    assert alerts_payload["overall_status"] == "clear"
-    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
+    assert alerts_payload["overall_status"] == "blocking"
+    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_payload["alerts"])
 
 
 def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(tmp_path: Path) -> None:
@@ -668,7 +684,7 @@ def test_cli_governance_release_readiness_report_works_without_bootstrapped_db(t
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["overall_ready"] is True
+    assert payload["overall_ready"] is False
 
 
 def test_cli_governance_domain_pack_report(tmp_path: Path) -> None:

@@ -1,15 +1,23 @@
 # 当前开发工作流
 
-## Current Version: M66 Closeout
+## Current Version: M67 Workflow-Dogfood Closeout
 
 - Package version: `0.66.0`.
-- Current accepted baseline: `M66`.
-- M61-M66 blocking open debt is zero; new work should keep bug-first gates active.
-- Active truth set: [README.md](../README.md), [M61_M66_ISSUE_REGISTER.md](../M61_M66_ISSUE_REGISTER.md), [M61_M66_EXECUTION_REPORT.md](../M61_M66_EXECUTION_REPORT.md), this workflow guide, and the governance debt registry.
-- Historical evaluations and older milestone plans/reports are archived under [docs/archive/evaluations/](archive/evaluations/); they are evidence, not active entrypoints.
+- Current accepted baseline: `M66`; active milestone: `M67`.
+- M61-M66 planned closeout scope is retired, but M67 has reopened verified blocking debt. Do not claim project-wide zero debt until M67 closeout is green.
+- Active truth set: [README.md](../README.md), [M67_ISSUE_REGISTER.md](../M67_ISSUE_REGISTER.md), [M67_EXECUTION_REPORT.md](../M67_EXECUTION_REPORT.md), this workflow guide, and the governance debt registry.
+- Historical evaluations and older milestone plans/reports are archived under [docs/archive/evaluations/](archive/evaluations/); the root M66 evaluation files are temporary M67 inputs until closeout archival.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
 - PR boundary is manual by default. The workflow may produce PR-ready summaries, but commit, push, and pull-request creation require explicit operator action.
-- M63 maintainability ratchets are active: `packages.runtime_langgraph.chat_runtime` is a package facade, `apps/operator_cli/main.py` stays below 500 lines, and `apps/orchestrator_api/web_ui.py` stays below 700 lines with no `innerHTML`.
+- M67 maintainability ratchets are active: workflow dogfood evidence is required, high-risk authorization must be scope-bound, provider readiness must be live-proofed, and hot files must slim before feature expansion resumes.
+
+## M67 Workflow-Dogfood Rules
+
+- 每个 phase 都先写 task card 到 `state/m67_workflow_closeout/task_cards/`，再执行、记录 evidence、operator packet 和 checkpoint。
+- 简单、低风险、边界清楚的任务优先用 `workflowctl run from-task-card ... --adapter opencode --execute`；复杂安全协议和架构变更允许 Codex 强模型或本地补丁兜底。
+- 启用动态/自适应路由时，必须保存 route decision evidence；P8 closeout 需要 simple / medium / complex 三类真实任务和一次 `batch-resume --max-workers 2`。
+- bug-first 优先级高于 phase 进度：workflow、receipt、probe、evidence、route、repo mutation 任一自身出 bug，先登记并修复 workflow bug，再恢复原 phase。
+- 从 M67 起恢复 1 phase 1 commit；不要再用单个 commit 压缩多个 milestone 或 phase。
 
 ## M48-M51 Recovery Rules
 
@@ -41,14 +49,17 @@
 3. [docs/milestone_history.md](milestone_history.md)
 4. [docs/tech-debt-registry.md](tech-debt-registry.md)
 5. [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)
-6. [M61_M66_ISSUE_REGISTER.md](../M61_M66_ISSUE_REGISTER.md)
-7. [M61_M66_EXECUTION_REPORT.md](../M61_M66_EXECUTION_REPORT.md)
+6. [M67_ISSUE_REGISTER.md](../M67_ISSUE_REGISTER.md)
+7. [M67_EXECUTION_REPORT.md](../M67_EXECUTION_REPORT.md)
+8. [M61_M66_ISSUE_REGISTER.md](../M61_M66_ISSUE_REGISTER.md)
+9. [M61_M66_EXECUTION_REPORT.md](../M61_M66_EXECUTION_REPORT.md)
 
 关闭阶段的 phase docs、task cards、freeze reviews、archive、M2M 交接计划和重复根目录计划不再是活跃真相源。需要历史细节时从 git 历史查看，不恢复到工作树。
 
 ## 当前仓库状态
 
 - 最新接受基线：`M66`
+- 当前工作里程碑：`M67`
 - 当前产品前提：个人自用 / 本地 operator runtime
 - 当前主入口：CLI、API、Web operator console、`/ui/workbench`
 - 当前 workbench 形态：LLM-assisted streaming chat workbench，主区域只显示真实对话、assistant delta/final 和确认卡；右侧显示 session、active run、graph node、evidence、review 和 PR-ready summary

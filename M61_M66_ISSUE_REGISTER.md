@@ -2,6 +2,8 @@
 
 Generated: 2026-04-25
 
+Historical note: this register closed the M61-M66 planned scope as of 2026-04-25. It is now superseded for active work by `M67_ISSUE_REGISTER.md`, which reopens verified blocking and carry-forward debt from the M66 evaluations.
+
 This register absorbs the still-provable issues from `docs/governance/tech_debt_registry.json`, archived M48-M60 reports/plans, [GPTPRO_EVALUATION.md](docs/archive/evaluations/GPTPRO_EVALUATION.md), [PROJECT_DEEP_EVALUATION_M47_OPUS.md](docs/archive/evaluations/PROJECT_DEEP_EVALUATION_M47_OPUS.md), and [PROJECT_DEEP_EVALUATION_M48_TRIAGE.md](docs/archive/evaluations/PROJECT_DEEP_EVALUATION_M48_TRIAGE.md).
 
 Status values: `open`, `repaid`, `obsolete`, `blocked`.

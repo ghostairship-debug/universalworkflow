@@ -4,11 +4,12 @@
 
 ## 当前基线
 
-- 日期：2026-04-25
+- 日期：2026-04-26
 - 最新接受基线：`M66`
+- 当前活跃里程碑：`M67`
 - 当前产品前提：个人自用 / 本地 operator runtime
 - 当前主入口：`/ui/workbench` LLM streaming chat workbench
-- 下一步建议：在 M66 bug-first gate 继续保持绿色的前提下，再开启 M67+ 功能型小步开发；dynamic/adaptive routing 仍保持 opt-in。
+- 下一步建议：先完成 M67 workflow-dogfood 可信收口，关闭 receipt scope、capability live-proof、validation/CI、Web/CSP、scheduler 语义和热点瘦身阻塞项；M67 GO 后再恢复能力层开发。
 
 ## 历史里程碑
 
@@ -35,7 +36,8 @@
 | M47 | 中文文档、验证、git 收口 | 已接受 |
 | M48-M51 | 恢复计划执行：workspace root、receipt gate、repo mutation atomicity、capability invocation ledger 和 local lease naming | 已吸收并归档 |
 | M52-M60 | Bug-first 清债：测试矩阵、service decomposition、capability probes、cluster route stats 和治理报告 | 已吸收 |
-| M61-M66 | 全量清债收口：Chat runtime package、CLI command families、Web UI receipt confirmation、zero-open-debt governance 和 all-provider live probe | 当前基线 |
+| M61-M66 | 全量清债收口：Chat runtime package、CLI command families、Web UI receipt confirmation、M61-M66 计划内债务收口和 all-provider live probe | 已接受基线；当前 M67 重新登记 verified debt |
+| M67 | Workflow-dogfood 可信收口：真实调用 workflow 共同开发，修 receipt scope、capability live-proof、validation/CI、Web/CSP、scheduler 语义和热点瘦身 | 执行中 |
 | M2M 修复 | 完成根目录历史文档归档、scheduler-authority flag 双态兼容、默认 local-only 语义修正 | 结论已吸收 |
 
 ## M41 关键结论

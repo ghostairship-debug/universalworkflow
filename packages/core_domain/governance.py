@@ -116,15 +116,31 @@ def _normalize_open_item(row: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _is_blocking_open_item(item: dict[str, Any]) -> bool:
+    status = str(item.get("current_status", "")).strip().lower()
+    blocking_level = str(item.get("blocking_level", "")).strip().lower()
+    return status in {"blocking_open", "active_blocker", "blocked"} or blocking_level == "blocking"
+
+
+def _is_carry_forward_item(item: dict[str, Any]) -> bool:
+    status = str(item.get("current_status", "")).strip().lower()
+    blocking_level = str(item.get("blocking_level", "")).strip().lower()
+    return status in {"carry_forward", "nonblocking_carry_forward"} or blocking_level == "carry_forward"
+
+
 def _build_tech_debt_report_payload(
     *,
     source_path: Path,
-    repaid_items: list[dict[str, str]],
-    open_items: list[dict[str, str]],
+    repaid_items: list[dict[str, Any]],
+    open_items: list[dict[str, Any]],
     freeze_review_questions: list[str],
     source_contract: str,
     compatibility_source_path: Path | None = None,
+    obsolete_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    obsolete_items = obsolete_items or []
+    blocking_open_items = [item for item in open_items if _is_blocking_open_item(item)]
+    carry_forward_items = [item for item in open_items if _is_carry_forward_item(item)]
     status_counts = Counter(item["current_status"] for item in open_items)
     planned_phase_counts = Counter(item["planned_repayment_phase"] for item in open_items)
     introduced_phase_counts = Counter(item["introduced_in"] for item in open_items)
@@ -164,6 +180,9 @@ def _build_tech_debt_report_payload(
         },
         "repaid_debt_count": len(repaid_items),
         "open_debt_count": len(open_items),
+        "blocking_open_count": len(blocking_open_items),
+        "carry_forward_count": len(carry_forward_items),
+        "obsolete_debt_count": len(obsolete_items),
         "status_counts": dict(status_counts),
         "planned_phase_counts": dict(planned_phase_counts),
         "introduced_phase_counts": dict(introduced_phase_counts),
@@ -179,7 +198,10 @@ def _build_tech_debt_report_payload(
         "next_cycle_focus_items": next_cycle_focus_items,
         "active_gate_focus_items": active_gate_focus_items,
         "open_items": open_items,
+        "blocking_open_items": blocking_open_items,
+        "carry_forward_items": carry_forward_items,
         "repaid_items": repaid_items,
+        "obsolete_items": obsolete_items,
         "freeze_review_questions": freeze_review_questions,
     }
 
@@ -192,6 +214,7 @@ def _build_tech_debt_report_from_structured(path: Path) -> dict[str, Any]:
     payload = _load_structured_json(path)
     repaid_items = [dict(item) for item in payload.get("repaid_items", [])]
     open_items = [dict(item) for item in payload.get("open_items", [])]
+    obsolete_items = [dict(item) for item in payload.get("obsolete_items", [])]
     return _build_tech_debt_report_payload(
         source_path=path,
         repaid_items=repaid_items,
@@ -199,6 +222,7 @@ def _build_tech_debt_report_from_structured(path: Path) -> dict[str, Any]:
         freeze_review_questions=list(payload.get("freeze_review_questions", [])),
         source_contract="structured_json",
         compatibility_source_path=DEFAULT_TECH_DEBT_REGISTRY_PATH if DEFAULT_TECH_DEBT_REGISTRY_PATH.exists() else None,
+        obsolete_items=obsolete_items,
     )
 
 
@@ -217,6 +241,7 @@ def _build_tech_debt_report_from_markdown(path: Path) -> dict[str, Any]:
         open_items=open_items,
         freeze_review_questions=_parse_numbered_lines(freeze_review_section),
         source_contract="markdown_compatibility",
+        obsolete_items=[],
     )
 
 
@@ -548,10 +573,14 @@ def build_governance_metrics_report(
         },
         "tech_debt": {
             "open_debt_count": tech_debt["open_debt_count"],
+            "blocking_open_count": tech_debt["blocking_open_count"],
+            "carry_forward_count": tech_debt["carry_forward_count"],
             "repaid_debt_count": tech_debt["repaid_debt_count"],
             "status_counts": tech_debt["status_counts"],
             "planned_phase_counts": tech_debt["planned_phase_counts"],
             "open_debt_ids": [item["debt_id"] for item in tech_debt["open_items"]],
+            "blocking_open_debt_ids": [item["debt_id"] for item in tech_debt["blocking_open_items"]],
+            "carry_forward_debt_ids": [item["debt_id"] for item in tech_debt["carry_forward_items"]],
         },
         "review_policy": {
             "supported_policy_count": review_policy["supported_policy_count"],
@@ -631,12 +660,22 @@ def build_governance_alert_report(
             }
         )
     if metrics["tech_debt"]["open_debt_count"] > 0:
+        blocking_open_count = metrics["tech_debt"].get("blocking_open_count", 0)
+        carry_forward_count = metrics["tech_debt"].get("carry_forward_count", 0)
+        severity = "blocking" if blocking_open_count > 0 else "degraded"
         alerts.append(
             {
                 "alert_id": "open_tech_debt_remaining",
-                "severity": "degraded",
-                "message": f"{metrics['tech_debt']['open_debt_count']} tech-debt item(s) remain open",
-                "recommended_action": "carry the remaining items into the next planned milestone with explicit entry-gate notes",
+                "severity": severity,
+                "message": (
+                    f"{blocking_open_count} blocking and {carry_forward_count} carry-forward "
+                    "tech-debt item(s) remain open"
+                ),
+                "recommended_action": (
+                    "complete the blocking M67 closeout items before expanding feature breadth"
+                    if blocking_open_count > 0
+                    else "carry the remaining items with explicit entry-gate notes"
+                ),
             }
         )
     awaiting_review_runs = metrics["runtime_inventory"].get("awaiting_review_runs", 0)
@@ -662,6 +701,7 @@ def build_governance_alert_report(
         "alerts": alerts,
         "metrics_snapshot": {
             "open_debt_count": metrics["tech_debt"]["open_debt_count"],
+            "blocking_open_count": metrics["tech_debt"].get("blocking_open_count", 0),
             "supported_policy_count": metrics["review_policy"]["supported_policy_count"],
             "validation_overall_passed": metrics["validation"]["overall_passed"],
             "cluster_flow_passed": metrics["validation"].get("cluster_flow_passed"),
@@ -804,10 +844,14 @@ def build_release_readiness_report(
         "governance_metrics": governance_metrics,
         "governance_alerts": governance_alerts,
         "recommended_next_step": (
-            "M61-M66 blocking debt is clear; keep bug-first gates active and open new feature milestones only "
-            "after doc links, offline validation, test matrix, and live capability probes remain green"
-            if not tech_debt["open_items"]
-            else "repay the remaining open technical debt before expanding feature breadth"
+            "M67 blocking closeout remains active; repay the blocking workflow, security, evidence, and slimming debt "
+            "before expanding feature breadth"
+            if tech_debt["blocking_open_items"]
+            else (
+                "blocking debt is clear; keep bug-first gates active and carry non-blocking items with explicit evidence"
+                if tech_debt["open_items"]
+                else "no open technical debt is registered; keep bug-first gates active before opening feature milestones"
+            )
         ),
         "source_paths": {
             "validation_report": validation_evidence["source_path"],

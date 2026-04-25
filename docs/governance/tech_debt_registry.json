@@ -254,11 +254,95 @@
       "result": "Require-live capability probes produced successful MMX and Vertex evidence; missing credentials or fallback-only results are no longer accepted as closeout success"
     }
   ],
-  "open_items": [],
+  "open_items": [
+    {
+      "debt_id": "M67-WF-001",
+      "description": "workflow self-development still needs tracked M67 task-card, route, batch-resume, evidence-manifest, and operator-packet proof for the active milestone rather than relying on manual execution alone",
+      "introduced_in": "M67 intake",
+      "planned_repayment_phase": "M67",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
+      "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
+    },
+    {
+      "debt_id": "M67-SEC-001",
+      "description": "OperatorActionReceipt validates action/workspace/ttl/single-use but does not bind the confirmed receipt to the actual request scope through scope_hash or scope_payload",
+      "introduced_in": "M49/M66 receipt gate",
+      "planned_repayment_phase": "M67 P2",
+      "current_status": "blocking_open",
+      "blocking_impact": "a confirmed high-risk action can be tampered by changing run ids, write sets, body fields, or session scope after receipt issue"
+    },
+    {
+      "debt_id": "M67-PROBE-001",
+      "description": "capability live probes can still accept generic, simulated, dry-run, or fallback-only provider output as verified readiness for non-codex/opencode providers",
+      "introduced_in": "M64/M66 capability closeout",
+      "planned_repayment_phase": "M67 P3",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks trustworthy provider routing and would make capability-layer development rest on false-positive evidence"
+    },
+    {
+      "debt_id": "M67-VAL-001",
+      "description": "offline validation is not yet shardable/freshness-safe enough; timeout paths can leave stale success reports available to operators",
+      "introduced_in": "M61-M66 validation closeout",
+      "planned_repayment_phase": "M67 P4",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks reliable closeout gates and bug-first recovery when validation hangs or times out"
+    },
+    {
+      "debt_id": "M67-WEB-001",
+      "description": "operator Web UI still depends on inline CSS/JS allowances and contribution game templates still contain browser-surface innerHTML paths",
+      "introduced_in": "M63/M66 Web split",
+      "planned_repayment_phase": "M67 P5",
+      "current_status": "blocking_open",
+      "blocking_impact": "weakens receipt-gated browser security and leaves generated browser artifacts outside the XSS regression net"
+    },
+    {
+      "debt_id": "M67-SCHED-001",
+      "description": "default scheduler wording and boot path are not fully aligned with local lease arbiter semantics; cluster-era support objects and repositories remain too visible in the flag-off path",
+      "introduced_in": "M65/M66 scheduler rename",
+      "planned_repayment_phase": "M67 P6",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks clear mental model of local-only scheduling and risks accidental cluster-path coupling"
+    },
+    {
+      "debt_id": "M67-ARCH-001",
+      "description": "hot-file slimming remains incomplete: services.py, service_interaction_chat.py, local_scheduler_lease_arbiter.py, web_ui_components.py, local_game_artifacts.py, and core_domain/test_matrix.py still exceed the M67 target shape",
+      "introduced_in": "M62-M66 decomposition carry-forward",
+      "planned_repayment_phase": "M67 P7",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks a stable architecture baseline for renewed capability-layer work"
+    },
+    {
+      "debt_id": "M67-AUTO-001",
+      "description": "bounded-autonomy policy is fragmented: execute=true and auto-apply style paths need a shared command/policy decision layer or automation lease semantics instead of route-specific checks",
+      "introduced_in": "M67 autonomy-policy evaluation",
+      "planned_repayment_phase": "M67 P2/P5",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks safe long-running workflow self-development without repeated ad-hoc confirmations"
+    },
+    {
+      "debt_id": "M67-ROUTE-001",
+      "description": "adaptive routing and dynamic cluster routing have P0 rehearsal evidence but still need end-to-end simple/medium/complex workflow tasks plus at least one successful batch-resume max-workers=2 closeout proof",
+      "introduced_in": "M67 workflow-dogfood plan",
+      "planned_repayment_phase": "M67 P8",
+      "current_status": "blocking_open",
+      "blocking_impact": "blocks claiming that minimax/opencode and adaptive routing are ready for sustained co-development"
+    },
+    {
+      "debt_id": "M67-CARRY-001",
+      "description": "repositories.py, service_lifecycle.py, service_projection.py, interaction_catalog.py, and models.py remain large; they are registered as carry-forward unless they block the M67 hot-file targets directly",
+      "introduced_in": "M47-M66 structure evaluation",
+      "planned_repayment_phase": "Post-M67 decision",
+      "current_status": "carry_forward",
+      "blocking_impact": "non-blocking maintainability debt to revisit only after M67 trusted closeout evidence is green"
+    }
+  ],
+  "obsolete_items": [],
   "freeze_review_questions": [
-    "Are any new post-M66 debts backed by concrete evidence rather than speculation?",
-    "Does every blocked external capability have an evidence path and unblock condition?",
-    "Do active docs avoid claiming commit, push, PR, scheduler consensus, or provider readiness beyond verified runtime facts?",
-    "Are new feature milestones gated by the M61-M66 test matrix and capability probe contracts?"
+    "Did M67 run real workflow task-card execution, adaptive routing, dynamic cluster routing, and batch-resume evidence rather than manual-only patches?",
+    "Do all high-risk receipt/lease paths bind the consumed authorization to the actual request scope?",
+    "Do all capability providers pass provider-specific live-proof contracts without simulated, dry-run, generic, or fallback-only evidence?",
+    "Do active docs avoid claiming zero debt, scheduler consensus, automatic PR publication, or provider readiness beyond verified runtime facts?",
+    "Are all blocking M67 items either repaid with evidence or explicitly marked blocked with unblock conditions before capability-layer work resumes?"
   ]
 }

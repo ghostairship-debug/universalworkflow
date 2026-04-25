@@ -1,12 +1,12 @@
 # Universal Agentic Workflow OS
 
-## Current Version: M66 Closeout
+## Current Version: M67 Workflow-Dogfood Closeout
 
 - Package version: `0.66.0`.
-- Current accepted baseline: `M66`.
-- Status: bug-first cleanup scope is closed; M61-M66 blocking open debt is zero.
-- Current closeout entrypoints: [M61_M66_ISSUE_REGISTER.md](M61_M66_ISSUE_REGISTER.md) and [M61_M66_EXECUTION_REPORT.md](M61_M66_EXECUTION_REPORT.md).
-- Historical evaluations, old recovery plans, and prior execution reports live under [docs/archive/evaluations/](docs/archive/evaluations/).
+- Current accepted baseline: `M66`; active milestone: `M67`.
+- Status: M67 is an active bug-first trusted-closeout milestone. The M61-M66 planned scope closed, but current verified debt is not zero.
+- Current closeout entrypoints: [M67_ISSUE_REGISTER.md](M67_ISSUE_REGISTER.md) and [M67_EXECUTION_REPORT.md](M67_EXECUTION_REPORT.md).
+- Historical evaluations, old recovery plans, and prior execution reports live under [docs/archive/evaluations/](docs/archive/evaluations/). The two root M66 evaluation files remain active M67 inputs until closeout archival.
 - Scheduler semantics are local-first: `LocalSchedulerLeaseArbiter` is the default local lease arbiter. `scheduler-authority` names remain only for legacy compatibility and cluster-on surfaces, not as a claim of distributed consensus.
 - GitHub/PR boundary: the workflow can generate PR-ready summaries, but it does not commit, push, or open a pull request unless the operator explicitly runs those actions.
 
@@ -14,9 +14,10 @@
 
 ## 当前状态
 
-- 最新接受基线：`M66`
+- 最新接受基线：`M66`；当前工作里程碑：`M67`
 - 产品前提：个人自用 / 本地 operator runtime
 - 主入口：CLI、API、Web operator console、`/ui/workbench` 流式聊天工作台
+- 当前 M67 目标：用 workflow 自身参与开发，修复 receipt scope、capability live-proof、validation/CI、Web/CSP、scheduler 语义和热点瘦身问题后，再恢复能力层开发。
 - M40 已完成：LLM-assisted chat runtime、assistant delta/final 流式输出、LangGraph chat control graph、SSE 去重和聊天/状态事件分离
 - M41 已完成：Codex CLI 强 dogfood 后端、MiniMax/DeepSeek LangChain 控制层、MMX/Vertex/Claude artifact-only 能力骨架、`architecture_delivery_cluster` 真机 dogfood
 - M42 已完成：补齐 `search_cluster`、`design_cluster`、`multimodal_cluster`、`review_cluster`、`management_cluster`，并把这些核心 agent 角色接入强 dogfood Codex CLI 路由
@@ -32,6 +33,8 @@
 - [里程碑历史摘要](docs/milestone_history.md)
 - [技术债登记表](docs/tech-debt-registry.md)
 - [结构化技术债 JSON](docs/governance/tech_debt_registry.json)
+- [M67 问题登记表](M67_ISSUE_REGISTER.md)
+- [M67 执行报告](M67_EXECUTION_REPORT.md)
 - [M61-M66 问题登记表](M61_M66_ISSUE_REGISTER.md)
 - [M61-M66 执行报告](M61_M66_EXECUTION_REPORT.md)
 

@@ -4,7 +4,7 @@ Generated: 2026-04-25
 
 ## Summary
 
-M61-M66 is closed as GO for the defined bug-first cleanup scope. The active issue register now has no open items, the structured tech-debt registry reports `open_debt_count = 0`, and historical root evaluations/plans have been archived under `docs/archive/evaluations/`.
+M61-M66 is closed as GO for the defined bug-first cleanup scope that existed on 2026-04-25. This report is now historical context, not the active truth set. M67 reopened verified blocking debt from the M66 evaluations, so the current structured tech-debt registry no longer reports `open_debt_count = 0`.
 
 The closeout kept the workflow共同开发 rule: every split has a task card under `state/m61_m66_execution/task_cards/`, and workflow bugs found during closeout were paused, fixed, tested, and recorded under `state/m61_m66_execution/workflow_bug_queue/`.
 
@@ -35,7 +35,7 @@ The closeout kept the workflow共同开发 rule: every split has a task card und
 ## Workflow Bugs Fixed
 
 - BUG-016: `doctor_payload.py` missed `import sys` after CLI split; doctor tests now patch the new owner module.
-- BUG-017: offline validation still expected seven open governance debts; CLI/API validation now expects M66 zero-open-debt state.
+- BUG-017: offline validation still expected seven open governance debts; CLI/API validation was aligned to the M66 closeout state at the time. M67 supersedes that state with a new blocking/carry-forward registry.
 - BUG-018: OpenCode live probe wrote minimal `ok` proof but the verifier rejected it; capability probe now accepts minimal proof while still rejecting generic assistant filler.
 
 ## Validation
@@ -53,9 +53,9 @@ The closeout kept the workflow共同开发 rule: every split has a task card und
   - Capability probe parser: 7 passed.
   - CLI/test matrix/capability quick suite: 10 passed, 56 skipped.
 
-## Remaining Debt
+## Remaining Debt At Historical Closeout
 
-No blocking open debt remains in the M61-M66 scope. Future platform objects stay archive/reference material unless a new explicit governance task promotes them. Dynamic/adaptive routing remains opt-in and must not be defaulted on without telemetry.
+No blocking open debt remained in the M61-M66 scope at closeout. That statement is scope-limited and historical. Current active debt is tracked in `M67_ISSUE_REGISTER.md` and `docs/governance/tech_debt_registry.json`.
 
 ## Go/No-Go
 

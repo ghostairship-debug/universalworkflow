@@ -39,7 +39,19 @@ class _FakeApiClient:
         self.responses = _FakeApiResponses()
 
 
-OPEN_DEBT_IDS: list[str] = []
+OPEN_DEBT_IDS: list[str] = [
+    "M67-WF-001",
+    "M67-SEC-001",
+    "M67-PROBE-001",
+    "M67-VAL-001",
+    "M67-WEB-001",
+    "M67-SCHED-001",
+    "M67-ARCH-001",
+    "M67-AUTO-001",
+    "M67-ROUTE-001",
+    "M67-CARRY-001",
+]
+BLOCKING_OPEN_DEBT_IDS = OPEN_DEBT_IDS[:-1]
 
 AVAILABLE_SHELL_EXEC_ADAPTERS = [
     "shell",
@@ -964,9 +976,12 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["source_contract"] == "structured_json"
-    assert payload["open_debt_count"] == 0
-    assert payload["status_counts"] == {}
+    assert payload["open_debt_count"] == len(OPEN_DEBT_IDS)
+    assert payload["blocking_open_count"] == len(BLOCKING_OPEN_DEBT_IDS)
+    assert payload["carry_forward_count"] == 1
+    assert payload["status_counts"] == {"blocking_open": len(BLOCKING_OPEN_DEBT_IDS), "carry_forward": 1}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
+    assert [item["debt_id"] for item in payload["blocking_open_items"]] == BLOCKING_OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")
 
@@ -1013,7 +1028,7 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     response = client.get("/governance/release-readiness", params={"validation_report_path": str(validation_report_path)})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["overall_ready"] is True
+    assert payload["overall_ready"] is False
     assert payload["validation_summary"]["overall_passed"] is True
     assert [item["domain_pack_id"] for item in payload["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in payload["gates"][3]["detail"]
@@ -1021,7 +1036,7 @@ def test_api_exposes_governance_release_readiness_report(tmp_path: Path) -> None
     assert payload["gates"][6]["gate"] == "orchestration_baseline"
     assert payload["gates"][7]["gate"] == "cluster_failover_core_completion"
     assert payload["remaining_gaps"] == []
-    assert payload["governance_alerts"]["overall_status"] == "clear"
+    assert payload["governance_alerts"]["overall_status"] == "blocking"
 
 
 def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> None:
@@ -1049,12 +1064,13 @@ def test_api_exposes_governance_metrics_and_alerts_reports(tmp_path: Path) -> No
 
     assert metrics_response.status_code == 200
     assert metrics_response.json()["tech_debt"]["open_debt_ids"] == OPEN_DEBT_IDS
+    assert metrics_response.json()["tech_debt"]["blocking_open_debt_ids"] == BLOCKING_OPEN_DEBT_IDS
     assert metrics_response.json()["review_policy"]["supported_policy_count"] == 5
     assert metrics_response.json()["automation"]["governance_metrics_available"] is True
 
     assert alerts_response.status_code == 200
-    assert alerts_response.json()["overall_status"] == "clear"
-    assert not any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
+    assert alerts_response.json()["overall_status"] == "blocking"
+    assert any(item["alert_id"] == "open_tech_debt_remaining" for item in alerts_response.json()["alerts"])
 
 
 def test_api_exposes_governance_domain_pack_platform_report(tmp_path: Path) -> None:

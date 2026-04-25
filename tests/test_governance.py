@@ -11,6 +11,20 @@ from packages.core_domain.governance import (
     build_tech_debt_report,
 )
 
+OPEN_DEBT_IDS: list[str] = [
+    "M67-WF-001",
+    "M67-SEC-001",
+    "M67-PROBE-001",
+    "M67-VAL-001",
+    "M67-WEB-001",
+    "M67-SCHED-001",
+    "M67-ARCH-001",
+    "M67-AUTO-001",
+    "M67-ROUTE-001",
+    "M67-CARRY-001",
+]
+BLOCKING_OPEN_DEBT_IDS = OPEN_DEBT_IDS[:-1]
+
 
 def test_build_tech_debt_report_parses_registry_sections(tmp_path: Path) -> None:
     registry_path = tmp_path / "tech-debt-registry.md"
@@ -89,7 +103,52 @@ def test_build_tech_debt_report_prefers_structured_sources_when_json_is_provided
     assert report["source_contract"] == "structured_json"
     assert report["repaid_debt_count"] == 1
     assert report["open_debt_count"] == 1
+    assert report["blocking_open_count"] == 0
+    assert report["carry_forward_count"] == 0
     assert report["active_gate_focus_items"][0]["debt_id"] == "TD-010"
+
+
+def test_build_tech_debt_report_projects_blocking_and_carry_forward_items(tmp_path: Path) -> None:
+    registry_path = tmp_path / "tech-debt-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "v1",
+                "repaid_items": [],
+                "open_items": [
+                    {
+                        "debt_id": "M67-BLOCKING",
+                        "description": "must close",
+                        "introduced_in": "M67",
+                        "planned_repayment_phase": "M67",
+                        "current_status": "blocking_open",
+                        "blocking_impact": "blocks release",
+                    },
+                    {
+                        "debt_id": "M67-CARRY",
+                        "description": "can carry",
+                        "introduced_in": "M67",
+                        "planned_repayment_phase": "Post-M67",
+                        "current_status": "carry_forward",
+                        "blocking_impact": "non-blocking",
+                    },
+                ],
+                "obsolete_items": [{"debt_id": "OLD", "result": "superseded"}],
+                "freeze_review_questions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_tech_debt_report(registry_path)
+
+    assert report["open_debt_count"] == 2
+    assert report["blocking_open_count"] == 1
+    assert report["carry_forward_count"] == 1
+    assert report["obsolete_debt_count"] == 1
+    assert [item["debt_id"] for item in report["blocking_open_items"]] == ["M67-BLOCKING"]
+    assert [item["debt_id"] for item in report["carry_forward_items"]] == ["M67-CARRY"]
 
 
 def test_build_tech_debt_report_structured_source_projects_compatibility_path_when_available(
@@ -245,7 +304,7 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
 
     report = build_release_readiness_report(validation_report_path=validation_report_path)
 
-    assert report["overall_ready"] is True
+    assert report["overall_ready"] is False
     assert [gate["gate"] for gate in report["gates"]] == [
         "offline_validation",
         "review_policy_runtime",
@@ -267,9 +326,9 @@ def test_build_release_readiness_report_projects_current_closeout_gates(tmp_path
     assert [item["domain_pack_id"] for item in report["domain_packs"]] == ["software_delivery_pack"]
     assert "platformized domain pack" in report["gates"][3]["detail"]
     assert report["remaining_gaps"] == []
-    assert report["open_debt_ids"] == []
-    assert report["governance_alerts"]["overall_status"] == "clear"
-    assert not any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["governance_alerts"]["alerts"])
+    assert report["open_debt_ids"] == OPEN_DEBT_IDS
+    assert report["governance_alerts"]["overall_status"] == "blocking"
+    assert any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["governance_alerts"]["alerts"])
     assert report["governance_metrics"]["review_policy"]["supported_policy_count"] == 5
     assert report["validation_evidence"]["report_present"] is True
     assert report["validation_evidence"]["source_mode"] == "explicit_arg"
@@ -329,14 +388,15 @@ def test_build_governance_metrics_report_projects_quantitative_inventory(tmp_pat
     )
 
     assert report["metrics_version"] == "m20_core_complete_v1"
-    assert report["tech_debt"]["open_debt_ids"] == []
+    assert report["tech_debt"]["open_debt_ids"] == OPEN_DEBT_IDS
+    assert report["tech_debt"]["blocking_open_debt_ids"] == BLOCKING_OPEN_DEBT_IDS
     assert report["review_policy"]["supported_policy_count"] == 5
     assert report["review_policy"]["reference_only_candidates"] == []
     assert report["validation"]["overall_passed"] is True
     assert report["automation"]["governance_alerts_available"] is True
 
 
-def test_build_governance_alert_report_is_clear_when_open_debt_is_repaid(tmp_path: Path) -> None:
+def test_build_governance_alert_report_is_blocking_when_m67_debt_is_open(tmp_path: Path) -> None:
     validation_report_path = tmp_path / "offline_validation_report.json"
     validation_report_path.write_text(
         json.dumps(
@@ -359,6 +419,6 @@ def test_build_governance_alert_report_is_clear_when_open_debt_is_repaid(tmp_pat
         validation_report_path=validation_report_path,
     )
 
-    assert report["overall_status"] == "clear"
-    assert not any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["alerts"])
+    assert report["overall_status"] == "blocking"
+    assert any(alert["alert_id"] == "open_tech_debt_remaining" for alert in report["alerts"])
     assert not any(alert["alert_id"] == "reference_only_review_policy_remaining" for alert in report["alerts"])

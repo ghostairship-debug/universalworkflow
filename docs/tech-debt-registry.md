@@ -41,12 +41,24 @@
 
 ## 未偿还债务
 
+M61-M66 计划内债务已经收口，但 M67 重新登记了当前仍可证实的问题。这里不再使用“项目零债”的表达；阻塞项在 M67 关闭前会让治理报告返回 blocking alert。
+
 | ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
-| 无 | M61-M66 范围内可证实的阻塞性 open debt 已清零 | M66 | N/A | repaid | 新债务必须先进入 issue register，并附 evidence / unblock condition |
+| M67-WF-001 | workflow 自身参与开发的 task-card / route / evidence / operator-packet 证据仍需跑完整 | M67 intake | M67 | blocking_open | 阻塞后续能力层开发的可信共同开发基线 |
+| M67-SEC-001 | `OperatorActionReceipt` 缺少 `scope_hash` / `scope_payload` 与实际请求绑定 | M49/M66 receipt gate | M67 P2 | blocking_open | 高风险动作可能在 receipt issue 后被篡改 scope |
+| M67-PROBE-001 | capability live probe 对非 Codex/OpenCode provider 仍可能接受 simulated / dry-run / generic evidence | M64/M66 capability closeout | M67 P3 | blocking_open | 阻塞 provider readiness 和自适应路由可信度 |
+| M67-VAL-001 | offline validation 缺少 shard/freshness/timeout 失败报告硬门禁 | M61-M66 validation closeout | M67 P4 | blocking_open | 门禁超时或中断时可能误读 stale success |
+| M67-WEB-001 | Web UI 仍依赖 inline CSP 例外，contribution game template 仍有 `innerHTML` browser surface | M63/M66 Web split | M67 P5 | blocking_open | 削弱 receipt-gated 浏览器安全兜底 |
+| M67-SCHED-001 | scheduler 默认文案和 flag-off boot path 尚未完全收敛到 local lease arbiter 语义 | M65/M66 scheduler rename | M67 P6 | blocking_open | 容易误解默认提供分布式 authority/consensus |
+| M67-ARCH-001 | M67 指定热点文件仍需瘦身并拆出 `RepositoryBundle` / `WorkerRuntimeBundle` / infra test matrix | M62-M66 carry-forward | M67 P7 | blocking_open | 阻塞恢复能力层开发前的结构基线 |
+| M67-AUTO-001 | `execute=true` / auto-apply 等自动化边界缺少统一 Command / PolicyEngine / AutomationLease 语义 | M67 autonomy-policy evaluation | M67 P2/P5 | blocking_open | 阻塞安全长程自开发，不应靠路由各自判断 |
+| M67-ROUTE-001 | 动态/自适应路由只有 P0 预演，还需要 simple/medium/complex E2E 和并发 batch-resume proof | M67 workflow-dogfood plan | M67 P8 | blocking_open | 阻塞声明 MiniMax/OpenCode/adaptive routing 可支撑真实共同开发 |
+| M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | M47-M66 structure evaluation | Post-M67 decision | carry_forward | 非阻塞维护债；M67 后按实际疼痛决定是否继续拆 |
 
-## M47 新观察
+## M67 评估吸收
 
-- M43 已用真实 PDF 生成商业化 HTML 游戏 vertical slice，并完成浏览器 smoke；这偿还了“PDF 输入能否转 artifact”的一部分债务。
-- 自适应路由和动态多集群编排当前都是 opt-in。默认关闭是刻意选择，避免低成本模型在核心路径上静默改变行为。
-- 下一轮优先级建议：真实 MMX/Vertex 输入、Workbench 中展示动态 route、继续收缩 `OrchestratorService`，以及让 adaptive route 采集真实成功率后再考虑默认启用。
+- 两份根目录 M66 评估和 `AGENTS_M67_universalworkflow.md` 已被吸收到 M67 issue register；原始文件在 M67 closeout 前保留，closeout 时归档。
+- M67 是一个完整 milestone，内部用 P0-P8 表达阶段；从本轮开始恢复 1 phase 1 commit 的审计纪律。
+- 自适应路由和动态多集群编排本轮必须形成真实 evidence。P0 预演已经证明复杂 lane 会路由到 `opencode + minimax/MiniMax-M2.7`，P8 还必须跑 simple/medium/complex 真实任务和一次 `batch-resume --max-workers 2`。
+- capability readiness 不再接受 fallback-only、generic greeting、simulated 或 dry-run 作为 `verified_ready`。
