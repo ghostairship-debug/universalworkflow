@@ -13,12 +13,9 @@ from packages.core_domain.governance import (
 )
 
 OPEN_DEBT_IDS: list[str] = [
-    "M67-WF-001",
-    "M67-AUTO-001",
-    "M67-ROUTE-001",
     "M67-CARRY-001",
 ]
-BLOCKING_OPEN_DEBT_IDS = OPEN_DEBT_IDS[:-1]
+BLOCKING_OPEN_DEBT_IDS: list[str] = []
 
 
 def test_build_tech_debt_report_parses_registry_sections(tmp_path: Path) -> None:

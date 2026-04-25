@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-import apps.operator_cli.main as cli_main
+import apps.operator_cli.doctor_payload as doctor_payload
 from apps.operator_cli.main import app
 from packages.contracts import AgentRoleType, ExecutionProfileDefinition, ExecutionScopeContext
 from packages.core_domain.config import build_effective_config
@@ -99,7 +99,7 @@ def test_m44_doctor_projects_adaptive_routing(tmp_path: Path, monkeypatch) -> No
     runner = CliRunner()
     db_path = tmp_path / "workflow.db"
     monkeypatch.setenv("WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED", "1")
-    monkeypatch.setattr(cli_main.shutil, "which", lambda name: f"C:/fake/{name}.exe")
+    monkeypatch.setattr(doctor_payload.shutil, "which", lambda name: f"C:/fake/{name}.exe")
 
     result = runner.invoke(app, ["--db-path", str(db_path), "doctor"])
 
@@ -116,7 +116,7 @@ def test_m46_doctor_projects_dynamic_cluster_routing(tmp_path: Path, monkeypatch
     runner = CliRunner()
     db_path = tmp_path / "workflow.db"
     monkeypatch.setenv("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED", "1")
-    monkeypatch.setattr(cli_main.shutil, "which", lambda name: f"C:/fake/{name}.exe")
+    monkeypatch.setattr(doctor_payload.shutil, "which", lambda name: f"C:/fake/{name}.exe")
 
     result = runner.invoke(app, ["--db-path", str(db_path), "doctor"])
 

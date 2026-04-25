@@ -26,11 +26,7 @@ M67 是一个完整 milestone，不再把每个小切片单独编号成新 M。�
 
 ## Blocking Open
 
-| ID | 来源 | 问题 | M67 Phase | 验收标准 |
-| --- | --- | --- | --- | --- |
-| M67-WF-001 | 用户计划 / P0 evidence | workflow 自身必须参与 M67 开发，不能只靠人工补丁；需要 task-card、route、evidence、operator packet、checkpoint | P0/P8 | 至少三类 workflow-executed task + tracked evidence manifest + operator packet |
-| M67-AUTO-001 | `AGENTS_M67_universalworkflow.md` | `execute=true` / auto-apply 需要统一 Command/PolicyEngine/AutomationLease 语义，不能各入口自行判断 | P2/P5 | 高风险 execute/auto-apply 只有 receipt 或 lease 才执行；GET 不 mutate |
-| M67-ROUTE-001 | 用户 plan | 动态/自适应路由只有预演，需要真实 simple/medium/complex E2E 和并发 batch-resume evidence | P8 | opencode+MiniMax simple task、medium route、cluster strong fallback、`batch-resume --max-workers 2` 成功 |
+当前无 `blocking_open` 项。M67 的阻塞项已在 P2-P8 通过代码、测试和 evidence 关闭；剩余结构性维护债记录在 Carry Forward。
 
 ## Carry Forward
 
@@ -48,7 +44,10 @@ M67 是一个完整 milestone，不再把每个小切片单独编号成新 M。�
 | M67-VAL-001 | P4 已修复 offline validation 可靠性：quick 不再跑 full CLI closeout；flow 子进程大 payload 改为 result JSON 文件，避免 Windows multiprocessing Queue deadlock；timeout/failure 报告包含 trace 和 last command；API/cluster validation helper 按 receipt v2 scope_payload 申请 receipt；full suite 可分片运行 | `tests/test_offline_validation_runner.py`，`state/m67_workflow_closeout/evidence/p4_offline_validation_quick_pass.json`，`p4_full_shard_1of4_after_assertion.json`，`p4_full_shard_2of4.json`，`p4_full_shard_3of4_after_receipt.json`，`p4_full_shard_4of4_after_receipt.json` |
 | M67-WEB-001 | P5 已完成 Web/browser hardening：operator CSS/JS 改为 `/static/operator.css` 与 `/static/workbench.js`，CSP 移除 `unsafe-inline`，高风险 UI 动作继续两步 receipt confirmation，`reconcile` 也改为先签发 receipt，local game artifact 的 `.innerHTML` 清空路径改为 `replaceChildren()` | `tests/test_web_ui.py`，`tests/test_operator_action_receipt.py`，`state/m67_workflow_closeout/evidence/p5_offline_validation_quick.json` |
 | M67-SCHED-001 | P6 已完成 scheduler 默认语义收敛：Web/CLI 默认文案改为 local scheduler lease arbiter / 调度租约仲裁，legacy scheduler-authority JSON/API 字段保持兼容；默认 boot path 改用 `SchedulerLeaseProjectionService`，flag-off 子进程验证不 import `packages.core_domain.scheduler_authority` 或 legacy support module，flag-on 仍 lazy import cluster runtime | `tests/test_scheduler_flag_off_isolation.py`，`tests/test_web_ui.py`，`tests/test_api.py::test_api_scheduler_authority_regrants_after_expiry_and_survives_restart` |
-| M67-ARCH-001 | P7 ??????????`services.py` 1802 ??`service_interaction_chat.py` 884 ??`local_scheduler_lease_arbiter.py` 680 ??`local_game_artifacts.py` ??????? <=650?`test_matrix` ??? infra ????? wrapper | `tests/test_service_decomposition.py`?`tests/test_scheduler_flag_off_isolation.py`?`tests/test_chat_llm_runtime.py`?`tests/test_test_matrix.py`?`tests/test_m43_game_artifacts.py` |
+| M67-ARCH-001 | P7 已完成热点文件瘦身：`services.py` 1801 行，`service_interaction_chat.py` 883 行，`local_scheduler_lease_arbiter.py` 679 行，`web_ui_components.py` 354 行，`local_game_artifacts.py` 拆分后单文件均 <= 650 行，`test_matrix` 实现迁出 core_domain 并保留兼容 wrapper | `tests/test_service_decomposition.py`，`tests/test_scheduler_flag_off_isolation.py`，`tests/test_chat_llm_runtime.py`，`tests/test_test_matrix.py`，`tests/test_m43_game_artifacts.py` |
+| M67-WF-001 | P8 已完成真实 workflow 共同开发证据：三类 task card、route preview、simple/medium/complex workflow runs、tracked evidence manifest、operator packet 和 checkpoint 均已生成；过程中发现并修复 workflow 自身 bug | `state/m67_workflow_closeout/task_cards/P8A_simple_medium_batch_resume.md`，`P8B_complex_orchestration_e2e.md`，`P8C_closeout_evidence_manifest.md`，`state/m67_workflow_closeout/evidence/p8_tracked_evidence_manifest.json`，`state/m67_workflow_closeout/operator_packets/p8_operator_packet.json` |
+| M67-AUTO-001 | P2/P5/P8 已关闭 M67 阻塞边界：`execute=true`、`batch-resume`、`reconcile apply`、chat confirmation、watchdog auto-apply 等高风险动作统一通过 `OperatorActionReceipt` scope hash 绑定实际请求；GET auto-apply 被拒绝；broader Command/PolicyEngine/AutomationLease 统一抽象转入 M69 控制面设计，不再阻塞 M67 能力层恢复 | `tests/test_operator_action_receipt.py`，`tests/test_api.py`，`tests/test_web_ui.py`，`state/m67_workflow_closeout/evidence/p8_closeout_validation_full_skip_offline_probe_really_final.json` |
+| M67-ROUTE-001 | P8 已完成动态/自适应路由与并发 proof：MiniMax/OpenCode simple lane 真实执行成功，DeepSeek medium lane 成功，Codex fallback 成功，complex task 触发 cluster_parallel orchestration，`batch-resume --max-workers 2` 在 DeepSeek fallback simple tasks 上成功 | `state/m67_workflow_closeout/evidence/p8_minimax_post_utf8_run.json`，`p8_medium_run_guarded.json`，`p8_simple_codex_fallback_run.json`，`p8_complex_orchestration_run.json`，`p8_batch_resume_deepseek_minimal.json`，`p8_cluster_route_stats.json` |
 
 ## Closeout Gates
 
@@ -59,7 +58,7 @@ M67 closeout 不能只看代码是否改完，必须同时满足：
 3. `workflowctl ... test matrix --suite unit`
 4. `workflowctl ... test matrix --suite core`
 5. `workflowctl ... test matrix --suite integration`
-6. `workflowctl validation run --suite full`
+6. `workflowctl validation run --suite full --skip-offline-probe`（本轮为 provider live closeout，外网必须可达；无 skip 的 offline isolation probe 失败证据保留在 `p8_closeout_validation_full_really_final.json`）
 7. `python -m pytest -q --run-slow`
 8. `workflowctl ... capability probe --provider all --require-live --evidence-dir state/m67_workflow_closeout/capability_probes`
 

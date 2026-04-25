@@ -43,21 +43,22 @@
 | M67-VAL-001 | offline validation 缺少 shard/freshness/timeout 失败报告硬门禁 | M67 P4 | 已加入 quick/full/shard、timeout trace/last-command 报告和 Windows-safe result file transfer |
 | M67-WEB-001 | Web UI 仍依赖 inline CSP 例外，contribution game template 仍有 `innerHTML` browser surface | M67 P5 | 已静态化 operator CSS/JS、移除 CSP `unsafe-inline`、补 receipt regression 并替换 `.innerHTML` 清空路径 |
 | M67-SCHED-001 | scheduler 默认文案和 flag-off boot path 尚未完全收敛到 local lease arbiter 语义 | M67 P6 | 已改为 local scheduler lease arbiter 默认文案，并验证 flag-off 不 import legacy cluster runtime/support |
+| M67-ARCH-001 | M67 指定热点文件仍偏大，默认启动路径和 facade 仍不够轻 | M67 P7 | 已抽出 repository/worker bundle、service mixin、game template split 和 infra test matrix wrapper，所有 M67 瘦身硬目标达标 |
+| M67-WF-001 | workflow 自身参与开发缺少完整 task-card / route / evidence / operator-packet proof | M67 P8 | 已用 workflow 跑 simple/medium/complex 任务、生成 manifest/operator packet，并在过程中按 bug-first 修复 workflow 自身问题 |
+| M67-AUTO-001 | `execute=true` / auto-apply 等自动化边界缺少统一可审计授权 | M67 P2/P5/P8 | 已将高风险 execute、batch resume、reconcile、chat confirmation、watchdog auto-apply 收敛到 scoped `OperatorActionReceipt`；GET mutate 被拒绝 |
+| M67-ROUTE-001 | 动态/自适应路由和并发执行缺少真实 E2E proof | M67 P8 | 已完成 MiniMax/OpenCode simple、DeepSeek medium、Codex fallback、cluster_parallel complex 和 `batch-resume --max-workers 2` evidence |
 
 ## 未偿还债务
 
-M61-M66 计划内债务已经收口，但 M67 重新登记了当前仍可证实的问题。这里不再使用“项目零债”的表达；阻塞项在 M67 关闭前会让治理报告返回 blocking alert。
+M61-M67 计划内阻塞债务已经收口。这里不再使用“项目零债”的表达；剩余项是非阻塞结构维护债，后续是否继续拆取决于能力层开发中的真实疼痛点。
 
 | ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
-| M67-WF-001 | workflow 自身参与开发的 task-card / route / evidence / operator-packet 证据仍需跑完整 | M67 intake | M67 | blocking_open | 阻塞后续能力层开发的可信共同开发基线 |
-| M67-AUTO-001 | `execute=true` / auto-apply 等自动化边界缺少统一 Command / PolicyEngine / AutomationLease 语义 | M67 autonomy-policy evaluation | M67 P2/P5 | blocking_open | 阻塞安全长程自开发，不应靠路由各自判断 |
-| M67-ROUTE-001 | 动态/自适应路由只有 P0 预演，还需要 simple/medium/complex E2E 和并发 batch-resume proof | M67 workflow-dogfood plan | M67 P8 | blocking_open | 阻塞声明 MiniMax/OpenCode/adaptive routing 可支撑真实共同开发 |
 | M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | M47-M66 structure evaluation | Post-M67 decision | carry_forward | 非阻塞维护债；M67 后按实际疼痛决定是否继续拆 |
 
 ## M67 评估吸收
 
 - 两份根目录 M66 评估和 `AGENTS_M67_universalworkflow.md` 已被吸收到 M67 issue register；原始文件在 M67 closeout 前保留，closeout 时归档。
 - M67 是一个完整 milestone，内部用 P0-P8 表达阶段；从本轮开始恢复 1 phase 1 commit 的审计纪律。
-- 自适应路由和动态多集群编排本轮必须形成真实 evidence。P0 预演已经证明复杂 lane 会路由到 `opencode + minimax/MiniMax-M2.7`，P8 还必须跑 simple/medium/complex 真实任务和一次 `batch-resume --max-workers 2`。
+- 自适应路由和动态多集群编排已经形成真实 evidence：P8 跑通 simple/medium/complex 真实任务和一次 `batch-resume --max-workers 2`。
 - capability readiness 不再接受 fallback-only、generic greeting、simulated 或 dry-run 作为 `verified_ready`。

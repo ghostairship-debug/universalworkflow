@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -175,6 +176,21 @@ class OpenCodeAdapter(CliAdapterBase):
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text(content, encoding="utf-8")
 
+    def _coerce_artifact_output(self, packet: TaskPacket, content: str) -> str | None:
+        expected = self._artifact_content_for(packet)
+        if content.rstrip("\n") == expected.rstrip("\n"):
+            return content
+        if content.strip() == expected.strip():
+            return expected
+        marker_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", content, re.DOTALL)
+        if marker_match is not None:
+            candidate = marker_match.group(1)
+            if candidate.rstrip("\n") == expected.rstrip("\n"):
+                return candidate
+            if candidate.strip() == expected.strip():
+                return expected
+        return None
+
     def build_command(self, packet: TaskPacket) -> list[str]:
         command = [
             *self._resolved_command_prefix(),
@@ -217,23 +233,38 @@ class OpenCodeAdapter(CliAdapterBase):
         stdout = decode_subprocess_stream(completed.stdout)
         stderr = decode_subprocess_stream(completed.stderr)
         output_text = self._extract_output_text(stdout)
-        if completed.returncode == 0 and output_text:
-            self._write_artifact(packet, output_text)
+        return_code = completed.returncode
+        failure_class = None
+        mutation_mode = self._mutation_mode_for(packet)
+        artifact_content = output_text
+        if return_code == 0 and output_text and mutation_mode == MutationMode.artifact_only:
+            coerced_output = self._coerce_artifact_output(packet, output_text)
+            if coerced_output is None:
+                failure_class = "artifact_output_mismatch"
+                return_code = 1
+                message = "opencode artifact-only output did not match expected content"
+                stderr = f"{stderr.rstrip()}\n{message}\n" if stderr else f"{message}\n"
+            else:
+                artifact_content = coerced_output
+        if return_code == 0 and output_text:
+            self._write_artifact(packet, artifact_content)
         finished_at = utc_now()
         metadata = {
-            "mutation_mode": str(self._mutation_mode_for(packet)),
+            "mutation_mode": str(mutation_mode),
             "opencode_model": self._model_for_packet(packet),
             "opencode_variant": self._variant_for_packet(packet),
         }
+        if failure_class is not None:
+            metadata["failure_class"] = failure_class
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
-            return_code=completed.returncode,
+            return_code=return_code,
             stdout=stdout,
             stderr=stderr,
             started_at=started_at,
             finished_at=finished_at,
             duration_ms=max(int((finished_at - started_at).total_seconds() * 1000), 0),
-            artifact_paths=self.collect_artifacts(packet),
+            artifact_paths=self.collect_artifacts(packet) if return_code == 0 else [],
             adapter_name=self.normalized_name(),
             metadata=metadata,
         )

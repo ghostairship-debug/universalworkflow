@@ -22,16 +22,9 @@ pytestmark = pytest.mark.slow
 
 runner = CliRunner()
 OPEN_DEBT_IDS: list[str] = [
-    "M67-WF-001",
-    "M67-VAL-001",
-    "M67-WEB-001",
-    "M67-SCHED-001",
-    "M67-ARCH-001",
-    "M67-AUTO-001",
-    "M67-ROUTE-001",
     "M67-CARRY-001",
 ]
-BLOCKING_OPEN_DEBT_IDS = OPEN_DEBT_IDS[:-1]
+BLOCKING_OPEN_DEBT_IDS: list[str] = []
 
 AVAILABLE_SHELL_EXEC_ADAPTERS = [
     "shell",
@@ -545,7 +538,7 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     assert payload["open_debt_count"] == len(OPEN_DEBT_IDS)
     assert payload["blocking_open_count"] == len(BLOCKING_OPEN_DEBT_IDS)
     assert payload["carry_forward_count"] == 1
-    assert payload["status_counts"] == {"blocking_open": len(BLOCKING_OPEN_DEBT_IDS), "carry_forward": 1}
+    assert payload["status_counts"] == {"carry_forward": 1}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert [item["debt_id"] for item in payload["blocking_open_items"]] == BLOCKING_OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")

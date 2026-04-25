@@ -84,7 +84,7 @@ class _FakeGatewayClient:
 
 
 def _fake_opencode_runner(command, cwd, env, capture_output, text, check, timeout):
-    prompt = command[2]
+    prompt = command[-1]
     content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", prompt, re.DOTALL)
     assert content_match is not None
     assert timeout == 180

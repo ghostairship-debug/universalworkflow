@@ -130,6 +130,11 @@ def run_subprocess_with_tree_timeout(command: list[str], **run_kwargs: Any) -> s
     check = bool(run_kwargs.pop("check", False))
     text = bool(run_kwargs.pop("text", False))
     stdin_value = run_kwargs.pop("input", None)
+    run_kwargs.pop("encoding", None)
+    run_kwargs.pop("errors", None)
+    run_kwargs.pop("universal_newlines", None)
+    if text and isinstance(stdin_value, str):
+        stdin_value = stdin_value.encode("utf-8")
     stdout_target = subprocess.PIPE if capture_output else None
     stderr_target = subprocess.PIPE if capture_output else None
     popen_kwargs: dict[str, Any] = {
@@ -138,7 +143,7 @@ def run_subprocess_with_tree_timeout(command: list[str], **run_kwargs: Any) -> s
         "stdin": subprocess.PIPE if stdin_value is not None else None,
         "stdout": stdout_target,
         "stderr": stderr_target,
-        "text": text,
+        "text": False,
         **run_kwargs,
     }
     if os.name == "nt":
@@ -160,7 +165,12 @@ def run_subprocess_with_tree_timeout(command: list[str], **run_kwargs: Any) -> s
         exc.stderr = stderr if stderr is not None else exc.stderr
         return completed_process_from_timeout(exc, command=command, timeout_seconds=timeout_seconds)
 
-    completed = subprocess.CompletedProcess(command, process.returncode, stdout=stdout or "", stderr=stderr or "")
+    completed = subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout=decode_subprocess_stream(stdout),
+        stderr=decode_subprocess_stream(stderr),
+    )
     if check and completed.returncode:
         completed.check_returncode()
     return completed

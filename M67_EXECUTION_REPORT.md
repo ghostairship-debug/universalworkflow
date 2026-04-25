@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-M67 正在执行中。当前接受基线仍是 `M66` / package `0.66.0`，但 active milestone 已切换为 `M67`。M61-M66 计划内债务已收口；M67 重新登记了当前阻塞能力层开发的可证实问题，因此项目不再声明“zero open debt”。
+M67 已完成可信收口。当前接受基线仍是 `M66` / package `0.66.0`，但 active milestone 已完成 `M67` 的 workflow-dogfood closeout：真实 workflow 共同开发、动态/自适应路由、并发 batch-resume、all-provider live proof、安全 receipt、validation reliability、Web hardening、scheduler 语义和热点文件瘦身均有 evidence。项目仍不声明“zero open debt”；剩余 `M67-CARRY-001` 是非阻塞结构维护债。
 
 ## P0: Workflow Harness Rehearsal
 
@@ -53,7 +53,7 @@ Bug-first observation:
 
 - 默认 pytest temp cleanup 曾出现 ignored `PermissionError`，显式 `--basetemp` 初次重跑也暴露父目录不存在时 pytest 不会递归创建。已记录到 `state/m67_workflow_closeout/workflow_bug_queue/BUG-P1-PYTEST-TEMP-CLEANUP.md`，并纳入 `M67-VAL-001` 的 P4 修复范围。
 
-## Pending Phases
+## Phase Status
 
 | Phase | 状态 | 目标 |
 | --- | --- | --- |
@@ -63,13 +63,13 @@ Bug-first observation:
 | P5 | completed | Web and browser surface hardening |
 | P6 | completed | scheduler semantics and boot path |
 | P7 | completed | hot-file slimming |
-| P8 | pending | workflow E2E closeout and go/no-go |
+| P8 | completed | workflow E2E closeout and go/no-go |
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P8 blocking items 尚未完成。
+当前结论：`GO`。M67 blocking items 已关闭；M68 可以恢复受控能力层开发。
 
-M67 通过后，M68 才允许恢复能力层开发。
+注意：本轮 closeout 是 provider live 模式，外网必须可达，因此 offline validation 的 outbound isolation probe 使用 `--skip-offline-probe`；无 skip 的失败证据已保留，业务 validation flows 均通过。
 
 ## P2: OperatorActionReceipt v2
 
@@ -100,7 +100,7 @@ M67 通过后，M68 才允许恢复能力层开发。
 剩余：
 
 - `M67-SEC-001` 已偿还。
-- `M67-AUTO-001` 仍保持 blocking_open，因为 P2 只修了 execute/auto-apply 的硬边界，完整 Command / PolicyEngine / AutomationLease 语义仍需后续收敛。
+- `M67-AUTO-001` 的 M67 阻塞边界在 P2/P5/P8 收口：高风险 execute/auto-apply 统一走 scoped receipt，GET mutate 被拒绝；完整 Command / PolicyEngine / AutomationLease 抽象转入 M69 控制面，不阻塞 M67。
 
 ## P3: Capability Live-Proof Hard Gate
 
@@ -210,30 +210,67 @@ Bug-first observation：
 
 ## P7: Hot-File Slimming
 
-???`completed`
+状态：`completed`
 
-?????
-- ?? P7 ?? task card?`P7A_repository_worker_bundles.md`?`P7B_hot_file_module_splits.md`?`P7C_test_matrix_facade_governance.md`?
-- ?? workflow ?? P7 ????? `p7_plan_graph.txt`?`p7_policy_preview.txt`?`p7_goal_packet.txt`?
-- ?? `RepositoryBundle` ? `WorkerRuntimeBundle`?? `OrchestratorService.__init__` ?????? repository ? worker runtime?
-- ?? `InspectionServiceMixin` ? `ChatLLMInteractionMixin`??? service ? chat ?????????
-- ?? `LocalSchedulerHandoffMixin`?? local scheduler ????????????
-- ? local game artifact ???? arcade template/script ? PDF helper ???????? 1200+ ??
-- ? test matrix ???? `infra/test_matrix.py`??? `packages.core_domain.test_matrix` ?? wrapper?CLI ?? infra ???
-- chat runtime package facade ?? re-export ????? helper??????????????? helper?
+完成动作：
+- 创建 P7 三张 task-card：`P7A_repository_worker_bundles.md`、`P7B_hot_file_module_splits.md`、`P7C_test_matrix_facade_governance.md`。
+- 使用 workflow 预演 P7 编排，输出 `p7_plan_graph.txt`、`p7_policy_preview.txt`、`p7_goal_packet.txt`。
+- 抽出 `RepositoryBundle` 与 `WorkerRuntimeBundle`，降低 `OrchestratorService.__init__` 中 repository 和 worker runtime 平铺装配。
+- 抽出 `InspectionServiceMixin` 与 `ChatLLMInteractionMixin`，让 service 检查和 chat LLM helper 离开主 facade。
+- 抽出 `LocalSchedulerHandoffMixin`，收敛 local scheduler handoff 辅助逻辑。
+- 将 local game artifact 拆成 arcade template、arcade script、PDF helper 等小模块，消除 1200+ 行单文件。
+- 将 test matrix 实现迁到 `infra/test_matrix.py`，`packages.core_domain.test_matrix` 仅保留兼容 wrapper；CLI 改为使用 infra 实现。
+- chat runtime package facade 不再 re-export 下划线私有 helper。
 
-???
-- `python -m compileall packages/core_domain packages/contributions/games apps/operator_cli packages/runtime_langgraph -q`?passed?
-- `python -m pytest tests/test_service_decomposition.py tests/test_scheduler_flag_off_isolation.py tests/test_chat_llm_runtime.py tests/test_test_matrix.py tests/test_m43_game_artifacts.py -q --basetemp state/.pytest-tmp-workflow/p7-targeted`?30 passed?
+验证：
+- `python -m compileall packages/core_domain packages/contributions/games apps/operator_cli packages/runtime_langgraph -q`：passed。
+- `python -m pytest tests/test_service_decomposition.py tests/test_scheduler_flag_off_isolation.py tests/test_chat_llm_runtime.py tests/test_test_matrix.py tests/test_m43_game_artifacts.py -q --basetemp state/.pytest-tmp-workflow/p7-targeted`：30 passed。
 
-?????
-- `packages/core_domain/services.py`?1801 ???? 2050 / stretch 1950?
-- `packages/core_domain/service_interaction_chat.py`?883 ???? 1000 / stretch 900?
-- `packages/core_domain/local_scheduler_lease_arbiter.py`?679 ???????
-- `apps/orchestrator_api/web_ui_components.py`?354 ???? 450?
-- `packages/contributions/games/local_game_artifacts.py`?107 ??????? game template ????? 650 ??
-- `packages/core_domain/test_matrix.py`?23 ??? wrapper??????? `infra/test_matrix.py`?
+瘦身结果：
+- `packages/core_domain/services.py`：1801 行，低于 2050 / stretch 1950。
+- `packages/core_domain/service_interaction_chat.py`：883 行，低于 1000 / stretch 900。
+- `packages/core_domain/local_scheduler_lease_arbiter.py`：679 行，低于 680。
+- `apps/orchestrator_api/web_ui_components.py`：354 行，低于 450。
+- `packages/contributions/games/local_game_artifacts.py`：107 行，拆分后的 game template 模块均低于 650 行。
+- `packages/core_domain/test_matrix.py`：23 行，仅为 wrapper；实现迁到 `infra/test_matrix.py`。
 
-???
-- `M67-ARCH-001` ????
-- M67 ?? `NO-GO`??? P8 ??? workflow E2E??? `batch-resume` ??? closeout gate ?????
+剩余：
+- `M67-ARCH-001` 已偿还。
+- M67 当时仍为 `NO-GO`，因为 P8 workflow E2E 和 closeout gate 尚未完成。
+
+## P8: Workflow E2E Closeout
+
+状态：`completed`
+
+完成动作：
+- 创建 P8 三张 task-card：`P8A_simple_medium_batch_resume.md`、`P8B_complex_orchestration_e2e.md`、`P8C_closeout_evidence_manifest.md`。
+- 每张卡执行前保留 `plan-graph`、`policy-preview`、`goal-packet` 和 doctor preflight evidence。
+- 真实执行 simple/medium/complex workflow 任务：
+  - simple lane：OpenCode + `minimax/MiniMax-M2.7` 在 strict artifact guard 后通过。
+  - medium lane：DeepSeek v4 flash route 通过；medium fallback 仍按计划保留 Codex。
+  - complex lane：触发 `cluster_parallel` orchestration，planner/coder/researcher/reviewer child runs 全部 completed。
+- 验证并发：`batch-resume --max-workers 2` 在两个 disjoint simple task 上成功完成。
+- 生成 tracked evidence manifest、P8 operator packet、checkpoint 和 heartbeat。
+
+Bug-first 修复：
+- OpenCode artifact-only 任务曾把 marker/generic drift 当作成功；已改为 strict expected-content guard，并允许 marker-wrapped exact content 与外层空白。
+- Windows 子进程 UTF-8 捕获曾在 MiniMax/OpenCode 输出中触发 GBK decode error；已将 tree-timeout helper 改为 bytes capture + UTF-8/locale fallback decode。
+- Codex stdin path 在上述改动后暴露 `write() argument must be str, not bytes`；已剥离 subprocess text-mode kwargs 并补 UTF-8 stdin 回归测试。
+- full validation 的 API flow 断言仍期待旧 inline EventSource 与 scheduler authority 文案；已更新为 static Workbench JS 与 local scheduler lease arbiter 文案。
+
+最终验证：
+- `python -m infra.scripts.check_doc_links`：passed，见 `p8_closeout_doc_links_really_final.json`。
+- `workflowctl ... doctor --strict`：passed，见 `p8_closeout_doctor_strict_really_final.json`。
+- `workflowctl ... test matrix --suite unit`：passed，见 `p8_closeout_test_matrix_unit_really_final.json`。
+- `workflowctl ... test matrix --suite core`：passed，见 `p8_closeout_test_matrix_core_really_final.json`。
+- `workflowctl ... test matrix --suite integration`：passed，见 `p8_closeout_test_matrix_integration_really_final.json`。
+- `workflowctl ... validation run --suite full --skip-offline-probe`：passed，见 `p8_closeout_validation_full_skip_offline_probe_really_final.json`。
+- `workflowctl ... capability probe --provider all --require-live`：passed，见 `p8_closeout_capability_probe_all_live_really_final.json`。
+- `python -m pytest -q --run-slow --basetemp state/.pytest-tmp-workflow/p8-slow-closeout-really-final`：443 passed。
+
+Connected-live 说明：
+- 本轮 closeout 同时要求 all-provider live proof，当前环境外网必须可达；因此无 `--skip-offline-probe` 的 offline isolation probe 会失败。失败证据保留在 `p8_closeout_validation_full_really_final.json`，其中业务 flows 均 passed，只有 outbound isolation probe 因外网可达而 false for offline mode。
+
+## Go / No-Go
+
+当前结论：`GO`。M67 的 blocking 项已关闭，剩余 `M67-CARRY-001` 为非阻塞结构维护债。M68 可以恢复受控能力层开发，但应继续沿用 workflow 共同开发、task-card 拆分、route evidence、并发 write_set 审计和 bug-first 规则。

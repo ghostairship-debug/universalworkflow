@@ -4,6 +4,7 @@ import subprocess
 import sys
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 from packages.contracts import AgentRoleType, MutationContract, MutationMode, TaskKind, TaskPacket
@@ -272,6 +273,8 @@ def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path
     calls = []
 
     def _fake_tree_runner(command, cwd, env, capture_output, text, check, timeout):
+        content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", command[-1], re.DOTALL)
+        assert content_match is not None
         calls.append(
             {
                 "command": command,
@@ -285,7 +288,7 @@ def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout=json.dumps({"type": "text", "part": {"text": "opencode artifact"}}),
+            stdout=json.dumps({"type": "text", "part": {"text": content_match.group(1)}}),
             stderr=None,
         )
 
@@ -301,7 +304,71 @@ def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path
     assert calls
     assert calls[0]["timeout"] == adapter.timeout_seconds
     assert result.stderr == ""
-    assert (tmp_path / "opencode.md").read_text(encoding="utf-8") == "opencode artifact\n"
+    assert "adapter: opencode" in (tmp_path / "opencode.md").read_text(encoding="utf-8")
+
+
+def test_opencode_adapter_rejects_artifact_only_output_mismatch(tmp_path: Path) -> None:
+    def _drifting_runner(command, cwd, env, capture_output, text, check, timeout):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": "not the requested artifact"}}),
+            stderr="",
+        )
+
+    adapter = OpenCodeAdapter(runner=_drifting_runner, executable=sys.executable, model="minimax/MiniMax-M2.7")
+    packet = _packet(tmp_path, artifact="opencode.md")
+
+    result = adapter.launch(packet)
+
+    assert result.return_code == 1
+    assert result.artifact_paths == []
+    assert result.metadata["failure_class"] == "artifact_output_mismatch"
+    assert "artifact-only output did not match expected content" in result.stderr
+    assert not (tmp_path / "opencode.md").exists()
+
+
+def test_opencode_adapter_accepts_exact_content_wrapped_in_markers(tmp_path: Path) -> None:
+    def _marker_runner(command, cwd, env, capture_output, text, check, timeout):
+        content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", command[-1], re.DOTALL)
+        assert content_match is not None
+        wrapped = f"<<<WORKFLOW_FILE>>>\n{content_match.group(1)}<<<END_WORKFLOW_FILE>>>"
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": wrapped}}),
+            stderr="",
+        )
+
+    adapter = OpenCodeAdapter(runner=_marker_runner, executable=sys.executable, model="minimax/MiniMax-M2.7")
+    packet = _packet(tmp_path, artifact="opencode.md")
+
+    result = adapter.launch(packet)
+
+    assert result.return_code == 0
+    assert "adapter: opencode" in (tmp_path / "opencode.md").read_text(encoding="utf-8")
+    assert "<<<WORKFLOW_FILE>>>" not in (tmp_path / "opencode.md").read_text(encoding="utf-8")
+
+
+def test_opencode_adapter_accepts_artifact_with_outer_whitespace(tmp_path: Path) -> None:
+    def _whitespace_runner(command, cwd, env, capture_output, text, check, timeout):
+        content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", command[-1], re.DOTALL)
+        assert content_match is not None
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": f"\n\n{content_match.group(1).rstrip()}\n\n"}}),
+            stderr="",
+        )
+
+    adapter = OpenCodeAdapter(runner=_whitespace_runner, executable=sys.executable, model="minimax/MiniMax-M2.7")
+    packet = _packet(tmp_path, artifact="opencode.md")
+
+    result = adapter.launch(packet)
+
+    assert result.return_code == 0
+    assert (tmp_path / "opencode.md").read_text(encoding="utf-8").endswith("\n")
+    assert (tmp_path / "opencode.md").read_text(encoding="utf-8").startswith("preset:")
 
 
 def test_opencode_command_places_options_before_prompt(tmp_path: Path) -> None:
@@ -445,6 +512,51 @@ def test_subprocess_tree_timeout_returns_124_for_hung_cli(tmp_path: Path) -> Non
 
     assert completed.returncode == 124
     assert "command timed out after 1s" in completed.stderr
+
+
+def test_subprocess_tree_timeout_decodes_utf8_stdout_when_text_requested(tmp_path: Path) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write('€ live'.encode('utf-8'))",
+    ]
+
+    completed = run_subprocess_with_tree_timeout(
+        command,
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "€ live"
+
+
+def test_subprocess_tree_timeout_encodes_utf8_stdin_when_text_requested(tmp_path: Path) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())",
+    ]
+
+    completed = run_subprocess_with_tree_timeout(
+        command,
+        cwd=tmp_path.as_posix(),
+        env={},
+        input="€ prompt",
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "€ prompt"
 
 
 def test_codex_command_places_exec_options_before_prompt(tmp_path: Path) -> None:

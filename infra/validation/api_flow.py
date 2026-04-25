@@ -173,6 +173,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
             {"session_id": chat_session_id, "content": "resume", "mode": "rule_based"},
         )
         chat_workbench_html = http_get_text(f"{base_url}/ui/workbench?session_id={chat_session_id}")
+        chat_workbench_js = http_get_text(f"{base_url}/static/workbench.js")
         human_approve = http_post_json(f"{base_url}/runs/{human_run_id}/approve")
         human_claims = http_get_json(f"{base_url}/runs/{human_run_id}/claims")
         human_leases = http_get_json(f"{base_url}/runs/{human_run_id}/leases")
@@ -350,13 +351,13 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "runs_html_ok": "运行目录" in runs_html,
                 "reviews_html_ok": "待审查控制台" in reviews_html,
                 "governance_html_ok": "治理" in governance_html,
-                "dashboard_html_contains_cluster": "调度权威拓扑" in dashboard_html,
-                "governance_html_contains_cluster": "调度权威拓扑" in governance_html,
+                "dashboard_html_contains_cluster": "调度租约仲裁拓扑" in dashboard_html,
+                "governance_html_contains_cluster": "调度租约仲裁拓扑" in governance_html,
                 "dashboard_html_has_local_only_banner": (
-                    "调度权威集群已关闭，当前为本地单机模式。" in dashboard_html
+                    "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。" in dashboard_html
                 ),
                 "governance_html_has_local_only_banner": (
-                    "调度权威集群已关闭，当前为本地单机模式。" in governance_html
+                    "调度租约仲裁集群路径已关闭，当前为本地租约仲裁模式。" in governance_html
                 ),
                 "config_html_ok": "有效配置" in config_html,
                 "chat_message_roles": [item["role"] for item in chat_create["chat_messages"]],
@@ -370,7 +371,8 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 "chat_resume_pending_action_type": chat_resume_gate["pending_confirmation"]["action_type"],
                 "chat_resume_pending_status": chat_resume_gate["pending_confirmation"]["status"],
                 "chat_workbench_html_ok": "流式聊天工作台" in chat_workbench_html,
-                "chat_workbench_has_eventsource": "EventSource" in chat_workbench_html,
+                "chat_workbench_has_eventsource": "EventSource" in chat_workbench_html or "EventSource" in chat_workbench_js,
+                "chat_workbench_loads_static_js": "/static/workbench.js" in chat_workbench_html,
                 "human_recoverability_hint": human_detail["recoverability_hint"],
                 "human_inspection_passed": human_inspection["passed"],
                 "human_inspection_problem_count": human_inspection["problem_count"],
@@ -566,6 +568,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 result["chat_resume_pending_status"] == "pending_confirmation",
                 result["chat_workbench_html_ok"] is True,
                 result["chat_workbench_has_eventsource"] is True,
+                result["chat_workbench_loads_static_js"] is True,
                 result["human_recoverability_hint"] == "resume_run",
                 result["human_inspection_passed"] is True,
                 result["human_inspection_problem_count"] == 0,

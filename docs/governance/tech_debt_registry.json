@@ -294,34 +294,30 @@
       "introduced_in": "M62-M66 decomposition carry-forward",
       "repaid_in": "M67 P7",
       "result": "Extracted RepositoryBundle/WorkerRuntimeBundle and service inspection/chat LLM mixins, split local scheduler handoff helpers and game templates into smaller modules, moved test matrix implementation to infra with a compatibility wrapper, removed private helper re-exports from the chat runtime facade, and verified targeted P7 tests plus line-count ratchets."
-    }
-  ],
-  "open_items": [
+    },
     {
       "debt_id": "M67-WF-001",
-      "description": "workflow self-development still needs tracked M67 task-card, route, batch-resume, evidence-manifest, and operator-packet proof for the active milestone rather than relying on manual execution alone",
+      "description": "workflow self-development still needed tracked M67 task-card, route, batch-resume, evidence-manifest, and operator-packet proof for the active milestone rather than relying on manual execution alone",
       "introduced_in": "M67 intake",
-      "planned_repayment_phase": "M67",
-      "current_status": "blocking_open",
-      "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
-      "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
+      "repaid_in": "M67 P8",
+      "result": "Ran real workflow task-card execution for simple, medium, and complex tasks; generated route previews, tracked evidence manifest, checkpoint, and operator packet; and fixed workflow bugs found during dogfood before closing the phase."
     },
     {
       "debt_id": "M67-AUTO-001",
-      "description": "bounded-autonomy policy is fragmented: execute=true and auto-apply style paths need a shared command/policy decision layer or automation lease semantics instead of route-specific checks",
+      "description": "bounded-autonomy policy was fragmented: execute=true and auto-apply style paths needed a shared auditable authorization boundary instead of route-specific checks",
       "introduced_in": "M67 autonomy-policy evaluation",
-      "planned_repayment_phase": "M67 P2/P5",
-      "current_status": "blocking_open",
-      "blocking_impact": "blocks safe long-running workflow self-development without repeated ad-hoc confirmations"
+      "repaid_in": "M67 P2/P5/P8",
+      "result": "Bound high-risk execute, batch-resume, reconcile apply, chat confirmation, and watchdog auto-apply paths to scoped OperatorActionReceipt consumption, rejected GET auto-apply mutation, and verified the receipt boundary through API/Web/validation closeout. Broader Command/PolicyEngine/AutomationLease consolidation remains a non-blocking M69 control-plane design concern."
     },
     {
       "debt_id": "M67-ROUTE-001",
-      "description": "adaptive routing and dynamic cluster routing have P0 rehearsal evidence but still need end-to-end simple/medium/complex workflow tasks plus at least one successful batch-resume max-workers=2 closeout proof",
+      "description": "adaptive routing and dynamic cluster routing had only P0 rehearsal evidence and still needed end-to-end simple/medium/complex workflow tasks plus a successful batch-resume max-workers=2 proof",
       "introduced_in": "M67 workflow-dogfood plan",
-      "planned_repayment_phase": "M67 P8",
-      "current_status": "blocking_open",
-      "blocking_impact": "blocks claiming that minimax/opencode and adaptive routing are ready for sustained co-development"
-    },
+      "repaid_in": "M67 P8",
+      "result": "Completed MiniMax/OpenCode simple lane, DeepSeek medium lane, Codex fallback, cluster_parallel complex orchestration, cluster route stats, and a batch-resume --max-workers 2 run over disjoint simple tasks."
+    }
+  ],
+  "open_items": [
     {
       "debt_id": "M67-CARRY-001",
       "description": "repositories.py, service_lifecycle.py, service_projection.py, interaction_catalog.py, and models.py remain large; they are registered as carry-forward unless they block the M67 hot-file targets directly",
