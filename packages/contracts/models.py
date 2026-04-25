@@ -161,6 +161,9 @@ class ResolvedExecutionProfile(ContractModel):
     model_selection_reason: str | None = None
     dogfood_strong_model_enabled: bool = False
     dogfood_execution_backend: str | None = None
+    adaptive_llm_routing_enabled: bool = False
+    adaptive_route_tier: str | None = None
+    adaptive_route_reason: str | None = None
     langchain_agent_provider: str | None = None
     langchain_agent_model: str | None = None
     langchain_agent_degraded_reason: str | None = None

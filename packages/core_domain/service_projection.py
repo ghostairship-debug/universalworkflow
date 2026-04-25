@@ -209,6 +209,11 @@ class ProjectionServiceMixin:
             "model_selection_reason": task_packet.env.get("WORKFLOW_MODEL_SELECTION_REASON") or None,
             "dogfood_strong_model_enabled": task_packet.env.get("WORKFLOW_DOGFOOD_STRONG_MODEL_ENABLED") == "true",
             "dogfood_execution_backend": task_packet.env.get("WORKFLOW_DOGFOOD_EXECUTION_BACKEND") or None,
+            "adaptive_llm_routing_enabled": (
+                task_packet.env.get("WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED") == "true"
+            ),
+            "adaptive_route_tier": task_packet.env.get("WORKFLOW_ADAPTIVE_ROUTE_TIER") or None,
+            "adaptive_route_reason": task_packet.env.get("WORKFLOW_ADAPTIVE_ROUTE_REASON") or None,
             "langchain_agent_provider": task_packet.env.get("WORKFLOW_LANGCHAIN_AGENT_PROVIDER") or None,
             "langchain_agent_model": task_packet.env.get("WORKFLOW_LANGCHAIN_AGENT_MODEL") or None,
             "langchain_agent_degraded_reason": (

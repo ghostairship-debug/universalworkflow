@@ -5,10 +5,10 @@
 ## 当前基线
 
 - 日期：2026-04-25
-- 最新接受基线：`M42`
+- 最新接受基线：`M47`
 - 当前产品前提：个人自用 / 本地 operator runtime
 - 当前主入口：`/ui/workbench` LLM streaming chat workbench
-- 下一步建议：继续围绕真实多模态输入、Claude architect gate 低频实测、Codex artifact prompt 收缩、Workbench 体验和 `OrchestratorService` 收缩做小步开发
+- 下一步建议：继续围绕真实 MMX/Vertex 多模态接入、Claude architect gate 低频实测、Workbench 体验和 `OrchestratorService` 收缩做小步开发
 
 ## 历史里程碑
 
@@ -28,6 +28,11 @@
 | M40 | 将 `/ui/workbench` 升级为 LLM 流式聊天驾驶舱，新增 chat LLM runtime、assistant delta/final、LangGraph control graph、`after_event_id` 去重和聊天/状态事件分离 | 已接受 |
 | M41 | 建立强模型优先 workflow dogfood：默认 Codex CLI 后端、MiniMax/DeepSeek LangChain 控制层、MMX/Vertex/Claude artifact-only 能力骨架、`architecture_delivery_cluster` 真机 E2E | 已接受 |
 | M42 | 补齐搜索、设计、多模态、review、管理五类角色集群，扩展强 dogfood 路由，并修复 Windows Codex CLI 子进程树超时清理 | 已接受 |
+| M43 | 使用俄罗斯方块消除 PDF 跑通真实 artifact 闭环，生成商业化 1010 block puzzle 示例，补真实拖拽、触控、道具、美术和外围系统 | 已接受 |
+| M44 | 新增自适应 LLM 路由 opt-in：MiniMax / DeepSeek V4 Flash / OpenCode 按角色复杂度选择并可投影 | 已接受 |
+| M45 | 新增动态多集群编排 opt-in，复杂目标可组合多模态、搜索、设计、开发和 review 集群 | 已接受 |
+| M46 | 扩展 operator 可见性，修复动态 cluster graph 只显示首个集群的问题 | 已接受 |
+| M47 | 中文文档、验证、git 收口 | 已接受 |
 | M2M 修复 | 完成根目录历史文档归档、scheduler-authority flag 双态兼容、默认 local-only 语义修正 | 结论已吸收 |
 
 ## M41 关键结论
@@ -50,6 +55,21 @@ M42 真实 smoke 记录：
 
 - `state/m42_management_cluster_smoke/summary.json`：一次长 timeout smoke，证明部分 Codex 子 run 可成功，失败子 run 会被保留为 failed 并 fallback。
 - `state/m42_management_cluster_tree_timeout_smoke/summary.json`：进程树 timeout 修复后的收口 smoke，根 run `run_665006c2016d` completed，Codex 子 run 均在约 8 秒收束，无残留 `codex.exe`。
+
+## M43-M47 关键结论
+
+M43-M47 完成了用户要求的 5 个 M 后停止：
+
+- M43 以 `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` 为真实输入，生成 [examples/block_puzzle_shop/index.html](../examples/block_puzzle_shop/index.html)，并通过浏览器 smoke 验证真实拖拽、皮肤和作品入口。
+- M44 增加 `WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED` 及 simple/medium/complex 模型选择，默认仍关闭。
+- M45 增加 `WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED`，复杂目标可命中 `multimodal_cluster`、`search_cluster`、`design_cluster`、`dev_cluster`、`review_cluster`。
+- M46 修复 status detail 的 composite cluster graph，使动态 route 不再只显示第一个集群。
+- M47 收口文档和验证。
+
+本轮真实 smoke 记录：
+
+- `state/m43_block_puzzle_e2e/block_puzzle_shop_smoke.png`
+- `state/m46_dynamic_adaptive_smoke/summary.json`
 
 ## 已移除的历史材料
 

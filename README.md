@@ -4,12 +4,13 @@
 
 ## 当前状态
 
-- 最新接受基线：`M42`
+- 最新接受基线：`M47`
 - 产品前提：个人自用 / 本地 operator runtime
 - 主入口：CLI、API、Web operator console、`/ui/workbench` 流式聊天工作台
 - M40 已完成：LLM-assisted chat runtime、assistant delta/final 流式输出、LangGraph chat control graph、SSE 去重和聊天/状态事件分离
 - M41 已完成：Codex CLI 强 dogfood 后端、MiniMax/DeepSeek LangChain 控制层、MMX/Vertex/Claude artifact-only 能力骨架、`architecture_delivery_cluster` 真机 dogfood
 - M42 已完成：补齐 `search_cluster`、`design_cluster`、`multimodal_cluster`、`review_cluster`、`management_cluster`，并把这些核心 agent 角色接入强 dogfood Codex CLI 路由
+- M43-M47 已完成：用俄罗斯方块消除 PDF 跑通真实 artifact 闭环，生成商业化 block puzzle 示例；新增自适应 LLM 路由、动态多集群编排和 operator 可见性
 - 安全边界：聊天可以触发 workflow，但 `resume`、`approve`、`reject`、`cancel`、`launch_execute`、repo mutation、git commit/push/PR 必须先确认
 - 慢测试规则：完整 `pytest -q --run-slow` 只在每个 M 收口时运行一次
 
@@ -84,6 +85,22 @@ $env:WORKFLOW_DOGFOOD_MODEL="gpt-5.5"
 $env:WORKFLOW_DOGFOOD_REASONING_EFFORT="xhigh"
 $env:WORKFLOW_CODEX_TIMEOUT_SECONDS="60"
 ```
+
+M44/M45 自适应与动态编排试用配置：
+
+```powershell
+$env:WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED="1"
+$env:WORKFLOW_ADAPTIVE_SIMPLE_MODEL="minimax/MiniMax-M2.7"
+$env:WORKFLOW_ADAPTIVE_MEDIUM_MODEL="deepseek/deepseek-v4-flash"
+$env:WORKFLOW_ADAPTIVE_COMPLEX_MODEL="minimax/MiniMax-M2.7"
+$env:WORKFLOW_ADAPTIVE_CODING_ADAPTER="opencode"
+$env:WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED="1"
+```
+
+M43 生成的本地小游戏示例：
+
+- [方块艺境 HTML](examples/block_puzzle_shop/index.html)
+- [PDF 映射说明](examples/block_puzzle_shop/design_trace.md)
 
 ## 验证
 

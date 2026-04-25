@@ -541,7 +541,7 @@ def test_cli_governance_tech_debt_report(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["source_contract"] == "structured_json"
     assert payload["open_debt_count"] == 7
-    assert payload["status_counts"] == {"partially_repaid": 4, "active": 3}
+    assert payload["status_counts"] == {"partially_repaid": 5, "active": 2}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")
     assert payload["source_paths"]["canonical"].endswith("docs/governance/tech_debt_registry.json")

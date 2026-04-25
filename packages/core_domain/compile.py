@@ -270,6 +270,17 @@ def compile_run(
                 "WORKFLOW_DOGFOOD_EXECUTION_BACKEND": (
                     (resolved_execution.dogfood_execution_backend or "") if resolved_execution is not None else ""
                 ),
+                "WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED": (
+                    str(resolved_execution.adaptive_llm_routing_enabled).lower()
+                    if resolved_execution is not None
+                    else "false"
+                ),
+                "WORKFLOW_ADAPTIVE_ROUTE_TIER": (
+                    (resolved_execution.adaptive_route_tier or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_ADAPTIVE_ROUTE_REASON": (
+                    (resolved_execution.adaptive_route_reason or "") if resolved_execution is not None else ""
+                ),
                 "WORKFLOW_LANGCHAIN_AGENT_PROVIDER": (
                     (resolved_execution.langchain_agent_provider or "") if resolved_execution is not None else ""
                 ),
@@ -368,6 +379,17 @@ def compile_run(
                 ),
                 "WORKFLOW_DOGFOOD_EXECUTION_BACKEND": (
                     (resolved_execution.dogfood_execution_backend or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED": (
+                    str(resolved_execution.adaptive_llm_routing_enabled).lower()
+                    if resolved_execution is not None
+                    else "false"
+                ),
+                "WORKFLOW_ADAPTIVE_ROUTE_TIER": (
+                    (resolved_execution.adaptive_route_tier or "") if resolved_execution is not None else ""
+                ),
+                "WORKFLOW_ADAPTIVE_ROUTE_REASON": (
+                    (resolved_execution.adaptive_route_reason or "") if resolved_execution is not None else ""
                 ),
                 "WORKFLOW_LANGCHAIN_AGENT_PROVIDER": (
                     (resolved_execution.langchain_agent_provider or "") if resolved_execution is not None else ""

@@ -294,6 +294,12 @@ def _block_puzzle_html() -> str:
       background: rgba(27, 18, 12, .84);
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.12), 0 18px 44px rgba(0,0,0,.24);
       user-select: none;
+      touch-action: none;
+      position: relative;
+      isolation: isolate;
+    }
+    .board.drag-active {
+      box-shadow: inset 0 0 0 2px rgba(255, 225, 148, .36), 0 24px 62px rgba(0,0,0,.3);
     }
     .cell {
       aspect-ratio: 1;
@@ -301,13 +307,27 @@ def _block_puzzle_html() -> str:
       background: var(--cell);
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.1);
       transition: transform .12s ease, background .12s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .cell::after {
+      content: "";
+      position: absolute;
+      inset: 12%;
+      border-radius: 8px;
+      opacity: 0;
+      transform: scale(.7);
+      transition: opacity .12s ease, transform .12s ease;
     }
     .cell.filled {
       background: linear-gradient(135deg, var(--tone-a), var(--tone-b));
       box-shadow: inset 0 2px 5px rgba(255,255,255,.35), 0 6px 12px rgba(0,0,0,.16);
     }
-    .cell.preview-ok { background: rgba(78,168,123,.45); }
-    .cell.preview-bad { background: rgba(233,107,75,.42); }
+    .cell.preview-ok { background: rgba(78,168,123,.34); transform: scale(.96); }
+    .cell.preview-ok::after { opacity: 1; transform: scale(1); background: rgba(126, 226, 162, .72); }
+    .cell.preview-bad { background: rgba(233,107,75,.42); transform: scale(.92); }
+    .cell.preview-bad::after { opacity: 1; transform: scale(1); background: rgba(255, 113, 88, .72); }
+    .cell.clear-flash { animation: clearFlash .34s ease; }
     .tray {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -321,8 +341,14 @@ def _block_puzzle_html() -> str:
       border: 2px solid transparent;
       display: grid;
       place-items: center;
+      cursor: grab;
+      touch-action: none;
+      position: relative;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.52), 0 14px 30px rgba(71,42,16,.12);
     }
+    .piece:active { cursor: grabbing; }
     .piece.selected { border-color: var(--gold); box-shadow: 0 0 0 5px rgba(214,168,79,.18); }
+    .piece.dragging { opacity: .55; transform: scale(.97); border-color: var(--jade); }
     .mini-grid {
       display: grid;
       gap: 4px;
@@ -377,6 +403,57 @@ def _block_puzzle_html() -> str:
       background: #fff8e9;
       box-shadow: 0 30px 120px rgba(0,0,0,.38);
     }
+    .drag-ghost {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 30;
+      pointer-events: none;
+      padding: 12px;
+      border-radius: 22px;
+      background: rgba(255, 250, 237, .86);
+      border: 1px solid rgba(255,255,255,.7);
+      box-shadow: 0 22px 70px rgba(44, 23, 10, .38);
+      transform: translate(-999px, -999px);
+      opacity: 0;
+      transition: opacity .08s ease;
+    }
+    .drag-ghost.active { opacity: 1; }
+    .drag-ghost .mini-cell { width: 22px; height: 22px; }
+    .combo-banner {
+      position: fixed;
+      left: 50%;
+      top: 16%;
+      z-index: 22;
+      transform: translate(-50%, 12px) scale(.88);
+      opacity: 0;
+      padding: 14px 22px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #fff1a6, #f06f4d);
+      color: #4a240e;
+      font-weight: 1000;
+      letter-spacing: .03em;
+      box-shadow: 0 24px 80px rgba(84, 38, 10, .28);
+      pointer-events: none;
+    }
+    .combo-banner.show { animation: comboPop .9s ease; }
+    .power-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .power-card {
+      border-radius: 18px;
+      padding: 12px;
+      background: rgba(255,255,255,.54);
+      border: 1px solid rgba(120,77,32,.12);
+      text-align: left;
+      color: #4d3320;
+      min-height: 82px;
+    }
+    .power-card strong { display: block; font-size: 14px; }
+    .power-card span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.35; }
     .jigsaw {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
@@ -411,14 +488,37 @@ def _block_puzzle_html() -> str:
     .toast.show { opacity: 1; translate: 0 8px; }
     body.skin-gem .cell.filled, body.skin-gem .mini-cell.on { filter: saturate(1.28) hue-rotate(28deg); }
     body.skin-wool .cell.filled, body.skin-wool .mini-cell.on { filter: saturate(.72) sepia(.15); border-radius: 999px; }
+    body.skin-night {
+      --panel: rgba(232, 244, 255, .86);
+      --ink: #15202b;
+      --muted: #566675;
+      background:
+        radial-gradient(circle at 16% 14%, rgba(109, 211, 255, .28), transparent 28%),
+        radial-gradient(circle at 86% 24%, rgba(255, 211, 110, .22), transparent 24%),
+        linear-gradient(135deg, #121c2e 0%, #28435e 48%, #76a8c7 100%);
+    }
+    @keyframes comboPop {
+      0% { opacity: 0; transform: translate(-50%, 18px) scale(.82); }
+      22% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+      72% { opacity: 1; transform: translate(-50%, -8px) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -24px) scale(.96); }
+    }
+    @keyframes clearFlash {
+      0% { filter: brightness(1); transform: scale(1); }
+      45% { filter: brightness(1.8); transform: scale(1.08); }
+      100% { filter: brightness(1); transform: scale(1); }
+    }
     @media (max-width: 920px) {
       .hero { grid-template-columns: 1fr; }
       .stats { grid-template-columns: repeat(2, 1fr); }
+      .power-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <div class="toast" id="toast">提示</div>
+  <div class="combo-banner" data-testid="combo-banner" id="comboBanner">Combo!</div>
+  <div class="drag-ghost" data-testid="drag-ghost" id="dragGhost" aria-hidden="true"></div>
   <main class="app">
     <section class="hero">
       <div class="card brand">
@@ -447,13 +547,19 @@ def _block_puzzle_html() -> str:
           </div>
         </div>
         <div class="board" data-testid="game-board" id="board" aria-label="10x10 方块棋盘"></div>
+        <p class="subtitle" style="font-size:13px;margin:10px 0 12px;">拖拽底部方块到棋盘，绿色为可放，红色为不可放；手机上会显示上移 ghost，避免手指遮挡。</p>
         <div class="tray" data-testid="piece-tray" id="tray"></div>
+        <div class="power-row" data-testid="booster-row">
+          <button class="power-card" data-testid="booster-refresh" id="boosterRefresh"><strong>刷新方块 <b id="boostRefreshCount">1</b></strong><span>替换一个候选块，模拟激励广告道具。</span></button>
+          <button class="power-card" data-testid="booster-line" id="boosterLine"><strong>横竖消除 <b id="boostLineCount">1</b></strong><span>清理最拥挤的一行或一列。</span></button>
+          <button class="power-card" data-testid="booster-shuffle" id="boosterShuffle"><strong>打乱重排 <b id="boostShuffleCount">1</b></strong><span>重排棋盘占用格，给残局续命。</span></button>
+        </div>
       </div>
     </section>
     <section class="hero" style="margin-top:18px;">
       <div class="card panel">
         <h2>策划映射</h2>
-        <div class="quest" id="designTrace">已实现：10x10 网格、3 候选块、全部用完刷新、行列消除、失败检测、防卡死刷新、Combo/Streak、广告复活、道具入口、皮肤与拼图外围。</div>
+        <div class="quest" id="designTrace">已实现：10x10 网格、3 候选块、真实拖拽/触控拖动、上移 ghost、防遮挡、绿色/红色放置预览、行列消除、失败检测、防卡死刷新、Combo/Streak、广告复活、插屏点位、道具、皮肤/背景/棋盘装饰与拼图外围。</div>
       </div>
       <div class="card panel">
         <h2>运行日志</h2>
@@ -505,6 +611,7 @@ def _block_puzzle_html() -> str:
         <button data-skin="">木块</button>
         <button data-skin="skin-gem">宝石</button>
         <button data-skin="skin-wool">毛线</button>
+        <button data-skin="skin-night">夜空棋盘</button>
         <button class="secondary" data-close="skinModal">关闭</button>
       </div>
     </div>
@@ -551,6 +658,10 @@ def _block_puzzle_html() -> str:
       [[1,1,1],[1,1,1],[1,1,1]]
     ];
     let board, pieces, selected = null, score = 0, best = 0, mode = 'classic', level = 0, revives = 1, streak = 0, jigsaw = 0, collected = [0,0,0,0,0];
+    let boosters = { refresh: 1, line: 1, shuffle: 1 };
+    let dragIndex = null;
+    let previewCells = [];
+    let lastHoverKey = '';
     const $ = id => document.getElementById(id);
     function log(text) {
       const line = document.createElement('div');
@@ -561,6 +672,97 @@ def _block_puzzle_html() -> str:
       $('toast').textContent = text;
       $('toast').classList.add('show');
       setTimeout(() => $('toast').classList.remove('show'), 1500);
+    }
+    function haptic(pattern) {
+      if (navigator.vibrate) navigator.vibrate(pattern);
+    }
+    function showCombo(text) {
+      const banner = $('comboBanner');
+      banner.textContent = text;
+      banner.classList.remove('show');
+      void banner.offsetWidth;
+      banner.classList.add('show');
+    }
+    function clearPreview() {
+      previewCells.forEach(cell => cell.classList.remove('preview-ok', 'preview-bad'));
+      previewCells = [];
+      lastHoverKey = '';
+      $('board').classList.remove('drag-active');
+    }
+    function pieceForDrag() {
+      const index = dragIndex !== null ? dragIndex : selected;
+      return index !== null && pieces[index] ? pieces[index] : null;
+    }
+    function paintPreview(row, col) {
+      const piece = pieceForDrag();
+      clearPreview();
+      if (!piece) return;
+      $('board').classList.add('drag-active');
+      const ok = canPlace(piece, row, col);
+      const cells = cellsOf(piece, row, col).filter(([r, c]) => r >= 0 && c >= 0 && r < SIZE && c < SIZE);
+      const paintTargets = cells.length ? cells : [[row, col]];
+      paintTargets.forEach(([r, c]) => {
+        const cell = document.querySelector('[data-row="' + r + '"][data-col="' + c + '"]');
+        if (!cell) return;
+        cell.classList.add(ok ? 'preview-ok' : 'preview-bad');
+        previewCells.push(cell);
+      });
+      const hoverKey = row + '-' + col + '-' + ok;
+      if (hoverKey !== lastHoverKey) {
+        haptic(ok ? 8 : 18);
+        lastHoverKey = hoverKey;
+      }
+    }
+    function cellFromPoint(clientX, clientY) {
+      const node = document.elementFromPoint(clientX, clientY);
+      const cell = node ? node.closest('.cell') : null;
+      if (!cell) return null;
+      return { row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
+    }
+    function renderMiniPiece(piece, target, cellSize = 20) {
+      target.innerHTML = '';
+      const grid = document.createElement('div');
+      grid.className = 'mini-grid';
+      grid.style.gridTemplateColumns = 'repeat(' + piece.shape[0].length + ', ' + cellSize + 'px)';
+      const tone = colors[piece.color];
+      piece.shape.forEach(row => row.forEach(on => {
+        const dot = document.createElement('span');
+        dot.className = 'mini-cell' + (on ? ' on' : '');
+        dot.style.width = cellSize + 'px';
+        dot.style.height = cellSize + 'px';
+        dot.style.setProperty('--tone-a', tone[0]);
+        dot.style.setProperty('--tone-b', tone[1]);
+        grid.appendChild(dot);
+      }));
+      target.appendChild(grid);
+    }
+    function moveGhost(clientX, clientY) {
+      const ghost = $('dragGhost');
+      ghost.style.transform = 'translate(' + (clientX - 40) + 'px, ' + (clientY - 126) + 'px)';
+    }
+    function startDrag(index, clientX, clientY) {
+      if (!pieces[index]) return;
+      selected = index;
+      dragIndex = index;
+      const ghost = $('dragGhost');
+      renderMiniPiece(pieces[index], ghost, 22);
+      ghost.classList.add('active');
+      moveGhost(clientX, clientY);
+      $('board').classList.add('drag-active');
+      log('开始拖拽候选方块 ' + (index + 1));
+    }
+    function finishDrag(clientX, clientY) {
+      const target = cellFromPoint(clientX, clientY);
+      const activeIndex = dragIndex;
+      $('dragGhost').classList.remove('active');
+      dragIndex = null;
+      clearPreview();
+      if (target && activeIndex !== null) {
+        selected = activeIndex;
+        placeSelected(target.row, target.col);
+      } else {
+        render();
+      }
     }
     function newBoard() {
       board = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => null));
@@ -616,7 +818,10 @@ def _block_puzzle_html() -> str:
         streak++;
         const gain = 5 * count * count + (streak >= 3 ? streak * 10 : 0);
         score += gain;
-        toast((count > 1 ? 'Combo x' + count + ' · ' : '') + (streak >= 3 ? 'Streak x' + streak : '消除成功'));
+        const feedback = (count > 1 ? 'Combo x' + count + ' · ' : '') + (streak >= 3 ? 'Streak x' + streak : '消除成功');
+        toast(feedback);
+        showCombo(feedback);
+        haptic([30, 30, 60]);
         log('消除 ' + count + ' 条线，奖励 ' + gain + ' 分');
       } else {
         streak = 0;
@@ -630,13 +835,16 @@ def _block_puzzle_html() -> str:
       const piece = pieces[selected];
       if (!canPlace(piece, row, col)) {
         toast('这个位置放不下');
+        haptic(25);
         return;
       }
+      clearPreview();
       const cells = cellsOf(piece, row, col);
       cells.forEach(([r, c]) => board[r][c] = { color: piece.color });
       score += cells.length;
       pieces[selected] = null;
       selected = null;
+      haptic(10);
       clearLines();
       if (pieces.every(p => !p)) refreshPieces();
       updateWinState();
@@ -652,17 +860,75 @@ def _block_puzzle_html() -> str:
         log('触发 Game Over');
       }
     }
+    function clearMostCrowdedLine() {
+      const rows = board.map((row, r) => ({ kind: 'row', index: r, density: row.filter(Boolean).length }));
+      const cols = Array.from({ length: SIZE }, (_, c) => ({ kind: 'col', index: c, density: board.filter(row => row[c]).length }));
+      const target = rows.concat(cols).sort((a, b) => b.density - a.density)[0];
+      if (!target || target.density <= 0) return false;
+      if (target.kind === 'row') {
+        for (let c = 0; c < SIZE; c++) board[target.index][c] = null;
+      } else {
+        for (let r = 0; r < SIZE; r++) board[r][target.index] = null;
+      }
+      return true;
+    }
     function revive() {
       if (revives <= 0) return;
       revives--;
-      for (let i = 0; i < 3; i++) {
-        const rowDensity = board.map((row, r) => [r, row.filter(Boolean).length]).sort((a,b) => b[1] - a[1])[0][0];
-        for (let c = 0; c < SIZE; c++) board[rowDensity][c] = null;
-      }
+      for (let i = 0; i < 3; i++) clearMostCrowdedLine();
       closeModal('gameOverModal');
       toast('广告复活成功');
-      log('模拟激励视频复活，清理最拥挤 3 行');
+      log('模拟激励视频复活，清理最拥挤 3 行/列');
       render();
+    }
+    function useRefreshBooster() {
+      if (boosters.refresh <= 0) return;
+      const targetIndex = selected !== null && pieces[selected] ? selected : pieces.findIndex(Boolean);
+      if (targetIndex < 0) return;
+      pieces[targetIndex] = randomPiece();
+      boosters.refresh--;
+      toast('刷新方块已使用');
+      log('道具：刷新候选方块 ' + (targetIndex + 1));
+      render();
+    }
+    function useLineBooster() {
+      if (boosters.line <= 0) return;
+      if (!clearMostCrowdedLine()) {
+        toast('棋盘还很干净，暂时不用清理');
+        return;
+      }
+      boosters.line--;
+      score += 25;
+      toast('横竖消除已触发');
+      log('道具：清理最拥挤的一行或一列');
+      render();
+      checkGameOver();
+    }
+    function useShuffleBooster() {
+      if (boosters.shuffle <= 0) return;
+      const occupied = [];
+      board.forEach(row => row.forEach(cell => { if (cell) occupied.push(cell); }));
+      if (!occupied.length) {
+        toast('棋盘为空，无需打乱');
+        return;
+      }
+      newBoard();
+      occupied.sort(() => Math.random() - .5).forEach(cell => {
+        let placed = false;
+        for (let attempts = 0; attempts < 80 && !placed; attempts++) {
+          const r = Math.floor(Math.random() * SIZE);
+          const c = Math.floor(Math.random() * SIZE);
+          if (!board[r][c]) {
+            board[r][c] = cell;
+            placed = true;
+          }
+        }
+      });
+      boosters.shuffle--;
+      toast('打乱重排完成');
+      log('道具：打乱重排棋盘');
+      render();
+      checkGameOver();
     }
     function updateWinState() {
       if (mode !== 'adventure') return;
@@ -684,6 +950,8 @@ def _block_puzzle_html() -> str:
           cell.className = 'cell' + (board[r][c] ? ' filled' : '');
           cell.type = 'button';
           cell.dataset.testid = 'cell-' + r + '-' + c;
+          cell.dataset.row = String(r);
+          cell.dataset.col = String(c);
           cell.setAttribute('aria-label', '格子 ' + r + '-' + c);
           if (board[r][c]) {
             const tone = colors[board[r][c].color];
@@ -691,6 +959,17 @@ def _block_puzzle_html() -> str:
             cell.style.setProperty('--tone-b', tone[1]);
           }
           cell.addEventListener('click', () => placeSelected(r, c));
+          cell.addEventListener('dragover', event => {
+            event.preventDefault();
+            paintPreview(r, c);
+          });
+          cell.addEventListener('drop', event => {
+            event.preventDefault();
+            const dropped = Number(event.dataTransfer.getData('text/plain'));
+            if (!Number.isNaN(dropped)) selected = dropped;
+            dragIndex = null;
+            placeSelected(r, c);
+          });
           $('board').appendChild(cell);
         }
       }
@@ -702,23 +981,34 @@ def _block_puzzle_html() -> str:
         shell.type = 'button';
         shell.className = 'piece' + (selected === index ? ' selected' : '');
         shell.dataset.testid = 'piece-' + index;
+        shell.dataset.pieceIndex = String(index);
         shell.setAttribute('aria-label', piece ? '候选方块 ' + (index + 1) : '空候选槽 ' + (index + 1));
         if (!piece) {
           shell.textContent = '已放置';
         } else {
-          const grid = document.createElement('div');
-          grid.className = 'mini-grid';
-          grid.style.gridTemplateColumns = 'repeat(' + piece.shape[0].length + ', 18px)';
-          const tone = colors[piece.color];
-          piece.shape.forEach(row => row.forEach(on => {
-            const dot = document.createElement('span');
-            dot.className = 'mini-cell' + (on ? ' on' : '');
-            dot.style.setProperty('--tone-a', tone[0]);
-            dot.style.setProperty('--tone-b', tone[1]);
-            grid.appendChild(dot);
-          }));
-          shell.appendChild(grid);
+          shell.draggable = true;
+          renderMiniPiece(piece, shell, 18);
           shell.addEventListener('click', () => { selected = index; render(); toast('已选择候选方块 ' + (index + 1)); });
+          shell.addEventListener('dragstart', event => {
+            selected = index;
+            dragIndex = index;
+            shell.classList.add('dragging');
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', String(index));
+            log('桌面拖拽候选方块 ' + (index + 1));
+          });
+          shell.addEventListener('dragend', () => {
+            shell.classList.remove('dragging');
+            dragIndex = null;
+            clearPreview();
+            render();
+          });
+          shell.addEventListener('pointerdown', event => {
+            if (event.pointerType === 'mouse') return;
+            event.preventDefault();
+            shell.classList.add('dragging');
+            startDrag(index, event.clientX, event.clientY);
+          });
         }
         $('tray').appendChild(shell);
       });
@@ -743,17 +1033,27 @@ def _block_puzzle_html() -> str:
         $('jigsaw').appendChild(piece);
       }
     }
+    function renderBoosters() {
+      $('boostRefreshCount').textContent = boosters.refresh;
+      $('boostLineCount').textContent = boosters.line;
+      $('boostShuffleCount').textContent = boosters.shuffle;
+      $('boosterRefresh').disabled = boosters.refresh <= 0;
+      $('boosterLine').disabled = boosters.line <= 0;
+      $('boosterShuffle').disabled = boosters.shuffle <= 0;
+    }
     function render() {
       renderBoard();
       renderPieces();
       renderStats();
+      renderBoosters();
     }
     function start(nextMode) {
       mode = nextMode;
       score = 0;
-      revives = 1;
+      revives = mode === 'classic' ? 3 : 1;
       streak = 0;
       collected = [0,0,0,0,0];
+      boosters = { refresh: 1, line: 1, shuffle: 1 };
       newBoard();
       refreshPieces();
       closeModal('gameOverModal');
@@ -766,6 +1066,9 @@ def _block_puzzle_html() -> str:
     $('classicMode').addEventListener('click', () => start('classic'));
     $('adventureMode').addEventListener('click', () => start('adventure'));
     $('restartBtn').addEventListener('click', () => start(mode));
+    $('boosterRefresh').addEventListener('click', useRefreshBooster);
+    $('boosterLine').addEventListener('click', useLineBooster);
+    $('boosterShuffle').addEventListener('click', useShuffleBooster);
     $('pauseBtn').addEventListener('click', () => openModal('pauseModal'));
     $('resumeBtn').addEventListener('click', () => closeModal('pauseModal'));
     $('pauseRestart').addEventListener('click', () => { closeModal('pauseModal'); start(mode); });
@@ -782,6 +1085,20 @@ def _block_puzzle_html() -> str:
       document.body.className = button.dataset.skin;
       toast('已切换皮肤');
     }));
+    $('board').addEventListener('dragleave', event => {
+      if (!$('board').contains(event.relatedTarget)) clearPreview();
+    });
+    document.addEventListener('pointermove', event => {
+      if (dragIndex === null) return;
+      moveGhost(event.clientX, event.clientY);
+      const target = cellFromPoint(event.clientX, event.clientY);
+      if (target) paintPreview(target.row, target.col);
+      else clearPreview();
+    });
+    document.addEventListener('pointerup', event => {
+      if (dragIndex === null) return;
+      finishDrag(event.clientX, event.clientY);
+    });
     start('classic');
   </script>
 </body>
@@ -791,11 +1108,15 @@ def _block_puzzle_html() -> str:
 
 def _requested_folder_for_goal(goal: str, *, default_name: str) -> Path:
     output_match = re.search(
-        r"(?:输出(?:到|目录|文件夹)?|保存到|生成到)\s*[：:]\s*([A-Za-z]:[\\/][^\n，,。；;]+)",
+        r"(?:输出(?:到(?:目录|文件夹)?|目录|文件夹)?|保存到|生成到|output(?:_dir| directory| folder)?|save to|write to)\s*[：:]\s*([^\n，,。；;]+)",
         goal,
+        flags=re.IGNORECASE,
     )
     if output_match:
-        return Path(output_match.group(1).strip().strip("`'\"“”‘’"))
+        output_name = output_match.group(1).strip().strip("`'\"“”‘’")
+        if re.match(r"^[A-Za-z]:[\\/]", output_name) or "/" in output_name or "\\" in output_name:
+            return Path(output_name)
+        return Path("state") / "artifacts" / "generated" / output_name
     folder_match = re.search(r"(?:文件夹|目录)\s*[：:]\s*([^\s，,。；;]+)", goal)
     folder_name = folder_match.group(1).strip("`'\"“”‘’") if folder_match else ""
     if re.match(r"^[A-Za-z]:[\\/]", folder_name):
@@ -839,11 +1160,13 @@ def _block_puzzle_artifacts(
         "直接用浏览器打开 `index.html`。\n\n"
         "## 已覆盖功能\n"
         "- 10x10 棋盘和底部 3 个候选方块。\n"
+        "- 桌面真实拖拽、移动端触控拖动、防遮挡 ghost、绿色/红色放置预览。\n"
         "- 全部候选块用完后刷新。\n"
         "- 行/列填满消除，包含 Combo 和 Streak 反馈。\n"
         "- 经典模式与前 7 关闯关配置。\n"
         "- 失败弹窗、模拟激励广告复活、结算广告点位。\n"
-        "- 皮肤装饰、作品/拼图收集外围系统。\n"
+        "- 刷新方块、横竖排消除、打乱重排三类广告道具。\n"
+        "- 皮肤、背景/棋盘装饰、作品/拼图收集外围系统。\n"
         "- 响应式商业化视觉包装。\n"
     )
     trace = (
@@ -857,9 +1180,10 @@ def _block_puzzle_artifacts(
         "- 没有剩余候选方块可放时 Game Over。\n"
         "- 空位超过 40% 时避免随机刷出全都放不下的死局。\n"
         "- 经典模式追求高分，闯关模式有前 7 关目标。\n"
-        "- Combo、Streak、放置预览、震动反馈、广告复活、插屏广告、皮肤和拼图收集。\n\n"
+        "- Combo、Streak、放置预览、震动反馈、广告复活、插屏广告、皮肤、背景、棋盘图和拼图收集。\n"
+        "- 三类道具：刷新方块、横竖排消除、打乱重排。\n\n"
         "## 原型实现取舍\n"
-        "- 浏览器原型使用点击选择候选块，再点击棋盘落点；移动端可继续扩展为真实拖拽。\n"
+        "- 浏览器原型同时支持点击选择、真实拖拽和触控拖动；触控拖动使用上移 ghost 避免遮挡。\n"
         "- 广告和震动以本地模拟形式呈现，不接真实广告 SDK。\n"
         "- 所有状态保存在前端内存，适合商业化 vertical slice 和玩法验证。\n"
     )

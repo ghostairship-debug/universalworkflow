@@ -45,6 +45,43 @@ EXTERNAL_ADAPTER_MODEL_LABELS = {
     "vertex_multimodal": ("vertex-cli-default", "external_cli_model"),
 }
 
+ADAPTIVE_COMPLEX_MARKERS = {
+    "coder",
+    "code",
+    "implementer",
+    "implementation",
+    "patch",
+    "mutation",
+    "worker",
+    "dev",
+}
+
+ADAPTIVE_MEDIUM_MARKERS = {
+    "planner",
+    "phase_designer",
+    "reviewer",
+    "review",
+    "quality",
+    "test",
+    "sentinel",
+    "critic",
+    "risk",
+}
+
+ADAPTIVE_SIMPLE_MARKERS = {
+    "research",
+    "search",
+    "source",
+    "citation",
+    "doc",
+    "curator",
+    "launch_guard",
+    "designer",
+    "management",
+    "roadmap",
+    "multimodal",
+}
+
 
 def execution_profile_values(profile: ExecutionProfileDefinition | None) -> dict[str, Any]:
     if profile is None:
@@ -124,6 +161,11 @@ def _model_selection_metadata(
 ) -> tuple[str, str]:
     adapter_source = source_map.get("adapter_name", {})
     model_source = source_map.get(selected_model_kind or "", {})
+    if adapter_source.get("scope") == "adaptive_llm_routing" or model_source.get("scope") == "adaptive_llm_routing":
+        return (
+            "adaptive_llm_router",
+            "M44 adaptive routing selected a MiniMax/DeepSeek/OpenCode free-model lane for this role",
+        )
     if (
         dogfood_strong_model_enabled
         and dogfood_execution_backend == "codex_cli"
@@ -164,6 +206,48 @@ def _model_selection_metadata(
     if adapter_source.get("scope") == "compatibility_fallback":
         return ("fallback", "worker router compatibility fallback selected the adapter")
     return ("role_default", "resolved from role, preset, cluster, or effective global defaults")
+
+
+def _adaptive_route_for_scope(
+    *,
+    adaptive_config: dict[str, Any],
+    scope_context: ExecutionScopeContext | None,
+) -> tuple[str, str, str, str] | None:
+    if not bool(adaptive_config.get("enabled")) or scope_context is None:
+        return None
+    role_parts = [
+        str(scope_context.role_label or ""),
+        str(scope_context.public_role or ""),
+        str(scope_context.cluster_template_id or ""),
+        str(scope_context.cluster_member_id or ""),
+        str(scope_context.agent_profile_id or ""),
+    ]
+    role_key = " ".join(role_parts).lower()
+    coding_adapter = str(adaptive_config.get("coding_adapter") or "opencode").strip().lower()
+    if any(marker in role_key for marker in ADAPTIVE_COMPLEX_MARKERS):
+        adapter = coding_adapter if coding_adapter in {"opencode", "agent"} else "opencode"
+        model_field = "opencode_model" if adapter == "opencode" else "agent_model"
+        return (
+            adapter,
+            model_field,
+            str(adaptive_config.get("complex_model") or "minimax/MiniMax-M2.7"),
+            "complex",
+        )
+    if any(marker in role_key for marker in ADAPTIVE_MEDIUM_MARKERS):
+        return (
+            "agent",
+            "agent_model",
+            str(adaptive_config.get("medium_model") or "deepseek/deepseek-v4-flash"),
+            "medium",
+        )
+    if any(marker in role_key for marker in ADAPTIVE_SIMPLE_MARKERS):
+        return (
+            "agent",
+            "agent_model",
+            str(adaptive_config.get("simple_model") or "minimax/MiniMax-M2.7"),
+            "simple",
+        )
+    return None
 
 
 def build_effective_execution_defaults(effective_config: dict[str, Any]) -> dict[str, Any]:
@@ -265,6 +349,36 @@ def resolve_execution_profile(
             "original_value": "agent",
         }
 
+    adaptive_config = effective_config.get("adaptive_llm_routing") or {}
+    adaptive_route = None
+    can_apply_adaptive_route = (
+        bool(adaptive_config.get("enabled"))
+        and not dogfood_strong_model_enabled
+        and source_map.get("adapter_name", {}).get("scope") != "explicit_invocation"
+        and resolved_values.get("adapter_name") not in EXTERNAL_ADAPTER_MODEL_LABELS
+    )
+    if can_apply_adaptive_route:
+        adaptive_route = _adaptive_route_for_scope(
+            adaptive_config=adaptive_config,
+            scope_context=scope_context,
+        )
+        if adaptive_route is not None:
+            route_adapter, model_field, route_model, _route_tier = adaptive_route
+            original_adapter = resolved_values.get("adapter_name")
+            resolved_values["adapter_name"] = route_adapter
+            resolved_values[model_field] = route_model
+            source_map["adapter_name"] = {
+                "scope": "adaptive_llm_routing",
+                "source": "derived:m44_adaptive_role_router",
+                "value": route_adapter,
+                "original_value": original_adapter,
+            }
+            source_map[model_field] = {
+                "scope": "adaptive_llm_routing",
+                "source": "derived:m44_adaptive_role_router",
+                "value": route_model,
+            }
+
     adapter_name = resolved_values.get("adapter_name")
     selected_model = None
     selected_model_kind = None
@@ -301,6 +415,13 @@ def resolve_execution_profile(
         model_selection_reason=model_selection_reason,
         dogfood_strong_model_enabled=dogfood_strong_model_enabled,
         dogfood_execution_backend=dogfood_execution_backend,
+        adaptive_llm_routing_enabled=bool(adaptive_config.get("enabled")),
+        adaptive_route_tier=adaptive_route[3] if adaptive_route is not None else None,
+        adaptive_route_reason=(
+            "M44 adaptive routing mapped this role to a MiniMax/DeepSeek/OpenCode free-model lane"
+            if adaptive_route is not None
+            else None
+        ),
         langchain_agent_provider=str(langchain_config.get("provider") or "auto"),
         langchain_agent_model=(
             str(langchain_config.get("model"))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import locale
 from collections.abc import Mapping
 from typing import Any
 
@@ -66,12 +67,28 @@ def build_subprocess_env(packet_env: Mapping[str, str] | None = None) -> dict[st
     return env
 
 
-def normalize_timeout_stream(value: str | bytes | None) -> str:
+def decode_subprocess_stream(value: str | bytes | None) -> str:
     if value is None:
         return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
+    if not isinstance(value, bytes):
+        return str(value)
+    encodings = ["utf-8", locale.getpreferredencoding(False)]
+    if os.name == "nt":
+        encodings.append("mbcs")
+    seen: set[str] = set()
+    for encoding in encodings:
+        if not encoding or encoding.lower() in seen:
+            continue
+        seen.add(encoding.lower())
+        try:
+            return value.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return value.decode("utf-8", errors="replace")
+
+
+def normalize_timeout_stream(value: str | bytes | None) -> str:
+    return decode_subprocess_stream(value)
 
 
 def completed_process_from_timeout(

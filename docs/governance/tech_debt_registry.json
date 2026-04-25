@@ -189,6 +189,20 @@
       "introduced_in": "M42 smoke",
       "repaid_in": "M42",
       "result": "Real Codex CLI execution now uses process-tree timeout cleanup; the M42 management-cluster tree-timeout smoke completed with no residual `codex.exe`"
+    },
+    {
+      "debt_id": "TD-SHELL-UTF8-001",
+      "description": "ShellAdapter captured subprocess output in text mode with the platform default encoding, which could fail or corrupt Chinese/UTF-8 artifact output on Windows",
+      "introduced_in": "M43 PDF artifact smoke",
+      "repaid_in": "M43",
+      "result": "ShellAdapter now captures bytes and decodes with UTF-8 plus system-codepage fallback; Chinese artifact stdout is covered by regression tests"
+    },
+    {
+      "debt_id": "TD-CLUSTER-GRAPH-001",
+      "description": "Dynamic multi-cluster launches selected several clusters, but status detail projected only the first cluster graph",
+      "introduced_in": "M45 dynamic routing smoke",
+      "repaid_in": "M46",
+      "result": "Cluster preview now builds a composite graph with all selected cluster_template_ids and per-cluster subgraphs"
     }
   ],
   "open_items": [
@@ -226,9 +240,9 @@
     },
     {
       "debt_id": "TD-DOGFOOD-001",
-      "description": "workflow dogfood has a real Codex CLI architecture-delivery E2E, but MMX/Claude are still verified mainly through degraded/fallback paths",
+      "description": "workflow dogfood has real Codex CLI E2E, M42 cluster smoke, and an M43 PDF artifact loop, but MMX/Claude are still verified mainly through degraded/fallback paths",
       "introduced_in": "M41",
-      "planned_repayment_phase": "M42+",
+      "planned_repayment_phase": "M48+",
       "current_status": "partially_repaid",
       "blocking_impact": "blocks claiming the full multi-agent capability layer is production-ready"
     },
@@ -242,11 +256,11 @@
     },
     {
       "debt_id": "TD-MULTIMODAL-001",
-      "description": "MMX/Vertex are modeled as multimodal evidence lanes, but real local PDF/image extraction has not yet been fully validated end to end",
+      "description": "MMX/Vertex are modeled as multimodal evidence lanes; M43 validated real PDF text extraction into a game artifact loop, but MMX/Vertex still have not handled the primary path",
       "introduced_in": "M41",
-      "planned_repayment_phase": "M42+",
-      "current_status": "active",
-      "blocking_impact": "blocks relying on multimodal evidence for complex project inputs without manual verification"
+      "planned_repayment_phase": "M48+",
+      "current_status": "partially_repaid",
+      "blocking_impact": "blocks relying on image/screenshot/design multimodal evidence without manual verification"
     }
   ],
   "freeze_review_questions": [

@@ -150,10 +150,15 @@ def _any_env_present(names: list[str]) -> bool:
     return any(bool(os.getenv(name)) for name in names)
 
 
+def _env_bool(name: str) -> bool:
+    return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 def _external_capability_status(effective: dict[str, object], optional_commands: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
     claude_config = effective.get("claude_architect", {}) if isinstance(effective, dict) else {}
     multimodal_config = effective.get("multimodal", {}) if isinstance(effective, dict) else {}
     dogfood_config = effective.get("dogfood", {}) if isinstance(effective, dict) else {}
+    adaptive_config = effective.get("adaptive_llm_routing", {}) if isinstance(effective, dict) else {}
     dogfood_enabled = bool(dogfood_config.get("strong_model_enabled")) if isinstance(dogfood_config, dict) else False
     dogfood_backend = (
         str(dogfood_config.get("execution_backend") or "codex_cli")
@@ -220,6 +225,26 @@ def _external_capability_status(effective: dict[str, object], optional_commands:
             "fallback_provider": langchain_agent["fallback_provider"],
             "fallback_model": langchain_agent["fallback_model"],
             "degraded_reason": langchain_agent["degraded_reason"],
+        },
+        "adaptive_llm_routing": {
+            "status": "enabled" if bool(adaptive_config.get("enabled")) else "disabled",
+            "enabled": bool(adaptive_config.get("enabled")) if isinstance(adaptive_config, dict) else False,
+            "simple_model": (
+                adaptive_config.get("simple_model") if isinstance(adaptive_config, dict) else "minimax/MiniMax-M2.7"
+            ),
+            "medium_model": (
+                adaptive_config.get("medium_model") if isinstance(adaptive_config, dict) else "deepseek/deepseek-v4-flash"
+            ),
+            "complex_model": (
+                adaptive_config.get("complex_model") if isinstance(adaptive_config, dict) else "minimax/MiniMax-M2.7"
+            ),
+            "coding_adapter": adaptive_config.get("coding_adapter") if isinstance(adaptive_config, dict) else "opencode",
+        },
+        "dynamic_cluster_routing": {
+            "status": "enabled" if _env_bool("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED") else "disabled",
+            "enabled": _env_bool("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED"),
+            "strategy": "compose_specialized_clusters",
+            "default_order": ["multimodal_cluster", "search_cluster", "design_cluster", "dev_cluster", "review_cluster"],
         },
         "claude_architect": {
             "status": claude_status,

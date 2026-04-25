@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from packages.contracts import (
@@ -1400,6 +1401,19 @@ class InteractionServiceMixin:
             else []
         )
         if graph_template_ids:
+            if str(os.getenv("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+                "enabled",
+            }:
+                routed_template_ids = self._cluster_router().suggest_template_ids(goal=goal, preset_id=preset_id)
+                merged_template_ids: list[str] = []
+                for template_id in [*list(graph_template_ids), *routed_template_ids]:
+                    if template_id not in merged_template_ids:
+                        merged_template_ids.append(template_id)
+                return merged_template_ids
             return self._cluster_router().suggest_template_ids(
                 goal=goal,
                 preset_id=preset_id,
@@ -1467,38 +1481,64 @@ class InteractionServiceMixin:
         templates = self._cluster_templates_for_ids(selected_cluster_template_ids)
         if not templates:
             return None
-        template = templates[0]
-        plan = self._cluster_orchestration_plan(
-            template=template,
-            goal=goal,
-            selected_preset_id=selected_preset_id,
-        )
-        graph = self.orchestration_engine.build_graph_from_plan(
-            run_id=None,
-            preset_id=selected_preset_id or plan.preset_id,
-            goal=goal,
-            plan=plan,
-            role_goal_for=lambda parent_goal, role: self._cluster_member_goal(
-                parent_goal,
-                template.template_id,
-                next(
-                    (
-                        member.role_label
-                        for member in template.member_specs
-                        if member.public_role == role
+        graphs: list[dict[str, Any]] = []
+        for template in templates:
+            plan = self._cluster_orchestration_plan(
+                template=template,
+                goal=goal,
+                selected_preset_id=selected_preset_id,
+            )
+            graph = self.orchestration_engine.build_graph_from_plan(
+                run_id=None,
+                preset_id=selected_preset_id or plan.preset_id,
+                goal=goal,
+                plan=plan,
+                role_goal_for=lambda parent_goal, role, cluster_template=template: self._cluster_member_goal(
+                    parent_goal,
+                    cluster_template.template_id,
+                    next(
+                        (
+                            member.role_label
+                            for member in cluster_template.member_specs
+                            if member.public_role == role
+                        ),
+                        str(role),
                     ),
-                    str(role),
+                    role,
                 ),
-                role,
-            ),
-            side_effect_level_for_adapter=self._side_effect_level_for_adapter,
-            recommended_preset_id=selected_preset_id or plan.preset_id,
-            summary=f"{template.name} preview graph for `{selected_preset_id or plan.preset_id}`.",
-            risk_summary=[
-                f"cluster template `{template.template_id}` is a preview projection layered on top of the shared execution substrate",
-            ],
+                side_effect_level_for_adapter=self._side_effect_level_for_adapter,
+                recommended_preset_id=selected_preset_id or plan.preset_id,
+                summary=f"{template.name} preview graph for `{selected_preset_id or plan.preset_id}`.",
+                risk_summary=[
+                    f"cluster template `{template.template_id}` is a preview projection layered on top of the shared execution substrate",
+                ],
+            ).model_dump(mode="json")
+            graphs.append(graph)
+        if len(graphs) == 1:
+            return graphs[0]
+        first = dict(graphs[0])
+        first["cluster_template_ids"] = [template.template_id for template in templates]
+        first["summary"] = (
+            "Dynamic cluster preview graph for "
+            + ", ".join(template.template_id for template in templates)
+            + f" on `{selected_preset_id or first.get('preset_id')}`."
         )
-        return graph.model_dump(mode="json")
+        first["risk_summary"] = [
+            f"dynamic cluster route includes `{template.template_id}` as a specialized lane"
+            for template in templates
+        ]
+        first["nodes"] = [node for graph in graphs for node in graph.get("nodes", [])]
+        first["edges"] = [edge for graph in graphs for edge in graph.get("edges", [])]
+        first["barriers"] = [barrier for graph in graphs for barrier in graph.get("barriers", [])]
+        first["retry_policies"] = [policy for graph in graphs for policy in graph.get("retry_policies", [])]
+        first["cluster_graphs"] = [
+            {
+                "template_id": template.template_id,
+                "graph": graph,
+            }
+            for template, graph in zip(templates, graphs, strict=False)
+        ]
+        return first
 
     def _cluster_policy_preview_payload(
         self,

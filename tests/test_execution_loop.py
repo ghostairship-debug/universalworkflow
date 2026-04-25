@@ -805,8 +805,30 @@ def test_compile_run_can_materialize_block_puzzle_vertical_slice(tmp_path: Path)
     assert "data-testid=\"game-board\"" in html
     assert "classic-mode" in html
     assert "revive-button" in html
+    assert "draggable = true" in html
+    assert "data-testid=\"drag-ghost\"" in html
+    assert "data-testid=\"booster-refresh\"" in html
+    assert "data-testid=\"booster-line\"" in html
+    assert "data-testid=\"booster-shuffle\"" in html
+    assert "真实拖拽" in trace_file.read_text(encoding="utf-8")
     assert game_file.resolve().as_posix() in result.artifact_paths
     assert trace_file.resolve().as_posix() in result.artifact_paths
+
+
+def test_shell_adapter_decodes_utf8_output_on_windows(tmp_path: Path) -> None:
+    packet = TaskPacket(
+        runtime_task_id="task_utf8_stdout",
+        run_id="run_utf8_stdout",
+        task_kind=TaskKind.shell_exec,
+        command=[sys.executable, "-c", "print('方块艺境 输出路径 examples/block_puzzle_shop')"],
+        working_directory=str(tmp_path),
+        expected_artifacts=[],
+    )
+
+    result = ShellAdapter().launch(packet)
+
+    assert result.return_code == 0
+    assert "方块艺境" in result.stdout
 
 
 def test_worker_router_uses_noop_adapter_for_noop_task(tmp_path: Path) -> None:

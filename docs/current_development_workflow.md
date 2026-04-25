@@ -18,13 +18,15 @@
 
 ## 当前仓库状态
 
-- 最新接受基线：`M42`
+- 最新接受基线：`M47`
 - 当前产品前提：个人自用 / 本地 operator runtime
 - 当前主入口：CLI、API、Web operator console、`/ui/workbench`
 - 当前 workbench 形态：LLM-assisted streaming chat workbench，主区域只显示真实对话、assistant delta/final 和确认卡；右侧显示 session、active run、graph node、evidence、review 和 PR-ready summary
 - 当前 stream 形态：SSE chat event stream，聊天 transcript 使用 `user_message`、`assistant_delta`、`assistant_final`、`confirmation_required`、`confirmation_result`、`error`；状态卡使用 `graph_update`、`run_update`、`status_patch`、`timeline_event`、`review_required`、`test_evidence`、`pr_ready_summary`、`heartbeat`
 - 当前确认规则：`resume_run`、`approve_run`、`reject_run`、`cancel_run`、`launch_execute`、repo mutation、git commit/push/PR 必须通过确认卡
 - 当前测试分层：默认 `pytest -q` 是快速核心回归；完整 `pytest -q --run-slow` 只在每个 M 收口运行一次
+- 当前自适应路由：默认关闭；开启 `WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED=1` 后，简单角色优先 MiniMax，中等 review/planning 优先 DeepSeek V4 Flash，复杂 coder 优先 OpenCode + MiniMax
+- 当前动态编排：默认关闭；开启 `WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED=1` 后，复杂目标可组合多模态、搜索、设计、开发和 review 集群
 
 ## Phase / Task 协议
 
@@ -77,6 +79,28 @@ M42 已完成以下能力补全：
 - Claude architect gate 目前仍以 quota-guarded / artifact-only 骨架为主，不能高频使用。
 - Codex artifact-only reviewer/doc curator 仍可能偏慢，进程树 timeout 已降低卡死风险，但 prompt 还可以继续收缩。
 - `OrchestratorService` 仍偏大，后续 M 应继续抽离 interaction/chat/projection/lifecycle glue。
+
+## M43-M47 收口结论
+
+M43-M47 已完成一次新的长程闭环：
+
+- M43：读取 `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf`，通过 workflow artifact 路径生成 [方块艺境示例](../examples/block_puzzle_shop/index.html)，覆盖真实拖拽、触控拖动、防遮挡 ghost、放置预览、广告复活、三类道具、皮肤/背景/棋盘装饰、拼图收集、经典模式和前 7 关闯关。
+- M44：新增自适应 LLM 路由配置和投影字段，默认关闭；启用后按 simple/medium/complex 路由到 MiniMax、DeepSeek V4 Flash 和 OpenCode。
+- M45：新增动态多集群 opt-in 路由，复杂 PDF 游戏目标可组合 `multimodal_cluster -> search_cluster -> design_cluster -> dev_cluster -> review_cluster`。
+- M46：扩展 doctor/status 可见性，并修复动态 route 在 status detail 中只显示第一个 cluster graph 的问题。
+- M47：更新中文文档、回归验证、git 推送后停止。
+
+M43 真实 evidence：
+
+- PDF trace：[examples/block_puzzle_shop/design_trace.md](../examples/block_puzzle_shop/design_trace.md)
+- 浏览器 smoke：`state/m43_block_puzzle_e2e/block_puzzle_shop_smoke.png`
+- 动态编排 smoke：`state/m46_dynamic_adaptive_smoke/summary.json`
+
+保留边界：
+
+- M43 的“多模态”先以本地 PDF text extraction 跑通，不声称 MMX/Vertex 已承担主路径。
+- 自适应路由与动态编排都是 opt-in；默认路径继续保持稳定优先。
+- 静态 HTML 游戏是 vertical slice，不是完整上线工程。
 
 ## 验证规则
 

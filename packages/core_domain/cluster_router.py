@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from packages.contracts import ExecutionClusterTemplate
 from packages.core_domain.interaction_catalog import cluster_template_ids_for_preset
 
@@ -108,7 +110,54 @@ class ClusterRouter:
             "里程碑",
         }
         research_markers = {"research", "investigate", "compare", "evaluate", "analyze", "研究", "调研", "评估", "分析"}
-        delivery_markers = {"project", "delivery", "implement", "integration", "feature", "refactor", "cluster"}
+        delivery_markers = {
+            "project",
+            "delivery",
+            "implement",
+            "build",
+            "integration",
+            "feature",
+            "refactor",
+            "cluster",
+            "game",
+            "develop",
+            "实现",
+            "开发",
+            "交付",
+            "小游戏",
+        }
+        dynamic_enabled = str(os.getenv("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+            "enabled",
+        }
+        if dynamic_enabled:
+            dynamic_candidates: list[str] = []
+            marker_map = [
+                (multimodal_markers, "multimodal_cluster"),
+                (search_markers, "search_cluster"),
+                (design_markers, "design_cluster"),
+                (architecture_markers, "architecture_delivery_cluster"),
+                (delivery_markers, "dev_cluster"),
+                (review_markers, "review_cluster"),
+                (management_markers, "management_cluster"),
+            ]
+            for markers, template_id in marker_map:
+                if template_id not in self._template_index:
+                    continue
+                if any(marker in normalized_goal for marker in markers):
+                    dynamic_candidates.append(template_id)
+            if not dynamic_candidates and "research_cluster" in self._template_index:
+                if any(marker in normalized_goal for marker in research_markers):
+                    dynamic_candidates.append("research_cluster")
+            if dynamic_candidates:
+                unique_candidates: list[str] = []
+                for template_id in dynamic_candidates:
+                    if template_id not in unique_candidates:
+                        unique_candidates.append(template_id)
+                return unique_candidates
         if any(marker in normalized_goal for marker in architecture_markers):
             return ["architecture_delivery_cluster"] if "architecture_delivery_cluster" in self._template_index else []
         if any(marker in normalized_goal for marker in multimodal_markers):
