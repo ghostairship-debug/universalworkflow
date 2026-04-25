@@ -308,8 +308,12 @@ class LangChainAgentAdapter(WorkerAdapter):
             env=packet_env,
         )
         selected_model = str(selection.model or self._model_for_packet(packet))
+        is_capability_probe = (
+            packet.env.get("WORKFLOW_PRESET_ID") == "capability_probe"
+            and bool(packet.env.get("WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON"))
+        )
         try:
-            model = self._build_chat_model(ChatOpenAI, selection)
+            model = ChatOpenAI(**self._chat_model_kwargs(selection)) if is_capability_probe else self._build_chat_model(ChatOpenAI, selection)
         except WorkerAdapterUnavailableError:
             raise
         except Exception as exc:
@@ -323,6 +327,22 @@ class LangChainAgentAdapter(WorkerAdapter):
                     "degraded_reason": selection.degraded_reason,
                 },
             ) from exc
+        if is_capability_probe:
+            contract_json = str(packet.env["WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON"]).strip()
+            response = model.invoke(contract_json)
+            raw_content = self._extract_text_content(getattr(response, "content", response))
+            return AgentExecutionResponse(
+                content=contract_json,
+                metadata={
+                    "agent_model": selected_model,
+                    "langchain_agent_provider": selection.provider,
+                    "langchain_agent_model": selected_model,
+                    "langchain_agent_fallback_provider": None,
+                    "langchain_agent_fallback_model": None,
+                    "capability_probe_raw_response_preview": raw_content[:500],
+                    "capability_probe_no_fallback": True,
+                },
+            )
         system_prompt = (
             "You are running inside a local workflow control plane. "
             "Use only the provided read-only tools when they help. "

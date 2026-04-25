@@ -259,6 +259,13 @@
       "introduced_in": "M49/M66 receipt gate",
       "repaid_in": "M67 P2",
       "result": "Added scope_hash and scope_payload to the contract/DB/repository, bound high-risk API/UI/chat receipt consumption to actual run/body/session scope, rejected legacy receipts without scope_hash, and moved watchdog auto-apply from mutating GET to POST plus receipt"
+    },
+    {
+      "debt_id": "M67-PROBE-001",
+      "description": "Capability live probes could accept generic, simulated, dry-run, or fallback-only provider output as verified readiness for non-codex/opencode providers",
+      "introduced_in": "M64/M66 capability closeout",
+      "repaid_in": "M67 P3",
+      "result": "Added provider-specific M67 live-proof contracts, rejected generic/simulated/dry-run/fallback-only evidence, forced Codex/OpenCode/Claude/LangChain probe paths to emit scoped proof after real backend execution, and passed require-live probes for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain"
     }
   ],
   "open_items": [
@@ -270,14 +277,6 @@
       "current_status": "blocking_open",
       "blocking_impact": "blocks confidence that future capability work is genuinely workflow-co-developed",
       "evidence_path": "state/m67_workflow_closeout/evidence/p0_plan_graph.json"
-    },
-    {
-      "debt_id": "M67-PROBE-001",
-      "description": "capability live probes can still accept generic, simulated, dry-run, or fallback-only provider output as verified readiness for non-codex/opencode providers",
-      "introduced_in": "M64/M66 capability closeout",
-      "planned_repayment_phase": "M67 P3",
-      "current_status": "blocking_open",
-      "blocking_impact": "blocks trustworthy provider routing and would make capability-layer development rest on false-positive evidence"
     },
     {
       "debt_id": "M67-VAL-001",

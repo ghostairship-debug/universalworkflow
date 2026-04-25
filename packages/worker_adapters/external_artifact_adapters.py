@@ -72,6 +72,12 @@ class ArtifactCliAdapter(CliAdapterBase):
         return path.resolve()
 
     def _prompt_for(self, packet: TaskPacket) -> str:
+        if packet.env.get("WORKFLOW_PRESET_ID") == "capability_probe" and packet.env.get("WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON"):
+            return (
+                "You are executing a live capability probe for Universal Agentic Workflow.\n"
+                "Return only the exact JSON object provided below. Do not use markdown, code fences, greetings, or analysis.\n"
+                f"{str(packet.env['WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON']).strip()}\n"
+            )
         input_paths = packet.env.get("WORKFLOW_MULTIMODAL_INPUT_PATHS") or packet.env.get("WORKFLOW_REFERENCED_ARTIFACT_PATHS")
         return (
             "You are running inside the local Universal Agentic Workflow control plane.\n"
@@ -217,6 +223,22 @@ class ClaudeArchitectAdapter(ArtifactCliAdapter):
         )
 
     def _default_command(self, packet: TaskPacket, artifact_path: Path, prompt: str) -> list[str]:
+        if packet.env.get("WORKFLOW_PRESET_ID") == "capability_probe":
+            probe_prompt = str(packet.env.get("WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON") or prompt).strip()
+            return [
+                self._resolved_executable(),
+                "-p",
+                probe_prompt,
+                "--output-format",
+                "text",
+                "--no-session-persistence",
+                "--tools",
+                "",
+                "--permission-mode",
+                "dontAsk",
+                "--system-prompt",
+                "Return only the exact JSON object from the user. No markdown, no tools, no analysis.",
+            ]
         return [self._resolved_executable(), "-p", prompt, "--output-format", "text"]
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:

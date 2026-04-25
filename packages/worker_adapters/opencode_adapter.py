@@ -87,6 +87,8 @@ class OpenCodeAdapter(CliAdapterBase):
         return MutationMode(packet.env.get("WORKFLOW_MUTATION_MODE", MutationMode.artifact_only))
 
     def _artifact_content_for(self, packet: TaskPacket) -> str:
+        if packet.env.get("WORKFLOW_PRESET_ID") == "capability_probe" and packet.env.get("WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON"):
+            return str(packet.env["WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON"]).strip() + "\n"
         return build_artifact_content(
             preset_id=packet.env.get("WORKFLOW_PRESET_ID", ""),
             goal=packet.env.get("WORKFLOW_RUN_GOAL", ""),

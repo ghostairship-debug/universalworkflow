@@ -26,6 +26,28 @@ from packages.worker_adapters.shell_adapter import ShellAdapter
 
 PROVIDERS = ["shell", "codex", "opencode", "mmx", "vertex", "claude", "langchain"]
 DEFAULT_PROBE_TIMEOUT_SECONDS = 120
+GENERIC_ASSISTANT_PATTERNS = (
+    "how can i help",
+    "how may i help",
+    "hello! how can",
+    "what can i help",
+    "i'm here to help",
+)
+SIMULATED_OR_DRY_RUN_PATTERNS = (
+    "simulated probe",
+    "simulated action",
+    "dry-run",
+    "dry run",
+    "cannot access external systems",
+    "can't access external systems",
+    "unable to access external systems",
+    "no actual api call",
+    "actual api call was not",
+    "not actually executed",
+    "fallback-only",
+    "fallback only",
+    "hypothetical",
+)
 
 
 def _preview(value: str | None, limit: int = 1000) -> str | None:
@@ -37,12 +59,25 @@ def _preview(value: str | None, limit: int = 1000) -> str | None:
 
 def _packet_for_provider(provider: str, workspace_root: Path, evidence_dir: Path) -> TaskPacket:
     artifact = evidence_dir / f"{provider}_probe.md"
+    proof_contract = {
+        "status": "ok",
+        "probe": "executed",
+        "provider": provider,
+        "live_backend": True,
+        "no_fallback": True,
+    }
     env = {
         "WORKFLOW_RUN_GOAL": f"Live capability probe for {provider}. Return a tiny proof of execution.",
         "WORKFLOW_PRESET_ID": "capability_probe",
         "WORKFLOW_TASK_KIND": str(TaskKind.shell_exec),
         "WORKFLOW_MUTATION_MODE": str(MutationMode.artifact_only),
-        "WORKFLOW_RUNTIME_BRIEF": "M64 live provider smoke. Do not mutate repository files.",
+        "WORKFLOW_RUNTIME_BRIEF": (
+            "M67 live provider smoke. Do not mutate repository files. "
+            "Return concrete evidence from the invoked backend. "
+            f"Return only this proof JSON when possible: {json.dumps(proof_contract, sort_keys=True)}"
+        ),
+        "WORKFLOW_CAPABILITY_PROBE_PROVIDER": provider,
+        "WORKFLOW_CAPABILITY_PROBE_CONTRACT_JSON": json.dumps(proof_contract, sort_keys=True),
         "WORKFLOW_CODEX_TIMEOUT_SECONDS": os.getenv("WORKFLOW_CODEX_TIMEOUT_SECONDS", "120"),
         "WORKFLOW_CLAUDE_ARCHITECT_ENABLED": os.getenv("WORKFLOW_CLAUDE_ARCHITECT_ENABLED", "1"),
     }
@@ -122,15 +157,13 @@ def _result_from_execution(
             artifact_text = Path(evidence_path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             artifact_text = ""
-    evidence_ok = bool(stdout.strip() or artifact_text.strip())
-    if '"status": "empty_output"' in artifact_text:
-        evidence_ok = False
-    if provider in {"codex", "opencode"} and artifact_text:
-        template_evidence = "preset: capability_probe" in artifact_text and f"adapter: {adapter_name}" in artifact_text
-        live_proof_evidence = _artifact_has_live_proof(artifact_text, provider=provider, adapter_name=adapter_name)
-        minimal_live_proof = _artifact_has_minimal_live_proof(artifact_text)
-        evidence_ok = template_evidence or live_proof_evidence or minimal_live_proof
-    success = execution.return_code == 0 and evidence_ok
+    proof_ok, failure_class, proof_metadata = _classify_live_probe_evidence(
+        provider=provider,
+        adapter_name=adapter_name,
+        stdout=stdout,
+        artifact_text=artifact_text,
+    )
+    success = execution.return_code == 0 and proof_ok
     return CapabilityProbeResult(
         provider=provider,
         adapter_name=adapter_name,
@@ -138,40 +171,117 @@ def _result_from_execution(
         live_probe=live_probe,
         auth_source=_auth_source_for_provider(provider),
         latency_ms=execution.duration_ms,
-        failure_class=None if success else "probe_failed",
+        failure_class=None if success else (failure_class or "probe_failed"),
         evidence_path=evidence_path,
         fallback_route=None if success else "manual_investigation_required",
         return_code=execution.return_code,
         stdout_preview=_preview(stdout),
         stderr_preview=_preview(stderr),
-        metadata={"artifact_paths": execution.artifact_paths},
+        metadata={"artifact_paths": execution.artifact_paths, "proof": proof_metadata},
     )
+
+
+def _contains_any_pattern(text: str, patterns: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in patterns)
+
+
+def _iter_json_objects(text: str):
+    stripped = text.strip()
+    if not stripped:
+        return
+    decoder = json.JSONDecoder()
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        yield payload
+    index = 0
+    while index < len(text):
+        brace_index = text.find("{", index)
+        if brace_index == -1:
+            break
+        try:
+            payload, end_index = decoder.raw_decode(text[brace_index:])
+        except json.JSONDecodeError:
+            index = brace_index + 1
+            continue
+        if isinstance(payload, dict):
+            yield payload
+        index = brace_index + max(end_index, 1)
+
+
+def _provider_adapter_values(provider: str, adapter_name: str | None) -> set[str]:
+    values = {provider}
+    if adapter_name:
+        values.add(adapter_name)
+    aliases = {
+        "mmx": {"mmx_multimodal"},
+        "vertex": {"vertex_multimodal"},
+        "claude": {"claude_architect"},
+        "langchain": {"agent", "langchain_agent"},
+    }
+    values.update(aliases.get(provider, set()))
+    return {value.lower() for value in values}
+
+
+def _classify_live_probe_evidence(
+    *,
+    provider: str,
+    adapter_name: str | None,
+    stdout: str,
+    artifact_text: str,
+) -> tuple[bool, str | None, dict[str, object]]:
+    combined_text = "\n".join(item for item in [stdout or "", artifact_text or ""] if item)
+    metadata: dict[str, object] = {"contract": "m67_live_proof_v1"}
+    if not combined_text.strip():
+        return False, "empty_output", metadata
+    if '"status": "empty_output"' in artifact_text:
+        return False, "empty_output", metadata
+    if _contains_any_pattern(combined_text, SIMULATED_OR_DRY_RUN_PATTERNS):
+        metadata["rejected_reason"] = "simulated_or_dry_run"
+        return False, "simulated_or_dry_run_evidence", metadata
+    if _contains_any_pattern(combined_text, GENERIC_ASSISTANT_PATTERNS):
+        metadata["rejected_reason"] = "generic_assistant_reply"
+        return False, "generic_assistant_evidence", metadata
+    if provider == "shell":
+        shell_ok = (
+            "workflow-shell-probe" in combined_text
+            or _artifact_has_live_proof(artifact_text, provider=provider, adapter_name=adapter_name)
+            or _artifact_has_live_proof(stdout, provider=provider, adapter_name=adapter_name)
+        )
+        metadata["proof_type"] = "shell_stdout" if shell_ok else "missing_shell_marker"
+        return (True, None, metadata) if shell_ok else (False, "missing_live_proof", metadata)
+    if _artifact_has_live_proof(artifact_text, provider=provider, adapter_name=adapter_name) or _artifact_has_live_proof(
+        stdout,
+        provider=provider,
+        adapter_name=adapter_name,
+    ):
+        metadata["proof_type"] = "json_live_proof"
+        return True, None, metadata
+    metadata["proof_type"] = "none"
+    return False, "missing_live_proof", metadata
 
 
 def _artifact_has_live_proof(artifact_text: str, *, provider: str, adapter_name: str | None) -> bool:
     text = artifact_text.strip()
     if not text:
         return False
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    adapter_values = {provider}
-    if adapter_name:
-        adapter_values.add(adapter_name)
-    return (
-        str(payload.get("status", "")).lower() == "ok"
-        and str(payload.get("probe", "")).lower() == "executed"
-        and str(payload.get("adapter", "")).lower() in {value.lower() for value in adapter_values}
-    )
-
-
-def _artifact_has_minimal_live_proof(artifact_text: str) -> bool:
-    text = artifact_text.strip().lower()
-    return text in {"ok", "probe-ok", "capability-probe-ok", "capability probe ok"}
-
+    adapter_values = _provider_adapter_values(provider, adapter_name)
+    for payload in _iter_json_objects(text):
+        adapter_value = str(payload.get("adapter") or payload.get("provider") or "").lower()
+        live_backend = payload.get("live_backend")
+        no_fallback = payload.get("no_fallback")
+        if (
+            str(payload.get("status", "")).lower() == "ok"
+            and str(payload.get("probe", "")).lower() == "executed"
+            and adapter_value in adapter_values
+            and live_backend is True
+            and no_fallback is True
+        ):
+            return True
+    return False
 
 def probe_provider(
     *,

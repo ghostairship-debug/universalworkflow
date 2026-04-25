@@ -58,7 +58,7 @@ Bug-first observation:
 | Phase | 状态 | 目标 |
 | --- | --- | --- |
 | P2 | completed | `OperatorActionReceipt` v2 / scope hash / bounded autonomy policy first slice |
-| P3 | pending | capability live-proof hard gate |
+| P3 | completed | capability live-proof hard gate |
 | P4 | pending | validation / CI reliability |
 | P5 | pending | Web and browser surface hardening |
 | P6 | pending | scheduler semantics and boot path |
@@ -67,7 +67,7 @@ Bug-first observation:
 
 ## Go / No-Go
 
-当前结论：`NO-GO`，因为 P3-P8 blocking items 尚未完成。
+当前结论：`NO-GO`，因为 P4-P8 blocking items 尚未完成。
 
 M67 通过后，M68 才允许恢复能力层开发。
 
@@ -101,3 +101,28 @@ M67 通过后，M68 才允许恢复能力层开发。
 
 - `M67-SEC-001` 已偿还。
 - `M67-AUTO-001` 仍保持 blocking_open，因为 P2 只修了 execute/auto-apply 的硬边界，完整 Command / PolicyEngine / AutomationLease 语义仍需后续收敛。
+
+## P3: Capability Live-Proof Hard Gate
+
+状态：`completed`
+
+已完成动作：
+
+- capability probe 引入 M67 live-proof contract：`status=ok`、`probe=executed`、`provider`、`live_backend=true`、`no_fallback=true`。
+- probe parser 拒绝 generic assistant greeting、simulated、dry-run、fallback-only、minimal `ok` 等 false-positive evidence。
+- Codex/OpenCode artifact-only capability probe 直接输出 contract JSON，避免模板文字被误判。
+- Claude capability probe 使用 contract JSON 作为唯一 prompt，禁用工具与会话持久化，避免 probe 漂移到 repo 操作。
+- LangChain capability probe 先真实调用 primary ChatOpenAI-compatible provider，再写入精确 proof；probe 路径不使用 fallback。
+- MMX/Vertex/Claude/LangChain 的 evidence 均纳入 provider-specific live-proof 校验。
+
+验证：
+
+- `python -m pytest tests/test_capability_probe.py -q --basetemp state/.pytest-tmp-current/p3-capability-strict-template`：11 passed。
+- `workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider claude --require-live --evidence-dir state/m67_workflow_closeout/capability_probes_single_claude`：passed。
+- `workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider langchain --require-live --evidence-dir state/m67_workflow_closeout/capability_probes_single_langchain`：passed。
+- `workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider all --require-live --evidence-dir state/m67_workflow_closeout/capability_probes`：passed，shell/Codex/OpenCode/MMX/Vertex/Claude/LangChain 全部 `verified_ready`。
+
+剩余：
+
+- `M67-PROBE-001` 已偿还。
+- M67 仍为 `NO-GO`，因为 P4-P8 blocking items 尚未完成。

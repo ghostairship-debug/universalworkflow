@@ -29,7 +29,7 @@ class _ProbeTimeoutAdapter:
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=0,
-            stdout="probe-ok",
+            stdout="workflow-shell-probe",
             stderr="",
             started_at=now,
             finished_at=now,
@@ -66,21 +66,32 @@ class _GenericArtifactAdapter:
 class _LiveProofArtifactAdapter:
     timeout_seconds = 180
 
+    def __init__(self, adapter_name: str = "opencode") -> None:
+        self.adapter_name = adapter_name
+
     def normalized_name(self) -> str:
-        return "opencode"
+        return self.adapter_name
 
     def launch(self, packet):
         artifact_path = Path(packet.expected_artifacts[0])
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text(
-            json.dumps({"status": "ok", "probe": "executed", "adapter": "opencode"}),
+            json.dumps(
+                {
+                    "status": "ok",
+                    "probe": "executed",
+                    "adapter": self.normalized_name(),
+                    "live_backend": True,
+                    "no_fallback": True,
+                }
+            ),
             encoding="utf-8",
         )
         now = utc_now()
         return ExecutionResult(
             runtime_task_id=packet.runtime_task_id,
             return_code=0,
-            stdout='{"status":"ok","probe":"executed","adapter":"opencode"}',
+            stdout=json.dumps({"status": "ok", "probe": "executed", "adapter": self.normalized_name()}),
             stderr="",
             started_at=now,
             finished_at=now,
@@ -105,6 +116,30 @@ class _MinimalLiveProofArtifactAdapter:
             runtime_task_id=packet.runtime_task_id,
             return_code=0,
             stdout='{"type":"text","text":"ok"}',
+            stderr="",
+            started_at=now,
+            finished_at=now,
+            duration_ms=0,
+            artifact_paths=[artifact_path.as_posix()],
+            adapter_name=self.normalized_name(),
+        )
+
+
+class _TemplateOnlyArtifactAdapter:
+    timeout_seconds = 180
+
+    def normalized_name(self) -> str:
+        return "opencode"
+
+    def launch(self, packet):
+        artifact_path = Path(packet.expected_artifacts[0])
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("preset: capability_probe\nadapter: opencode\n", encoding="utf-8")
+        now = utc_now()
+        return ExecutionResult(
+            runtime_task_id=packet.runtime_task_id,
+            return_code=0,
+            stdout="",
             stderr="",
             started_at=now,
             finished_at=now,
@@ -204,7 +239,39 @@ def test_capability_probe_rejects_generic_artifact_false_positive(tmp_path: Path
     )
 
     assert result.status == "blocked"
-    assert result.failure_class == "probe_failed"
+    assert result.failure_class == "generic_assistant_evidence"
+
+
+def test_capability_probe_rejects_simulated_or_dry_run_evidence(tmp_path: Path, monkeypatch) -> None:
+    class _SimulatedArtifactAdapter(_GenericArtifactAdapter):
+        def launch(self, packet):
+            artifact_path = Path(packet.expected_artifacts[0])
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text("Simulated Probe Action: no actual API call was forced.\n", encoding="utf-8")
+            now = utc_now()
+            return ExecutionResult(
+                runtime_task_id=packet.runtime_task_id,
+                return_code=0,
+                stdout="Simulated Probe Action: no actual API call was forced.\n",
+                stderr="",
+                started_at=now,
+                finished_at=now,
+                duration_ms=0,
+                artifact_paths=[artifact_path.as_posix()],
+                adapter_name=self.normalized_name(),
+            )
+
+    monkeypatch.setattr(capability_probe, "_adapter_for_provider", lambda provider: _SimulatedArtifactAdapter())
+
+    result = probe_provider(
+        provider="vertex",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+    )
+
+    assert result.status == "blocked"
+    assert result.failure_class == "simulated_or_dry_run_evidence"
 
 
 def test_capability_probe_accepts_explicit_live_proof_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -221,7 +288,59 @@ def test_capability_probe_accepts_explicit_live_proof_artifact(tmp_path: Path, m
     assert result.failure_class is None
 
 
-def test_capability_probe_accepts_minimal_live_proof_artifact(tmp_path: Path, monkeypatch) -> None:
+def test_capability_probe_accepts_explicit_live_proof_for_non_coding_provider(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(capability_probe, "_adapter_for_provider", lambda provider: _LiveProofArtifactAdapter("vertex_multimodal"))
+
+    result = probe_provider(
+        provider="vertex",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+    )
+
+    assert result.status == "verified_ready"
+    assert result.failure_class is None
+
+
+def test_capability_probe_extracts_live_proof_from_markdown_fence(tmp_path: Path, monkeypatch) -> None:
+    class _FencedLiveProofArtifactAdapter(_GenericArtifactAdapter):
+        def normalized_name(self) -> str:
+            return "mmx_multimodal"
+
+        def launch(self, packet):
+            artifact_path = Path(packet.expected_artifacts[0])
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(
+                '```json\n{"status":"ok","probe":"executed","provider":"mmx","live_backend":true,"no_fallback":true}\n```\n',
+                encoding="utf-8",
+            )
+            now = utc_now()
+            return ExecutionResult(
+                runtime_task_id=packet.runtime_task_id,
+                return_code=0,
+                stdout="",
+                stderr="",
+                started_at=now,
+                finished_at=now,
+                duration_ms=0,
+                artifact_paths=[artifact_path.as_posix()],
+                adapter_name=self.normalized_name(),
+            )
+
+    monkeypatch.setattr(capability_probe, "_adapter_for_provider", lambda provider: _FencedLiveProofArtifactAdapter())
+
+    result = probe_provider(
+        provider="mmx",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+    )
+
+    assert result.status == "verified_ready"
+    assert result.failure_class is None
+
+
+def test_capability_probe_rejects_minimal_ok_as_insufficient_live_proof(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(capability_probe, "_adapter_for_provider", lambda provider: _MinimalLiveProofArtifactAdapter())
 
     result = probe_provider(
@@ -231,5 +350,19 @@ def test_capability_probe_accepts_minimal_live_proof_artifact(tmp_path: Path, mo
         require_live=True,
     )
 
-    assert result.status == "verified_ready"
-    assert result.failure_class is None
+    assert result.status == "blocked"
+    assert result.failure_class == "missing_live_proof"
+
+
+def test_capability_probe_rejects_template_only_evidence(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(capability_probe, "_adapter_for_provider", lambda provider: _TemplateOnlyArtifactAdapter())
+
+    result = probe_provider(
+        provider="opencode",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+    )
+
+    assert result.status == "blocked"
+    assert result.failure_class == "missing_live_proof"
