@@ -17,6 +17,15 @@ from packages.core_domain.asset_generation import (
 )
 
 AssetGenerator = Callable[[AssetGenerationRequest], AssetGenerationResult]
+REQUIRED_COMMERCIAL_ASSET_NAMES = {
+    "background",
+    "block_skin_neon",
+    "particle_clear",
+    "sfx_place",
+    "sfx_clear",
+    "bgm_loop",
+    "voice_reward",
+}
 
 
 def _result_payload(name: str, result: AssetGenerationResult) -> dict[str, Any]:
@@ -25,15 +34,56 @@ def _result_payload(name: str, result: AssetGenerationResult) -> dict[str, Any]:
 
 def _coverage(results: list[dict[str, Any]]) -> dict[str, bool]:
     completed = [item for item in results if item.get("status") == "completed"]
-    completed_names = {str(item.get("asset_name") or "") for item in completed}
-    completed_modalities = {str(item.get("modality") or "") for item in completed}
+    completed_names = {
+        str(item.get("asset_name") or "")
+        for item in completed
+        if item.get("artifact_paths")
+    }
     return {
-        "generated_art_assets": "image" in completed_modalities,
-        "generated_audio_assets": bool({"audio", "music"} & completed_modalities),
+        "generated_art_assets": {"background", "block_skin_neon", "particle_clear"} <= completed_names,
+        "generated_audio_assets": {"sfx_place", "sfx_clear", "bgm_loop", "voice_reward"} <= completed_names,
         "skin_switching_visual_assets": any("skin" in name for name in completed_names),
         "particle_effects": any("particle" in name for name in completed_names),
-        "commercial_polish_pass": len(completed) >= 4,
+        "commercial_polish_pass": REQUIRED_COMMERCIAL_ASSET_NAMES <= completed_names,
     }
+
+
+def _blocked_required_assets(results: list[dict[str, Any]]) -> list[str]:
+    completed_names = {
+        str(item.get("asset_name") or "")
+        for item in results
+        if item.get("status") == "completed" and item.get("artifact_paths")
+    }
+    blockers = [f"required_asset_{name}_not_completed" for name in sorted(REQUIRED_COMMERCIAL_ASSET_NAMES - completed_names)]
+    for item in results:
+        name = str(item.get("asset_name") or "")
+        if name in REQUIRED_COMMERCIAL_ASSET_NAMES and item.get("status") != "completed":
+            failure = item.get("failure_class") or "blocked"
+            blocker = f"required_asset_{name}_{failure}"
+            if blocker not in blockers:
+                blockers.append(blocker)
+    return blockers
+
+
+def _generate_with_retries(
+    generator: AssetGenerator,
+    request: AssetGenerationRequest,
+    *,
+    attempts: int = 2,
+) -> AssetGenerationResult:
+    last_result: AssetGenerationResult | None = None
+    for attempt in range(1, attempts + 1):
+        result = generator(request)
+        metadata = dict(result.metadata or {})
+        metadata["attempt"] = attempt
+        metadata["max_attempts"] = attempts
+        result.metadata = metadata
+        if result.status == "completed" and result.artifact_paths:
+            return result
+        last_result = result
+    if last_result is None:
+        return generator(request)
+    return last_result
 
 
 def generate_cocos_commercial_asset_manifest(
@@ -70,14 +120,15 @@ def generate_cocos_commercial_asset_manifest(
         ),
     ]
     for name, filename, prompt in image_specs:
-        result = image_generator(
+        result = _generate_with_retries(
+            image_generator,
             AssetGenerationRequest(
                 provider="mmx_generation_api",
                 modality="image",
                 prompt=prompt,
                 output_dir=asset_dir / "images",
                 filename=filename,
-            )
+            ),
         )
         results.append(_result_payload(name, result))
 
@@ -86,36 +137,40 @@ def generate_cocos_commercial_asset_manifest(
         ("sfx_clear", "sfx_clear.mp3", "short bright line clear reward sound for casual mobile puzzle game"),
     ]
     for name, filename, prompt in audio_specs:
-        result = speech_generator(
+        result = _generate_with_retries(
+            speech_generator,
             AssetGenerationRequest(
                 provider="mmx_generation_api",
                 modality="audio",
                 prompt=prompt,
                 output_dir=asset_dir / "audio",
                 filename=filename,
-            )
+            ),
         )
         results.append(_result_payload(name, result))
 
-    music_result = music_generator(
+    music_result = _generate_with_retries(
+        music_generator,
         AssetGenerationRequest(
             provider="mmx_generation_api",
             modality="music",
             prompt="short seamless upbeat premium casual puzzle game background loop, no vocals",
             output_dir=asset_dir / "audio",
             filename="bgm_loop.mp3",
-        )
+        ),
+        attempts=3,
     )
     results.append(_result_payload("bgm_loop", music_result))
 
-    voice_result = tts_generator(
+    voice_result = _generate_with_retries(
+        tts_generator,
         AssetGenerationRequest(
             provider="gcp_tts_api",
             modality="audio",
             prompt="Great clear. Keep going.",
             output_dir=asset_dir / "audio",
             filename="voice_reward.mp3",
-        )
+        ),
     )
     results.append(_result_payload("voice_reward", voice_result))
 
@@ -132,7 +187,8 @@ def generate_cocos_commercial_asset_manifest(
             None,
         )
         if first_image:
-            review_result = visual_review_generator(
+            review_result = _generate_with_retries(
+                visual_review_generator,
                 AssetGenerationRequest(
                     provider="vertex_generation_api",
                     modality="vision_review",
@@ -143,12 +199,13 @@ def generate_cocos_commercial_asset_manifest(
                     output_dir=asset_dir / "reviews",
                     filename="vertex_visual_review.json",
                     metadata={"image_path": first_image["artifact_paths"][0]},
-                )
+                ),
             )
             review_result_payload = _result_payload("vertex_visual_review", review_result)
             results.append(review_result_payload)
 
     coverage = _coverage(results)
+    blockers = _blocked_required_assets(results)
     manifest = {
         "schema_version": "m77_cocos_commercial_assets_v1",
         "created_at": datetime.now(UTC).isoformat(),
@@ -156,7 +213,8 @@ def generate_cocos_commercial_asset_manifest(
         "asset_root": asset_dir.as_posix(),
         "results": results,
         "feature_coverage": coverage,
-        "go_no_go": "GO" if all(coverage.values()) else "NO-GO",
+        "blockers": blockers,
+        "go_no_go": "GO" if all(coverage.values()) and not blockers else "NO-GO",
     }
     manifest_path = root / "commercial_asset_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

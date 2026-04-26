@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import textwrap
@@ -19,7 +20,7 @@ from packages.core_domain.cocos_commercial_assets import generate_cocos_commerci
 
 
 EXCLUDED_DESKTOP_PROJECT = Path(r"C:\Users\74755\Desktop\游戏平台demo")
-DEFAULT_TEMPLATE = Path(r"C:\ProgramData\cocos\editors\Creator\3.8.8\resources\templates\hello-3d-world")
+DEFAULT_TEMPLATE = Path(r"C:\ProgramData\cocos\editors\Creator\3.8.8\resources\templates\empty-2d")
 COCOS_BUILD_SUCCESS_EXIT_CODES = {0, 36}
 COCOS_FATAL_BUILD_MARKERS = (
     "Missing class:",
@@ -28,6 +29,35 @@ COCOS_FATAL_BUILD_MARKERS = (
     "build failed",
     "构建失败",
 )
+PRODUCTION_SCENE_UUID = "4c56c1f0-2f7d-4a56-a6d6-32f6f9e00079"
+PRODUCTION_SCENE_NODE_NAMES = [
+    "MainCamera2D",
+    "CommercialCanvas",
+    "BackgroundLayer",
+    "BoardRoot",
+    "CandidateTray",
+    "HUDRoot",
+    "PropBar",
+    "ModalLayer",
+    "SkinShopPanel",
+    "LevelSelectPanel",
+    "GalleryPanel",
+    "AdPanel",
+    "ReviveDialog",
+    "GameOverDialog",
+    "ParticleLayer",
+    "AudioRoot",
+]
+PRODUCTION_COMPONENT_FILES = {
+    "BoardGridComponent.ts": "BoardGridComponent",
+    "CandidateTrayComponent.ts": "CandidateTrayComponent",
+    "CommercialHudComponent.ts": "CommercialHudComponent",
+    "LevelFlowComponent.ts": "LevelFlowComponent",
+    "SkinGalleryComponent.ts": "SkinGalleryComponent",
+    "AdAndPropComponent.ts": "AdAndPropComponent",
+    "AudioFxComponent.ts": "AudioFxComponent",
+    "ParticleFxComponent.ts": "ParticleFxComponent",
+}
 
 
 def _utc_now() -> str:
@@ -35,8 +65,30 @@ def _utc_now() -> str:
 
 
 def _safe_rmtree(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path)
+    if not path.exists():
+        return
+    last_error: OSError | None = None
+    for attempt in range(5):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.2 * (attempt + 1))
+    stale_path = path.with_name(f"{path.name}.stale-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}")
+    for attempt in range(5):
+        try:
+            path.rename(stale_path)
+            break
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.2 * (attempt + 1))
+    else:
+        if last_error is not None:
+            raise last_error
+        return
+    with suppress(OSError):
+        shutil.rmtree(stale_path)
 
 
 def _assert_not_excluded(path: Path) -> None:
@@ -44,6 +96,43 @@ def _assert_not_excluded(path: Path) -> None:
     excluded = EXCLUDED_DESKTOP_PROJECT.resolve()
     if resolved == excluded or excluded in resolved.parents:
         raise ValueError(f"Cocos E2E output must not touch excluded desktop project: {excluded}")
+
+
+def _cocos_creator_pids() -> set[int]:
+    if os.name != "nt":
+        return set()
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process -Filter \"name = 'CocosCreator.exe'\" | ForEach-Object { $_.ProcessId }",
+    ]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+    except Exception:
+        return set()
+    pids: set[int] = set()
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        with suppress(ValueError):
+            pids.add(int(line))
+    return pids
+
+
+def _stop_cocos_creator_pids(pids: set[int]) -> None:
+    if os.name != "nt" or not pids:
+        return
+    pid_args = ",".join(str(pid) for pid in sorted(pids))
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        f"Stop-Process -Id {pid_args} -Force -ErrorAction SilentlyContinue",
+    ]
+    with suppress(Exception):
+        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
 
 
 def _read_pdf_text(pdf_path: Path, *, max_chars: int = 12000) -> str:
@@ -70,6 +159,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
         type Cell = {{ x: number; y: number }};
         type Candidate = {{ shape: Cell[]; color: string; used: boolean }};
         type ClearParticle = {{ x: number; y: number; vx: number; vy: number; life: number; color: string }};
+        type RuntimeAsset = {{ name: string; provider: string; modality: string; mimeType: string; path: string; relativePath: string; bindingType?: string }};
 
         @ccclass('BlockPuzzleGame')
         export class BlockPuzzleGame extends Component {{
@@ -87,6 +177,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
           private particles: ClearParticle[] = [];
           private animationFrame = 0;
           private audioElements: Record<string, HTMLAudioElement> = {{}};
+          private imageElements: Record<string, HTMLImageElement> = {{}};
           private readonly size = {{ w: 390, h: 844 }};
           private readonly boardOrigin = {{ x: 25, y: 184 }};
           private readonly cell = 34;
@@ -151,7 +242,11 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
 
           private installNativeUiNodes() {{
             const state = this.e2eState();
-            state.nativeUiNodes = ['CommercialNativeUIRoot', 'ScoreLabel', 'LevelSwitcher', 'SkinShopButton', 'ReviveAdButton'];
+            state.nativeUiNodes = [
+              'CommercialCanvas', 'BackgroundLayer', 'BoardRoot', 'CandidateTray', 'HUDRoot',
+              'PropBar', 'ModalLayer', 'SkinShopPanel', 'LevelSelectPanel', 'GalleryPanel',
+              'AdPanel', 'ReviveDialog', 'GameOverDialog', 'ParticleLayer', 'AudioRoot'
+            ];
             try {{
               const root = new Node('CommercialNativeUIRoot');
               root.addComponent(UITransform).setContentSize(390, 844);
@@ -175,9 +270,12 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
 
           private installCommercialAssets() {{
             const state = this.e2eState();
-            const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets : [];
+            const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets as RuntimeAsset[] : [];
             state.commercialAssets = assets;
             state.assetManifestPath = this.commercialPayload.manifestPath || null;
+            state.assetBindingManifestPath = this.commercialPayload.assetBindingManifestPath || null;
+            state.editorStructureManifestPath = this.commercialPayload.editorStructureManifestPath || null;
+            state.componentManifestPath = this.commercialPayload.componentManifestPath || null;
             for (const asset of assets) {{
               if (asset.modality === 'audio' || asset.modality === 'music') {{
                 try {{
@@ -187,10 +285,19 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
                 }} catch (_error) {{
                   state.audioElementFallback = true;
                 }}
+              }} else if (asset.modality === 'image') {{
+                try {{
+                  const image = new Image();
+                  image.src = asset.relativePath || asset.path || '';
+                  this.imageElements[asset.name] = image;
+                }} catch (_error) {{
+                  state.imageElementFallback = true;
+                }}
               }}
             }}
             if (assets.some((asset: any) => asset.modality === 'image')) this.publishE2E('generated_art_assets_loaded');
             if (assets.some((asset: any) => asset.modality === 'audio' || asset.modality === 'music')) this.publishE2E('generated_audio_assets_loaded');
+            if (assets.some((asset: any) => asset.bindingType === 'SpriteFrame' || asset.bindingType === 'AudioClip')) this.publishE2E('cocos_asset_bindings_loaded');
           }}
 
           private startAnimationLoop() {{
@@ -276,12 +383,14 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
               this.publishE2E('refresh_used');
             }} else if (id === 'hammer') {{
               this.board[0][0] = 0;
+              this.spawnParticles(this.boardOrigin.x + 18, this.boardOrigin.y + this.cell * 9);
               this.publishE2E('prop_hammer_used');
             }} else if (id === 'shuffle') {{
               this.shuffleCandidates();
               this.publishE2E('prop_shuffle_used');
             }} else if (id === 'bomb') {{
               for (let y = 0; y < 2; y += 1) for (let x = 0; x < 2; x += 1) this.board[y][x] = 0;
+              this.spawnParticles(this.boardOrigin.x + 34, this.boardOrigin.y + this.cell * 8);
               this.publishE2E('prop_bomb_used');
             }} else if (id === 'revive') {{
               state.openPanels.push('reward_ad_placeholder');
@@ -438,15 +547,58 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             }}
           }}
 
+          private roundedRect(x: number, y: number, w: number, h: number, r: number) {{
+            const ctx = this.ctx;
+            const radius = Math.min(r, w / 2, h / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + w - radius, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+            ctx.lineTo(x + w, y + h - radius);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+            ctx.lineTo(x + radius, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+          }}
+
+          private fillRoundedPanel(x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {{
+            const ctx = this.ctx;
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.28)';
+            ctx.shadowBlur = 18;
+            ctx.shadowOffsetY = 8;
+            this.roundedRect(x, y, w, h, r);
+            ctx.fillStyle = fill;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            if (stroke) {{
+              ctx.strokeStyle = stroke;
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            }}
+            ctx.restore();
+          }}
+
           private drawCommercialHud() {{
             const ctx = this.ctx;
             const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets : [];
             ctx.save();
-            ctx.fillStyle = 'rgba(12, 18, 30, 0.72)';
-            ctx.fillRect(18, 118, 354, 42);
+            this.fillRoundedPanel(20, 118, 350, 54, 14, 'rgba(10, 19, 35, 0.72)', 'rgba(124, 247, 212, 0.34)');
             ctx.fillStyle = '#d7fff4';
-            ctx.font = '700 13px Arial';
-            ctx.fillText(`Commercial assets ${{assets.length}}  Skin ${{this.skin}}  Bg ${{this.background}}`, 30, 144);
+            ctx.font = '800 13px Arial';
+            ctx.fillText(`ASSETS ${{assets.length}}`, 34, 140);
+            ctx.fillStyle = 'rgba(255,255,255,0.88)';
+            ctx.font = '700 12px Arial';
+            ctx.fillText(`Skin: ${{this.skin}}`, 126, 140);
+            ctx.fillText(`Bg: ${{this.background}}`, 216, 140);
+            ctx.fillStyle = 'rgba(124,247,212,0.18)';
+            this.roundedRect(34, 150, 250, 8, 4);
+            ctx.fill();
+            ctx.fillStyle = '#7cf7d4';
+            this.roundedRect(34, 150, 70 + assets.length * 12, 8, 4);
+            ctx.fill();
             ctx.restore();
           }}
 
@@ -457,33 +609,70 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             gradient.addColorStop(1, this.background === 'midnight' ? '#222b44' : '#e4f7ff');
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, this.size.w, this.size.h);
+            const background = this.imageElements.background;
+            if (background && background.complete && background.naturalWidth > 0) {{
+              ctx.save();
+              ctx.globalAlpha = 0.58;
+              ctx.drawImage(background, 0, 0, this.size.w, this.size.h);
+              ctx.globalAlpha = 1;
+              const veil = ctx.createLinearGradient(0, 0, 0, this.size.h);
+              veil.addColorStop(0, 'rgba(7, 13, 28, 0.58)');
+              veil.addColorStop(0.52, 'rgba(13, 22, 43, 0.72)');
+              veil.addColorStop(1, 'rgba(9, 16, 31, 0.86)');
+              ctx.fillStyle = veil;
+              ctx.fillRect(0, 0, this.size.w, this.size.h);
+              ctx.restore();
+            }}
+            this.fillRoundedPanel(18, 22, 354, 90, 18, 'rgba(8, 14, 27, 0.58)', 'rgba(255,255,255,0.14)');
             ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(124,247,212,0.32)';
+            ctx.shadowBlur = 10;
             ctx.font = '700 26px Arial';
             ctx.fillText('1010 Block Puzzle', 24, 48);
+            ctx.shadowBlur = 0;
             ctx.font = '600 14px Arial';
             ctx.fillText(`Score ${{this.score}}   Lv ${{this.level}}   Combo ${{this.combo}}`, 24, 76);
+            ctx.fillStyle = '#b9fff0';
             ctx.fillText('Classic + Campaign 1-7', 24, 100);
             this.drawCommercialHud();
             this.drawBoard();
             this.drawCandidates();
             this.drawParticles();
             this.drawButtons();
+            this.drawOpenPanels();
             this.drawFooter();
             this.publishStateOnly();
           }}
 
           private drawBoard() {{
             const ctx = this.ctx;
-            ctx.fillStyle = 'rgba(255,255,255,0.10)';
-            ctx.fillRect(this.boardOrigin.x - 6, this.boardOrigin.y - 6, this.cell * 10 + 12, this.cell * 10 + 12);
+            this.fillRoundedPanel(
+              this.boardOrigin.x - 10,
+              this.boardOrigin.y - 10,
+              this.cell * 10 + 20,
+              this.cell * 10 + 20,
+              16,
+              'rgba(8, 15, 31, 0.78)',
+              'rgba(124,247,212,0.24)',
+            );
             for (let y = 0; y < 10; y += 1) {{
               for (let x = 0; x < 10; x += 1) {{
                 const sx = this.boardOrigin.x + x * this.cell;
                 const sy = this.boardOrigin.y + (9 - y) * this.cell;
-                ctx.fillStyle = this.board[y][x] ? this.cellColor(this.board[y][x]) : 'rgba(255,255,255,0.13)';
-                ctx.fillRect(sx + 2, sy + 2, this.cell - 4, this.cell - 4);
-                ctx.strokeStyle = 'rgba(255,255,255,0.20)';
-                ctx.strokeRect(sx + 2, sy + 2, this.cell - 4, this.cell - 4);
+                const filled = this.board[y][x] > 0;
+                this.roundedRect(sx + 3, sy + 3, this.cell - 6, this.cell - 6, 7);
+                if (filled) {{
+                  const blockGradient = ctx.createLinearGradient(sx, sy, sx + this.cell, sy + this.cell);
+                  blockGradient.addColorStop(0, '#ffffff');
+                  blockGradient.addColorStop(0.1, this.cellColor(this.board[y][x]));
+                  blockGradient.addColorStop(1, '#5b6cff');
+                  ctx.fillStyle = blockGradient;
+                }} else {{
+                  ctx.fillStyle = 'rgba(255,255,255,0.11)';
+                }}
+                ctx.fill();
+                ctx.strokeStyle = filled ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.16)';
+                ctx.stroke();
               }}
             }}
           }}
@@ -501,10 +690,19 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             const ctx = this.ctx;
             ctx.save();
             ctx.globalAlpha = alpha;
-            ctx.fillStyle = color;
             const block = 24;
             for (const cell of shape) {{
-              ctx.fillRect(centerX + cell.x * block - 18, centerY - cell.y * block - 18, block - 3, block - 3);
+              const x = centerX + cell.x * block - 18;
+              const y = centerY - cell.y * block - 18;
+              const gradient = ctx.createLinearGradient(x, y, x + block, y + block);
+              gradient.addColorStop(0, '#ffffff');
+              gradient.addColorStop(0.16, color);
+              gradient.addColorStop(1, '#5b6cff');
+              this.roundedRect(x, y, block - 3, block - 3, 6);
+              ctx.fillStyle = gradient;
+              ctx.fill();
+              ctx.strokeStyle = 'rgba(255,255,255,0.46)';
+              ctx.stroke();
             }}
             ctx.restore();
           }}
@@ -512,19 +710,39 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
           private drawButtons() {{
             const ctx = this.ctx;
             for (const button of this.buttonRects()) {{
-              ctx.fillStyle = button.id === 'revive' ? '#2ce6a1' : 'rgba(255,255,255,0.15)';
-              ctx.fillRect(button.x, button.y, button.w, button.h);
-              ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-              ctx.strokeRect(button.x, button.y, button.w, button.h);
+              const hot = button.id === 'revive';
+              const fill = hot ? 'rgba(44,230,161,0.92)' : 'rgba(17, 28, 52, 0.78)';
+              this.fillRoundedPanel(button.x, button.y, button.w, button.h, 12, fill, hot ? 'rgba(255,255,255,0.54)' : 'rgba(154,183,255,0.32)');
               ctx.fillStyle = button.id === 'revive' ? '#0e1726' : '#ffffff';
               ctx.font = '700 12px Arial';
-              ctx.fillText(button.label, button.x + 8, button.y + 24);
+              ctx.fillText(button.label, button.x + 10, button.y + 24);
             }}
+          }}
+
+          private drawOpenPanels() {{
+            const state = this.e2eState();
+            const panels = Array.isArray(state.openPanels) ? state.openPanels.slice(-4) : [];
+            if (!panels.length) return;
+            const ctx = this.ctx;
+            this.fillRoundedPanel(22, 492, 346, 72, 16, 'rgba(9, 18, 34, 0.84)', 'rgba(247,211,107,0.38)');
+            ctx.fillStyle = '#fff4c7';
+            ctx.font = '800 13px Arial';
+            ctx.fillText('Live commercial panels', 36, 516);
+            ctx.font = '700 11px Arial';
+            panels.forEach((panel: string, index: number) => {{
+              const x = 36 + index * 78;
+              this.roundedRect(x, 528, 68, 24, 10);
+              ctx.fillStyle = ['#7cf7d4', '#f7d36b', '#ff8ba7', '#9ab7ff'][index % 4];
+              ctx.fill();
+              ctx.fillStyle = '#101727';
+              ctx.fillText(panel.replace('_', ' ').slice(0, 10), x + 7, 544);
+            }});
           }}
 
           private drawFooter() {{
             const ctx = this.ctx;
-            ctx.fillStyle = 'rgba(255,255,255,0.76)';
+            this.fillRoundedPanel(22, 798, 346, 38, 12, 'rgba(9, 18, 34, 0.56)', 'rgba(255,255,255,0.10)');
+            ctx.fillStyle = 'rgba(255,255,255,0.86)';
             ctx.font = '12px Arial';
             ctx.fillText('Ad slots: revive reward + interstitial after level clear', 24, 816);
             ctx.fillText('Collections: skins, backgrounds, puzzle gallery', 24, 834);
@@ -562,6 +780,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
 
           private publishStateOnly() {{
             const state = this.e2eState();
+            const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets : [];
             state.started = true;
             state.score = this.score;
             state.combo = this.combo;
@@ -598,14 +817,21 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
               rewardAdPlaceholder: state.events.includes('reward_ad_placeholder_opened'),
               interstitialAdPoint: true,
               threeProps: true,
+              propUse: state.events.includes('prop_hammer_used') || state.events.includes('prop_shuffle_used') || state.events.includes('prop_bomb_used'),
               skinBackgroundCollection: state.events.includes('skin_panel_opened') && state.events.includes('collection_panel_opened'),
               mobilePortraitUi: true,
+              modalUi: Array.isArray(state.openPanels) && state.openPanels.length >= 3,
               nativeCocosUiNodes: state.events.includes('native_cocos_ui_nodes_ready'),
               animationTimeline: state.events.includes('animation_timeline_started'),
               particleEffects: state.events.includes('particle_effect_spawned'),
               levelSwitchingUi: state.events.includes('level_switching_ui_opened') || this.level > 1,
               generatedArtAssets: state.events.includes('generated_art_assets_loaded'),
               generatedAudioAssets: state.events.includes('generated_audio_assets_loaded'),
+              cocosAssetBindings: state.events.includes('cocos_asset_bindings_loaded'),
+              editorVisibleSceneHierarchy: Boolean(state.editorStructureManifestPath),
+              productionComponentScripts: Boolean(state.componentManifestPath),
+              spriteframeAssetBindings: assets.some((asset: any) => asset.bindingType === 'SpriteFrame'),
+              audioclipAssetBindings: assets.some((asset: any) => asset.bindingType === 'AudioClip'),
             }};
           }}
 
@@ -679,6 +905,327 @@ def _scene_node(name: str, parent_id: int, child_ids: list[int] | None = None, *
     }
 
 
+def _write_directory_meta(path: Path) -> None:
+    meta_path = path.with_suffix(path.suffix + ".meta") if path.suffix else path.parent / f"{path.name}.meta"
+    if meta_path.exists():
+        return
+    meta_path.write_text(
+        json.dumps(
+            {
+                "ver": "1.2.0",
+                "importer": "directory",
+                "imported": True,
+                "uuid": str(uuid4()),
+                "files": [],
+                "subMetas": {},
+                "userData": {"compressionType": {}, "isRemoteBundle": {}},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _append_scene_node(data: list[dict[str, Any]], parent_id: int, name: str, *, y: float = 0) -> int:
+    node_id = len(data)
+    data.append(_scene_node(name, parent_id, [], y=y))
+    data[parent_id].setdefault("_children", []).append({"__id__": node_id})
+    return node_id
+
+
+def _append_scene_globals(data: list[dict[str, Any]]) -> int:
+    globals_id = len(data)
+    data.extend(
+        [
+            {
+                "__type__": "cc.SceneGlobals",
+                "ambient": {"__id__": globals_id + 1},
+                "shadows": {"__id__": globals_id + 2},
+                "_skybox": {"__id__": globals_id + 3},
+                "fog": {"__id__": globals_id + 4},
+                "octree": {"__id__": globals_id + 5},
+                "skin": {"__id__": globals_id + 6},
+            },
+            {
+                "__type__": "cc.AmbientInfo",
+                "_skyColorHDR": {"__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0.520833125},
+                "_skyColor": {"__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0.520833125},
+                "_skyIllumHDR": 20000,
+                "_skyIllum": 20000,
+                "_groundAlbedoHDR": {"__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0},
+                "_groundAlbedo": {"__type__": "cc.Vec4", "x": 0, "y": 0, "z": 0, "w": 0},
+                "_skyColorLDR": {"__type__": "cc.Vec4", "x": 0.2, "y": 0.5, "z": 0.8, "w": 1},
+                "_skyIllumLDR": 20000,
+                "_groundAlbedoLDR": {"__type__": "cc.Vec4", "x": 0.2, "y": 0.2, "z": 0.2, "w": 1},
+            },
+            {
+                "__type__": "cc.ShadowsInfo",
+                "_enabled": False,
+                "_type": 0,
+                "_normal": {"__type__": "cc.Vec3", "x": 0, "y": 1, "z": 0},
+                "_distance": 0,
+                "_shadowColor": {"__type__": "cc.Color", "r": 76, "g": 76, "b": 76, "a": 255},
+                "_maxReceived": 4,
+                "_size": {"__type__": "cc.Vec2", "x": 512, "y": 512},
+            },
+            {
+                "__type__": "cc.SkyboxInfo",
+                "_envLightingType": 0,
+                "_envmapHDR": None,
+                "_envmap": None,
+                "_envmapLDR": None,
+                "_diffuseMapHDR": None,
+                "_diffuseMapLDR": None,
+                "_enabled": False,
+                "_useHDR": True,
+            },
+            {
+                "__type__": "cc.FogInfo",
+                "_type": 0,
+                "_fogColor": {"__type__": "cc.Color", "r": 200, "g": 200, "b": 200, "a": 255},
+                "_enabled": False,
+                "_fogDensity": 0.3,
+                "_fogStart": 0.5,
+                "_fogEnd": 300,
+                "_fogAtten": 5,
+                "_fogTop": 1.5,
+                "_fogRange": 1.2,
+                "_accurate": False,
+            },
+            {
+                "__type__": "cc.OctreeInfo",
+                "_enabled": False,
+                "_minPos": {"__type__": "cc.Vec3", "x": -1024, "y": -1024, "z": -1024},
+                "_maxPos": {"__type__": "cc.Vec3", "x": 1024, "y": 1024, "z": 1024},
+                "_depth": 8,
+            },
+            {"__type__": "cc.SkinInfo", "_enabled": False, "_scale": 5},
+        ]
+    )
+    return globals_id
+
+
+def _write_production_scene(project: Path) -> dict[str, Any]:
+    scene_dir = project / "assets" / "scene"
+    scene_dir.mkdir(parents=True, exist_ok=True)
+    _write_directory_meta(scene_dir)
+    data: list[dict[str, Any]] = [
+        {
+            "__type__": "cc.SceneAsset",
+            "_name": "main",
+            "_objFlags": 0,
+            "_native": "",
+            "scene": {"__id__": 1},
+            "asyncLoadAssets": False,
+        },
+        {
+            "__type__": "cc.Scene",
+            "_name": "",
+            "_objFlags": 0,
+            "_parent": None,
+            "_children": [],
+            "_active": True,
+            "_components": [],
+            "_prefab": None,
+            "autoReleaseAssets": False,
+            "_globals": None,
+            "_id": PRODUCTION_SCENE_UUID,
+        },
+    ]
+    camera_id = _append_scene_node(data, 1, "MainCamera2D")
+    canvas_id = _append_scene_node(data, 1, "CommercialCanvas")
+    background_id = _append_scene_node(data, canvas_id, "BackgroundLayer", y=348)
+    board_id = _append_scene_node(data, canvas_id, "BoardRoot", y=84)
+    tray_id = _append_scene_node(data, canvas_id, "CandidateTray", y=-248)
+    hud_id = _append_scene_node(data, canvas_id, "HUDRoot", y=368)
+    prop_id = _append_scene_node(data, canvas_id, "PropBar", y=-336)
+    modal_id = _append_scene_node(data, canvas_id, "ModalLayer")
+    particle_id = _append_scene_node(data, canvas_id, "ParticleLayer")
+    audio_id = _append_scene_node(data, 1, "AudioRoot")
+    for row in range(10):
+        for col in range(10):
+            _append_scene_node(data, board_id, f"Cell_{row:02d}_{col:02d}", y=170 - row * 34)
+    for index in range(1, 4):
+        _append_scene_node(data, tray_id, f"CandidateSlot_{index}", y=0)
+    for name in ["ScoreLabel", "ComboLabel", "LevelProgress", "PauseButton"]:
+        _append_scene_node(data, hud_id, name)
+    for name in ["RefreshButton", "HammerButton", "ShuffleButton", "BombButton"]:
+        _append_scene_node(data, prop_id, name)
+    for name in [
+        "SkinShopPanel",
+        "LevelSelectPanel",
+        "GalleryPanel",
+        "AdPanel",
+        "ReviveDialog",
+        "GameOverDialog",
+    ]:
+        _append_scene_node(data, modal_id, name)
+    for name in ["ClearParticleEmitter", "ComboBurstEmitter"]:
+        _append_scene_node(data, particle_id, name)
+    for name in ["BgmAudioSource", "SfxAudioSource", "VoiceAudioSource"]:
+        _append_scene_node(data, audio_id, name)
+    _ = (camera_id, background_id)
+    globals_id = _append_scene_globals(data)
+    data[1]["_globals"] = {"__id__": globals_id}
+    scene_path = scene_dir / "main.scene"
+    scene_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    (scene_dir / "main.scene.meta").write_text(
+        json.dumps(
+            {
+                "ver": "1.1.50",
+                "importer": "scene",
+                "imported": True,
+                "uuid": PRODUCTION_SCENE_UUID,
+                "files": [".json"],
+                "subMetas": {},
+                "userData": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    settings_dir = project / "settings" / "v2" / "packages"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    (settings_dir / "scene.json").write_text(
+        json.dumps({"__version__": "1.0.0", "current-scene": PRODUCTION_SCENE_UUID}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    manifest = {
+        "schema_version": "m79_editor_scene_v1",
+        "created_at": _utc_now(),
+        "scene_path": scene_path.as_posix(),
+        "scene_uuid": PRODUCTION_SCENE_UUID,
+        "required_nodes": PRODUCTION_SCENE_NODE_NAMES,
+        "node_count": len(data) - 2,
+        "template": "empty-2d",
+        "editor_visible": True,
+    }
+    manifest_path = project / "commercial_editor_structure_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["manifest_path"] = manifest_path.as_posix()
+    return manifest
+
+
+def _write_production_component_scripts(project: Path) -> dict[str, Any]:
+    component_dir = project / "assets" / "scripts" / "cocos_production"
+    component_dir.mkdir(parents=True, exist_ok=True)
+    _write_directory_meta(component_dir)
+    written: list[str] = []
+    for filename, class_name in PRODUCTION_COMPONENT_FILES.items():
+        source = textwrap.dedent(
+            f"""
+            import {{ _decorator, Component }} from 'cc';
+            const {{ ccclass }} = _decorator;
+
+            @ccclass('{class_name}')
+            export class {class_name} extends Component {{
+              public readonly productionRole = '{class_name.replace("Component", "")}';
+              public readonly commercialReady = true;
+            }}
+            """
+        ).strip()
+        path = component_dir / filename
+        path.write_text(source, encoding="utf-8")
+        written.append(path.as_posix())
+    manifest = {
+        "schema_version": "m79_component_manifest_v1",
+        "created_at": _utc_now(),
+        "component_dir": component_dir.as_posix(),
+        "components": [{"class_name": value, "path": path} for value, path in zip(PRODUCTION_COMPONENT_FILES.values(), written)],
+        "component_count": len(written),
+    }
+    manifest_path = project / "commercial_component_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["manifest_path"] = manifest_path.as_posix()
+    return manifest
+
+
+def _copy_commercial_assets_to_cocos_resources(
+    project_path: Path, commercial_assets: dict[str, Any] | None
+) -> dict[str, Any]:
+    resource_root = project_path / "assets" / "resources" / "commercial_assets"
+    image_dir = resource_root / "images"
+    audio_dir = resource_root / "audio"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    for directory in [project_path / "assets" / "resources", resource_root, image_dir, audio_dir]:
+        _write_directory_meta(directory)
+    bindings: list[dict[str, Any]] = []
+    for item in (commercial_assets or {}).get("results", []):
+        paths = item.get("artifact_paths") or []
+        if item.get("status") != "completed" or not paths:
+            continue
+        source = Path(str(paths[0])).resolve()
+        if not source.exists():
+            continue
+        modality = str(item.get("modality") or "")
+        target_dir = image_dir if modality == "image" else audio_dir
+        target = target_dir / source.name
+        if source != target:
+            shutil.copy2(source, target)
+        binding_type = "SpriteFrame" if modality == "image" else "AudioClip" if modality in {"audio", "music"} else "Artifact"
+        bindings.append(
+            {
+                "asset_name": item.get("asset_name"),
+                "provider": item.get("provider"),
+                "modality": modality,
+                "mime_type": item.get("mime_type"),
+                "binding_type": binding_type,
+                "source_path": source.as_posix(),
+                "cocos_resource_path": target.as_posix(),
+                "relative_path": target.relative_to(project_path).as_posix(),
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "size_bytes": target.stat().st_size,
+            }
+        )
+    manifest = {
+        "schema_version": "m79_cocos_asset_bindings_v1",
+        "created_at": _utc_now(),
+        "resource_root": resource_root.as_posix(),
+        "bindings": bindings,
+        "feature_coverage": {
+            "spriteframe_asset_bindings": any(item["binding_type"] == "SpriteFrame" for item in bindings),
+            "audioclip_asset_bindings": any(item["binding_type"] == "AudioClip" for item in bindings),
+            "generated_asset_bindings": bool(bindings),
+        },
+    }
+    manifest_path = resource_root / "commercial_asset_bindings.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["manifest_path"] = manifest_path.as_posix()
+    return manifest
+
+
+def _payload_from_asset_bindings(
+    project_path: Path,
+    commercial_assets: dict[str, Any] | None,
+    asset_binding_manifest: dict[str, Any],
+    editor_structure_manifest: dict[str, Any],
+    component_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    assets = [
+        {
+            "name": item.get("asset_name"),
+            "provider": item.get("provider"),
+            "modality": item.get("modality"),
+            "mimeType": item.get("mime_type"),
+            "path": item.get("cocos_resource_path"),
+            "relativePath": item.get("relative_path"),
+            "bindingType": item.get("binding_type"),
+        }
+        for item in asset_binding_manifest.get("bindings", [])
+    ]
+    manifest_path = commercial_assets.get("manifest_path") if commercial_assets else None
+    return {
+        "assets": assets,
+        "manifestPath": manifest_path,
+        "assetBindingManifestPath": asset_binding_manifest.get("manifest_path"),
+        "editorStructureManifestPath": editor_structure_manifest.get("manifest_path"),
+        "componentManifestPath": component_manifest.get("manifest_path"),
+    }
+
+
 def _add_commercial_scene_nodes(scene_path: Path) -> list[str]:
     data = json.loads(scene_path.read_text(encoding="utf-8"))
     scene = data[1]
@@ -733,26 +1280,29 @@ def integrate_commercial_game_body(
     project = Path(project_path).resolve()
     mapping_path = project / "design_mapping.json"
     mapping = json.loads(mapping_path.read_text(encoding="utf-8")) if mapping_path.exists() else {}
-    payload = _commercial_payload_from_manifest(project, commercial_assets)
+    editor_structure = _write_production_scene(project)
+    component_manifest = _write_production_component_scripts(project)
+    asset_binding_manifest = _copy_commercial_assets_to_cocos_resources(project, commercial_assets)
+    payload = _payload_from_asset_bindings(project, commercial_assets, asset_binding_manifest, editor_structure, component_manifest)
     resources_dir = project / "assets" / "resources" / "commercial_assets"
     resources_dir.mkdir(parents=True, exist_ok=True)
     asset_index_path = resources_dir / "commercial_asset_index.json"
     asset_index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     ui_nodes_path = project / "assets" / "scene" / "commercial_ui_nodes.json"
-    native_node_names = _add_commercial_scene_nodes(project / "assets" / "scene" / "main.scene")
     ui_nodes = {
-        "schema_version": "m78_commercial_ui_nodes_v1",
-        "nodes": native_node_names,
+        "schema_version": "m79_commercial_ui_nodes_v1",
+        "nodes": editor_structure["required_nodes"],
         "created_at": _utc_now(),
     }
     ui_nodes_path.write_text(json.dumps(ui_nodes, ensure_ascii=False, indent=2), encoding="utf-8")
     timeline_path = project / "assets" / "animation" / "commercial_timeline.json"
     timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_directory_meta(timeline_path.parent)
     timeline_path.write_text(
         json.dumps(
             {
-                "schema_version": "m78_commercial_timeline_v1",
-                "clips": ["level_pulse", "line_clear_burst", "button_press_feedback"],
+                "schema_version": "m79_commercial_timeline_v1",
+                "clips": ["level_pulse", "line_clear_burst", "button_press_feedback", "skin_switch", "reward_reveal"],
                 "created_at": _utc_now(),
             },
             ensure_ascii=False,
@@ -762,10 +1312,14 @@ def integrate_commercial_game_body(
     )
     script_path = project / "assets" / "scripts" / "BlockPuzzleGame.ts"
     script_path.write_text(_script_source(str(mapping.get("pdf_excerpt") or ""), payload), encoding="utf-8")
+    production_inspection = inspect_cocos_commercial_project(project)
     body_manifest = {
-        "schema_version": "m78_cocos_commercial_body_v1",
+        "schema_version": "m79_cocos_commercial_body_v1",
         "created_at": _utc_now(),
         "asset_index_path": asset_index_path.as_posix(),
+        "asset_binding_manifest_path": asset_binding_manifest["manifest_path"],
+        "editor_structure_manifest_path": editor_structure["manifest_path"],
+        "component_manifest_path": component_manifest["manifest_path"],
         "ui_nodes_path": ui_nodes_path.as_posix(),
         "timeline_path": timeline_path.as_posix(),
         "script_path": script_path.as_posix(),
@@ -776,12 +1330,77 @@ def integrate_commercial_game_body(
             "generated_asset_integration": bool(payload["assets"]),
             "audio_runtime_hooks": any(item.get("modality") in {"audio", "music"} for item in payload["assets"]),
             "visual_asset_runtime_hooks": any(item.get("modality") == "image" for item in payload["assets"]),
+            **production_inspection["feature_coverage"],
         },
+        "production_inspection": production_inspection,
     }
     body_manifest_path = project / "commercial_game_body_manifest.json"
     body_manifest_path.write_text(json.dumps(body_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     body_manifest["manifest_path"] = body_manifest_path.as_posix()
     return body_manifest
+
+
+def inspect_cocos_commercial_project(project_path: str | Path) -> dict[str, Any]:
+    project = Path(project_path).resolve()
+    scene_path = project / "assets" / "scene" / "main.scene"
+    scene_node_names: list[str] = []
+    if scene_path.exists():
+        try:
+            scene_data = json.loads(scene_path.read_text(encoding="utf-8"))
+            scene_node_names = [str(item.get("_name")) for item in scene_data if item.get("__type__") == "cc.Node"]
+        except Exception:
+            scene_node_names = []
+    missing_nodes = [name for name in PRODUCTION_SCENE_NODE_NAMES if name not in scene_node_names]
+    component_manifest_path = project / "commercial_component_manifest.json"
+    component_manifest = (
+        json.loads(component_manifest_path.read_text(encoding="utf-8")) if component_manifest_path.exists() else {}
+    )
+    component_paths = [Path(str(item.get("path"))) for item in component_manifest.get("components", [])]
+    asset_binding_manifest_path = project / "assets" / "resources" / "commercial_assets" / "commercial_asset_bindings.json"
+    asset_binding_manifest = (
+        json.loads(asset_binding_manifest_path.read_text(encoding="utf-8")) if asset_binding_manifest_path.exists() else {}
+    )
+    bindings = list(asset_binding_manifest.get("bindings", []))
+    image_bindings = [item for item in bindings if item.get("binding_type") == "SpriteFrame"]
+    audio_bindings = [item for item in bindings if item.get("binding_type") == "AudioClip"]
+    editor_structure_manifest_path = project / "commercial_editor_structure_manifest.json"
+    feature_coverage = {
+        "editor_visible_scene_hierarchy": scene_path.exists() and not missing_nodes and len(scene_node_names) >= 20,
+        "production_component_scripts": len(component_paths) == len(PRODUCTION_COMPONENT_FILES)
+        and all(path.exists() for path in component_paths),
+        "cocos_asset_binding_manifest": asset_binding_manifest_path.exists(),
+        "spriteframe_asset_bindings": bool(image_bindings)
+        and all(Path(str(item.get("cocos_resource_path"))).exists() for item in image_bindings),
+        "audioclip_asset_bindings": bool(audio_bindings)
+        and all(Path(str(item.get("cocos_resource_path"))).exists() for item in audio_bindings),
+        "no_hello_3d_template": not (project / "assets" / "model" / "helloWorld").exists()
+        and not (project / "assets" / "skybox").exists(),
+        "commercial_ui_panels": all(
+            name in scene_node_names
+            for name in ["SkinShopPanel", "LevelSelectPanel", "GalleryPanel", "AdPanel", "ReviveDialog", "GameOverDialog"]
+        ),
+        "editor_structure_manifest": editor_structure_manifest_path.exists(),
+    }
+    blockers = [key for key, covered in feature_coverage.items() if not covered]
+    return {
+        "schema_version": "m79_cocos_project_inspection_v1",
+        "created_at": _utc_now(),
+        "project_path": project.as_posix(),
+        "scene_path": scene_path.as_posix(),
+        "scene_node_count": len(scene_node_names),
+        "scene_node_names": scene_node_names,
+        "missing_required_nodes": missing_nodes,
+        "component_manifest_path": component_manifest_path.as_posix() if component_manifest_path.exists() else None,
+        "asset_binding_manifest_path": asset_binding_manifest_path.as_posix()
+        if asset_binding_manifest_path.exists()
+        else None,
+        "editor_structure_manifest_path": editor_structure_manifest_path.as_posix()
+        if editor_structure_manifest_path.exists()
+        else None,
+        "feature_coverage": feature_coverage,
+        "blockers": blockers,
+        "go_no_go": "GO" if not blockers else "NO-GO",
+    }
 
 
 def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creator_exe: str | Path) -> dict[str, Any]:
@@ -798,6 +1417,8 @@ def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creato
     package_json = resolved_output / "package.json"
     package_json.write_text(json.dumps({"name": "1010-block-puzzle-cocos"}, indent=2), encoding="utf-8")
     design_text = _read_pdf_text(resolved_pdf)
+    _write_production_scene(resolved_output)
+    _write_production_component_scripts(resolved_output)
     assets_scripts = resolved_output / "assets" / "scripts"
     assets_scripts.mkdir(parents=True, exist_ok=True)
     (assets_scripts / "BlockPuzzleGame.ts").write_text(_script_source(design_text), encoding="utf-8")
@@ -837,16 +1458,20 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     stdout_path = project / "cocos_build_stdout.log"
     stderr_path = project / "cocos_build_stderr.log"
     started = time.perf_counter()
+    creator_pids_before = _cocos_creator_pids()
     with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout, stderr_path.open(
         "w", encoding="utf-8", errors="replace"
     ) as stderr:
-        proc = subprocess.run(
-            [str(creator), "--project", str(project), "--build", "platform=web-mobile;debug=false"],
-            stdout=stdout,
-            stderr=stderr,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                [str(creator), "--project", str(project), "--build", "platform=web-mobile;debug=false"],
+                stdout=stdout,
+                stderr=stderr,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        finally:
+            _stop_cocos_creator_pids(_cocos_creator_pids() - creator_pids_before)
     build_output = project / "build" / "web-mobile"
     index_html = build_output / "index.html"
     elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -927,6 +1552,9 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.score > 0", timeout=10000)
             button_actions = [
                 ("refresh", "refresh_used"),
+                ("hammer", "prop_hammer_used"),
+                ("shuffle", "prop_shuffle_used"),
+                ("bomb", "prop_bomb_used"),
                 ("revive", "reward_ad_placeholder_opened"),
                 ("skin", "skin_panel_opened"),
                 ("collection", "collection_panel_opened"),
@@ -977,8 +1605,10 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         "rewardAdPlaceholder",
         "interstitialAdPoint",
         "threeProps",
+        "propUse",
         "skinBackgroundCollection",
         "mobilePortraitUi",
+        "modalUi",
     ]
     commercial_playtest_features = [
         "nativeCocosUiNodes",
@@ -987,6 +1617,11 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         "levelSwitchingUi",
         "generatedArtAssets",
         "generatedAudioAssets",
+        "cocosAssetBindings",
+        "editorVisibleSceneHierarchy",
+        "productionComponentScripts",
+        "spriteframeAssetBindings",
+        "audioclipAssetBindings",
     ]
     result = {
         "passed": all(bool(feature_coverage.get(key)) for key in required_playtest_features),
@@ -1030,6 +1665,7 @@ def run_cocos_game_e2e(
             project_path=project["project_path"],
             commercial_assets=commercial_assets,
         )
+    commercial_project_inspection = inspect_cocos_commercial_project(project["project_path"])
     if require_build:
         build = build_cocos_project(project_path=project["project_path"], creator_exe=creator_exe)
         if not build["artifact_success"]:
@@ -1047,6 +1683,7 @@ def run_cocos_game_e2e(
                 blockers.append("browser_playtest_failed")
                 build["playtest_error"] = playtest_error
     commercial_body_coverage = dict((commercial_body or {}).get("feature_coverage") or {})
+    production_coverage = dict(commercial_project_inspection.get("feature_coverage") or {})
     commercial_feature_coverage = {
         "cocos_creator_project": True,
         "web_mobile_build": bool((build or {}).get("artifact_success")) if require_build else True,
@@ -1063,6 +1700,13 @@ def run_cocos_game_e2e(
         "level_switching_ui": bool(commercial_body_coverage.get("level_switching_ui")),
         "commercial_polish_pass": bool((commercial_assets or {}).get("feature_coverage", {}).get("commercial_polish_pass"))
         and bool(commercial_body_coverage.get("generated_asset_integration")),
+        "editor_visible_scene_hierarchy": bool(production_coverage.get("editor_visible_scene_hierarchy")),
+        "production_component_scripts": bool(production_coverage.get("production_component_scripts")),
+        "cocos_asset_binding_manifest": bool(production_coverage.get("cocos_asset_binding_manifest")),
+        "spriteframe_asset_bindings": bool(production_coverage.get("spriteframe_asset_bindings")),
+        "audioclip_asset_bindings": bool(production_coverage.get("audioclip_asset_bindings")),
+        "no_hello_3d_template": bool(production_coverage.get("no_hello_3d_template")),
+        "commercial_ui_panels": bool(production_coverage.get("commercial_ui_panels")),
     }
     commercial_blockers = [
         key
@@ -1090,6 +1734,7 @@ def run_cocos_game_e2e(
             "playtest": playtest,
             "commercial_assets": commercial_assets,
             "commercial_body": commercial_body,
+            "commercial_project_inspection": commercial_project_inspection,
             "commercial_go_no_go": commercial_go_no_go,
             "commercial_blockers": commercial_blockers,
             "commercial_feature_coverage": commercial_feature_coverage,
@@ -1109,4 +1754,5 @@ def run_cocos_game_e2e(
         "playtest": playtest,
         "commercial_assets": commercial_assets,
         "commercial_body": commercial_body,
+        "commercial_project_inspection": commercial_project_inspection,
     }

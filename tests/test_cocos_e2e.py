@@ -32,6 +32,28 @@ def _fake_asset_generator(request: AssetGenerationRequest) -> AssetGenerationRes
     )
 
 
+def test_cocos_safe_rmtree_renames_locked_output_dir(tmp_path: Path, monkeypatch) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "cocos_build_stdout.log").write_text("locked", encoding="utf-8")
+    original_rmtree = cocos_e2e_module.shutil.rmtree
+    calls: list[str] = []
+
+    def _flaky_rmtree(path: Path) -> None:
+        name = Path(path).name
+        calls.append(name)
+        if name == "output":
+            raise PermissionError("simulated Windows log lock")
+        original_rmtree(path)
+
+    monkeypatch.setattr(cocos_e2e_module.shutil, "rmtree", _flaky_rmtree)
+
+    cocos_e2e_module._safe_rmtree(output_dir)
+
+    assert not output_dir.exists()
+    assert any(name.startswith("output.stale-") for name in calls)
+
+
 def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) -> None:
     pdf_path = tmp_path / "design.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
@@ -50,11 +72,26 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     assert (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts").exists()
     assert (output_dir / "assets" / "scene" / "main.scene").exists()
     assert (output_dir / "design_mapping.json").exists()
+    assert not (output_dir / "assets" / "model" / "helloWorld").exists()
+    assert (output_dir / "commercial_editor_structure_manifest.json").exists()
+    assert (output_dir / "commercial_component_manifest.json").exists()
     script = (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts").read_text(encoding="utf-8")
     assert "__COCOS_BLOCK_PUZZLE_E2E__" in script
     assert "bootBlockPuzzleStandalone()" in script
     assert "campaignFirstSevenLevels" in script
     assert "Math.floor(this.score / 10 + offset)" in script
+    assert "fillRoundedPanel" in script
+    assert "drawOpenPanels" in script
+    assert "Live commercial panels" in script
+    scene_text = (output_dir / "assets" / "scene" / "main.scene").read_text(encoding="utf-8")
+    assert "CommercialCanvas" in scene_text
+    assert "BoardRoot" in scene_text
+    assert "SkinShopPanel" in scene_text
+    scene_data = json.loads(scene_text)
+    globals_ref = scene_data[1]["_globals"]["__id__"]
+    globals_data = scene_data[globals_ref]
+    assert globals_data["__type__"] == "cc.SceneGlobals"
+    assert "_skybox" in globals_data
 
 
 def test_cocos_build_accepts_creator_success_exit_code_36(tmp_path: Path, monkeypatch) -> None:
@@ -77,6 +114,30 @@ def test_cocos_build_accepts_creator_success_exit_code_36(tmp_path: Path, monkey
     assert build["creator_exit_code"] == 36
     assert build["artifact_success"] is True
     assert build["fatal_marker_detected"] is False
+
+
+def test_cocos_build_stops_new_creator_child_processes(tmp_path: Path, monkeypatch) -> None:
+    build_output = tmp_path / "build" / "web-mobile"
+    (build_output / "assets").mkdir(parents=True)
+    (build_output / "index.html").write_text("<canvas></canvas>", encoding="utf-8")
+    pid_snapshots = iter([{11}, {11, 22, 33}])
+    stopped: list[set[int]] = []
+
+    def _fake_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build Task (web-mobile) Finished")
+        return subprocess.CompletedProcess(command, 36)
+
+    monkeypatch.setattr(cocos_e2e_module, "_cocos_creator_pids", lambda: next(pid_snapshots))
+    monkeypatch.setattr(cocos_e2e_module, "_stop_cocos_creator_pids", lambda pids: stopped.append(pids))
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _fake_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+    )
+
+    assert build["artifact_success"] is True
+    assert stopped == [{22, 33}]
 
 
 def test_cocos_build_rejects_success_code_with_fatal_runtime_marker(tmp_path: Path, monkeypatch) -> None:
@@ -203,6 +264,31 @@ def test_cocos_commercial_asset_manifest_can_batch_generated_assets(tmp_path: Pa
     assert Path(manifest["manifest_path"]).exists()
 
 
+def test_cocos_commercial_asset_manifest_blocks_missing_bgm(tmp_path: Path) -> None:
+    def _blocked_music(request: AssetGenerationRequest) -> AssetGenerationResult:
+        return AssetGenerationResult(
+            provider=request.provider,
+            modality=request.modality,
+            status="blocked",
+            failure_class="TimeoutError",
+            metadata={"error": "simulated timeout"},
+        )
+
+    manifest = generate_cocos_commercial_asset_manifest(
+        output_dir=tmp_path / "commercial_assets",
+        include_vertex_review=False,
+        image_generator=_fake_asset_generator,
+        speech_generator=_fake_asset_generator,
+        music_generator=_blocked_music,
+        tts_generator=_fake_asset_generator,
+    )
+
+    assert manifest["go_no_go"] == "NO-GO"
+    assert manifest["feature_coverage"]["generated_audio_assets"] is False
+    assert "required_asset_bgm_loop_not_completed" in manifest["blockers"]
+    assert "required_asset_bgm_loop_TimeoutError" in manifest["blockers"]
+
+
 def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path, monkeypatch) -> None:
     pdf_path = tmp_path / "design.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
@@ -266,6 +352,12 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
     assert payload["commercial_feature_coverage"]["native_cocos_ui_nodes"] is True
     assert payload["commercial_feature_coverage"]["animation_timeline"] is True
     assert payload["commercial_feature_coverage"]["level_switching_ui"] is True
+    assert payload["commercial_feature_coverage"]["editor_visible_scene_hierarchy"] is True
+    assert payload["commercial_feature_coverage"]["production_component_scripts"] is True
+    assert payload["commercial_feature_coverage"]["spriteframe_asset_bindings"] is True
+    assert payload["commercial_feature_coverage"]["audioclip_asset_bindings"] is True
+    assert payload["commercial_feature_coverage"]["no_hello_3d_template"] is True
+    assert payload["commercial_project_inspection"]["go_no_go"] == "GO"
     assert "commercial_missing_generated_art_assets" not in payload["manifest"]["blockers"]
     script = (Path(payload["project"]["project_path"]) / "assets" / "scripts" / "BlockPuzzleGame.ts").read_text(
         encoding="utf-8"
@@ -273,7 +365,11 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
     assert "CommercialNativeUIRoot" in script
     assert "animation_timeline_started" in script
     assert "level_switching_ui_opened" in script
+    assert "cocos_asset_bindings_loaded" in script
     assert Path(payload["commercial_body"]["manifest_path"]).exists()
+    assert Path(payload["commercial_body"]["asset_binding_manifest_path"]).exists()
+    assert Path(payload["commercial_body"]["editor_structure_manifest_path"]).exists()
+    assert Path(payload["commercial_body"]["component_manifest_path"]).exists()
 
 
 def test_cli_game_cocos_assets_uses_commercial_manifest(tmp_path: Path, monkeypatch) -> None:
