@@ -28,6 +28,7 @@ from packages.core_domain.repositories import PresetRepository
 preset_app = typer.Typer(help="Preset inspection commands.")
 domain_pack_app = typer.Typer(help="Domain pack inspection commands.")
 capability_app = typer.Typer(help="Capability registry inspection commands.")
+capability_routes_app = typer.Typer(help="Capability route stats commands.")
 simulation_app = typer.Typer(help="Simulation policy commands.")
 simulation_policy_app = typer.Typer(help="Simulation policy catalog commands.")
 memory_app = typer.Typer(help="Memory-plane inspection commands.")
@@ -37,6 +38,7 @@ memory_item_app = typer.Typer(help="Persistent memory item commands.")
 memory_app.add_typer(memory_namespace_app, name="namespace")
 memory_app.add_typer(memory_item_app, name="item")
 simulation_app.add_typer(simulation_policy_app, name="policy")
+capability_app.add_typer(capability_routes_app, name="routes")
 
 @preset_app.command("list")
 def preset_list(ctx: typer.Context, as_json: bool = typer.Option(False, "--json")) -> None:
@@ -117,8 +119,23 @@ def capability_descriptors(ctx: typer.Context) -> None:
 
 
 @capability_app.command("health")
-def capability_health(ctx: typer.Context) -> None:
-    _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_health()))
+def capability_health(
+    ctx: typer.Context,
+    verified_only: bool = typer.Option(
+        False,
+        "--verified-only",
+        help="Only include providers backed by live probe evidence or recent runtime success.",
+    ),
+) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).list_capability_health(verified_only=verified_only)))
+
+
+@capability_routes_app.command("stats")
+def capability_route_stats(
+    ctx: typer.Context,
+    days: int = typer.Option(30, "--days", min=1, help="Recent window for provider route statistics."),
+) -> None:
+    _emit_json(_run_workflow_action(lambda: _service(ctx).get_capability_route_stats(days=days)))
 
 
 @capability_app.command("probe")

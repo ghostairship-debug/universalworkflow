@@ -31,8 +31,20 @@ from packages.core_domain.m8_flags import (
     mcp_broker_profile_ids_from_env,
     mcp_broker_tool_ids_from_env,
 )
+from packages.core_domain.capability_control_plane import ADAPTER_PROVIDER_KEYS
 from packages.core_domain.memory import load_seed_memory_namespaces
 from packages.core_domain.skills import export_domain_pack_skill_bundle
+
+
+PROVIDER_HEALTH_ALIASES = {
+    "codex_cli": ["codex"],
+    "opencode_cli": ["opencode"],
+    "claude_cli": ["claude"],
+    "langchain_agent": ["langchain"],
+    "mmx_generation_api": ["mmx_image", "mmx_speech", "mmx_music", "mmx"],
+    "vertex_generation_api": ["vertex_imagen", "vertex_gemini_review", "vertex"],
+    "gcp_tts_api": ["gcp_tts", "vertex_tts"],
+}
 
 
 class MemorySimulationServiceMixin:
@@ -94,8 +106,8 @@ class MemorySimulationServiceMixin:
             )
         ]
 
-    def list_capability_health(self) -> list[dict[str, Any]]:
-        return [
+    def list_capability_health(self, *, verified_only: bool = False) -> list[dict[str, Any]]:
+        payload = [
             item.model_dump(mode="json")
             for item in self.capability_plane.list_capability_health(
                 worker_pool_profiles=self.worker_pool_profiles,
@@ -109,6 +121,64 @@ class MemorySimulationServiceMixin:
                 },
             )
         ]
+        route_stats = self.get_capability_route_stats(days=30)["providers"]
+        payload = [self._with_provider_truth_summary(item, route_stats) for item in payload]
+        if not verified_only:
+            return payload
+        def has_verified_live_probe(item: dict[str, Any]) -> bool:
+            probe = item.get("probe_evidence", {})
+            return probe.get("status") == "verified_ready" and bool(probe.get("live_probe"))
+
+        def has_recent_success(item: dict[str, Any]) -> bool:
+            summary = item.get("recent_call_summary", {})
+            return int(summary.get("recent_success_count") or 0) > 0 and bool(summary.get("verified_by_runtime"))
+
+        return [
+            item
+            for item in payload
+            if has_verified_live_probe(item) or has_recent_success(item) or bool(item.get("verified_by_live_probe"))
+        ]
+
+    def _with_provider_truth_summary(
+        self,
+        item: dict[str, Any],
+        route_stats: dict[str, Any],
+    ) -> dict[str, Any]:
+        provider_keys = self._provider_keys_for_capability_health_item(item)
+        matching_stats = {key: route_stats[key] for key in provider_keys if key in route_stats}
+        verified_by_live_probe = any(
+            int((stats.get("probe_summary") or {}).get("verified_count") or 0) > 0
+            and (stats.get("probe_summary") or {}).get("last_status") != "blocked"
+            for stats in matching_stats.values()
+        )
+        enriched = dict(item)
+        enriched["provider_keys"] = provider_keys
+        enriched["provider_route_stats"] = matching_stats
+        enriched["verified_by_live_probe"] = verified_by_live_probe
+        if verified_by_live_probe and enriched.get("readiness_state") == "configured":
+            enriched["readiness_state"] = "verified_ready"
+        return enriched
+
+    def _provider_keys_for_capability_health_item(self, item: dict[str, Any]) -> list[str]:
+        descriptor = item.get("descriptor", {})
+        keys: list[str] = []
+        adapter_name = descriptor.get("adapter_name")
+        if adapter_name:
+            keys.append(ADAPTER_PROVIDER_KEYS.get(str(adapter_name), str(adapter_name)))
+        keys.extend(str(scope) for scope in descriptor.get("scopes") or [])
+        profile_id = descriptor.get("profile_id")
+        if profile_id:
+            keys.append(str(profile_id))
+        provider_kind = descriptor.get("provider_kind")
+        if provider_kind:
+            keys.append(str(provider_kind))
+        for key in list(keys):
+            keys.extend(PROVIDER_HEALTH_ALIASES.get(key, []))
+        deduped: list[str] = []
+        for key in keys:
+            if key and key not in deduped:
+                deduped.append(key)
+        return deduped
 
     def list_mcp_server_profiles(self) -> list[dict[str, Any]]:
         return [profile.model_dump(mode="json") for profile in self.capability_plane.list_mcp_profiles()]

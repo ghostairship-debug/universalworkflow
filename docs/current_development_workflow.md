@@ -1,10 +1,10 @@
 # 当前开发工作流
 
-## Current Version: M79 Cocos Commercial Pipeline Repair Planned
+## Current Version: M80 Provider Runtime Stabilization
 
 - Package version: `0.66.0`.
-- Accepted implementation baseline: `M78` real provider/asset repair plus Cocos E2E scaffold.
-- Active repair entry: [M77+ integrated repair plan](../M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md), with M79 focused on true commercial Cocos production.
+- Accepted implementation baseline: `M79` commercial Cocos pipeline v1.
+- Active repair entry: M80-M83 capability-layer recovery: provider runtime truth, reusable asset factory, workflow self-development, and templated commercial Cocos pipeline.
 - Active truth set: [README.md](../README.md), this workflow guide, [M77 issue register](../M77_ISSUE_REGISTER.md), [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
 - Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
@@ -70,8 +70,8 @@ GET 请求不得触发状态变更。所有文件写入必须解析明确 worksp
 - Pipeline run 需要写 stage evidence，并在 validation/capability 失败后短路后续 stage；复杂写入仍走既有 run/control-plane。
 - H5 游戏商业化是正式业务需求，应作为 pipeline 场景承载，而不是新增一堆 `game_*_cluster`。
 - Cocos 技术 smoke 与商业化验收必须分开；`workflowctl game cocos-e2e --require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时必须 NO-GO。
-- M78 的真实结论是“E2E scaffold 通过”，不是“完整商业化游戏完成”。`commercial_go_no_go=GO`、canvas 非空、事件覆盖、截图变化都只能证明当前验证门槛通过，不能证明 Cocos 编辑器工程已达到商业化制作标准。
-- M79 前不得恢复大规模能力层扩张；优先把 game pipeline 产物升级为真实 Cocos Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 绑定、Animation/Particle、皮肤/关卡/广告/道具闭环。
+- M79 已把 Cocos 产物从 E2E scaffold 推进到商业化 v1：真实 Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 绑定、Animation/Particle、皮肤/关卡/广告/道具入口和移动端 playtest。
+- M80-M83 恢复能力层开发，但只围绕 provider runtime truth、asset factory、workflow 自开发 proof 和可复用 commercial Cocos pipeline 模板推进。
 
 ## Validation Rules
 
@@ -103,5 +103,11 @@ python -m pytest -q --run-slow
 ## M78/M79 Game Pipeline Notes
 
 - M78 committed and pushed a real Cocos E2E scaffold: real project generation, real Web Mobile build, real browser playtest, MMX image/speech/music, GCP TTS, and Vertex review evidence.
-- The generated Cocos project still uses a scaffold-like structure and runtime/canvas-heavy game body; opening it in Cocos Creator does not show a finished commercial game.
-- M79 acceptance must include editor-visible production evidence, not only browser feature flags: scene hierarchy, prefab/component structure, imported and bound generated art/audio, UI panels, animations, particles, level/skin switching, mobile visual polish, and rejection of half-finished projects.
+- M79 committed and pushed the commercial Cocos pipeline v1: editor-visible scene hierarchy, component scripts, generated asset binding manifests, UI panels, animations, particles, level/skin switching, Web Mobile build, and browser playtest evidence.
+- M83 should turn the M79 one-off delivery path into a reusable `commercial_cocos_game` template; it must not regress to manifest-only, canvas-only, or dry-run completion.
+
+## M80 Provider Runtime Notes
+
+- `workflowctl capability health --verified-only` must only include capabilities backed by live probe evidence or recent successful runtime invocation.
+- `workflowctl capability routes stats --days 30` is the operator-facing provider route ledger summary: transport, modalities, auth source, live-proof status, latency, failure class, fallback policy, and cost hint.
+- Descriptor presence, configured tools, MCP profile existence, or a failed runtime attempt cannot by itself mark a provider as `verified_ready`.

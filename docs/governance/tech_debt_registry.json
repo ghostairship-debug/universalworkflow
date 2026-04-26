@@ -343,6 +343,20 @@
       "introduced_in": "M67-M71 governance closeout",
       "repaid_in": "M72",
       "result": "Added workflowctl governance self-development-manifest, which checks execution reports, task cards, evidence files, operator packets, git commits, and the rule that single-card phases require a single_card_exception marker."
+    },
+    {
+      "debt_id": "M77-COCOS-001",
+      "description": "Cocos E2E proved a technical build/playtest path but did not deliver editor-visible commercial UI, art/audio binding, animation, particles, skins, props, and level flow",
+      "introduced_in": "M76 Cocos E2E review",
+      "repaid_in": "M79",
+      "result": "M79 generated a commercial Cocos pipeline v1 with editor-visible scene/component/UI structure, generated SpriteFrame/AudioClip binding manifests, animation/particle evidence, skin/level/prop/ad entry points, Web Mobile build, and browser playtest evidence."
+    },
+    {
+      "debt_id": "M80-PROVIDER-001",
+      "description": "provider health and routing evidence needed one runtime truth view so descriptor-only readiness was not confused with verified provider readiness",
+      "introduced_in": "M80 provider runtime stabilization",
+      "repaid_in": "M80",
+      "result": "Added verified-only capability health, provider alias live-proof aggregation, and 30-day provider route stats with success, failure class, latency, fallback policy, and cost hints."
     }
   ],
   "open_items": [
@@ -385,14 +399,6 @@
       "planned_repayment_phase": "M77 P7",
       "current_status": "partially_repaid",
       "blocking_impact": "pipeline run no longer fakes completed capability stages and now writes stage evidence with blocked/failed/skipped short-circuiting; full workflow run and capability invocation execution still need integration"
-    },
-    {
-      "debt_id": "M77-COCOS-001",
-      "description": "Cocos E2E currently proves a technical build/playtest path but does not yet deliver a commercial-grade game with real UI, art, audio, animation, particles, skins, and level flow",
-      "introduced_in": "M76 Cocos E2E review",
-      "planned_repayment_phase": "M77 P8",
-      "current_status": "partially_repaid",
-      "blocking_impact": "commercial NO-GO gate, generated asset manifest, and M78 real build/playtest scaffold now prevent the old dry-run path from passing; however the Cocos Creator project remains a half-finished scaffold, so M79 must add editor-visible native UI, prefab/component structure, SpriteFrame/AudioClip binding, animation/particle assets, real level/skin flow, and full game-body polish"
     },
     {
       "debt_id": "M67-CARRY-001",

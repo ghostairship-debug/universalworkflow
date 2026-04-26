@@ -14,7 +14,8 @@
 
 - M73-M76 已落地 workflow dogfood、capability control、MCP broker、AutomationLease、Pipeline 最小入口、Cocos E2E 生成与验证路径的骨架，但最近评估确认存在实现降级项。
 - M77/M78 已修复 OpenAI API/Codex CLI 边界、MiniMax/DeepSeek direct coding API 与受控 patch apply 入口、LangChain 默认路由降级、Pipeline 假完成风险、MMX/GCP/Vertex generation live proof，以及 Cocos 真实 build/playtest scaffold。
-- 当前不能再宣称所有能力 closeout 硬闸门已完整通过；M79 完成前，能力层开发应以 provider truth、asset generation live proof、pipeline real execution、workflow dogfood 和真实 Cocos 商业化产物为前置。
+- M79 已把 Cocos 产物推进到商业化 v1：编辑器可见 Cocos Scene/Node/Component/UI、资产绑定、动画/粒子、皮肤/关卡/道具入口、Web Mobile build 和浏览器 playtest。
+- M80-M83 恢复能力层开发，但仍以前置可信门禁为主：provider route truth、asset factory、workflow dogfood、自开发 proof、commercial Cocos pipeline template。
 - 留存策略本轮暂不处理；大型清理仍会持续发生。
 
 ## 已偿还债务摘要
@@ -36,6 +37,8 @@
 | M74-PIPE-001 | Pipeline 概念缺少正式 contract | M74 | 已加入 `WorkflowPipeline` / `PipelineStage` contract 与 preview |
 | M75-PIPE-EXEC-001 | Pipeline 缺少最小执行入口 | M75 | 已加入串行 `workflowctl pipeline run` |
 | M76-COCOS-001 | H5 游戏 pipeline 缺少真实 Cocos E2E evidence | M76 | 已加入 `workflowctl game cocos-e2e`，生成 Cocos Creator 项目、构建 Web Mobile、浏览器 playtest |
+| M77-COCOS-001 | Cocos E2E 缺编辑器可见商业化 game body | M79 | 已加入商业化 Cocos pipeline v1、真实 Scene/Component/UI/Audio/Animation/Particle/skin/level 结构、资产绑定和 browser playtest evidence |
+| M80-PROVIDER-001 | provider health 和 route evidence 缺少统一 runtime truth 视图 | M80 | 已加入 `capability health --verified-only`、provider alias live-proof 聚合和 `capability routes stats --days 30` |
 
 ## 当前未偿还债务
 
@@ -46,7 +49,6 @@
 | M77-VERTEX-001 | Vertex 当前主要是文本 evidence，未完整接入 Imagen/Gemini image/GCP TTS/visual review 生成与审查能力 | partially_repaid | Cloud TTS 已拆为 `gcp_tts_api` 并真实 live proof；Vertex Imagen/Gemini review REST wrapper 与 live proof 已落地；仍需在 M79 产物验收中发挥真实 fallback/review 作用 |
 | M77-LANGCHAIN-001 | LangChain 当前缺少主线不可替代价值，仍可能被误认为默认 provider route | partially_repaid | 已降级为 experimental / opt-in，并保留旧 adapter 兼容 |
 | M77-PIPE-001 | Pipeline run 仍偏最小/v0，需证明 stage 真实执行、失败短路和 evidence chain | partially_repaid | 已禁止 capability stage 伪 completed，增加 blocked/failed/skipped 短路和 stage evidence；仍需接全量 workflow run/capability invocation |
-| M77-COCOS-001 | Cocos E2E 当前偏技术 demo / E2E scaffold，缺编辑器可见的商业化 UI、美术、音效、动画、粒子、皮肤、关卡闭环 | partially_repaid | M78 真实 build/playtest 和 generated asset runtime 接入已完成，但 Cocos Creator 打开仍是半成品脚手架；M79 必须产出真实商业化 Cocos 工程 |
 | M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | carry_forward | 非阻塞维护债；只有在后续能力开发中造成真实痛点时继续拆分 |
 
 ## M76 收口说明
@@ -59,4 +61,4 @@
 
 - `M77-VERTEX-001` 已从 “仅 GCP TTS 可用” 推进到 Vertex AI REST wrapper，并真实跑通 `vertex_imagen` 与 `vertex_gemini_review` live proof。
 - `M77-MMX-001` 已进入并真实跑通 Cocos asset manifest 批处理：`workflowctl game cocos-assets` 会批量生成图像、语音、音乐、TTS 和可选视觉审查 evidence。
-- `M77-COCOS-001` 仍未完全偿还：M78 证明 E2E scaffold、Web Mobile build、browser playtest 和生成资产链路可跑通，但原生 Cocos UI、Prefab/Component、动画、粒子、关卡切换、皮肤/画廊和真正商业级 game body 仍是 M79 工作。
+- `M77-COCOS-001` 已由 M79 偿还到商业化 v1；M83 的剩余工作是把该链路模板化，确保后续游戏生成不退回一次性脚本或 scaffold。

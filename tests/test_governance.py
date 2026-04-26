@@ -18,7 +18,6 @@ OPEN_DEBT_IDS: list[str] = [
     "M77-VERTEX-001",
     "M77-LANGCHAIN-001",
     "M77-PIPE-001",
-    "M77-COCOS-001",
     "M67-CARRY-001",
 ]
 BLOCKING_OPEN_DEBT_IDS: list[str] = []

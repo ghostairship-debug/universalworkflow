@@ -4,9 +4,9 @@
 
 ## 当前基线
 
-- 日期：2026-04-26
-- 最新接受实现基线：`M78`
-- 下一阶段建议：执行 `M79 Cocos commercial pipeline repair`；在真实商业化 Cocos 工程产出前，不恢复大范围能力层扩张。
+- 日期：2026-04-27
+- 最新接受实现基线：`M79`
+- 下一阶段建议：执行 M80-M83 能力层恢复：provider runtime truth、asset factory、workflow self-development、commercial Cocos pipeline template。
 - 产品前提：个人自用 / 本地 operator runtime。
 - 主入口：CLI、API、Web operator console、`/ui/workbench` streaming chat workbench。
 - 当前硬规则：workflow 共同开发、bug-first、scoped receipt、provider live proof、route/evidence/operator packet、phase 多 task card。
@@ -36,6 +36,8 @@
 | M76 | H5 commercialization + Cocos E2E：加入 Cocos Creator 项目生成、Web Mobile build、browser playtest 和 feature coverage evidence | 已完成真实 E2E 骨架，不代表商业化成品完成 |
 | M77 | Provider/asset generation repair：修正 OpenAI/Codex 边界、MiniMax/DeepSeek direct coding proposal、MMX/GCP/Vertex 生成能力与 pipeline 假完成风险 | 已完成主要接入修复 |
 | M78 | Cocos commercial game body E2E scaffold：真实跑通生成资产、Cocos build、browser playtest 和商业化特征 coverage | 已完成 E2E scaffold；商业化 Cocos 成品仍未完成 |
+| M79 | Cocos commercial pipeline v1：补真实 Cocos Scene/Node/Component/UI、资产绑定、动画/粒子、皮肤/关卡/道具入口、Web Mobile build 与 browser playtest | 已完成并推送；后续 M83 需模板化 |
+| M80 | Provider runtime stabilization：verified-only health、provider route stats、30 天成功率/失败/延迟/fallback/cost 摘要 | 执行中 |
 
 ## M73-M78 关键结论
 
@@ -45,7 +47,7 @@
 - AutomationLease 为无人值守任务提供有界授权，但继续禁止 secrets、workspace root 扩大、未授权 publish/push/PR。
 - Pipeline 已形成最小产品层，不替代既有 OrchestrationPlan，也不创建第二套 mutation 真相源。
 - Cocos E2E 以桌面 PDF 为输入，生成真实 Cocos Creator 3.8 项目并跑 Web Mobile 浏览器验证。
-- 事后评估确认：M78 产物是可运行脚手架，不是完整商业化 Cocos 工程；M79 需要补真实编辑器场景、UI、Prefab/Component、SpriteFrame/AudioClip、Animation/Particle、皮肤、关卡和商业化面板。
+- 事后评估确认：M78 产物是可运行脚手架；M79 已补编辑器可见商业化 v1 结构。M83 的重点是把该链路模板化和复用化，而不是再次做一次性脚本。
 
 ## 历史材料治理
 

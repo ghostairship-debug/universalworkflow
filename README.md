@@ -1,10 +1,10 @@
 # Universal Agentic Workflow OS
 
-## Current Version: M79 Cocos Commercial Pipeline Repair Planned
+## Current Version: M80 Provider Runtime Stabilization
 
 - Package version: `0.66.0`.
-- Accepted implementation baseline: `M78` real Cocos E2E scaffold and provider/asset repair.
-- Active repair entry: [M77+ integrated repair and development plan](M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md), with M79 now focused on true Cocos commercial game production.
+- Accepted implementation baseline: `M79` commercial Cocos pipeline v1 and provider/asset repair.
+- Active repair entry: M80-M83 capability-layer recovery: provider runtime truth, reusable asset factory, workflow self-development, and templated commercial Cocos pipeline.
 - Beginner overview: [项目全景介绍](PROJECT_OVERVIEW_FOR_BEGINNERS.md).
 - Governance source of truth: [structured tech debt registry](docs/governance/tech_debt_registry.json).
 
@@ -38,9 +38,9 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - capability readiness 只接受 provider-specific live proof；simulated、dry-run、generic greeting、fallback-only 都不能标记为 `verified_ready`。
 - Dynamic cluster routing 和 adaptive LLM routing 仍是 opt-in，不默认开启。
 - Pipeline 是 `OrchestrationPlan` 之上的 plan-of-plans 产品层；当前执行器已禁止伪完成 capability stage，未真实执行会明确 `blocked`，复杂 mutation 仍通过既有 run/control-plane 语义落地。
-- Cocos E2E 现在能真实生成 Cocos Creator 项目、构建 Web Mobile 并跑浏览器 playtest；M78 同时接通 MMX/GCP/Vertex 资产链路。
-- 重要限制：M78 产物仍是可运行 E2E 脚手架/半成品 game body，不是编辑器内完整可维护的商业化 Cocos 成品。`commercial_go_no_go=GO` 只代表当前 E2E 覆盖通过，不能等同于最终商业化验收。
-- M79 的当前主线是把 game pipeline 从“能验证”升级为“能产出”：真实 Cocos Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 资产绑定、动画、粒子、皮肤、关卡、弹窗和移动端商业化体验。
+- M79 已把 Cocos E2E 从 scaffold 推进到商业化 v1：生成真实 Cocos Creator 3.8 工程、编辑器可见 Scene/Node/Component/UI、SpriteFrame/AudioClip 绑定、动画/粒子/皮肤/关卡/道具入口，并完成 Web Mobile build 与浏览器 playtest。
+- M80 正在把 provider runtime truth 固化为可查询事实：`capability health --verified-only` 只展示 live proof 或真实成功调用支撑的能力，route stats 提供 30 天成功率、失败类型、延迟、fallback 和成本提示。
+- M81-M83 的当前主线是把 M79 的一次性 Cocos 生产链路抽象成通用 asset factory 与可复用 `commercial_cocos_game` pipeline 模板。
 
 ## Architecture Map
 
@@ -98,6 +98,8 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" run policy-preview --goal "实现一个受控能力切片" --preset project_delivery
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" run goal-packet --goal "实现一个受控能力切片" --preset project_delivery
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider all --require-live --evidence-dir state/capability_probes
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability health --verified-only
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability routes stats --days 30
 ```
 
 Pipeline 入口：
@@ -110,7 +112,7 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 Cocos E2E 入口：
 
 ```powershell
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m79_cocos_commercial_pipeline/cocos_project --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --generate-commercial-assets --require-commercial
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m79_cocos_commercial_pipeline/1010_block_puzzle_cocos_production --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --generate-commercial-assets --require-commercial
 ```
 
 ## Workflow Dogfood Rules
@@ -158,14 +160,14 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 python -m pytest -q --run-slow
 ```
 
-## M77 Provider And Game Pipeline Update
+## M77-M80 Provider And Game Pipeline Update
 
 - `vertex_imagen` and `vertex_gemini_review` now have Vertex AI REST wrappers and capability probes. They are only `verified_ready` after live probe success.
 - `gcp_tts_api` is Google Cloud Text-to-Speech; legacy `vertex_tts` remains only as a compatibility alias.
 - Local GCP probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` to force ADC.
 - `workflowctl game cocos-assets` generates a commercial asset manifest from MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review.
-- M78 proved the end-to-end path with a real Cocos Creator build and browser playtest, but the generated project remains a scaffold: most game logic is still canvas/runtime driven, generated assets are manifest-fed, and the Cocos editor view is not a finished commercial scene.
-- M79 must replace that scaffold with editor-visible Cocos game production: native 2D scene hierarchy, real UI/prefabs/components, generated SpriteFrame/AudioClip binding, Cocos animation/particle assets, and visual acceptance that rejects half-finished projects.
+- M79 replaced the old scaffold with editor-visible Cocos production structure and strict commercial checks. The current M80-M83 track now focuses on provider route truth, reusable asset factory, workflow self-development proof, and turning the Cocos delivery path into a reusable pipeline template.
+- `workflowctl capability health --verified-only` filters out descriptor-only readiness; `workflowctl capability routes stats --days 30` summarizes provider probe/runtime success, latency, failure classes, fallback policy, and cost hint.
 
 ```powershell
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider vertex_imagen --require-live --evidence-dir state/m77_integrated_repair/live_probes/vertex_imagen

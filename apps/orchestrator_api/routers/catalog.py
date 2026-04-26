@@ -47,8 +47,12 @@ def build_catalog_router(service: OrchestratorService, effective_config: dict[st
         return service.list_capability_descriptors()
 
     @router.get("/capability-health")
-    def list_capability_health() -> list[dict]:
-        return service.list_capability_health()
+    def list_capability_health(verified_only: bool = False) -> list[dict]:
+        return service.list_capability_health(verified_only=verified_only)
+
+    @router.get("/capability-routes/stats")
+    def capability_route_stats(days: int = 30) -> dict:
+        return service.get_capability_route_stats(days=days)
 
     @router.get("/cluster-routes/stats")
     def cluster_route_stats(days: int = 30) -> dict:

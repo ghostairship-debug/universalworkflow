@@ -18,7 +18,7 @@
 | M77-VERTEX-001 | partially_repaid | Vertex/gcloud/GCP TTS 边界混乱，Vertex 主要停留在文本 evidence | 已把 Cloud Text-to-Speech 拆为 `gcp_tts_api`，旧 `vertex_tts` 仅兼容 alias；已修复 Windows gcloud shim、ADC quota project、IAM Service Usage Consumer、Vertex AI API/IAM 和 token source 选择，并真实跑通 GCP TTS、`vertex_imagen`、`vertex_gemini_review` live proof。 |
 | M77-LANGCHAIN-001 | partially_repaid | LangChain 容易被误认为默认主路由 | provider contract 和文档已降级为 experimental / opt-in agent framework，不再作为默认 provider control plane。仍保留现有 adapter 兼容旧测试和实验用途。 |
 | M77-PIPE-001 | partially_repaid | Pipeline run 会把未真实执行的 stage 标成 completed | 已修复为真实 stage 状态机：planning/review 只产 evidence，未显式执行的 capability stage 返回 blocked，validation gate 会短路，CLI 非 completed 返回非零退出码；AutomationLease 可约束 pipeline write_set。仍需把 workflow run / capability invocation 全量接入 stage executor。 |
-| M77-COCOS-001 | partially_repaid | Cocos E2E 仍偏技术 demo / E2E scaffold，缺编辑器可见的商业化 UI、美术、音效、动画、粒子、皮肤和关卡闭环 | 已新增 `--require-commercial` 硬门禁，并在 M78 跑通真实 Cocos build/playtest 与生成资产接入；但打开 Cocos 工程仍是半成品脚手架，不能声明商业化游戏已完成。M79 必须重做为真实 Cocos Scene/Prefab/Component/UI/Audio/Animation 生产线。 |
+| M77-COCOS-001 | repaid | Cocos E2E 仍偏技术 demo / E2E scaffold，缺编辑器可见的商业化 UI、美术、音效、动画、粒子、皮肤和关卡闭环 | M79 已完成商业化 Cocos pipeline v1：真实 Cocos Scene/Prefab/Component/UI/Audio/Animation/Particle/skin/level 结构、资产绑定、Web Mobile build 与浏览器 playtest。后续 M83 只处理模板化复用，不再把半成品 scaffold 视为完成。 |
 | M67-CARRY-001 | carry_forward | 若干大文件仍偏大 | 当前不阻塞 provider/pipeline/Cocos 修复；后续能力开发触发痛点时再拆。 |
 
 ## 本轮已落地证据
@@ -30,7 +30,7 @@
 - `workflowctl capability coding-proposal` 已支持 MiniMax/DeepSeek proposal-only 路径。
 - `workflowctl capability coding-apply` 已支持 MiniMax/DeepSeek 生成 unified diff 后经 workflow write_set/lease/test gate 受控落盘。
 - `workflowctl pipeline run` 不再伪完成 capability stage，失败/阻塞会写 evidence 并返回非零退出码。
-- `workflowctl game cocos-e2e --require-commercial` 会拒绝明显缺失商业化美术/音效/UI/动画/粒子的技术 demo；M78 暴露出当前 gate 仍偏 E2E feature flag，不能替代编辑器级成品验收。
+- `workflowctl game cocos-e2e --require-commercial` 会拒绝明显缺失商业化美术/音效/UI/动画/粒子的技术 demo；M79 已补编辑器级商业化 v1 evidence。
 - 测试：`tests/test_m77_provider_access.py`、`tests/test_pipeline_and_automation_cli.py` 覆盖当前修复。
 
 ## 下一步
@@ -43,4 +43,4 @@
 
 - `M77-VERTEX-001`：已新增并真实跑通 `vertex_imagen` 与 `vertex_gemini_review` 两条 REST probe/wrapper；`gcp_tts_api` 继续独立表示 Cloud Text-to-Speech。
 - `M77-MMX-001`：已新增并真实跑通 Cocos commercial asset manifest 批量生成，覆盖 MMX image/speech/music、GCP TTS voice 和可选 Vertex Gemini review。
-- `M77-COCOS-001`：M78 真实跑通 Cocos E2E scaffold、Web Mobile build、browser playtest 和生成资产接入；但 Cocos 原生 UI、Prefab/Component、动画、粒子、关卡切换、皮肤/画廊和真正商业化 game body 仍未完成，不能声明商业化游戏已完成。
+- `M77-COCOS-001`：M79 真实跑通商业化 Cocos pipeline v1、Web Mobile build、browser playtest 和生成资产绑定；M83 的剩余目标是模板化为可复用 `commercial_cocos_game` pipeline。

@@ -45,6 +45,7 @@ from packages.contracts import (
     TaskStatus,
     validate_event_payload,
 )
+from packages.core_domain.capability_control_plane import ADAPTER_PROVIDER_KEYS
 from packages.core_domain.db import DEFAULT_DB_PATH, get_connection
 from packages.core_domain.presets import load_seed_presets
 
@@ -584,7 +585,8 @@ class CapabilityInvocationRepository(RepositoryBase):
             summary["recent_invocation_count"] += 1
             status = str(row["status"])
             return_code = row["return_code"]
-            if status == "completed" and return_code == 0:
+            success = status == "completed" and return_code == 0
+            if success:
                 summary["recent_success_count"] += 1
             else:
                 summary["recent_failure_count"] += 1
@@ -595,8 +597,90 @@ class CapabilityInvocationRepository(RepositoryBase):
                 summary["last_adapter_name"] = row["adapter_name"]
                 summary["last_failure_class"] = row["failure_class"]
                 summary["last_invoked_at"] = row["created_at"]
-            summary["verified_by_runtime"] = True
+            summary["verified_by_runtime"] = bool(summary["verified_by_runtime"]) or success
         return summaries
+
+    def summarize_recent_routes(
+        self,
+        *,
+        days: int = 30,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        cutoff = datetime.now(UTC).timestamp() - max(days, 0) * 86400
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT capability_id, provider_kind, status, return_code, adapter_name,
+                       duration_ms, failure_class, created_at
+                FROM capability_invocations
+                ORDER BY created_at DESC, invocation_id DESC
+                """
+            ).fetchall()
+        summaries: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if datetime.fromisoformat(row["created_at"]).timestamp() < cutoff:
+                continue
+            provider = self._provider_key_for_invocation_row(row)
+            summary = summaries.setdefault(
+                provider,
+                {
+                    "provider": provider,
+                    "invocation_count": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "failure_classes": {},
+                    "latency_ms": {"count": 0, "total": 0, "average": None, "last": None},
+                    "last_status": None,
+                    "last_return_code": None,
+                    "last_failure_class": None,
+                    "last_invoked_at": None,
+                    "routes": {},
+                },
+            )
+            summary["invocation_count"] += 1
+            status = str(row["status"])
+            return_code = row["return_code"]
+            if status == "completed" and return_code == 0:
+                summary["success_count"] += 1
+            else:
+                summary["failure_count"] += 1
+                failure_class = str(row["failure_class"] or "unknown")
+                summary["failure_classes"][failure_class] = summary["failure_classes"].get(failure_class, 0) + 1
+            latency = int(row["duration_ms"] or 0)
+            summary["latency_ms"]["count"] += 1
+            summary["latency_ms"]["total"] += latency
+            summary["latency_ms"]["last"] = latency if summary["last_invoked_at"] is None else summary["latency_ms"]["last"]
+            route = str(row["adapter_name"] or row["capability_id"] or provider)
+            summary["routes"][route] = summary["routes"].get(route, 0) + 1
+            if summary["last_invoked_at"] is None:
+                summary["last_status"] = status
+                summary["last_return_code"] = return_code
+                summary["last_failure_class"] = row["failure_class"]
+                summary["last_invoked_at"] = row["created_at"]
+        for summary in summaries.values():
+            count = summary["latency_ms"]["count"]
+            total = summary["latency_ms"]["total"]
+            summary["latency_ms"]["average"] = int(total / count) if count else None
+            summary["success_rate"] = (
+                summary["success_count"] / summary["invocation_count"] if summary["invocation_count"] else None
+            )
+            summary["failure_classes"] = dict(sorted(summary["failure_classes"].items()))
+            summary["routes"] = dict(sorted(summary["routes"].items()))
+        return {
+            "days": days,
+            "window": {"days": days, "cutoff_timestamp": cutoff},
+            "providers": dict(sorted(summaries.items())),
+        }
+
+    def _provider_key_for_invocation_row(self, row: Any) -> str:
+        adapter_name = row["adapter_name"]
+        if adapter_name:
+            normalized = str(adapter_name)
+            return ADAPTER_PROVIDER_KEYS.get(normalized, normalized)
+        capability_id = str(row["capability_id"] or "")
+        if ":" in capability_id:
+            return capability_id.split(":", 1)[1]
+        return str(row["provider_kind"] or "unknown")
 
 
 class CapabilityProbeResultRepository(RepositoryBase):
@@ -678,6 +762,73 @@ class CapabilityProbeResultRepository(RepositoryBase):
             schema_version=row["schema_version"],
             created_at=datetime.fromisoformat(row["created_at"]),
         )
+
+    def summarize_recent(
+        self,
+        *,
+        days: int = 30,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        cutoff = datetime.now(UTC).timestamp() - max(days, 0) * 86400
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM capability_probe_results
+                ORDER BY created_at DESC, probe_id DESC
+                """
+            ).fetchall()
+        providers: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if datetime.fromisoformat(row["created_at"]).timestamp() < cutoff:
+                continue
+            provider = str(row["provider"])
+            summary = providers.setdefault(
+                provider,
+                {
+                    "provider": provider,
+                    "probe_count": 0,
+                    "verified_count": 0,
+                    "blocked_count": 0,
+                    "failure_classes": {},
+                    "latency_ms": {"count": 0, "total": 0, "average": None, "last": None},
+                    "last_status": None,
+                    "last_failure_class": None,
+                    "last_evidence_path": None,
+                    "last_probed_at": None,
+                    "live_probe_count": 0,
+                },
+            )
+            summary["probe_count"] += 1
+            if bool(row["live_probe"]):
+                summary["live_probe_count"] += 1
+            status = str(row["status"])
+            if status == "verified_ready" and bool(row["live_probe"]):
+                summary["verified_count"] += 1
+            elif status == "blocked":
+                summary["blocked_count"] += 1
+                failure_class = str(row["failure_class"] or "unknown")
+                summary["failure_classes"][failure_class] = summary["failure_classes"].get(failure_class, 0) + 1
+            latency = int(row["latency_ms"] or 0)
+            summary["latency_ms"]["count"] += 1
+            summary["latency_ms"]["total"] += latency
+            if summary["last_probed_at"] is None:
+                summary["last_status"] = status
+                summary["last_failure_class"] = row["failure_class"]
+                summary["last_evidence_path"] = row["evidence_path"]
+                summary["last_probed_at"] = row["created_at"]
+                summary["latency_ms"]["last"] = latency
+        for summary in providers.values():
+            count = summary["latency_ms"]["count"]
+            total = summary["latency_ms"]["total"]
+            summary["latency_ms"]["average"] = int(total / count) if count else None
+            summary["verified_rate"] = summary["verified_count"] / summary["probe_count"] if summary["probe_count"] else None
+            summary["failure_classes"] = dict(sorted(summary["failure_classes"].items()))
+        return {
+            "days": days,
+            "window": {"days": days, "cutoff_timestamp": cutoff},
+            "providers": dict(sorted(providers.items())),
+        }
 
 
 class ClusterRouteDecisionRepository(RepositoryBase):

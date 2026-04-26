@@ -37,6 +37,7 @@ from packages.core_domain.m8_flags import (
     active_feature_flags,
     is_external_worker_pools_enabled,
 )
+from packages.core_domain.provider_access import list_provider_access_contracts
 from packages.runtime_langgraph.gateway import resolve_runtime_gateway
 
 
@@ -45,6 +46,68 @@ from packages.runtime_langgraph.gateway import resolve_runtime_gateway
 class CoreHelperServiceMixin:
     def get_cluster_route_stats(self, *, days: int = 30) -> dict[str, Any]:
         return self.cluster_route_decision_repo.summarize_recent(days=days)
+
+    def get_capability_route_stats(self, *, days: int = 30) -> dict[str, Any]:
+        probe_stats = self.capability_probe_result_repo.summarize_recent(days=days)
+        invocation_stats = self.capability_invocation_repo.summarize_recent_routes(days=days)
+        contracts = {str(item["provider_key"]): item for item in list_provider_access_contracts()}
+        providers = sorted(set(contracts) | set(probe_stats["providers"]) | set(invocation_stats["providers"]))
+        provider_payloads: dict[str, Any] = {}
+        for provider in providers:
+            contract = contracts.get(provider, {})
+            probe = probe_stats["providers"].get(provider, {})
+            invocation = invocation_stats["providers"].get(provider, {})
+            verified_count = int(probe.get("verified_count") or 0)
+            invocation_success_count = int(invocation.get("success_count") or 0)
+            provider_payloads[provider] = {
+                "provider": provider,
+                "display_name": contract.get("display_name") or provider,
+                "category": contract.get("category"),
+                "transport": contract.get("transport"),
+                "modalities": list(contract.get("modalities") or []),
+                "default_model": contract.get("default_model"),
+                "auth_sources": list(contract.get("auth_sources") or []),
+                "default_route": bool(contract.get("default_route")),
+                "cost_hint": self._provider_cost_hint(contract),
+                "fallback_policy": self._provider_fallback_policy(provider, contract),
+                "verified_ready": verified_count > 0,
+                "recently_successful": invocation_success_count > 0,
+                "probe_summary": probe,
+                "invocation_summary": invocation,
+            }
+        return {
+            "schema_version": "m80_provider_route_stats_v1",
+            "days": days,
+            "provider_count": len(provider_payloads),
+            "providers": provider_payloads,
+        }
+
+    def _provider_cost_hint(self, contract: dict[str, Any]) -> str:
+        transport = str(contract.get("transport") or "")
+        provider_key = str(contract.get("provider_key") or "")
+        if provider_key == "shell":
+            return "local_free"
+        if transport == "cli":
+            return "external_cli_account"
+        if transport in {"api", "langchain"}:
+            return "provider_variable"
+        if transport == "mcp":
+            return "tool_specific"
+        return "unknown"
+
+    def _provider_fallback_policy(self, provider: str, contract: dict[str, Any]) -> str:
+        if provider == "deepseek_api":
+            return "fallback_to_codex_cli"
+        if provider in {"minimax_api", "opencode_cli"}:
+            return "fallback_to_deepseek_then_codex"
+        if provider in {"mmx_generation_api", "vertex_generation_api", "gcp_tts_api"}:
+            return "blocked_if_required_asset_missing"
+        if provider == "openai_api":
+            return "not_primary_without_openai_api_key"
+        if provider == "langchain_agent":
+            return "experimental_opt_in_only"
+        notes = " ".join(str(item) for item in contract.get("notes") or [])
+        return notes[:240] if notes else "none"
 
     def _resolver(self) -> PresetResolver:
         return PresetResolver(self.preset_repo.list())

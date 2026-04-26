@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
+from apps.orchestrator_api.main import create_app
 from packages.core_domain import capability_probe
 from packages.core_domain.capability_probe import probe_provider, run_capability_probes
 from packages.core_domain.db import migrate
 from packages.core_domain.repositories import CapabilityProbeResultRepository
 from packages.core_domain.services import OrchestratorService
+from packages.contracts import CapabilityInvocationRecord, CapabilityProbeResult
 from packages.worker_adapters.base import ExecutionResult, utc_now
 
 
@@ -183,6 +186,174 @@ def test_capability_health_surfaces_probe_evidence(tmp_path: Path) -> None:
 
     assert shell_health["probe_evidence"]["status"] == "verified_ready"
     assert shell_health["readiness_state"] == "verified_ready"
+
+
+def test_capability_health_verified_only_filters_unverified_descriptors(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    run_capability_probes(
+        provider="shell",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+        db_path=db_path,
+    )
+
+    service = OrchestratorService(db_path, workspace_root=tmp_path)
+    full_health = service.list_capability_health()
+    verified_health = service.list_capability_health(verified_only=True)
+
+    assert len(verified_health) < len(full_health)
+    assert verified_health
+    assert all(
+        (
+            item.get("probe_evidence", {}).get("status") == "verified_ready"
+            and item.get("probe_evidence", {}).get("live_probe") is True
+        )
+        or (
+            item.get("recent_call_summary", {}).get("recent_success_count", 0) > 0
+            and item.get("recent_call_summary", {}).get("verified_by_runtime") is True
+        )
+        for item in verified_health
+    )
+
+
+def test_capability_health_verified_only_ignores_failed_runtime_attempts(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    service = OrchestratorService(db_path, workspace_root=tmp_path)
+    target = next(item for item in service.list_capability_descriptors() if item.get("enabled", True))
+    service.capability_invocation_repo.create(
+        CapabilityInvocationRecord(
+            capability_id=target["capability_id"],
+            provider_kind=target["provider_kind"],
+            status="failed",
+            return_code=1,
+            adapter_name=target.get("adapter_name"),
+            failure_class="execution_failed",
+        )
+    )
+
+    verified_health = OrchestratorService(db_path, workspace_root=tmp_path).list_capability_health(verified_only=True)
+
+    assert all(item["descriptor"]["capability_id"] != target["capability_id"] for item in verified_health)
+
+
+def test_capability_health_verified_only_uses_provider_alias_live_proof(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    CapabilityProbeResultRepository(db_path).create(
+        CapabilityProbeResult(
+            provider="mmx_image",
+            adapter_name="mmx_generation_api",
+            status="verified_ready",
+            live_probe=True,
+            auth_source="MINIMAX_API_KEY",
+            evidence_path=str(tmp_path / "evidence" / "mmx_image_probe.json"),
+            created_at=utc_now(),
+        )
+    )
+
+    verified_health = OrchestratorService(db_path, workspace_root=tmp_path).list_capability_health(verified_only=True)
+    mmx_health = next(item for item in verified_health if item["descriptor"]["capability_id"] == "asset_generator:mmx_generation_api")
+
+    assert mmx_health["readiness_state"] == "verified_ready"
+    assert mmx_health["verified_by_live_probe"] is True
+    assert "mmx_image" in mmx_health["provider_route_stats"]
+
+
+def test_capability_route_stats_include_live_probe_ledger(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    run_capability_probes(
+        provider="shell",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+        db_path=db_path,
+    )
+
+    stats = OrchestratorService(db_path, workspace_root=tmp_path).get_capability_route_stats(days=30)
+
+    assert stats["schema_version"] == "m80_provider_route_stats_v1"
+    assert stats["providers"]["shell"]["verified_ready"] is True
+    assert stats["providers"]["shell"]["probe_summary"]["verified_count"] == 1
+
+
+def test_cli_capability_route_stats_and_verified_only_health(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    probe_result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(db_path),
+            "--workspace-root",
+            str(tmp_path),
+            "capability",
+            "probe",
+            "--provider",
+            "shell",
+            "--require-live",
+            "--evidence-dir",
+            str(tmp_path / "evidence"),
+        ],
+    )
+    assert probe_result.exit_code == 0
+
+    stats_result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(db_path),
+            "--workspace-root",
+            str(tmp_path),
+            "capability",
+            "routes",
+            "stats",
+            "--days",
+            "30",
+        ],
+    )
+    health_result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(db_path),
+            "--workspace-root",
+            str(tmp_path),
+            "capability",
+            "health",
+            "--verified-only",
+        ],
+    )
+
+    assert stats_result.exit_code == 0
+    assert health_result.exit_code == 0
+    assert json.loads(stats_result.stdout)["providers"]["shell"]["verified_ready"] is True
+    health_payload = json.loads(health_result.stdout)
+    assert health_payload
+    assert all(item["readiness_state"] in {"verified_ready", "recently_successful"} for item in health_payload)
+
+
+def test_api_capability_health_and_route_stats_support_m80_fields(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    run_capability_probes(
+        provider="shell",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        require_live=True,
+        db_path=db_path,
+    )
+    client = TestClient(create_app(db_path=db_path, workspace_root=tmp_path))
+
+    health_response = client.get("/capability-health?verified_only=true")
+    stats_response = client.get("/capability-routes/stats?days=30")
+
+    assert health_response.status_code == 200
+    assert stats_response.status_code == 200
+    assert health_response.json()
+    assert stats_response.json()["providers"]["shell"]["verified_ready"] is True
 
 
 def test_cli_capability_probe_blocks_when_required_provider_is_unavailable(tmp_path: Path, monkeypatch) -> None:
