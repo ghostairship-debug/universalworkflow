@@ -4,8 +4,6 @@
 
 - Package version: `0.66.0`.
 - Accepted baseline: `M76`.
-- Current closeout entrypoint: [M73-M76 执行报告](M73_M76_EXECUTION_REPORT.md).
-- Current development plan: [M73-M76 最终开发方案](FINAL_DEVELOPMENT_PLAN_M73_M76.md).
 - Beginner overview: [项目全景介绍](PROJECT_OVERVIEW_FOR_BEGINNERS.md).
 - Governance source of truth: [structured tech debt registry](docs/governance/tech_debt_registry.json).
 
@@ -19,11 +17,8 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - [里程碑历史](docs/milestone_history.md)
 - [技术债登记表](docs/tech-debt-registry.md)
 - [结构化技术债 JSON](docs/governance/tech_debt_registry.json)
-- [M73-M76 执行报告](M73_M76_EXECUTION_REPORT.md)
-- [M76 后深度评估 R1](M76_POST_CLOSEOUT_DEEP_EVALUATION_R1.md)
-- [M76 后深度评估 R2](M76_POST_CLOSEOUT_DEEP_EVALUATION_R2.md)
 
-历史评估、旧恢复计划、旧路线图和重复根目录材料应归档到 [docs/archive/evaluations/](docs/archive/evaluations/)。需要逐字历史时看 git 历史；当前判断以 Active Truth Set 为准。
+历史评估、旧恢复计划、旧路线图、阶段报告和重复根目录材料不再保留为工作树文档。需要逐字历史时看 git 历史；当前判断以 Active Truth Set 为准。
 
 ## Current State
 

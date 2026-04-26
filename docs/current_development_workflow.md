@@ -4,8 +4,8 @@
 
 - Package version: `0.66.0`.
 - Accepted baseline: `M76`.
-- Active truth set: [README.md](../README.md), [M73-M76 执行报告](../M73_M76_EXECUTION_REPORT.md), this workflow guide, [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
-- Historical evaluations, long-term roadmaps, old recovery plans, and duplicate root docs belong under [docs/archive/evaluations/](archive/evaluations/).
+- Active truth set: [README.md](../README.md), this workflow guide, [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
+- Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
 - PR publication remains manual unless the operator explicitly asks for commit, push, or PR creation.
 

@@ -8,7 +8,7 @@
 
 ## 开发规则
 
-- 优先读取 `README.md`、`docs/current_development_workflow.md`、`M73_M76_EXECUTION_REPORT.md` 和 `docs/governance/tech_debt_registry.json`。
+- 优先读取 `README.md`、`docs/current_development_workflow.md`、`docs/milestone_history.md` 和 `docs/governance/tech_debt_registry.json`。
 - Milestone / phase / task card 必须保持三层语义：一个 milestone 包含多个 phase；一个 phase 默认包含多个 task card；task card 是最小可执行单元。
 - 不要把“一 phase = 一 task card”作为默认模式。若某 phase 只有一张 task card，必须在 task card 或 operator packet 中写明 `single_card_exception`。
 - phase 级 operator packet 必须汇总该 phase 内所有 task card 的 write_set、test commands、evidence 和阻塞项。

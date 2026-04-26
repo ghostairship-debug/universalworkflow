@@ -53,4 +53,4 @@
 - 根目录长期路线图、评估文档、恢复计划和重复执行报告
 - 关闭后的临时 workflow state evidence
 
-需要逐字审计旧材料时，使用 git 历史或 [docs/archive/evaluations/](archive/evaluations/)。
+需要逐字审计旧材料时，使用 git 历史。历史评估和阶段报告不再保留为工作树 Markdown，以避免仓库继续膨胀和旧结论污染当前入口。
