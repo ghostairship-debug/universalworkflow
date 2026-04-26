@@ -2,7 +2,7 @@
 
 ## 当前里程碑
 
-当前接受基线是 `M76: Workflow Pipeline And Cocos E2E Closeout`。下一阶段可以恢复能力层开发，但仍必须保留 workflow dogfood、bug-first、安全门禁、provider live proof 和 evidence closeout。
+当前接受实现基线是 `M78: provider/asset repair + real Cocos E2E scaffold`。下一阶段主线是 `M79: Cocos commercial pipeline repair`，必须先把游戏 pipeline 从“能真实 E2E 验证”升级到“能产出完整商业化 Cocos 工程”，再恢复更大范围能力层开发。
 
 本仓库是个人自用 / local-first agentic workflow runtime，不是公开 SaaS、多租户平台、插件市场、自动 PR 发布器或外部托管执行服务。
 
@@ -40,6 +40,14 @@
 - Gemini CLI 暂未接入；Gemini-family 能力当前通过 Vertex/GCP。
 - `gcloud` 是 Vertex/GCP 凭据与环境工具，不是独立 worker adapter。
 - capability readiness 只接受 provider-specific live proof。simulated、dry-run、generic greeting、fallback-only、非真实调用都不能标记为 `verified_ready`。
+
+## Game Pipeline 真实性
+
+- H5/Cocos 商业化游戏是正式业务需求，不是示例 demo。
+- M78 只证明了真实 Cocos Creator 项目生成、Web Mobile 构建、浏览器 playtest 和 MMX/GCP/Vertex 资产链路可以跑通；它不是商业化成品验收。
+- 不得把 `commercial_go_no_go=GO`、feature flag、canvas 非空或浏览器事件覆盖写成“完整商业化游戏已生成”。
+- M79 需要产出编辑器可见、可维护的真实 Cocos 2D 工程：Scene / Node / Prefab / Component / UI、SpriteFrame、AudioClip、Animation、Particle、皮肤、关卡、广告占位和道具闭环。
+- 技术 smoke、E2E scaffold、商业化成品验收必须分开记录。半成品可以作为 evidence，但不能标记为 final commercial ready。
 
 ## 并发与编排
 

@@ -2,7 +2,7 @@
 
 ## 1. 当前事实判断
 
-本计划整合最近几轮评估和讨论结论，作为下一阶段开发入口。当前目标不是继续堆新能力，而是先把 provider、workflow、pipeline、Cocos 游戏生成链路中已经暴露的“名义完成但实现降级”问题修到可信，再恢复能力层开发。
+本计划整合最近几轮评估和讨论结论，作为下一阶段开发入口。当前目标不是继续堆新能力，而是先把 provider、workflow、pipeline、Cocos 游戏生成链路中已经暴露的“名义完成但实现降级”问题修到可信，再考虑恢复能力层开发。
 
 当前关键事实如下：
 
@@ -15,7 +15,7 @@
 - Vertex 当前也存在同类降级：名义是 Gemini-family / multimodal entrypoint，实际主要是 `generate_content()` 文本 evidence。gcloud 更应作为认证和环境工具，而不是生成执行器本身；Cloud Text-to-Speech 属于 GCP TTS 能力，不再归入 Vertex 本体。
 - LangChain 当前对主线几乎没有不可替代价值，应降级为 experimental / opt-in agent framework。未来可用于动态工具 agent、RAG、MCP 组合、provider 快速实验，但不应位于 provider control plane 主路径。
 - MCP 应定位为工具接入层，不是 LLM provider 本体。MCP 适合 workspace readonly、web search、understand image、外部业务工具等能力。
-- M75 pipeline 与 M76 Cocos E2E 目前偏 v0/技术 demo。pipeline stage 没有完全真实执行，Cocos 游戏缺商业化 UI、美术、音效、动画、粒子、皮肤、关卡等闭环。
+- M75 pipeline 与 M76 Cocos E2E 目前偏 v0/技术 demo。M78 已补强真实 Cocos build/playtest 和生成资产接入，但实际产物仍是 E2E scaffold，不是编辑器可见的商业化 Cocos 成品；Cocos 游戏仍缺真实 UI、美术绑定、音效绑定、动画、粒子、皮肤、关卡等闭环。
 - 留存策略本轮暂不处理。后续仍会频繁大规模清理，因此 evidence 保留只需满足当前 closeout 和可追踪需要，不做长期归档策略设计。
 
 ## 2. 总体原则
@@ -155,44 +155,53 @@ gcloud 的角色：
 - 程序化占位只允许用于 CI 或无凭据测试，不得标记商业化完成。
 - 浏览器自动测试必须覆盖 canvas 非空、像素变化、拖拽成功、分数变化、消除、关卡切换、皮肤切换、道具、广告占位、移动端 390x844 无遮挡。
 
-## 4. M78-M82 后续开发计划
+## 4. M78-M83 后续开发计划
 
-M77 通过后，才恢复能力层开发。
+M77/M78 已完成 provider/asset/E2E scaffold 关键修复；M79 通过前，不恢复大规模能力层扩张。
 
-### M78：Provider Runtime 体系稳定化
+### M78：Provider/Asset Repair + Cocos E2E Scaffold（已执行）
 
-- 完成 provider registry：每个 provider 记录 transport、modality、成本等级、凭据来源、live proof、fallback 策略。
-- CLI/API/UI capability health 只展示真实 verified provider。
-- 增加 provider route decision ledger，统计最近 30 天成功率、失败类型、延迟、成本估计。
+- 实际执行中，M78 优先修复了 provider/asset generation 与 Cocos E2E game body。
+- 已真实跑通 MMX/MiniMax image、speech、music，GCP TTS，Vertex Imagen/Gemini review。
+- 已真实生成 Cocos Creator 项目、构建 Web Mobile、跑浏览器 playtest，并把 generated assets 接入 runtime manifest。
+- 当前结论：M78 是可信 E2E scaffold，不是完整商业化 Cocos 工程；不能把 `commercial_go_no_go=GO` 解读为 final commercial ready。
 
-### M79：H5 / Cocos 商业化游戏生产线 v1
+### M79：H5 / Cocos 商业化游戏生产线 v1（当前最优先）
 
-- 将 Cocos E2E 从单个 demo 扩展为可复用 pipeline。
+- 将 Cocos E2E 从单个 scaffold 扩展为可复用、可编辑、可维护的 Cocos production pipeline。
 - 支持从 PDF/策划文档生成：
   - 产品需求映射。
   - 游戏设计 brief。
   - 美术风格 brief。
   - 资源清单。
   - Cocos 项目。
+  - 编辑器可见的 Scene / Node / Prefab / Component / UI 层级。
+  - MMX/Vertex 图片到 SpriteFrame、MMX/GCP 音频到 AudioClip/AudioSource 的真实绑定。
   - 构建与 playtest。
-- 支持商业化检查：广告点位、付费/道具入口、留存任务、移动端性能、首屏体验。
+- 支持商业化检查：广告点位、付费/道具入口、留存任务、移动端性能、首屏体验、编辑器可见性、视觉质量、半成品拒绝。
 
-### M80：多模态资产工厂
+### M80：Provider Runtime 体系稳定化
+
+- 完成 provider registry：每个 provider 记录 transport、modality、成本等级、凭据来源、live proof、fallback 策略。
+- CLI/API/UI capability health 只展示真实 verified provider。
+- 增加 provider route decision ledger，统计最近 30 天成功率、失败类型、延迟、成本估计。
+
+### M81：多模态资产工厂
 
 - 建立 asset manifest、prompt manifest、style guide、asset provenance。
 - 支持批量生成、失败重试、同风格变体、素材 hash 去重。
 - 引入视觉 QA：截图审查、UI 遮挡检测、风格一致性检查。
 - 后续可加入视频素材生成，但不作为 v1 阻塞。
 
-### M81：Workflow 自开发闭环
+### M82：Workflow 自开发闭环
 
 - 用 workflow 自己完成一个中等规模内部改进作为 dogfood demo。
 - 真实使用并发 task cards、route decision、provider fallback、review gate、test gate。
 - 输出完整 run manifest，从 task card 到 evidence、test、commit 可追踪。
 
-### M82：能力层开发恢复
+### M83：能力层开发恢复
 
-在 M77-M81 通过后，恢复更高层能力开发：
+在 M77-M82 通过后，恢复更高层能力开发：
 
 - 更完整的 game pipeline。
 - 多模态内容生产。
@@ -212,7 +221,7 @@ M77 closeout 必须满足：
 - LangChain 不在默认主 route 中，只作为 experimental opt-in。
 - AutomationLease 接入无人值守执行路径。
 - Pipeline run 不再假 completed。
-- Cocos pipeline 生成真实 Cocos 项目和商业化可演示游戏，而不是半成品技术 demo。
+- Cocos pipeline 不能只生成 E2E scaffold；最终商业化验收必须打开 Cocos Creator 可见真实 2D 场景、UI、Prefab/Component、SpriteFrame/AudioClip、Animation/Particle、皮肤、关卡、广告/道具入口。
 - workflow 编排和并发至少完成：
   - artifact-only 并发成功。
   - disjoint write_set 并发成功。
@@ -251,4 +260,4 @@ M77 closeout 必须满足：
 
 - `vertex_imagen` and `vertex_gemini_review` now exist as Vertex AI REST wrappers and capability probes; `gcp_tts_api` remains the separate Google Cloud Text-to-Speech route.
 - `workflowctl game cocos-assets` now batches MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review into a commercial asset manifest.
-- The Cocos commercial game body is still not complete: native Cocos UI nodes, animation timeline, level-switching UI, and final art/audio integration remain open acceptance work.
+- M78 added a real Cocos E2E scaffold and browser playtest with generated assets, but the Cocos commercial game body is still not complete: editor-visible native Cocos UI, prefabs/components, animation clips, particles, level/skin systems, and final art/audio integration remain open M79 acceptance work.

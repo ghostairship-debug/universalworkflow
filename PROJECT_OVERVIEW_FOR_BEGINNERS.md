@@ -186,15 +186,20 @@ Pipeline 是更高一层的产品语义，可以理解为“计划之上的计�
 
 ## 当前阶段
 
-当前已推进到 M76：
+当前已推进到 M78，下一阶段重点是 M79：
 
 - workflow 已能参与开发。
 - route preview、task card、evidence、operator packet 已成为默认要求。
 - capability live proof 已成为硬门禁。
 - Pipeline 有了最小 contract 和 CLI 入口。
 - Cocos H5 游戏 E2E 已有真实生成、构建和浏览器测试入口。
+- MMX/MiniMax、GCP TTS、Vertex 已能参与生成或审查游戏素材。
 
-下一阶段可以恢复能力层开发，但仍要遵守 bug-first 和 workflow dogfood 规则。
+但这里有一个非常重要的限制：
+
+> 当前 Cocos game pipeline 能证明“链路能跑通”，还不能证明“完整商业化游戏已经生成”。
+
+M78 生成的工程可以构建、可以浏览器测试，也有生成素材和商业化特征 evidence；但如果你用 Cocos Creator 打开它，会发现它更像一个可运行脚手架，而不是完整商业化成品。下一阶段 M79 要解决的正是这个问题：把游戏从 canvas/runtime 主导的 E2E scaffold，升级为编辑器里可见、可维护、可继续制作的 Cocos 2D 商业化工程。
 
 ## 一个最小使用路径
 
@@ -207,5 +212,7 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 如果要跑 Cocos H5 小游戏 E2E：
 
 ```powershell
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m73_m76_autopilot/cocos_e2e/1010_block_puzzle_cocos --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m79_cocos_commercial_pipeline/cocos_project --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --generate-commercial-assets --require-commercial
 ```
+
+这个命令当前用于验证链路和生成 evidence。直到 M79 完成前，它不应被理解为“一键生成完整商业化小游戏”。

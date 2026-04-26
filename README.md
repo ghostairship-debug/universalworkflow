@@ -1,9 +1,10 @@
 # Universal Agentic Workflow OS
 
-## Current Version: M77 Provider Access Repair In Progress
+## Current Version: M79 Cocos Commercial Pipeline Repair Planned
 
 - Package version: `0.66.0`.
-- Accepted baseline: `M76`; active repair entry: [M77+ integrated repair and development plan](M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md).
+- Accepted implementation baseline: `M78` real Cocos E2E scaffold and provider/asset repair.
+- Active repair entry: [M77+ integrated repair and development plan](M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md), with M79 now focused on true Cocos commercial game production.
 - Beginner overview: [项目全景介绍](PROJECT_OVERVIEW_FOR_BEGINNERS.md).
 - Governance source of truth: [structured tech debt registry](docs/governance/tech_debt_registry.json).
 
@@ -37,7 +38,9 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - capability readiness 只接受 provider-specific live proof；simulated、dry-run、generic greeting、fallback-only 都不能标记为 `verified_ready`。
 - Dynamic cluster routing 和 adaptive LLM routing 仍是 opt-in，不默认开启。
 - Pipeline 是 `OrchestrationPlan` 之上的 plan-of-plans 产品层；当前执行器已禁止伪完成 capability stage，未真实执行会明确 `blocked`，复杂 mutation 仍通过既有 run/control-plane 语义落地。
-- Cocos E2E 现在区分技术 smoke 和商业化验收；`--require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时会明确 NO-GO。
+- Cocos E2E 现在能真实生成 Cocos Creator 项目、构建 Web Mobile 并跑浏览器 playtest；M78 同时接通 MMX/GCP/Vertex 资产链路。
+- 重要限制：M78 产物仍是可运行 E2E 脚手架/半成品 game body，不是编辑器内完整可维护的商业化 Cocos 成品。`commercial_go_no_go=GO` 只代表当前 E2E 覆盖通过，不能等同于最终商业化验收。
+- M79 的当前主线是把 game pipeline 从“能验证”升级为“能产出”：真实 Cocos Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 资产绑定、动画、粒子、皮肤、关卡、弹窗和移动端商业化体验。
 
 ## Architecture Map
 
@@ -101,13 +104,13 @@ Pipeline 入口：
 
 ```powershell
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline preview --goal "交付一个商业化 H5 小游戏"
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --goal "交付一个商业化 H5 小游戏"
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --goal "交付一个商业化 H5 小游戏" --execute-capabilities --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build
 ```
 
 Cocos E2E 入口：
 
 ```powershell
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m73_m76_autopilot/cocos_e2e/1010_block_puzzle_cocos --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m79_cocos_commercial_pipeline/cocos_project --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --generate-commercial-assets --require-commercial
 ```
 
 ## Workflow Dogfood Rules
@@ -161,7 +164,8 @@ python -m pytest -q --run-slow
 - `gcp_tts_api` is Google Cloud Text-to-Speech; legacy `vertex_tts` remains only as a compatibility alias.
 - Local GCP probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` to force ADC.
 - `workflowctl game cocos-assets` generates a commercial asset manifest from MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review.
-- `workflowctl game cocos-e2e --generate-commercial-assets --require-commercial` can feed generated assets into the commercial gate, but native Cocos UI nodes, animation timeline, and real level-switching UI remain future game-body work.
+- M78 proved the end-to-end path with a real Cocos Creator build and browser playtest, but the generated project remains a scaffold: most game logic is still canvas/runtime driven, generated assets are manifest-fed, and the Cocos editor view is not a finished commercial scene.
+- M79 must replace that scaffold with editor-visible Cocos game production: native 2D scene hierarchy, real UI/prefabs/components, generated SpriteFrame/AudioClip binding, Cocos animation/particle assets, and visual acceptance that rejects half-finished projects.
 
 ```powershell
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider vertex_imagen --require-live --evidence-dir state/m77_integrated_repair/live_probes/vertex_imagen
