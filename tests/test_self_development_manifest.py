@@ -41,6 +41,11 @@ def test_self_development_manifest_go_when_milestone_evidence_is_complete(tmp_pa
     assert manifest["blocking_issue_count"] == 0
     assert manifest["task_card_mechanism"]["min_task_cards_per_phase"] == 3
     assert all(item["task_card_policy"]["status"] == "passed" for item in manifest["milestones"])
+    assert all(item["provenance"]["traceability_status"] == "complete" for item in manifest["milestones"])
+    assert all(item["provenance"]["task_card_paths"] for item in manifest["milestones"])
+    assert all(item["provenance"]["evidence_paths"] for item in manifest["milestones"])
+    assert all(item["provenance"]["schema_version"] == "m73_manifest_provenance_v2" for item in manifest["milestones"])
+    assert all(item["provenance"]["trace_links"] for item in manifest["milestones"])
 
 
 def test_self_development_manifest_accepts_archived_execution_report(tmp_path: Path) -> None:
@@ -53,6 +58,7 @@ def test_self_development_manifest_accepts_archived_execution_report(tmp_path: P
     assert manifest["blocking_issue_count"] == 0
     assert manifest["milestones"][0]["execution_report"]["path"] == "docs/archive/evaluations/M70_EXECUTION_REPORT.md"
     assert "M70_EXECUTION_REPORT.md" in manifest["milestones"][0]["execution_report"]["lookup_paths"][0]
+    assert manifest["milestones"][0]["provenance"]["execution_report_path"] == "docs/archive/evaluations/M70_EXECUTION_REPORT.md"
 
 
 def test_self_development_manifest_blocks_single_card_phase_without_exception(tmp_path: Path) -> None:
@@ -64,6 +70,7 @@ def test_self_development_manifest_blocks_single_card_phase_without_exception(tm
     assert manifest["blocking_issue_count"] == 1
     assert manifest["milestones"][0]["task_card_policy"]["status"] == "failed"
     assert manifest["blocking_issues"][0]["code"] == "task_card_policy_failed"
+    assert manifest["milestones"][0]["provenance"]["traceability_status"] == "complete"
 
 
 def test_cli_governance_self_development_manifest_writes_output(tmp_path: Path) -> None:

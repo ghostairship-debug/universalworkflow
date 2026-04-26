@@ -173,17 +173,24 @@ class MCPCapabilitySource(CapabilitySource):
         preset_id: str,
         task_kind: TaskKind,
         review_policy: ReviewPolicy,
+        profile_ids: list[str] | None = None,
+        tool_ids: list[str] | None = None,
     ) -> list[ToolProjectionEntry]:
         if not mcp_dependency_available():
             return []
+        selected_profiles = self.select_profiles(profile_ids=profile_ids, tool_ids=tool_ids)
+        if not selected_profiles:
+            return []
+        selected_tool_ids = {item for item in (tool_ids or []) if item}
         entries: list[ToolProjectionEntry] = []
-        for profile in self.list_profiles():
-            if not profile.enabled or profile.transport != MCPTransport.stdio:
-                continue
+        for profile in selected_profiles:
             tools = self._list_tools_for_profile(profile)
             consumed_schema_bytes = 0
             for tool in tools[: profile.max_tools]:
                 if profile.allowed_tools and tool["name"] not in profile.allowed_tools:
+                    continue
+                canonical_tool_id = self.canonical_tool_id(profile.profile_id, str(tool["name"]))
+                if selected_tool_ids and tool["name"] not in selected_tool_ids and canonical_tool_id not in selected_tool_ids:
                     continue
                 schema_json = tool.get("inputSchema") or {}
                 schema_bytes = len(json.dumps(schema_json, ensure_ascii=False))
@@ -204,9 +211,40 @@ class MCPCapabilitySource(CapabilitySource):
                         enabled_for_preset=preset_id,
                         redaction_rules=["no_env_leakage"],
                         server_profile_id=profile.profile_id,
+                        canonical_tool_id=canonical_tool_id,
                     )
                 )
         return entries
+
+    def select_profiles(
+        self,
+        *,
+        profile_ids: list[str] | None = None,
+        tool_ids: list[str] | None = None,
+    ) -> list[MCPServerProfile]:
+        requested_profile_ids = {item for item in (profile_ids or []) if item}
+        requested_tool_ids = {item for item in (tool_ids or []) if item}
+        if not requested_profile_ids and not requested_tool_ids:
+            return []
+        selected: list[MCPServerProfile] = []
+        for profile in self.list_profiles():
+            if not profile.enabled or profile.transport != MCPTransport.stdio:
+                continue
+            if requested_profile_ids and profile.profile_id not in requested_profile_ids:
+                continue
+            if requested_tool_ids and not self._profile_matches_tool_selector(profile, requested_tool_ids):
+                continue
+            selected.append(profile)
+        return selected
+
+    def _profile_matches_tool_selector(self, profile: MCPServerProfile, tool_ids: set[str]) -> bool:
+        allowed_tools = set(profile.allowed_tools)
+        canonical_tool_ids = {self.canonical_tool_id(profile.profile_id, tool_name) for tool_name in allowed_tools}
+        return bool(tool_ids & allowed_tools or tool_ids & canonical_tool_ids)
+
+    @staticmethod
+    def canonical_tool_id(profile_id: str, tool_name: str) -> str:
+        return f"mcp:{profile_id}:{tool_name}"
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         self._require_mcp_dependency()
@@ -674,6 +712,8 @@ class CapabilityPlane:
         lane_type: ExecutionLaneType,
         domain_pack_id: str | None = None,
         include_mcp: bool = False,
+        mcp_profile_ids: list[str] | None = None,
+        mcp_tool_ids: list[str] | None = None,
     ) -> tuple[ToolProjectionManifest, list[MCPServerProfile]]:
         entries: list[ToolProjectionEntry] = []
         profiles: list[MCPServerProfile] = []
@@ -691,12 +731,14 @@ class CapabilityPlane:
                 )
             )
             if include_mcp:
-                profiles = [profile for profile in self.mcp_source.list_profiles() if profile.enabled]
+                profiles = self.mcp_source.select_profiles(profile_ids=mcp_profile_ids, tool_ids=mcp_tool_ids)
                 entries.extend(
                     self.mcp_source.list_tool_entries(
                         preset_id=preset_id,
                         task_kind=task_kind,
                         review_policy=review_policy,
+                        profile_ids=mcp_profile_ids,
+                        tool_ids=mcp_tool_ids,
                     )
                 )
         trust_tiers = sorted({entry.trust_tier for entry in entries}, key=str)

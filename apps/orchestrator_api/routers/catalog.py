@@ -67,11 +67,15 @@ def build_catalog_router(service: OrchestratorService, effective_config: dict[st
         preset_id: str,
         task_kind: str | None = None,
         adapter_name: str | None = None,
+        mcp_profile_id: list[str] | None = Query(default=None),
+        mcp_tool_id: list[str] | None = Query(default=None),
     ) -> dict:
         return service.preview_tool_projection(
             preset_id=preset_id,
             task_kind=task_kind,
             adapter_name=adapter_name,
+            mcp_profile_ids=mcp_profile_id,
+            mcp_tool_ids=mcp_tool_id,
         )
 
     @router.get("/simulation/policies")

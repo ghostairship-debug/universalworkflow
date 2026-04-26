@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+import subprocess
+
+import pytest
+
 from packages.contracts import CapabilityDescriptor, CapabilityProbeResult, MutationMode, TaskKind
 from packages.core_domain.capability_plane import CapabilityPlane
 from packages.core_domain.capability_control_plane import (
@@ -8,6 +13,11 @@ from packages.core_domain.capability_control_plane import (
     provider_contract_for_key,
     provider_key_for_descriptor,
 )
+from packages.core_domain.db import migrate
+from packages.core_domain.errors import CapabilityPolicyEnforcementError
+from packages.core_domain.services import OrchestratorService
+from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
+from packages.worker_adapters.router import WorkerRouter
 
 
 def _descriptor(adapter_name: str = "opencode") -> CapabilityDescriptor:
@@ -118,3 +128,76 @@ def test_capability_plane_uses_provider_contract_failure_taxonomy() -> None:
     failure_classes = plane._failure_classes_for_descriptor(_descriptor("vertex_multimodal"))
 
     assert failure_classes == provider_contract_for_key("vertex")["failure_taxonomy"]
+
+
+def _fake_patch_runner(_command, **_kwargs):
+    patch_text = "--- target.txt\n+++ target.txt\n@@ -1 +1 @@\n-before\n+after\n"
+    return subprocess.CompletedProcess(
+        args=_command,
+        returncode=0,
+        stdout=patch_text,
+        stderr="",
+    )
+
+
+def test_capability_enforcement_pilot_blocks_real_patch_path_without_receipt_or_live_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKFLOW_CAPABILITY_ENFORCEMENT_PILOT_ENABLED", "1")
+    target = tmp_path / "target.txt"
+    target.write_text("before\n", encoding="utf-8")
+    migrate(tmp_path / "workflow.db")
+    service = OrchestratorService(
+        tmp_path / "workflow.db",
+        workspace_root=tmp_path,
+        worker_router=WorkerRouter([OpenCodeAdapter(runner=_fake_patch_runner)]),
+    )
+    run = service.create_run(goal="enforced patch", preset_id="feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        mutation_mode="patch_apply",
+        write_set=["target.txt"],
+        task_card_ref="enforced-card",
+    )
+
+    with pytest.raises(CapabilityPolicyEnforcementError) as excinfo:
+        service.resume_run(run.run_id)
+
+    assert excinfo.value.details["decision"] in {"needs_live_probe", "needs_receipt"}
+    assert "provider_live_proof_missing" in excinfo.value.details["reasons"]
+    assert target.read_text(encoding="utf-8") == "before\n"
+
+
+def test_capability_enforcement_pilot_allows_real_patch_path_with_receipt_and_live_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKFLOW_CAPABILITY_ENFORCEMENT_PILOT_ENABLED", "1")
+    target = tmp_path / "target.txt"
+    target.write_text("before\n", encoding="utf-8")
+    migrate(tmp_path / "workflow.db")
+    service = OrchestratorService(
+        tmp_path / "workflow.db",
+        workspace_root=tmp_path,
+        worker_router=WorkerRouter([OpenCodeAdapter(runner=_fake_patch_runner)]),
+    )
+    service.capability_probe_result_repo.create(_verified_probe("opencode"))
+    run = service.create_run(goal="allowed patch", preset_id="feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        mutation_mode="patch_apply",
+        write_set=["target.txt"],
+        task_card_ref="allowed-card",
+    )
+
+    bundle = service.resume_run(run.run_id, operator_receipt_id="opreceipt_allowed")
+
+    assert bundle.run.status == "completed"
+    assert target.read_text(encoding="utf-8") == "after\n"
+    detail = service.get_status_detail(run.run_id)
+    receipt = detail["last_runtime_state"]["state_payload"]["capability_execution_receipt"]
+    assert receipt["operator_receipt_id"] == "opreceipt_allowed"
+    assert receipt["policy_decision"]["decision"] == "allowed"

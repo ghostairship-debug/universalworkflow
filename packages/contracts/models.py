@@ -121,6 +121,22 @@ class ExecutionTargetKind(StrEnum):
     external_worker_pool = "external_worker_pool"
 
 
+class AutomationLeaseStatus(StrEnum):
+    active = "active"
+    revoked = "revoked"
+    expired = "expired"
+
+
+class PipelineStageKind(StrEnum):
+    agent_role = "agent_role"
+    cluster = "cluster"
+    capability = "capability"
+    human_checkpoint = "human_checkpoint"
+    sub_pipeline = "sub_pipeline"
+    validation_gate = "validation_gate"
+    external_worker = "external_worker"
+
+
 class AgentRoleType(StrEnum):
     planner = "planner"
     coder = "coder"
@@ -518,6 +534,24 @@ class CapabilityInvocationEnvelope(ContractModel):
     policy_decision: dict[str, Any] = Field(default_factory=dict)
 
 
+class CapabilityInvocation(PersistedContractModel):
+    invocation_id: str = Field(default_factory=lambda: new_id("capinv"))
+    provider: str
+    adapter_name: str | None = None
+    task_kind: TaskKind | str | None = None
+    run_id: str | None = None
+    runtime_task_id: str | None = None
+    mutation_mode: MutationMode | str | None = None
+    requested_write_set: list[str] = Field(default_factory=list)
+    operator_receipt_id: str | None = None
+    automation_lease_id: str | None = None
+    live_probe_status: str = "not_probed"
+    failure_class: str | None = None
+    evidence_path: str | None = None
+    policy_decision: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CapabilityExecutionReceipt(ContractModel):
     receipt_id: str = Field(default_factory=lambda: new_id("capreceipt"))
     envelope: CapabilityInvocationEnvelope
@@ -604,6 +638,60 @@ class OperatorActionReceipt(PersistedContractModel):
     expires_at: datetime
     consumed_at: datetime | None = None
     audit_timestamp: datetime = Field(default_factory=utc_now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutomationLease(PersistedContractModel):
+    lease_id: str = Field(default_factory=lambda: new_id("autolease"))
+    workspace_root: str
+    allowed_actions: list[str] = Field(default_factory=list)
+    denied_actions: list[str] = Field(default_factory=list)
+    write_set_allowlist: list[str] = Field(default_factory=list)
+    expires_at: datetime
+    max_resume_count: int = Field(default=0, ge=0)
+    max_fix_iterations: int = Field(default=0, ge=0)
+    resume_count: int = Field(default=0, ge=0)
+    status: AutomationLeaseStatus | str = AutomationLeaseStatus.active
+    revoked_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PipelineStage(ContractModel):
+    stage_id: str = Field(default_factory=lambda: new_id("pstage"))
+    name: str
+    stage_kind: PipelineStageKind | str
+    order_index: int = Field(ge=0)
+    goal: str
+    preset_id: str | None = None
+    task_kind: TaskKind | str | None = None
+    adapter_name: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    write_set: list[str] = Field(default_factory=list)
+    validation_commands: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowPipeline(PersistedContractModel):
+    pipeline_id: str = Field(default_factory=lambda: new_id("pipeline"))
+    name: str
+    goal: str
+    execution_mode: str = "serial"
+    stages: list[PipelineStage] = Field(default_factory=list)
+    source: str = "workflow_pipeline"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CocosGameE2EManifest(PersistedContractModel):
+    manifest_id: str = Field(default_factory=lambda: new_id("cocose2e"))
+    pdf_path: str
+    cocos_creator_path: str
+    project_path: str
+    build_output_path: str | None = None
+    playtest_screenshot_paths: list[str] = Field(default_factory=list)
+    canvas_hashes: list[str] = Field(default_factory=list)
+    feature_coverage: dict[str, bool] = Field(default_factory=dict)
+    go_no_go: str = "pending"
+    blockers: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

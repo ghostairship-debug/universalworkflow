@@ -72,6 +72,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         capability_mcp_profiles = http_get_json(f"{base_url}/capability-sources/mcp-profiles")
         capability_projection = http_get_json(
             f"{base_url}/capability-projections/preview?preset_id=research_spike_reviewable"
+            "&mcp_profile_id=local_workspace_readonly&mcp_profile_id=minimax_coding_plan"
         )
         simulation_policies = http_get_json(f"{base_url}/simulation/policies")
         memory_namespaces = http_get_json(f"{base_url}/memory/namespaces")

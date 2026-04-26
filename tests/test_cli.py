@@ -213,6 +213,7 @@ def test_cli_can_preview_m8_capability_projection(tmp_path: Path) -> None:
     env = {
         "UAWO_ENABLE_AGENT_LANE": "1",
         "UAWO_ENABLE_MCP_SOURCE": "1",
+        "WORKFLOW_MCP_BROKER_PROFILE_IDS": "local_workspace_readonly",
     }
 
     sources_result = _invoke(tmp_path, "capability", "sources", env=env)

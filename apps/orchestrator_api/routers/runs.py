@@ -164,7 +164,7 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
         operator_action_receipt: str | None = Header(default=None, alias="X-Operator-Action-Receipt"),
     ) -> dict:
         _consume_receipt("resume_run", operator_action_receipt, {"run_id": run_id})
-        bundle = service.resume_run(run_id)
+        bundle = service.resume_run(run_id, operator_receipt_id=operator_action_receipt)
         return {
             "run": bundle.run.model_dump(mode="json"),
             "evidence_id": bundle.evidence.evidence_id,
@@ -181,7 +181,11 @@ def build_runs_router(service: OrchestratorService) -> APIRouter:
             operator_action_receipt,
             {"run_ids": payload.run_ids, "max_workers": payload.max_workers},
         )
-        return service.resume_runs_parallel(payload.run_ids, max_workers=payload.max_workers)
+        return service.resume_runs_parallel(
+            payload.run_ids,
+            max_workers=payload.max_workers,
+            operator_receipt_id=operator_action_receipt,
+        )
 
     @router.post("/runs/{run_id}/approve")
     def approve_run(

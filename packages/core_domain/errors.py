@@ -191,6 +191,11 @@ class OperatorActionReceiptError(WorkflowError):
     status_code = 403
 
 
+class CapabilityPolicyEnforcementError(WorkflowError):
+    code = "capability_policy_denied"
+    status_code = 403
+
+
 class SchedulerArbitrationError(WorkflowError):
     code = "scheduler_arbitration_error"
     status_code = 409

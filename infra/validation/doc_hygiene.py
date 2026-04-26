@@ -9,7 +9,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIVING_DOCS = [
     Path("README.md"),
     Path("AGENTS.md"),
-    Path("M72_EXECUTION_REPORT.md"),
+    Path("FINAL_DEVELOPMENT_PLAN_M73_M76.md"),
+    Path("M73_M76_EXECUTION_REPORT.md"),
+    Path("M76_POST_CLOSEOUT_DEEP_EVALUATION_R1.md"),
+    Path("M76_POST_CLOSEOUT_DEEP_EVALUATION_R2.md"),
+    Path("PROJECT_OVERVIEW_FOR_BEGINNERS.md"),
     Path("docs/current_development_workflow.md"),
     Path("docs/tech-debt-registry.md"),
     Path("docs/milestone_history.md"),

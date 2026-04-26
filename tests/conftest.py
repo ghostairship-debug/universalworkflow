@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -73,6 +77,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "slow: slow end-to-end tests skipped by default")
+    if getattr(config.option, "basetemp", None):
+        return
+    root_path = Path(str(config.rootpath)).resolve()
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    basetemp_root = root_path / "state" / ".pytest-tmp-workflow"
+    basetemp_root.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = str(basetemp_root / f"default-{os.getpid()}-{timestamp}")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

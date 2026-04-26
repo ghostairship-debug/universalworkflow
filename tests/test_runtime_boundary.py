@@ -40,6 +40,10 @@ def test_contracts_and_core_domain_do_not_import_langgraph() -> None:
                     assert node.module != "langgraph"
 
 
+def test_core_domain_does_not_keep_game_artifact_compatibility_shim() -> None:
+    assert not Path("packages/core_domain/local_game_artifacts.py").exists()
+
+
 def test_runtime_gateway_state_is_lightweight() -> None:
     gateway = NullRuntimeGateway()
     state_ref = gateway.start("run_123", "task_123")

@@ -25,7 +25,12 @@ from packages.contracts import (
 )
 from packages.core_domain.db import unit_of_work
 from packages.core_domain.errors import EntityNotFoundError, PresetNotFoundError, WorkflowError
-from packages.core_domain.m8_flags import is_mcp_source_enabled, is_skill_export_enabled
+from packages.core_domain.m8_flags import (
+    is_mcp_source_enabled,
+    is_skill_export_enabled,
+    mcp_broker_profile_ids_from_env,
+    mcp_broker_tool_ids_from_env,
+)
 from packages.core_domain.memory import load_seed_memory_namespaces
 from packages.core_domain.skills import export_domain_pack_skill_bundle
 
@@ -114,6 +119,8 @@ class MemorySimulationServiceMixin:
         preset_id: str,
         task_kind: TaskKind | str | None = None,
         adapter_name: str | None = None,
+        mcp_profile_ids: list[str] | None = None,
+        mcp_tool_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         preset = self.preset_repo.get(preset_id)
         if preset is None:
@@ -137,6 +144,8 @@ class MemorySimulationServiceMixin:
             lane_type=lane_type,
             domain_pack_id=domain_pack.domain_pack_id if domain_pack is not None else None,
             include_mcp=lane_type != ExecutionLaneType.native_deterministic and is_mcp_source_enabled(),
+            mcp_profile_ids=mcp_profile_ids if mcp_profile_ids is not None else mcp_broker_profile_ids_from_env(),
+            mcp_tool_ids=mcp_tool_ids if mcp_tool_ids is not None else mcp_broker_tool_ids_from_env(),
         )
         return {
             "preset": preset.model_dump(mode="json"),

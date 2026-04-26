@@ -45,6 +45,11 @@ def run_create(
     mutation_mode: Optional[str] = typer.Option(None, "--mutation-mode", help="artifact_only or patch_apply."),
     prepare: bool = typer.Option(False, "--prepare", help="Prepare the run internally after creation."),
     execute: bool = typer.Option(False, "--execute", help="Execute the prepared run internally."),
+    operator_receipt_id: Optional[str] = typer.Option(
+        None,
+        "--operator-receipt-id",
+        help="Receipt id attached to a capability-enforced mutation invocation.",
+    ),
 ) -> None:
     service = _service(ctx)
     run = _run_workflow_action(lambda: service.create_run(goal=goal, preset_id=preset))
@@ -91,7 +96,7 @@ def run_create(
             prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None
         )
     if execute:
-        executed = _run_workflow_action(lambda: service.resume_run(run.run_id))
+        executed = _run_workflow_action(lambda: service.resume_run(run.run_id, operator_receipt_id=operator_receipt_id))
         current_run = executed.run
         payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
         payload["evidence_id"] = executed.evidence.evidence_id
@@ -111,6 +116,11 @@ def run_from_task_card(
     test_command: Optional[list[str]] = typer.Option(None, "--test-command", help="Safe test commands to run."),
     max_fix_iterations: int = typer.Option(0, "--max-fix-iterations", min=0),
     execute: bool = typer.Option(False, "--execute", help="Execute the prepared run immediately."),
+    operator_receipt_id: Optional[str] = typer.Option(
+        None,
+        "--operator-receipt-id",
+        help="Receipt id attached to a capability-enforced mutation invocation.",
+    ),
 ) -> None:
     path = Path(task_card_path)
     if not path.exists():
@@ -161,7 +171,7 @@ def run_from_task_card(
         ),
     }
     if execute:
-        executed = _run_workflow_action(lambda: service.resume_run(run.run_id))
+        executed = _run_workflow_action(lambda: service.resume_run(run.run_id, operator_receipt_id=operator_receipt_id))
         payload["run"] = executed.run.model_dump(mode="json")
         payload["evidence_id"] = executed.evidence.evidence_id
         payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
@@ -416,8 +426,16 @@ def run_recompile(
 
 
 @run_app.command("resume")
-def run_resume(ctx: typer.Context, run_id: str) -> None:
-    executed = _run_workflow_action(lambda: _service(ctx).resume_run(run_id))
+def run_resume(
+    ctx: typer.Context,
+    run_id: str,
+    operator_receipt_id: Optional[str] = typer.Option(
+        None,
+        "--operator-receipt-id",
+        help="Receipt id attached to a capability-enforced mutation invocation.",
+    ),
+) -> None:
+    executed = _run_workflow_action(lambda: _service(ctx).resume_run(run_id, operator_receipt_id=operator_receipt_id))
     _emit_json(
         {
             "run": executed.run.model_dump(mode="json"),
@@ -432,8 +450,21 @@ def run_batch_resume(
     ctx: typer.Context,
     run_id: list[str] = typer.Argument(..., help="Prepared run ids to resume behind one local batch barrier."),
     max_workers: Optional[int] = typer.Option(None, "--max-workers", min=1),
+    operator_receipt_id: Optional[str] = typer.Option(
+        None,
+        "--operator-receipt-id",
+        help="Receipt id attached to capability-enforced mutation invocations.",
+    ),
 ) -> None:
-    _emit_json(_run_workflow_action(lambda: _service(ctx).resume_runs_parallel(run_id, max_workers=max_workers)))
+    _emit_json(
+        _run_workflow_action(
+            lambda: _service(ctx).resume_runs_parallel(
+                run_id,
+                max_workers=max_workers,
+                operator_receipt_id=operator_receipt_id,
+            )
+        )
+    )
 
 
 @run_app.command("approve")

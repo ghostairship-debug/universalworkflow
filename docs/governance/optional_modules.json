@@ -1,0 +1,49 @@
+{
+  "schema_version": "m73_optional_modules_v1",
+  "generated_at": "2026-04-26T00:00:00Z",
+  "purpose": "Track optional or deferred modules that are intentionally retained but must not silently become permanent complexity.",
+  "modules": [
+    {
+      "module_id": "scheduler_authority_cluster_runtime",
+      "paths": [
+        "packages/core_domain/scheduler_authority.py",
+        "apps/scheduler_authority_api/main.py"
+      ],
+      "status": "optional_cluster_compatibility",
+      "default_path": "disabled",
+      "rationale": "Cloud/distributed scheduler authority remains deferred. LocalSchedulerLeaseArbiter is the default local-first path.",
+      "review_at": "2026-10-26",
+      "keep_condition": "Retain only if explicit cluster-on work resumes or external control-plane failover becomes a concrete roadmap item.",
+      "delete_condition": "Delete or quarantine if cluster mode remains unused through the review date and the owner confirms cloud/distributed scheduling is still deferred.",
+      "doctor_behavior": "warn_after_review_at"
+    },
+    {
+      "module_id": "remote_worker_api",
+      "paths": [
+        "apps/remote_worker_api/main.py",
+        "tests/test_remote_worker_api.py"
+      ],
+      "status": "optional_remote_worker_surface",
+      "default_path": "disabled",
+      "rationale": "Remote worker support is useful for future distributed execution but the current product remains personal local-first.",
+      "review_at": "2026-10-26",
+      "keep_condition": "Retain if M73-M75 introduces a bounded AutomationLease or worker-pool deployment plan that uses it.",
+      "delete_condition": "Delete or move behind a plugin boundary if no bounded remote execution plan exists by the review date.",
+      "doctor_behavior": "warn_after_review_at"
+    },
+    {
+      "module_id": "external_worker_pools",
+      "paths": [
+        "packages/core_domain/external_workers.py",
+        "packages/core_domain/worker_pools.py"
+      ],
+      "status": "optional_worker_pool_compatibility",
+      "default_path": "disabled",
+      "rationale": "External worker pools are opt-in and should not affect the default local execution path.",
+      "review_at": "2026-10-26",
+      "keep_condition": "Retain if there is fresh evidence for callback allowlist, shared secret, lease, and partial failure resume behavior.",
+      "delete_condition": "Quarantine or remove if they remain unused and unverified by the review date.",
+      "doctor_behavior": "warn_after_review_at"
+    }
+  ]
+}

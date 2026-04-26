@@ -280,7 +280,7 @@ def test_api_exposes_m8_capability_sources_and_projection_preview(tmp_path: Path
     profiles_response = client.get("/capability-sources/mcp-profiles")
     projection_response = client.get(
         "/capability-projections/preview",
-        params={"preset_id": "research_spike_reviewable"},
+        params={"preset_id": "research_spike_reviewable", "mcp_profile_id": "local_workspace_readonly"},
     )
 
     assert sources_response.status_code == 200

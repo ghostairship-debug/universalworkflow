@@ -105,6 +105,8 @@ from packages.core_domain.m8_flags import (
     is_agent_lane_enabled,
     is_durable_pilot_enabled,
     is_mcp_source_enabled,
+    mcp_broker_profile_ids_from_env,
+    mcp_broker_tool_ids_from_env,
 )
 from packages.core_domain.observability import TraceExporter, TraceRecord, build_trace_exporter_from_env
 from packages.core_domain.orchestration_engine import OrchestrationEngine
@@ -660,6 +662,8 @@ class OrchestratorService(
             lane_type=lane_type,
             domain_pack_id=domain_pack.domain_pack_id if domain_pack is not None else None,
             include_mcp=is_mcp_source_enabled(),
+            mcp_profile_ids=mcp_broker_profile_ids_from_env(),
+            mcp_tool_ids=mcp_broker_tool_ids_from_env(),
         )
         return (manifest, profiles) if manifest.tools or lane_type != ExecutionLaneType.native_deterministic else (manifest, profiles)
 

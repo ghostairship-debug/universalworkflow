@@ -290,10 +290,10 @@
     },
     {
       "debt_id": "M67-ARCH-001",
-      "description": "hot-file slimming remains incomplete: services.py, service_interaction_chat.py, local_scheduler_lease_arbiter.py, web_ui_components.py, local_game_artifacts.py, and core_domain/test_matrix.py still exceed the M67 target shape",
+      "description": "hot-file slimming and default-path cleanup needed to reduce services.py, service_interaction_chat.py, local_scheduler_lease_arbiter.py, web_ui_components.py, local game artifacts, and core_domain/test_matrix.py toward the M67 target shape",
       "introduced_in": "M62-M66 decomposition carry-forward",
-      "repaid_in": "M67 P7",
-      "result": "Extracted RepositoryBundle/WorkerRuntimeBundle and service inspection/chat LLM mixins, split local scheduler handoff helpers and game templates into smaller modules, moved test matrix implementation to infra with a compatibility wrapper, removed private helper re-exports from the chat runtime facade, and verified targeted P7 tests plus line-count ratchets."
+      "repaid_in": "M67 P7 / M73 preflight",
+      "result": "Extracted RepositoryBundle/WorkerRuntimeBundle and service inspection/chat LLM mixins, split local scheduler handoff helpers and game templates into smaller modules, moved test matrix implementation to infra with a compatibility wrapper, removed private helper re-exports from the chat runtime facade, deleted the stale core_domain local game artifact shim in M73 preflight, and verified targeted tests plus line-count ratchets."
     },
     {
       "debt_id": "M67-WF-001",

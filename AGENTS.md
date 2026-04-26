@@ -2,19 +2,19 @@
 
 ## 当前里程碑
 
-当前接受基线是 `M72: Trusted Self-Development Baseline`。下一阶段建议进入 `M73` 能力层开发。
+当前接受基线是 `M76: Workflow Pipeline And Cocos E2E Closeout`。下一阶段可以恢复能力层开发，但仍必须保留 workflow dogfood、bug-first、安全门禁、provider live proof 和 evidence closeout。
 
 本仓库是个人自用 / local-first agentic workflow runtime，不是公开 SaaS、多租户平台、插件市场、自动 PR 发布器或外部托管执行服务。
 
 ## 开发规则
 
-- 优先读取 `README.md`、`docs/current_development_workflow.md`、`M72_EXECUTION_REPORT.md` 和 `docs/governance/tech_debt_registry.json`。
+- 优先读取 `README.md`、`docs/current_development_workflow.md`、`M73_M76_EXECUTION_REPORT.md` 和 `docs/governance/tech_debt_registry.json`。
 - Milestone / phase / task card 必须保持三层语义：一个 milestone 包含多个 phase；一个 phase 默认包含多个 task card；task card 是最小可执行单元。
 - 不要把“一 phase = 一 task card”作为默认模式。若某 phase 只有一张 task card，必须在 task card 或 operator packet 中写明 `single_card_exception`。
 - phase 级 operator packet 必须汇总该 phase 内所有 task card 的 write_set、test commands、evidence 和阻塞项。
 - 简单低风险任务优先通过 `workflowctl run from-task-card ... --adapter opencode --execute` 走 workflow；复杂安全协议和架构切片可以使用 Codex 或本地补丁兜底。
 - bug-first：workflow、receipt、probe、evidence、route、repo mutation、test matrix 任一路径出 bug，先修 workflow bug 并补测试，再继续原 phase。
-- 成功 phase 可 1 phase 1 commit；不要把多个 phase 或多个 milestone 压成一个 commit。
+- 成功 phase 可以 1 phase 1 commit；不要把多个 phase 或多个 milestone 压成一个 commit，除非用户明确要求一次性收口提交。
 
 ## 高风险动作边界
 
@@ -30,7 +30,7 @@
 - watchdog auto-apply
 - git commit / push / PR
 
-高风险动作必须使用 scope-bound `OperatorActionReceipt`。GET 请求不得产生状态变更；`execute=true` 不得绕过 receipt 或 lease。
+高风险动作必须使用 scope-bound `OperatorActionReceipt` 或明确的 `AutomationLease`。GET 请求不得产生状态变更；`execute=true` 不得绕过 receipt 或 lease。
 
 ## 路由与 Provider 真实性
 

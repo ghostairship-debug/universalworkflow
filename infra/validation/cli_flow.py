@@ -182,6 +182,10 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             "projection",
             "--preset",
             "research_spike_reviewable",
+            "--mcp-profile-id",
+            "local_workspace_readonly",
+            "--mcp-profile-id",
+            "minimax_coding_plan",
         ],
         env,
     )

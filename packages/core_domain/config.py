@@ -288,6 +288,14 @@ def build_effective_config(
                 default=False,
                 coerce=_coerce_bool,
             ),
+            "capability_enforcement_pilot": _resolve_value(
+                env=environment,
+                env_key="WORKFLOW_CAPABILITY_ENFORCEMENT_PILOT_ENABLED",
+                config=raw_config,
+                config_key="feature_flags.capability_enforcement_pilot",
+                default=False,
+                coerce=_coerce_bool,
+            ),
         },
         "agent": {
             "model": _resolve_value(

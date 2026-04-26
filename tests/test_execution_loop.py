@@ -1489,6 +1489,7 @@ def test_resume_run_converts_worker_adapter_exception_to_failed_evidence(tmp_pat
 def test_preview_tool_projection_includes_mcp_subset_for_reviewable_pilot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UAWO_ENABLE_AGENT_LANE", "1")
     monkeypatch.setenv("UAWO_ENABLE_MCP_SOURCE", "1")
+    monkeypatch.setenv("WORKFLOW_MCP_BROKER_PROFILE_IDS", "local_workspace_readonly,minimax_coding_plan")
     db_path = tmp_path / "workflow.db"
     migrate(db_path)
     PresetRepository(db_path).seed_defaults()

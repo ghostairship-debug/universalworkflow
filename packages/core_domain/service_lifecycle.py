@@ -38,6 +38,7 @@ from packages.core_domain.compile import CompileSnapshot, compile_run as build_c
 from packages.core_domain.db import get_connection, unit_of_work
 from packages.core_domain.errors import (
     BudgetExhaustedError,
+    CapabilityPolicyEnforcementError,
     EntityNotFoundError,
     MutationContractError,
     ParallelBarrierBrokenError,
@@ -45,6 +46,7 @@ from packages.core_domain.errors import (
     RepoMutationScopeError,
     WorkflowError,
 )
+from packages.core_domain.capability_control_plane import evaluate_capability_policy
 from packages.core_domain.parallel_execution_contract import build_parallel_batch_plan, build_partial_failure_resume
 from packages.core_domain.service_types import ExecutedRunBundle, PreparedRunBundle, ReviewedRunBundle
 from packages.worker_adapters.base import ExecutionResult
@@ -985,6 +987,7 @@ class LifecycleServiceMixin:
         self,
         run_id: str,
         *,
+        operator_receipt_id: str | None = None,
         _parallel_barrier: Barrier | None = None,
         _barrier_id: str | None = None,
         _barrier_size: int | None = None,
@@ -1121,6 +1124,46 @@ class LifecycleServiceMixin:
                     },
                 }
             )
+            envelope = self._capability_invocation_envelope_from_state(resumed_state)
+            if envelope is not None and operator_receipt_id and not envelope.operator_receipt_id:
+                envelope = type(envelope).model_validate(
+                    {
+                        **envelope.model_dump(mode="json"),
+                        "operator_receipt_id": operator_receipt_id,
+                    }
+                )
+                resumed_state = self._state_ref_with_payload_updates(
+                    resumed_state,
+                    {"capability_invocation_envelope": envelope.model_dump(mode="json")},
+                )
+                self.runtime_state_repo.upsert(resumed_state, connection=connection)
+            if (
+                self.effective_config.get("feature_flags", {})
+                .get("capability_enforcement_pilot", {})
+                .get("enabled")
+                and execution_packet.mutation_contract is not None
+                and execution_packet.mutation_contract.mutation_mode == MutationMode.patch_apply
+                and envelope is not None
+            ):
+                policy_decision = evaluate_capability_policy(
+                    descriptor=envelope.descriptor,
+                    mutation_mode=envelope.mutation_mode,
+                    requested_write_set=envelope.requested_write_set,
+                    operator_receipt_id=envelope.operator_receipt_id,
+                    latest_probe_results=self.capability_probe_result_repo.latest_by_provider(),
+                    require_live=envelope.live_probe_required,
+                )
+                if policy_decision.get("decision") != "allowed":
+                    raise CapabilityPolicyEnforcementError(
+                        "capability policy denied repo mutation execution",
+                        {
+                            "run_id": run.run_id,
+                            "runtime_task_id": runtime_task.runtime_task_id,
+                            "decision": policy_decision.get("decision"),
+                            "reasons": policy_decision.get("reasons", []),
+                            "policy_decision": policy_decision,
+                        },
+                    )
             scheduler_context = self._scheduler_context_for_dispatch(
                 scheduler_submission.get("committed_lease") if isinstance(scheduler_submission, dict) else None
             )
@@ -1733,7 +1776,13 @@ class LifecycleServiceMixin:
     def execute_run(self, run_id: str) -> ExecutedRunBundle:
         return self.resume_run(run_id)
 
-    def resume_runs_parallel(self, run_ids: list[str], *, max_workers: int | None = None) -> dict[str, Any]:
+    def resume_runs_parallel(
+        self,
+        run_ids: list[str],
+        *,
+        max_workers: int | None = None,
+        operator_receipt_id: str | None = None,
+    ) -> dict[str, Any]:
         normalized_run_ids: list[str] = []
         seen: set[str] = set()
         for run_id in run_ids:
@@ -1786,6 +1835,7 @@ class LifecycleServiceMixin:
             try:
                 bundle = self.resume_run(
                     target_run_id,
+                    operator_receipt_id=operator_receipt_id,
                     _parallel_barrier=sync_barrier,
                     _barrier_id=barrier_id,
                     _barrier_size=len(normalized_run_ids),

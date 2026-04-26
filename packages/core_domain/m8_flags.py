@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from packages.core_domain.config import build_effective_config
 
 UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER = "UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER"
@@ -27,6 +29,18 @@ def is_agent_lane_enabled() -> bool:
 
 def is_mcp_source_enabled() -> bool:
     return _flag_value("UAWO_ENABLE_MCP_SOURCE")
+
+
+def _split_selector_env(name: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+def mcp_broker_profile_ids_from_env() -> list[str]:
+    return _split_selector_env("WORKFLOW_MCP_BROKER_PROFILE_IDS")
+
+
+def mcp_broker_tool_ids_from_env() -> list[str]:
+    return _split_selector_env("WORKFLOW_MCP_BROKER_TOOL_IDS")
 
 
 def is_external_trace_export_enabled() -> bool:

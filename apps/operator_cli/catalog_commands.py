@@ -224,6 +224,8 @@ def capability_projection(
     preset: str = typer.Option(..., "--preset"),
     task_kind: Optional[str] = typer.Option(None, "--task-kind"),
     adapter: Optional[str] = typer.Option(None, "--adapter"),
+    mcp_profile_id: Optional[list[str]] = typer.Option(None, "--mcp-profile-id", help="Explicit MCP profile id to expose."),
+    mcp_tool_id: Optional[list[str]] = typer.Option(None, "--mcp-tool-id", help="Explicit MCP raw or canonical tool id to expose."),
 ) -> None:
     _emit_json(
         _run_workflow_action(
@@ -231,6 +233,8 @@ def capability_projection(
                 preset_id=preset,
                 task_kind=task_kind,
                 adapter_name=adapter,
+                mcp_profile_ids=list(mcp_profile_id) if mcp_profile_id else None,
+                mcp_tool_ids=list(mcp_tool_id) if mcp_tool_id else None,
             )
         )
     )

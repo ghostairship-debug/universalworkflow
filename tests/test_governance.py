@@ -18,6 +18,25 @@ OPEN_DEBT_IDS: list[str] = [
 BLOCKING_OPEN_DEBT_IDS: list[str] = []
 
 
+def test_optional_modules_registry_records_review_and_delete_conditions() -> None:
+    registry_path = Path("docs/governance/optional_modules.json")
+    payload = json.loads(registry_path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == "m73_optional_modules_v1"
+    modules = {item["module_id"]: item for item in payload["modules"]}
+    assert {
+        "scheduler_authority_cluster_runtime",
+        "remote_worker_api",
+        "external_worker_pools",
+    } <= set(modules)
+    for item in modules.values():
+        assert item["paths"]
+        assert item["review_at"]
+        assert item["rationale"]
+        assert item["delete_condition"]
+        assert item["doctor_behavior"] == "warn_after_review_at"
+
+
 def test_build_tech_debt_report_parses_registry_sections(tmp_path: Path) -> None:
     registry_path = tmp_path / "tech-debt-registry.md"
     registry_path.write_text(
