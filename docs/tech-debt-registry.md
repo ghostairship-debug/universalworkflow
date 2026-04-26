@@ -1,64 +1,51 @@
 # 技术债登记表
 
-本文档是人类可读的技术债摘要。结构化真相源是 [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)，治理 API/CLI 默认读取该 JSON；本文档用于快速理解当前还剩什么债、下一步为什么要处理它。
+本文档是人类可读的技术债摘要。结构化真相源是 [docs/governance/tech_debt_registry.json](governance/tech_debt_registry.json)，治理 API/CLI 默认读取该 JSON。
 
 ## 登记规则
 
-- 只记录已经明确接受或在仓库中清晰观察到的债务。
+- 只登记已经明确接受或在仓库中清晰观察到的债务。
 - 不把未分析想法塞进这里。
 - 每条债务必须说明引入位置、计划偿还阶段、当前状态和阻塞影响。
 - 历史债务可以汇总，但不能在没有证据的情况下静默删除。
+- 不再使用“项目零债”的表达；只说明 blocking debt 是否清零，以及 carry-forward debt 是否阻塞下一阶段。
+
+## 当前结论
+
+- M67-M72 阻塞可信使用的债务已经收口。
+- M73 可以恢复能力层开发。
+- 仍保留非阻塞结构维护债：若能力开发中真实触发痛点，再按 bug-first 原则拆成新的偿还 phase。
 
 ## 已偿还债务摘要
 
 | ID | 描述 | 偿还阶段 | 结果 |
 | --- | --- | --- | --- |
-| TD-002 | preset 缺少确定性 suggestion 路径 | M1 | 已加入离线 deterministic suggestion |
-| TD-003 | `HandoffLite` 只有契约没有持久化 | M1 | 已加入持久化和状态查询 |
-| TD-005 | 执行路径过度依赖 shell-only lane | M5 | 已形成多 adapter baseline |
-| TD-012 | offline validation 脚本过大 | Pre-M8 | 已拆为 `infra/validation/` |
-| TD-018 | 文档混用绝对链接和历史/当前说明 | Pre-M8 | 已建立 portable links 和当前文档治理规则 |
-| TD-006 | `optional` review policy 只是 reference-only | M9 | 已加入可执行 optional advisory review |
-| TD-007 | run events / trace 缺少 replay-grade linkage | M9 | 已加入 replay packet 和 run metrics |
-| TD-008 | durable pilot 缺少 interrupt/resume/checkpoint lineage | M9 | 已加入 durable lineage 和 reconciliation |
-| TD-020 | Web operator UI 缺失 | M14 | 已加入 FastAPI Web operator surface |
-| TD-021 | scheduler authority 第一版不完整 | M20 | 已加入 single-store quorum-style authority、fencing 和 cutover validation |
-| TD-STRUCT-002 | M31 后 truth 分散在多个文档 | M32 / M38 | 已吸收到活跃中文真相源 |
-| TD-STRUCT-004 | orchestration 仍携带 `project_delivery` 假设 | M33 | 已收缩到 shared orchestration service 和 canonical plan builder |
-| TD-CODEX-CLI-001 | CodexAdapter prompt/参数顺序和 Windows 文本处理可能破坏模型选择或 artifact 输出 | M41 Phase 13 | 已改为 options-before-prompt、stdin prompt、UTF-8 decode 和 artifact 目录创建 |
-| TD-DOGFOOD-002 | orchestration child failures 可被静默 approve | M41 Phase 13 | 已确保失败 child 在 fallback 前保留 failed/rejected 证据 |
-| TD-MODEL-ACCESS-001 | 本机 Codex CLI 曾无法访问目标 dogfood 模型 | M41 Phase 13 | 已升级 npm `@openai/codex` 到 `0.125.0` 并完成 `gpt-5.5` smoke |
-| TD-CODEX-PROCESS-001 | Windows 上 Codex CLI 的 node/native 子进程可能在 timeout 后残留并卡住 workflow | M42 | 已为真实 Codex CLI 路径加入进程树 timeout 清理，并用 8 秒 tree-timeout smoke 验证 |
-| TD-SHELL-UTF8-001 | Windows ShellAdapter 用系统默认文本模式捕获输出，遇到中文/UTF-8 artifact stdout 可能解码失败 | M43 | 已改为 bytes 捕获并按 UTF-8/系统编码 fallback 解码 |
-| TD-CLUSTER-GRAPH-001 | 动态多集群目标在 status detail 中只投影首个 cluster graph | M45/M46 | 已改为 composite cluster graph，保留全部 selected cluster |
-| TD-STRUCT-001 | Orchestrator/CLI/Web/chat surface 过大 | M62/M63 | 已用 facade ratchet、interaction split、chat runtime package、CLI command families 和 Web UI receipt split 收口 |
+| TD-STRUCT-001 | Orchestrator/CLI/Web/chat surface 过大 | M62/M63 | facade ratchet、interaction split、chat runtime package、CLI command families、Web UI split 已落地 |
 | TD-STRUCT-003 | scheduler-authority 命名可能高估 consensus 语义 | M65/M66 | 已收敛为 `LocalSchedulerLeaseArbiter` local-first 语义，旧名称仅兼容 |
 | TD-STRUCT-005 | capability health 缺少真实 runtime probe 支撑 | M64 | 已加入 `CapabilityProbeResult` ledger，并完成 all-provider require-live probe |
-| TD-STRUCT-006 | M31 future platform objects 缺少 promotion path | M66 | 已归类为 archive/reference material；未来采用前必须另开治理任务 |
-| TD-DOGFOOD-001 | 多 provider dogfood 仍依赖 degraded/fallback | M64 | 已完成 shell/Codex/OpenCode/MMX/Vertex/Claude/LangChain require-live probes |
-| TD-CODEX-LATENCY-001 | Codex artifact-only prompt 偏大且缺少 role telemetry | M66 | 已收缩 dogfood artifact prompt，并在 metadata 中记录 role/prompt telemetry |
-| TD-MULTIMODAL-001 | MMX/Vertex 缺少 live multimodal evidence | M64 | 已通过 require-live probe 产生真实 evidence，fallback 不再算完成 |
-| M67-SEC-001 | `OperatorActionReceipt` 缺少 request scope 绑定 | M67 P2 | 已加入 `scope_hash` / `scope_payload`，并覆盖 run/body/session/batch tamper 和 legacy receipt 拒绝 |
-| M67-PROBE-001 | capability live probe 可能误收 simulated / dry-run / generic / fallback-only evidence | M67 P3 | 已加入 provider-specific live-proof contract，并通过 shell/Codex/OpenCode/MMX/Vertex/Claude/LangChain 全量 require-live probe |
+| M67-SEC-001 | `OperatorActionReceipt` 缺少 request scope 绑定 | M67 P2 | 已加入 `scope_hash` / `scope_payload` 并覆盖 tamper / legacy receipt 拒绝 |
+| M67-PROBE-001 | capability live probe 可能误收 simulated / dry-run / generic / fallback-only evidence | M67 P3 | 已加入 provider-specific live-proof contract 并通过全量 require-live probe |
 | M67-VAL-001 | offline validation 缺少 shard/freshness/timeout 失败报告硬门禁 | M67 P4 | 已加入 quick/full/shard、timeout trace/last-command 报告和 Windows-safe result file transfer |
-| M67-WEB-001 | Web UI 仍依赖 inline CSP 例外，contribution game template 仍有 `innerHTML` browser surface | M67 P5 | 已静态化 operator CSS/JS、移除 CSP `unsafe-inline`、补 receipt regression 并替换 `.innerHTML` 清空路径 |
-| M67-SCHED-001 | scheduler 默认文案和 flag-off boot path 尚未完全收敛到 local lease arbiter 语义 | M67 P6 | 已改为 local scheduler lease arbiter 默认文案，并验证 flag-off 不 import legacy cluster runtime/support |
-| M67-ARCH-001 | M67 指定热点文件仍偏大，默认启动路径和 facade 仍不够轻 | M67 P7 | 已抽出 repository/worker bundle、service mixin、game template split 和 infra test matrix wrapper，所有 M67 瘦身硬目标达标 |
-| M67-WF-001 | workflow 自身参与开发缺少完整 task-card / route / evidence / operator-packet proof | M67 P8 | 已用 workflow 跑 simple/medium/complex 任务、生成 manifest/operator packet，并在过程中按 bug-first 修复 workflow 自身问题 |
-| M67-AUTO-001 | `execute=true` / auto-apply 等自动化边界缺少统一可审计授权 | M67 P2/P5/P8 | 已将高风险 execute、batch resume、reconcile、chat confirmation、watchdog auto-apply 收敛到 scoped `OperatorActionReceipt`；GET mutate 被拒绝 |
-| M67-ROUTE-001 | 动态/自适应路由和并发执行缺少真实 E2E proof | M67 P8 | 已完成 MiniMax/OpenCode simple、DeepSeek medium、Codex fallback、cluster_parallel complex 和 `batch-resume --max-workers 2` evidence |
+| M67-WEB-001 | Web UI 仍依赖 inline CSP 例外，game template 仍有 `innerHTML` browser surface | M67 P5 | 已静态化 operator CSS/JS、移除 CSP `unsafe-inline` 并替换 `.innerHTML` 清空路径 |
+| M67-SCHED-001 | scheduler 默认文案和 flag-off boot path 未完全收敛到 local lease arbiter | M67 P6 | 已改为 local scheduler lease arbiter 默认文案，并验证 flag-off 不 import legacy cluster runtime/support |
+| M67-ARCH-001 | M67 热点文件和默认启动路径仍偏重 | M67 P7 | 已抽出 repository/worker bundle、service mixin、game template split 和 infra test matrix wrapper |
+| M67-WF-001 | workflow 自身参与开发缺少完整 proof | M67 P8 | 已用 workflow 跑 simple/medium/complex 任务并生成 manifest/operator packet |
+| M67-AUTO-001 | `execute=true` / auto-apply 等自动化边界缺少统一可审计授权 | M67 P2/P5/P8 | 高风险动作已收敛到 scoped `OperatorActionReceipt` |
+| M67-ROUTE-001 | 动态/自适应路由和并发执行缺少真实 E2E proof | M67 P8 | 已完成 MiniMax/OpenCode simple、DeepSeek medium、Codex fallback、cluster_parallel complex 和 batch-resume evidence |
+| M69-CONTROL-001 | capability policy/live proof/write_set/receipt 缺少统一 control-plane decision | M69 | 已新增 capability control-plane decision，并写入 invocation envelope / execution receipt |
+| M70-PROVIDER-001 | Vertex、gcloud、Gemini CLI 和 provider contract 边界不清 | M70 | 已新增 provider contract registry 和 CLI，明确 Gemini CLI 未接入、gcloud 不是 worker adapter |
+| M71-CONCURRENCY-001 | batch-resume 缺少并发前审计、串行降级和 partial failure resume | M71 | 已加入 parallel batch contract、write_set/dirty/SQLite 审计和恢复指针 |
+| M72-GOV-001 | workflow 自开发证据和 task-card 规则缺少机器可检查入口 | M72 | 已新增 self-development manifest，检查 reports、task cards、evidence、operator packets 和 `single_card_exception` 规则 |
 
 ## 未偿还债务
 
-M61-M67 计划内阻塞债务已经收口。这里不再使用“项目零债”的表达；剩余项是非阻塞结构维护债，后续是否继续拆取决于能力层开发中的真实疼痛点。
-
 | ID | 描述 | 引入 | 计划偿还阶段 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- | --- | --- |
-| M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | M47-M66 structure evaluation | Post-M67 decision | carry_forward | 非阻塞维护债；M67 后按实际疼痛决定是否继续拆 |
+| M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | M47-M66 structure evaluation | M73+ capability-driven maintenance | carry_forward | 非阻塞维护债；只有在能力开发中造成真实疼痛时才继续拆 |
 
-## M67 评估吸收
+## M72 收口说明
 
-- 两份根目录 M66 评估和 `AGENTS_M67_universalworkflow.md` 已被吸收到 M67 issue register；原始文件在 M67 closeout 前保留，closeout 时归档。
-- M67 是一个完整 milestone，内部用 P0-P8 表达阶段；从本轮开始恢复 1 phase 1 commit 的审计纪律。
-- 自适应路由和动态多集群编排已经形成真实 evidence：P8 跑通 simple/medium/complex 真实任务和一次 `batch-resume --max-workers 2`。
+- 根目录 M66/M67 长期路线图和评估材料已归档到 [docs/archive/evaluations/](archive/evaluations/)。
+- `workflowctl governance self-development-manifest` 是 M67-M72 自开发证据完整性的机器检查入口。
 - capability readiness 不再接受 fallback-only、generic greeting、simulated 或 dry-run 作为 `verified_ready`。
+- 动态/自适应路由仍为 opt-in；是否 default-on 必须另开 telemetry 决策。

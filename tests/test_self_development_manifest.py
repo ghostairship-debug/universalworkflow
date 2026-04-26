@@ -25,6 +25,12 @@ def _write_milestone_fixture(root: Path, milestone: str, *, task_cards: int = 3,
     (operator_packet_dir / f"{milestone}.json").write_text("{}", encoding="utf-8")
 
 
+def _archive_milestone_report(root: Path, milestone: str) -> None:
+    archive_dir = root / "docs" / "archive" / "evaluations"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (root / f"{milestone}_EXECUTION_REPORT.md").replace(archive_dir / f"{milestone}_EXECUTION_REPORT.md")
+
+
 def test_self_development_manifest_go_when_milestone_evidence_is_complete(tmp_path: Path) -> None:
     for milestone in ["M70", "M71"]:
         _write_milestone_fixture(tmp_path, milestone)
@@ -35,6 +41,18 @@ def test_self_development_manifest_go_when_milestone_evidence_is_complete(tmp_pa
     assert manifest["blocking_issue_count"] == 0
     assert manifest["task_card_mechanism"]["min_task_cards_per_phase"] == 3
     assert all(item["task_card_policy"]["status"] == "passed" for item in manifest["milestones"])
+
+
+def test_self_development_manifest_accepts_archived_execution_report(tmp_path: Path) -> None:
+    _write_milestone_fixture(tmp_path, "M70")
+    _archive_milestone_report(tmp_path, "M70")
+
+    manifest = build_self_development_manifest(tmp_path, milestones=["M70"])
+
+    assert manifest["go_no_go"] == "GO"
+    assert manifest["blocking_issue_count"] == 0
+    assert manifest["milestones"][0]["execution_report"]["path"] == "docs/archive/evaluations/M70_EXECUTION_REPORT.md"
+    assert "M70_EXECUTION_REPORT.md" in manifest["milestones"][0]["execution_report"]["lookup_paths"][0]
 
 
 def test_self_development_manifest_blocks_single_card_phase_without_exception(tmp_path: Path) -> None:

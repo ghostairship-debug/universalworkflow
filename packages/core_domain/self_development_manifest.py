@@ -9,6 +9,22 @@ from typing import Any
 DEFAULT_SELF_DEVELOPMENT_MILESTONES = ["M67", "M68", "M69", "M70", "M71", "M72"]
 
 
+def _execution_report_candidates(workspace_root: Path, milestone: str) -> list[Path]:
+    filename = f"{milestone}_EXECUTION_REPORT.md"
+    return [
+        workspace_root / filename,
+        workspace_root / "docs" / "archive" / "evaluations" / filename,
+    ]
+
+
+def _resolve_execution_report(workspace_root: Path, milestone: str) -> Path:
+    candidates = _execution_report_candidates(workspace_root, milestone)
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
+
+
 def _files_under(path: Path) -> list[Path]:
     if not path.exists():
         return []
@@ -69,7 +85,7 @@ def _milestone_manifest(
     milestone: str,
     min_task_cards_per_phase: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    report_path = workspace_root / f"{milestone}_EXECUTION_REPORT.md"
+    report_path = _resolve_execution_report(workspace_root, milestone)
     state_dirs = _state_dirs_for_milestone(state_root, milestone)
     task_cards: list[Path] = []
     evidence_files: list[Path] = []
@@ -83,7 +99,13 @@ def _milestone_manifest(
     task_card_policy_passed = len(task_cards) >= min_task_cards_per_phase or single_card_exception
     issues: list[dict[str, Any]] = []
     if not report_path.exists():
-        issues.append({"milestone": milestone, "code": "missing_execution_report", "path": report_path.as_posix()})
+        issues.append(
+            {
+                "milestone": milestone,
+                "code": "missing_execution_report",
+                "paths": [path.as_posix() for path in _execution_report_candidates(workspace_root, milestone)],
+            }
+        )
     if not state_dirs:
         issues.append({"milestone": milestone, "code": "missing_state_directory", "path": state_root.as_posix()})
     if not task_card_policy_passed:
@@ -105,6 +127,9 @@ def _milestone_manifest(
         "execution_report": {
             "present": report_path.exists(),
             "path": _display_path(report_path, workspace_root),
+            "lookup_paths": [
+                _display_path(path, workspace_root) for path in _execution_report_candidates(workspace_root, milestone)
+            ],
         },
         "state_directories": [_display_path(path, workspace_root) for path in state_dirs],
         "task_card_count": len(task_cards),

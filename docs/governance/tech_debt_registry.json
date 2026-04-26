@@ -315,6 +315,34 @@
       "introduced_in": "M67 workflow-dogfood plan",
       "repaid_in": "M67 P8",
       "result": "Completed MiniMax/OpenCode simple lane, DeepSeek medium lane, Codex fallback, cluster_parallel complex orchestration, cluster route stats, and a batch-resume --max-workers 2 run over disjoint simple tasks."
+    },
+    {
+      "debt_id": "M69-CONTROL-001",
+      "description": "capability invocation policy still needed one auditable decision surface tying provider live proof, write_set requirements, mutation mode, and operator receipt state together",
+      "introduced_in": "M67-M68 trusted closeout",
+      "repaid_in": "M69",
+      "result": "Added capability control-plane policy decisions, exposed write_set/live-proof/receipt decisions in invocation envelopes and execution receipts, and added CLI/test coverage for allowed, blocked, and needs_receipt outcomes."
+    },
+    {
+      "debt_id": "M70-PROVIDER-001",
+      "description": "provider facts were easy to misstate: Vertex, gcloud, Gemini CLI, OpenCode, MMX, Claude, LangChain, and Shell did not share one contract registry",
+      "introduced_in": "M67-M69 provider routing discussion",
+      "repaid_in": "M70",
+      "result": "Added provider contract registry and CLI provider-contracts output. The docs and contract now state that Gemini CLI is not currently an adapter, Gemini-family access goes through Vertex, and gcloud is a credential/environment tool rather than a worker adapter."
+    },
+    {
+      "debt_id": "M71-CONCURRENCY-001",
+      "description": "batch-resume could execute in parallel but lacked a formal preflight contract for disjoint write_set auditing, dirty workspace degradation, SQLite readiness, and partial-failure resume guidance",
+      "introduced_in": "M67-M70 workflow concurrency dogfood",
+      "repaid_in": "M71",
+      "result": "Added a parallel batch contract, serial degradation for write_set conflicts/dirty write_set/SQLite lock, richer batch result metadata, partial failure resume hints, and cluster route stats source/dynamic counters."
+    },
+    {
+      "debt_id": "M72-GOV-001",
+      "description": "workflow self-development closeout evidence and the multi-task-card phase rule were still human-convention only rather than machine-checkable",
+      "introduced_in": "M67-M71 governance closeout",
+      "repaid_in": "M72",
+      "result": "Added workflowctl governance self-development-manifest, which checks execution reports, task cards, evidence files, operator packets, git commits, and the rule that single-card phases require a single_card_exception marker."
     }
   ],
   "open_items": [
@@ -322,17 +350,18 @@
       "debt_id": "M67-CARRY-001",
       "description": "repositories.py, service_lifecycle.py, service_projection.py, interaction_catalog.py, and models.py remain large; they are registered as carry-forward unless they block the M67 hot-file targets directly",
       "introduced_in": "M47-M66 structure evaluation",
-      "planned_repayment_phase": "Post-M67 decision",
+      "planned_repayment_phase": "M73+ capability-driven maintenance",
       "current_status": "carry_forward",
-      "blocking_impact": "non-blocking maintainability debt to revisit only after M67 trusted closeout evidence is green"
+      "blocking_impact": "non-blocking maintainability debt; revisit only if capability development exposes real friction"
     }
   ],
   "obsolete_items": [],
   "freeze_review_questions": [
-    "Did M67 run real workflow task-card execution, adaptive routing, dynamic cluster routing, and batch-resume evidence rather than manual-only patches?",
+    "Did the active phase use multiple task cards, or explicitly mark a justified single_card_exception?",
+    "Did the phase run workflow route previews and preserve task-card/evidence/operator-packet proof?",
     "Do all high-risk receipt/lease paths bind the consumed authorization to the actual request scope?",
     "Do all capability providers pass provider-specific live-proof contracts without simulated, dry-run, generic, or fallback-only evidence?",
-    "Do active docs avoid claiming zero debt, scheduler consensus, automatic PR publication, or provider readiness beyond verified runtime facts?",
-    "Are all blocking M67 items either repaid with evidence or explicitly marked blocked with unblock conditions before capability-layer work resumes?"
+    "Do active docs avoid claiming zero debt, scheduler consensus, automatic PR publication, Gemini CLI support, or provider readiness beyond verified runtime facts?",
+    "Does workflowctl governance self-development-manifest remain GO before declaring a milestone ready for capability-layer work?"
   ]
 }

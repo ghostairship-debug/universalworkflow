@@ -179,7 +179,7 @@ def governance_self_development_manifest(
     milestone: Optional[list[str]] = typer.Option(
         None,
         "--milestone",
-        help="Milestone id to include. Repeat to override the default M67-M72 set.",
+        help="Milestone id to include. Repeat to override the default M67-M72 closeout set.",
     ),
     state_root: str = typer.Option("state", "--state-root", help="State root containing milestone evidence."),
     output_path: Optional[str] = typer.Option(None, "--output-path", help="Optional JSON output path."),
