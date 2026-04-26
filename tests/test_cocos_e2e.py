@@ -6,7 +6,29 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
+import apps.operator_cli.game_commands as game_commands
+import packages.core_domain.cocos_e2e as cocos_e2e_module
+from packages.core_domain.asset_generation import AssetGenerationRequest, AssetGenerationResult
+from packages.core_domain.cocos_commercial_assets import generate_cocos_commercial_asset_manifest
 from packages.core_domain.cocos_e2e import run_cocos_game_e2e
+
+
+def _fake_asset_generator(request: AssetGenerationRequest) -> AssetGenerationResult:
+    output = Path(request.output_dir) / request.filename
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if request.modality == "vision_review":
+        output.write_text('{"review_text":"commercial polish looks coherent"}', encoding="utf-8")
+        mime_type = "application/json"
+    else:
+        output.write_bytes(f"{request.modality}-asset".encode("utf-8"))
+        mime_type = request.mime_type or "application/octet-stream"
+    return AssetGenerationResult(
+        provider=request.provider,
+        modality=request.modality,
+        status="completed",
+        artifact_paths=[output.as_posix()],
+        mime_type=mime_type,
+    )
 
 
 def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) -> None:
@@ -63,3 +85,142 @@ def test_cli_game_cocos_e2e_generates_manifest_without_build(tmp_path: Path) -> 
     payload = json.loads(result.stdout)
     assert payload["manifest"]["project_path"] == output_dir.as_posix()
     assert Path(payload["manifest_path"]).exists()
+
+
+def test_cocos_e2e_commercial_gate_rejects_technical_demo(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "commercial_gate_project"
+
+    payload = run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator,
+        require_build=False,
+        require_commercial=True,
+    )
+
+    assert payload["manifest"]["go_no_go"] == "NO-GO"
+    assert payload["commercial_go_no_go"] == "NO-GO"
+    assert "generated_art_assets" in payload["commercial_blockers"]
+    assert "commercial_missing_generated_audio_assets" in payload["manifest"]["blockers"]
+
+
+def test_cli_game_cocos_e2e_commercial_gate_returns_nonzero(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "cli_commercial_project"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-e2e",
+            "--pdf-path",
+            str(pdf_path),
+            "--output-dir",
+            str(output_dir),
+            "--creator-exe",
+            str(creator),
+            "--require-commercial",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["commercial_go_no_go"] == "NO-GO"
+
+
+def test_cocos_commercial_asset_manifest_can_batch_generated_assets(tmp_path: Path) -> None:
+    manifest = generate_cocos_commercial_asset_manifest(
+        output_dir=tmp_path / "commercial_assets",
+        include_vertex_review=True,
+        image_generator=_fake_asset_generator,
+        speech_generator=_fake_asset_generator,
+        music_generator=_fake_asset_generator,
+        tts_generator=_fake_asset_generator,
+        visual_review_generator=_fake_asset_generator,
+    )
+
+    assert manifest["go_no_go"] == "GO"
+    assert manifest["feature_coverage"]["generated_art_assets"] is True
+    assert manifest["feature_coverage"]["generated_audio_assets"] is True
+    assert manifest["feature_coverage"]["skin_switching_visual_assets"] is True
+    assert manifest["feature_coverage"]["particle_effects"] is True
+    assert Path(manifest["manifest_path"]).exists()
+
+
+def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path, monkeypatch) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    def _fake_manifest(*, output_dir, **_kwargs):
+        manifest_path = Path(output_dir) / "commercial_asset_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+        return {
+            "manifest_path": manifest_path.as_posix(),
+            "go_no_go": "GO",
+            "feature_coverage": {
+                "generated_art_assets": True,
+                "generated_audio_assets": True,
+                "skin_switching_visual_assets": True,
+                "particle_effects": True,
+                "commercial_polish_pass": True,
+            },
+            "results": [],
+        }
+
+    monkeypatch.setattr(cocos_e2e_module, "generate_cocos_commercial_asset_manifest", _fake_manifest)
+
+    payload = run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=tmp_path / "generated_asset_project",
+        creator_exe=creator,
+        require_build=False,
+        require_commercial=True,
+        generate_commercial_assets=True,
+    )
+
+    assert payload["commercial_feature_coverage"]["generated_art_assets"] is True
+    assert payload["commercial_feature_coverage"]["generated_audio_assets"] is True
+    assert payload["commercial_go_no_go"] == "NO-GO"
+    assert "native_cocos_ui_nodes" in payload["commercial_blockers"]
+    assert "commercial_missing_generated_art_assets" not in payload["manifest"]["blockers"]
+
+
+def test_cli_game_cocos_assets_uses_commercial_manifest(tmp_path: Path, monkeypatch) -> None:
+    def _fake_manifest(*, output_dir, **_kwargs):
+        manifest_path = Path(output_dir) / "commercial_asset_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text("{}", encoding="utf-8")
+        return {"go_no_go": "GO", "manifest_path": manifest_path.as_posix(), "feature_coverage": {}}
+
+    monkeypatch.setattr(game_commands, "generate_cocos_commercial_asset_manifest", _fake_manifest)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-assets",
+            "--output-dir",
+            str(tmp_path / "assets"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["go_no_go"] == "GO"

@@ -1,10 +1,10 @@
 # 当前开发工作流
 
-## Current Version: M76 Workflow Pipeline And Cocos E2E Closeout
+## Current Version: M77 Provider Access Repair In Progress
 
 - Package version: `0.66.0`.
-- Accepted baseline: `M76`.
-- Active truth set: [README.md](../README.md), this workflow guide, [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
+- Accepted baseline: `M76`; active repair entry: [M77+ integrated repair plan](../M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md).
+- Active truth set: [README.md](../README.md), this workflow guide, [M77 issue register](../M77_ISSUE_REGISTER.md), [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
 - Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
 - PR publication remains manual unless the operator explicitly asks for commit, push, or PR creation.
@@ -25,18 +25,25 @@
 
 ## Routing Defaults
 
-- simple 杂活：OpenCode + `minimax/MiniMax-M2.7`；失败后可试 OpenCode + `deepseek/deepseek-v4-flash`；最终 fallback Codex。
-- medium review / validation / security：优先 `deepseek/deepseek-v4-flash`；失败直接 fallback Codex。
-- complex 架构、安全协议、repo mutation：Codex 或本地补丁兜底；workflow 仍负责 task card、route evidence 和 operator packet。
+- OpenAI API 当前不是已配置主路径；OpenAI-family coding 真实入口是 Codex CLI。
+- MiniMax / DeepSeek API 可以直接生成 plan、review、patch proposal；需要写仓库时必须通过 `workflowctl capability coding-apply`，并携带允许 `coding_patch_apply` 的 `AutomationLease` 与明确 `write_set`。
+- simple 杂活：可走 OpenCode + `minimax/MiniMax-M2.7`，但 OpenCode 当前主要是低成本 coding CLI 壳，不宣称 OMO 生态已接入。
+- medium review / validation / security：优先 DeepSeek API 或 `deepseek/deepseek-v4-flash`；失败直接 fallback Codex，不 fallback MiniMax。
+- complex 架构、安全协议、repo mutation：Codex CLI 或本地补丁兜底；workflow 仍负责 task card、route evidence 和 operator packet。
+- MMX/MiniMax 的主要新增价值是 image / speech / music / future video 资产生成，而不是只做文本 evidence 或视觉提取。
+- Vertex 生成能力应走 API/SDK；`gcloud` 是 Vertex/GCP 凭据与环境工具，不是独立 worker adapter。
+- Cloud Text-to-Speech 不是 Vertex AI 本体，能力名使用 `gcp_tts_api`；旧 `vertex_tts` 仅保留为兼容 alias。
 - Gemini CLI 暂不接入；Gemini-family 能力短期通过 Vertex/GCP。
-- `gcloud` 是 Vertex/GCP 凭据与环境工具，不是独立 worker adapter。
+- LangChain 是 experimental / opt-in agent framework，不进入默认主路由。
 
 ## Capability Truth
 
 - Capability health 必须来自 runtime ledger / live probe，而不是 descriptor 自我声明。
 - `verified_ready` 或 `recently_successful` 只能由真实 provider-specific live proof 产生。
 - simulated、dry-run、generic greeting、fallback-only、非真实调用不能标记为 ready。
+- text evidence、coding proposal、asset generation 必须分开声明；生成类能力必须有真实二进制 artifact、mime、hash 和 evidence。
 - `workflowctl capability probe --provider all --require-live` 是能力 closeout 的硬门禁。
+- GCP 本地开发需设置 ADC quota project，并给 ADC 实际账号授予 `roles/serviceusage.serviceUsageConsumer` 或等价 `serviceusage.services.use` 权限。
 
 ## High-Risk Action Boundary
 
@@ -58,8 +65,10 @@ GET 请求不得触发状态变更。所有文件写入必须解析明确 worksp
 
 - `WorkflowPipeline` 是 `OrchestrationPlan` 之上的 plan-of-plans，不是 cluster 的别名。
 - Pipeline stage 类型固定为 `agent_role | cluster | capability | human_checkpoint | sub_pipeline | validation_gate | external_worker`。
-- Pipeline preview 不直接 mutation；execution 当前只支持受控串行 stage，复杂写入仍走既有 run/control-plane。
+- Pipeline preview 不直接 mutation；execution 当前只支持受控串行 stage，未真实执行的 capability stage 必须返回 `blocked`，不得伪装 `completed`。
+- Pipeline run 需要写 stage evidence，并在 validation/capability 失败后短路后续 stage；复杂写入仍走既有 run/control-plane。
 - H5 游戏商业化是正式业务需求，应作为 pipeline 场景承载，而不是新增一堆 `game_*_cluster`。
+- Cocos 技术 smoke 与商业化验收必须分开；`workflowctl game cocos-e2e --require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时必须 NO-GO。
 
 ## Validation Rules
 
@@ -79,3 +88,11 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider all --require-live --evidence-dir state/<milestone>/capability_probes
 python -m pytest -q --run-slow
 ```
+
+## M77 Provider And Asset Generation Notes
+
+- Vertex/GCP routes are split by real execution surface: `vertex_imagen` uses Vertex AI Imagen REST, `vertex_gemini_review` uses Vertex Gemini visual review over an image, and `gcp_tts_api` uses Google Cloud Text-to-Speech.
+- `gcloud` remains an authentication and environment helper, not a worker adapter. Local workflow probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` when ADC must be forced.
+- MMX/MiniMax generation is the preferred commercial game asset path for image, speech, and music. Vertex is a fallback/review path, and GCP TTS is a voice fallback.
+- `workflowctl game cocos-assets` is the asset-manifest batch step. It does not by itself make the Cocos game commercial-ready unless `cocos-e2e --require-commercial` also passes the UI, animation, level, and playtest gates.
+- Provider health must still come from live proof. Descriptor presence, dry-runs, fallback-only output, or generated manifests with blocked assets do not count as `verified_ready`.

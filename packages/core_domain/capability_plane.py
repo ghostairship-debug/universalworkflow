@@ -27,6 +27,7 @@ from packages.contracts import (
 )
 from packages.core_domain.agent_tools import built_in_tool_specs
 from packages.core_domain.capability_control_plane import provider_contract_for_key, provider_key_for_descriptor
+from packages.core_domain.provider_access import list_provider_access_contracts
 
 
 DEFAULT_MCP_PROFILE_SEED_PATH = Path("infra/seeds/mcp_server_profiles.json")
@@ -479,6 +480,33 @@ class CapabilityPlane:
                     default_selected=adapter_name in {"shell", "noop"},
                 )
             )
+        for contract in list_provider_access_contracts():
+            category = str(contract.get("category") or "")
+            provider_key = str(contract.get("provider_key") or "")
+            if not provider_key or category in {"mcp_tool"}:
+                continue
+            descriptors.append(
+                CapabilityDescriptor(
+                    capability_id=f"{category}:{provider_key}",
+                    provider_kind=category,
+                    transport=str(contract.get("transport") or "api"),
+                    auth_mode="env",
+                    scopes=[provider_key],
+                    allowed_task_kinds=[TaskKind.shell_exec],
+                    cost_class="provider_variable",
+                    latency_class="provider_variable",
+                    side_effect_level="artifact_write"
+                    if category == "asset_generator"
+                    else ("repo_mutation_controlled" if category == "cli_agent" else "read_only"),
+                    evidence_schema={
+                        "capability_invocation": "v1",
+                        "modalities": list(contract.get("modalities") or []),
+                    },
+                    display_name=str(contract.get("display_name") or provider_key),
+                    enabled=True,
+                    default_selected=bool(contract.get("default_route")),
+                )
+            )
         for profile in worker_pool_profiles or []:
             descriptors.append(
                 CapabilityDescriptor(
@@ -560,7 +588,7 @@ class CapabilityPlane:
             failure_classes = self._failure_classes_for_descriptor(descriptor)
             probe_status, probe_reason, probe_detail = self._runtime_probe_for_descriptor(descriptor)
             probe_evidence = self._probe_evidence_for_descriptor(descriptor, latest_probe_results or {})
-            if descriptor.enabled and probe_status in {"ready", "assumed_ready", "runtime_ready"}:
+            if descriptor.enabled and probe_status in {"ready", "assumed_ready", "runtime_ready", "configured"}:
                 status = "ready"
             elif descriptor.enabled:
                 status = "degraded"
@@ -602,6 +630,8 @@ class CapabilityPlane:
     ) -> dict[str, Any]:
         keys = [descriptor.adapter_name, descriptor.profile_id]
         if descriptor.provider_kind == "runtime_gateway" and descriptor.scopes:
+            keys.append(str(descriptor.scopes[0]))
+        if descriptor.provider_kind in {"api_model", "cli_agent", "asset_generator", "experimental_agent_framework"} and descriptor.scopes:
             keys.append(str(descriptor.scopes[0]))
         keys.append(descriptor.provider_kind)
         for key in keys:
@@ -694,6 +724,18 @@ class CapabilityPlane:
             if not descriptor.enabled:
                 return ("pool_disabled", "pool_disabled", {"worker_pool_id": descriptor.profile_id})
             return ("assumed_ready", None, {"worker_pool_id": descriptor.profile_id, "transport": descriptor.transport})
+        if descriptor.provider_kind in {"api_model", "cli_agent", "asset_generator", "experimental_agent_framework"}:
+            if not descriptor.enabled:
+                return ("provider_disabled", "provider_disabled", {"provider": descriptor.scopes[0] if descriptor.scopes else None})
+            return (
+                "configured",
+                None,
+                {
+                    "provider": descriptor.scopes[0] if descriptor.scopes else None,
+                    "transport": descriptor.transport,
+                    "live_probe_required_for_verified_ready": True,
+                },
+            )
         if descriptor.provider_kind == "adapter_route":
             return (
                 "assumed_ready" if descriptor.enabled else "adapter_disabled",

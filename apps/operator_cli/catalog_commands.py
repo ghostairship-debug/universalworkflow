@@ -124,7 +124,14 @@ def capability_health(ctx: typer.Context) -> None:
 @capability_app.command("probe")
 def capability_probe(
     ctx: typer.Context,
-    provider: str = typer.Option("all", "--provider", help="Provider: all, shell, codex, opencode, mmx, vertex, claude, or langchain."),
+    provider: str = typer.Option(
+        "all",
+        "--provider",
+        help=(
+            "Provider: all, shell, codex, opencode, mmx, vertex, claude, langchain, "
+            "mmx_image/speech/music, vertex_imagen, vertex_gemini_review, gcp_tts."
+        ),
+    ),
     require_live: bool = typer.Option(False, "--require-live", help="Run real provider smoke tests instead of descriptor-only checks."),
     evidence_dir: Optional[Path] = typer.Option(None, "--evidence-dir", help="Directory for probe artifacts."),
 ) -> None:
@@ -206,6 +213,74 @@ def capability_provider_contracts(
         )
         raise typer.Exit(code=1)
     _emit_json(contract)
+
+
+@capability_app.command("coding-proposal")
+def capability_coding_proposal(
+    provider: str = typer.Option(..., "--provider", help="Provider: minimax or deepseek."),
+    goal: str = typer.Option(..., "--goal", help="Coding/review goal. Generates a proposal only."),
+    task_card: Optional[Path] = typer.Option(None, "--task-card", help="Optional task card markdown path."),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Read-only context paths."),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Proposed allowed write_set."),
+    context: Optional[str] = typer.Option(None, "--context", help="Inline extra context."),
+    model: Optional[str] = typer.Option(None, "--model", help="Optional provider model override."),
+    evidence_dir: Optional[Path] = typer.Option(None, "--evidence-dir", help="Directory for proposal evidence."),
+) -> None:
+    from packages.core_domain.llm_coding_api import CodingProposalRequest, generate_coding_proposal
+
+    task_card_text = task_card.read_text(encoding="utf-8") if task_card is not None else None
+    result = generate_coding_proposal(
+        CodingProposalRequest(
+            provider=provider,
+            goal=goal,
+            task_card=task_card_text,
+            read_set=list(read_set or []),
+            write_set=list(write_set or []),
+            context=context,
+            model=model,
+        ),
+        evidence_dir=evidence_dir,
+    )
+    _emit_json(result.to_dict())
+    if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
+@capability_app.command("coding-apply")
+def capability_coding_apply(
+    ctx: typer.Context,
+    provider: str = typer.Option(..., "--provider", help="Provider: minimax or deepseek."),
+    goal: str = typer.Option(..., "--goal", help="Coding goal. Generates and applies a controlled unified diff."),
+    automation_lease_id: str = typer.Option(..., "--automation-lease-id", help="AutomationLease allowing coding_patch_apply for the write_set."),
+    task_card: Optional[Path] = typer.Option(None, "--task-card", help="Optional task card markdown path."),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Read-only context paths."),
+    write_set: list[str] = typer.Option(..., "--write-set", help="Allowed writable paths."),
+    test_command: Optional[list[str]] = typer.Option(None, "--test-command", help="Safe test command to run after patch apply."),
+    context: Optional[str] = typer.Option(None, "--context", help="Inline extra context."),
+    model: Optional[str] = typer.Option(None, "--model", help="Optional provider model override."),
+    evidence_dir: Optional[Path] = typer.Option(None, "--evidence-dir", help="Directory for proposal/apply evidence."),
+) -> None:
+    from packages.core_domain.llm_coding_api import CodingProposalRequest, apply_coding_proposal_patch
+
+    task_card_text = task_card.read_text(encoding="utf-8") if task_card is not None else None
+    result = apply_coding_proposal_patch(
+        CodingProposalRequest(
+            provider=provider,
+            goal=goal,
+            task_card=task_card_text,
+            read_set=list(read_set or []),
+            write_set=list(write_set or []),
+            context=context,
+            model=model,
+        ),
+        workspace_root=_workspace_root_from_context(ctx),
+        automation_lease_id=automation_lease_id,
+        evidence_dir=evidence_dir,
+        test_commands=list(test_command or []),
+    )
+    _emit_json(result.to_dict())
+    if result.status != "completed":
+        raise typer.Exit(code=1)
 
 
 @capability_app.command("mcp-profiles")

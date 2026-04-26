@@ -347,6 +347,54 @@
   ],
   "open_items": [
     {
+      "debt_id": "M77-PROVIDER-001",
+      "description": "OpenAI API, Codex CLI, MiniMax/DeepSeek direct API, OpenCode CLI, MMX/GCP/Vertex generation, MCP tools, and LangChain experimental agent roles were too easy to conflate in docs and routing policy",
+      "introduced_in": "M77 provider-access evaluation",
+      "planned_repayment_phase": "M77 P0-P2",
+      "current_status": "partially_repaid",
+      "blocking_impact": "provider access contract, docs, tests, and direct API controlled patch apply now separate access categories; broader route evidence still needs to accumulate"
+    },
+    {
+      "debt_id": "M77-MMX-001",
+      "description": "MMX/MiniMax was primarily wired as text evidence rather than true image, speech, and music asset generation",
+      "introduced_in": "M77 multimodal generation evaluation",
+      "planned_repayment_phase": "M77 P3",
+      "current_status": "partially_repaid",
+      "blocking_impact": "API wrapper, binary artifact writing, manifest, image/speech/music live proof, and a real Cocos commercial asset-manifest batch run are present; commercial game acceptance still requires native UI, animation, level flow, and full game-body integration"
+    },
+    {
+      "debt_id": "M77-VERTEX-001",
+      "description": "Vertex was primarily wired as text evidence while gcloud/GCP TTS were conflated with Vertex generation APIs",
+      "introduced_in": "M77 Vertex evaluation",
+      "planned_repayment_phase": "M77 P4",
+      "current_status": "partially_repaid",
+      "blocking_impact": "GCP TTS is now split as gcp_tts_api and has verified binary live proof; Vertex Imagen and Gemini visual-review REST wrappers/probes are implemented and have passed live proof in M77 evidence"
+    },
+    {
+      "debt_id": "M77-LANGCHAIN-001",
+      "description": "LangChain remains present as an agent adapter but does not currently provide a mainline capability that direct APIs, MCP broker, or CLI agents cannot cover",
+      "introduced_in": "M77 LangChain utility evaluation",
+      "planned_repayment_phase": "M77 P5",
+      "current_status": "partially_repaid",
+      "blocking_impact": "LangChain is now documented and surfaced as experimental/opt-in; old adapter compatibility remains"
+    },
+    {
+      "debt_id": "M77-PIPE-001",
+      "description": "Pipeline run still needs proof that stages truly execute workflow runs, capability invocations, validation gates, failure short-circuiting, and evidence chain output",
+      "introduced_in": "M75-M76 downgrade review",
+      "planned_repayment_phase": "M77 P7",
+      "current_status": "partially_repaid",
+      "blocking_impact": "pipeline run no longer fakes completed capability stages and now writes stage evidence with blocked/failed/skipped short-circuiting; full workflow run and capability invocation execution still need integration"
+    },
+    {
+      "debt_id": "M77-COCOS-001",
+      "description": "Cocos E2E currently proves a technical build/playtest path but does not yet deliver a commercial-grade game with real UI, art, audio, animation, particles, skins, and level flow",
+      "introduced_in": "M76 Cocos E2E review",
+      "planned_repayment_phase": "M77 P8",
+      "current_status": "partially_repaid",
+      "blocking_impact": "commercial NO-GO gate and generated asset manifest now prevent technical demos from passing as commercial output; native Cocos UI, animation timeline, real level switching UI, and full game-body polish remain required"
+    },
+    {
       "debt_id": "M67-CARRY-001",
       "description": "repositories.py, service_lifecycle.py, service_projection.py, interaction_catalog.py, and models.py remain large; they are registered as carry-forward unless they block the M67 hot-file targets directly",
       "introduced_in": "M47-M66 structure evaluation",

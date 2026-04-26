@@ -3,12 +3,25 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import struct
 import subprocess
 import sys
+import time
+import zlib
 from pathlib import Path
 from typing import Callable
 
 from packages.contracts import CapabilityProbeResult, MutationMode, TaskKind, TaskPacket
+from packages.core_domain.asset_generation import (
+    AssetGenerationRequest,
+    generate_gcp_tts,
+    generate_minimax_image,
+    generate_minimax_music,
+    generate_minimax_speech,
+    generate_vertex_gemini_visual_review,
+    generate_vertex_imagen,
+    write_asset_manifest,
+)
 from packages.core_domain.db import migrate
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.core_domain.repositories import CapabilityProbeResultRepository
@@ -24,7 +37,24 @@ from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.shell_adapter import ShellAdapter
 
 
-PROVIDERS = ["shell", "codex", "opencode", "mmx", "vertex", "claude", "langchain"]
+PROVIDERS = [
+    "shell",
+    "codex",
+    "opencode",
+    "mmx",
+    "vertex",
+    "claude",
+    "langchain",
+    "mmx_image",
+    "mmx_speech",
+    "mmx_music",
+    "vertex_imagen",
+    "vertex_gemini_review",
+    "gcp_tts",
+    "vertex_tts",
+]
+ASSET_GENERATION_PROVIDERS = {"mmx_image", "mmx_speech", "mmx_music", "vertex_imagen", "gcp_tts", "vertex_tts"}
+VISION_REVIEW_PROVIDERS = {"vertex_gemini_review"}
 DEFAULT_PROBE_TIMEOUT_SECONDS = 120
 GENERIC_ASSISTANT_PATTERNS = (
     "how can i help",
@@ -48,6 +78,19 @@ SIMULATED_OR_DRY_RUN_PATTERNS = (
     "fallback only",
     "hypothetical",
 )
+
+
+def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    crc = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + chunk_type + payload + struct.pack(">I", crc)
+
+
+def _tiny_png_bytes() -> bytes:
+    width = 4
+    height = 4
+    rows = b"".join(b"\x00" + b"\x7c\xf7\xd4" * width for _ in range(height))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", zlib.compress(rows)) + _png_chunk(b"IEND", b"")
 
 
 def _preview(value: str | None, limit: int = 1000) -> str | None:
@@ -131,14 +174,148 @@ def _auth_source_for_provider(provider: str) -> str | None:
         "vertex": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"],
         "claude": ["ANTHROPIC_API_KEY", "claude_cli_login"],
         "langchain": ["MINIMAX_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
+        "mmx_image": ["MINIMAX_API_KEY", "MINIMAX_TOKEN"],
+        "mmx_speech": ["MINIMAX_API_KEY", "MINIMAX_TOKEN"],
+        "mmx_music": ["MINIMAX_API_KEY", "MINIMAX_TOKEN"],
+        "vertex_imagen": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "gcloud_adc"],
+        "vertex_gemini_review": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "gcloud_adc"],
+        "gcp_tts": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "gcloud_adc"],
+        "vertex_tts": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "gcloud_adc"],
         "shell": ["local_python"],
     }.get(provider, [])
     for candidate in candidates:
-        if candidate.endswith("_login") or candidate == "local_python":
+        if candidate.endswith("_login") or candidate in {"local_python", "gcloud_adc"}:
             return candidate
         if os.getenv(candidate):
             return candidate
     return None
+
+
+def _probe_asset_generation_provider(
+    *,
+    provider: str,
+    evidence_dir: Path,
+) -> CapabilityProbeResult:
+    asset_dir = evidence_dir / "assets"
+    prompt = "Tiny live proof asset for Universal Agentic Workflow capability verification."
+    started = time.perf_counter()
+    if provider == "mmx_image":
+        result = generate_minimax_image(
+            AssetGenerationRequest(
+                provider="mmx_generation_api",
+                modality="image",
+                prompt=prompt,
+                output_dir=asset_dir,
+                filename="mmx_image_probe.png",
+            )
+        )
+    elif provider == "mmx_speech":
+        result = generate_minimax_speech(
+            AssetGenerationRequest(
+                provider="mmx_generation_api",
+                modality="audio",
+                prompt="workflow capability probe",
+                output_dir=asset_dir,
+                filename="mmx_speech_probe.mp3",
+            )
+        )
+    elif provider == "mmx_music":
+        result = generate_minimax_music(
+            AssetGenerationRequest(
+                provider="mmx_generation_api",
+                modality="music",
+                prompt="short upbeat puzzle game loop, five seconds, no vocals",
+                output_dir=asset_dir,
+                filename="mmx_music_probe.mp3",
+            )
+        )
+    elif provider == "vertex_imagen":
+        result = generate_vertex_imagen(
+            AssetGenerationRequest(
+                provider="vertex_generation_api",
+                modality="image",
+                prompt="Tiny polished square icon for workflow capability verification, no text.",
+                output_dir=asset_dir,
+                filename="vertex_imagen_probe.png",
+            )
+        )
+    elif provider in {"gcp_tts", "vertex_tts"}:
+        result = generate_gcp_tts(
+            AssetGenerationRequest(
+                provider="gcp_tts_api",
+                modality="audio",
+                prompt="workflow capability probe",
+                output_dir=asset_dir,
+                filename=f"{provider}_probe.mp3",
+            )
+        )
+    else:
+        raise ValueError(f"unsupported asset generation provider: {provider}")
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    manifest_path = evidence_dir / f"{provider}_asset_probe.json"
+    write_asset_manifest(result, manifest_path)
+    success = result.status == "completed" and bool(result.artifact_paths)
+    return CapabilityProbeResult(
+        provider=provider,
+        adapter_name=result.provider,
+        status="verified_ready" if success else "blocked",
+        live_probe=True,
+        auth_source=_auth_source_for_provider(provider),
+        latency_ms=latency_ms,
+        failure_class=None if success else (result.failure_class or "asset_generation_failed"),
+        evidence_path=manifest_path.as_posix(),
+        fallback_route=None if success else "manual_investigation_required",
+        metadata={
+            "asset_generation": result.to_dict(),
+            "proof": {
+                "contract": "m77_asset_live_proof_v1",
+                "binary_artifact_required": True,
+                "artifact_paths": result.artifact_paths,
+            },
+        },
+    )
+
+
+def _probe_vertex_gemini_review_provider(*, evidence_dir: Path) -> CapabilityProbeResult:
+    started = time.perf_counter()
+    asset_dir = evidence_dir / "assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    image_path = asset_dir / "vertex_review_probe.png"
+    image_path.write_bytes(_tiny_png_bytes())
+    result = generate_vertex_gemini_visual_review(
+        AssetGenerationRequest(
+            provider="vertex_generation_api",
+            modality="vision_review",
+            prompt="Review this tiny probe image. Return one sentence that mentions visual review.",
+            output_dir=evidence_dir,
+            filename="vertex_gemini_review_probe.json",
+            metadata={"image_path": image_path.as_posix()},
+        )
+    )
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    manifest_path = evidence_dir / "vertex_gemini_review_asset_probe.json"
+    write_asset_manifest(result, manifest_path)
+    success = result.status == "completed" and bool(result.artifact_paths)
+    return CapabilityProbeResult(
+        provider="vertex_gemini_review",
+        adapter_name=result.provider,
+        status="verified_ready" if success else "blocked",
+        live_probe=True,
+        auth_source=_auth_source_for_provider("vertex_gemini_review"),
+        latency_ms=latency_ms,
+        failure_class=None if success else (result.failure_class or "visual_review_failed"),
+        evidence_path=manifest_path.as_posix(),
+        fallback_route=None if success else "manual_investigation_required",
+        metadata={
+            "asset_generation": result.to_dict(),
+            "proof": {
+                "contract": "m77_vertex_visual_review_live_proof_v1",
+                "visual_review_required": True,
+                "artifact_paths": result.artifact_paths,
+            },
+        },
+    )
 
 
 def _result_from_execution(
@@ -303,6 +480,10 @@ def probe_provider(
             evidence_path=None,
             metadata={"require_live": False},
         )
+    if provider in ASSET_GENERATION_PROVIDERS:
+        return _probe_asset_generation_provider(provider=provider, evidence_dir=evidence_dir)
+    if provider in VISION_REVIEW_PROVIDERS:
+        return _probe_vertex_gemini_review_provider(evidence_dir=evidence_dir)
     try:
         adapter = _adapter_for_provider(provider)
         _apply_probe_timeout_to_adapter(adapter)

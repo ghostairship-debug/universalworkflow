@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from packages.contracts import CocosGameE2EManifest
+from packages.core_domain.cocos_commercial_assets import generate_cocos_commercial_asset_manifest
 
 
 EXCLUDED_DESKTOP_PROJECT = Path(r"C:\Users\74755\Desktop\游戏平台demo")
@@ -705,6 +706,8 @@ def run_cocos_game_e2e(
     creator_exe: str | Path,
     require_build: bool = False,
     require_playtest: bool = True,
+    require_commercial: bool = False,
+    generate_commercial_assets: bool = False,
 ) -> dict[str, Any]:
     project = create_cocos_project(pdf_path=pdf_path, output_dir=output_dir, creator_exe=creator_exe)
     build: dict[str, Any] | None = None
@@ -726,6 +729,30 @@ def run_cocos_game_e2e(
             if playtest is None or not playtest.get("passed"):
                 blockers.append("browser_playtest_failed")
                 build["playtest_error"] = playtest_error
+    commercial_assets: dict[str, Any] | None = None
+    if generate_commercial_assets:
+        commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=project["project_path"])
+    commercial_feature_coverage = {
+        "cocos_creator_project": True,
+        "web_mobile_build": bool((build or {}).get("artifact_success")) if require_build else False,
+        "browser_playtest": bool((playtest or {}).get("passed")) if require_build and require_playtest else False,
+        "generated_art_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("generated_art_assets")),
+        "generated_audio_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("generated_audio_assets")),
+        "native_cocos_ui_nodes": False,
+        "animation_timeline": False,
+        "particle_effects": bool((commercial_assets or {}).get("feature_coverage", {}).get("particle_effects")),
+        "skin_switching_visual_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("skin_switching_visual_assets")),
+        "level_switching_ui": False,
+        "commercial_polish_pass": bool((commercial_assets or {}).get("feature_coverage", {}).get("commercial_polish_pass")),
+    }
+    commercial_blockers = [
+        key
+        for key, covered in commercial_feature_coverage.items()
+        if key not in {"cocos_creator_project"} and not covered
+    ]
+    commercial_go_no_go = "GO" if not commercial_blockers else "NO-GO"
+    if require_commercial and commercial_blockers:
+        blockers.extend(f"commercial_missing_{item}" for item in commercial_blockers)
     manifest = CocosGameE2EManifest(
         pdf_path=Path(pdf_path).resolve().as_posix(),
         cocos_creator_path=Path(creator_exe).resolve().as_posix(),
@@ -742,14 +769,23 @@ def run_cocos_game_e2e(
             "design_mapping_path": project["design_mapping_path"],
             "build": build,
             "playtest": playtest,
+            "commercial_assets": commercial_assets,
+            "commercial_go_no_go": commercial_go_no_go,
+            "commercial_blockers": commercial_blockers,
+            "commercial_feature_coverage": commercial_feature_coverage,
+            "commercial_gate_required": require_commercial,
         },
     )
     manifest_path = Path(project["project_path"]) / "cocos_game_e2e_manifest.json"
     manifest_path.write_text(json.dumps(manifest.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
     return {
         "manifest": manifest.model_dump(mode="json"),
+        "commercial_go_no_go": commercial_go_no_go,
+        "commercial_blockers": commercial_blockers,
+        "commercial_feature_coverage": commercial_feature_coverage,
         "manifest_path": manifest_path.as_posix(),
         "project": project,
         "build": build,
         "playtest": playtest,
+        "commercial_assets": commercial_assets,
     }

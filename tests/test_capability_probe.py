@@ -435,3 +435,12 @@ def test_capability_probe_rejects_template_only_evidence(tmp_path: Path, monkeyp
 
     assert result.status == "blocked"
     assert result.failure_class == "missing_live_proof"
+
+
+def test_vertex_review_probe_png_is_valid_enough_for_multimodal_upload() -> None:
+    data = capability_probe._tiny_png_bytes()
+
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert b"IHDR" in data
+    assert b"IDAT" in data
+    assert b"IEND" in data

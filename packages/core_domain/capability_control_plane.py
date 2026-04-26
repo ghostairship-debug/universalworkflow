@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from packages.contracts import CapabilityDescriptor, CapabilityProbeResult, MutationMode
+from packages.core_domain.provider_access import list_provider_access_contracts, provider_access_contract_for_key
 
 
 ADAPTER_PROVIDER_KEYS = {
@@ -33,7 +34,10 @@ PROVIDER_CONTRACTS: dict[str, dict[str, Any]] = {
         "auth_sources": ["codex_cli_login", "OPENAI_API_KEY"],
         "route_role": "strong coding fallback and complex local CLI worker",
         "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "provider_timeout", "execution_failed"],
-        "notes": ["Codex remains the medium/complex fallback when cheaper lanes fail."],
+        "notes": [
+            "Codex remains the medium/complex fallback when cheaper lanes fail.",
+            "Current OpenAI-family execution is through Codex CLI; OPENAI_API_KEY is not assumed.",
+        ],
     },
     "opencode": {
         "provider": "opencode",
@@ -42,7 +46,10 @@ PROVIDER_CONTRACTS: dict[str, dict[str, Any]] = {
         "auth_sources": ["MINIMAX_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
         "route_role": "simple/free-model coding lane through OpenCode",
         "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "artifact_output_mismatch", "execution_failed"],
-        "notes": ["Default simple lane model is minimax/MiniMax-M2.7 unless overridden."],
+        "notes": [
+            "Default simple lane model is minimax/MiniMax-M2.7 unless overridden.",
+            "OMO/OpenCode plugin ecosystem is not integrated in this repository yet.",
+        ],
     },
     "mmx": {
         "provider": "mmx",
@@ -51,7 +58,10 @@ PROVIDER_CONTRACTS: dict[str, dict[str, Any]] = {
         "auth_sources": ["MINIMAX_API_KEY", "MINIMAX_TOKEN"],
         "route_role": "MiniMax multimodal evidence lane",
         "failure_taxonomy": ["adapter_unavailable", "provider_auth_missing", "multimodal_probe_failed", "execution_failed"],
-        "notes": ["MMX is a provider/adapter lane, not the same as OpenCode using a MiniMax text model."],
+        "notes": [
+            "MMX text evidence is not the same as OpenCode using a MiniMax text model.",
+            "True MiniMax image/speech/music generation is represented by mmx_generation_api.",
+        ],
     },
     "vertex": {
         "provider": "vertex",
@@ -64,6 +74,8 @@ PROVIDER_CONTRACTS: dict[str, dict[str, Any]] = {
             "Gemini CLI is not currently an adapter.",
             "Gemini-family access currently goes through Vertex.",
             "gcloud is a credential/environment tool, not an independent worker adapter.",
+            "True Vertex Imagen image generation and Gemini visual review are represented by vertex_generation_api.",
+            "Cloud Text-to-Speech is represented separately by gcp_tts_api.",
         ],
     },
     "claude": {
@@ -91,17 +103,57 @@ def provider_contract_for_key(provider_key: str | None) -> dict[str, Any] | None
     if provider_key is None:
         return None
     contract = PROVIDER_CONTRACTS.get(str(provider_key).strip().lower())
-    return dict(contract) if contract is not None else None
+    if contract is not None:
+        return dict(contract)
+    access_contract = provider_access_contract_for_key(provider_key)
+    if access_contract is None:
+        return None
+    return {
+        "provider": access_contract["provider_key"],
+        "adapter_name": None,
+        "cli_dependency": None,
+        "auth_sources": list(access_contract.get("auth_sources") or []),
+        "route_role": access_contract.get("role") or "",
+        "failure_taxonomy": list(access_contract.get("failure_taxonomy") or []),
+        "notes": list(access_contract.get("notes") or []),
+        "category": access_contract.get("category"),
+        "transport": access_contract.get("transport"),
+        "modalities": list(access_contract.get("modalities") or []),
+        "default_model": access_contract.get("default_model"),
+    }
 
 
 def list_provider_contracts() -> list[dict[str, Any]]:
-    return [dict(PROVIDER_CONTRACTS[key]) for key in sorted(PROVIDER_CONTRACTS)]
+    contracts = [dict(PROVIDER_CONTRACTS[key]) for key in sorted(PROVIDER_CONTRACTS)]
+    existing = {str(item["provider"]) for item in contracts if item.get("provider")}
+    for item in list_provider_access_contracts():
+        provider_key = str(item["provider_key"])
+        if provider_key in existing:
+            continue
+        contracts.append(
+            {
+                "provider": provider_key,
+                "adapter_name": None,
+                "cli_dependency": None,
+                "auth_sources": list(item.get("auth_sources") or []),
+                "route_role": item.get("role") or "",
+                "failure_taxonomy": list(item.get("failure_taxonomy") or []),
+                "notes": list(item.get("notes") or []),
+                "category": item.get("category"),
+                "transport": item.get("transport"),
+                "modalities": list(item.get("modalities") or []),
+                "default_model": item.get("default_model"),
+            }
+        )
+    return sorted(contracts, key=lambda item: str(item.get("provider") or ""))
 
 
 def provider_key_for_descriptor(descriptor: CapabilityDescriptor) -> str:
     if descriptor.provider_kind == "adapter_route" and descriptor.adapter_name:
         return ADAPTER_PROVIDER_KEYS.get(str(descriptor.adapter_name), str(descriptor.adapter_name))
     if descriptor.provider_kind == "runtime_gateway" and descriptor.scopes:
+        return str(descriptor.scopes[0])
+    if descriptor.provider_kind in {"api_model", "cli_agent", "asset_generator", "mcp_tool", "experimental_agent_framework"} and descriptor.scopes:
         return str(descriptor.scopes[0])
     if descriptor.profile_id:
         return str(descriptor.profile_id)

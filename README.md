@@ -1,9 +1,9 @@
 # Universal Agentic Workflow OS
 
-## Current Version: M76 Workflow Pipeline And Cocos E2E Closeout
+## Current Version: M77 Provider Access Repair In Progress
 
 - Package version: `0.66.0`.
-- Accepted baseline: `M76`.
+- Accepted baseline: `M76`; active repair entry: [M77+ integrated repair and development plan](M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md).
 - Beginner overview: [项目全景介绍](PROJECT_OVERVIEW_FOR_BEGINNERS.md).
 - Governance source of truth: [structured tech debt registry](docs/governance/tech_debt_registry.json).
 
@@ -14,6 +14,7 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 后续开发优先参考这些文件：
 
 - [当前开发工作流](docs/current_development_workflow.md)
+- [M77 Issue Register](M77_ISSUE_REGISTER.md)
 - [里程碑历史](docs/milestone_history.md)
 - [技术债登记表](docs/tech-debt-registry.md)
 - [结构化技术债 JSON](docs/governance/tech_debt_registry.json)
@@ -23,14 +24,20 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 ## Current State
 
 - 入口：CLI、API、Web operator console、`/ui/workbench` streaming chat workbench。
-- 已接入 provider/adapter：Codex、OpenCode、Claude、MMX/MiniMax、Vertex、LangChain、Shell/Noop。
+- 已接入 provider/adapter：Codex CLI、OpenCode CLI、Claude CLI、MMX/MiniMax、Vertex、LangChain、Shell/Noop。
+- OpenAI API 当前不作为已配置真实能力；OpenAI-family coding 主路径是 Codex CLI。
+- MiniMax / DeepSeek API 现在支持 direct coding proposal，并可通过 `workflowctl capability coding-apply` 在 `AutomationLease(coding_patch_apply)` 授权下受控应用 unified diff。
+- MMX/MiniMax 的多模态生成能力是 M77 修复重点：image / speech / music 资产生成必须和文本 evidence 通道分离。
+- Vertex 生成能力是 M77 修复重点：Imagen/Gemini image/visual review 走 Vertex AI API/SDK；Cloud Text-to-Speech 已拆为 `gcp_tts_api`，`gcloud` 只做认证和环境。
 - Gemini CLI 暂未接入；Gemini-family 能力当前通过 Vertex/GCP 路径进入。
 - `gcloud` 是 Vertex/GCP 凭据与环境工具，不是独立 worker adapter。
-- OpenCode simple lane 默认使用 `minimax/MiniMax-M2.7`。
+- OpenCode simple lane 默认使用 `minimax/MiniMax-M2.7`；当前不宣称 OMO / OpenCode 插件生态已集成。
 - medium lane 可使用 `deepseek/deepseek-v4-flash`，失败时直接 fallback 到 Codex。
+- LangChain 当前是 experimental / opt-in agent framework，不是默认 provider control plane。
 - capability readiness 只接受 provider-specific live proof；simulated、dry-run、generic greeting、fallback-only 都不能标记为 `verified_ready`。
 - Dynamic cluster routing 和 adaptive LLM routing 仍是 opt-in，不默认开启。
-- Pipeline 是 `OrchestrationPlan` 之上的 plan-of-plans 产品层；当前最小执行支持串行 stage，复杂 mutation 仍通过既有 run/control-plane 语义落地。
+- Pipeline 是 `OrchestrationPlan` 之上的 plan-of-plans 产品层；当前执行器已禁止伪完成 capability stage，未真实执行会明确 `blocked`，复杂 mutation 仍通过既有 run/control-plane 语义落地。
+- Cocos E2E 现在区分技术 smoke 和商业化验收；`--require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时会明确 NO-GO。
 
 ## Architecture Map
 
@@ -146,4 +153,18 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" validation run --suite full --skip-offline-probe
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider all --require-live --evidence-dir state/capability_probes
 python -m pytest -q --run-slow
+```
+
+## M77 Provider And Game Pipeline Update
+
+- `vertex_imagen` and `vertex_gemini_review` now have Vertex AI REST wrappers and capability probes. They are only `verified_ready` after live probe success.
+- `gcp_tts_api` is Google Cloud Text-to-Speech; legacy `vertex_tts` remains only as a compatibility alias.
+- Local GCP probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` to force ADC.
+- `workflowctl game cocos-assets` generates a commercial asset manifest from MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review.
+- `workflowctl game cocos-e2e --generate-commercial-assets --require-commercial` can feed generated assets into the commercial gate, but native Cocos UI nodes, animation timeline, and real level-switching UI remain future game-body work.
+
+```powershell
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider vertex_imagen --require-live --evidence-dir state/m77_integrated_repair/live_probes/vertex_imagen
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider vertex_gemini_review --require-live --evidence-dir state/m77_integrated_repair/live_probes/vertex_gemini_review
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-assets --output-dir state/m77_integrated_repair/cocos_assets
 ```
