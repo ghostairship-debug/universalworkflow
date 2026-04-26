@@ -13,9 +13,6 @@ from packages.core_domain.governance import (
 )
 
 OPEN_DEBT_IDS: list[str] = [
-    "M77-PROVIDER-001",
-    "M77-MMX-001",
-    "M77-VERTEX-001",
     "M77-LANGCHAIN-001",
     "M77-PIPE-001",
     "M67-CARRY-001",

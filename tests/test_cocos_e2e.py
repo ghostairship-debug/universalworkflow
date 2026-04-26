@@ -261,6 +261,9 @@ def test_cocos_commercial_asset_manifest_can_batch_generated_assets(tmp_path: Pa
     assert manifest["feature_coverage"]["generated_audio_assets"] is True
     assert manifest["feature_coverage"]["skin_switching_visual_assets"] is True
     assert manifest["feature_coverage"]["particle_effects"] is True
+    assert manifest["asset_factory_manifest"]["schema_version"] == "m81_asset_factory_manifest_v1"
+    assert manifest["asset_factory_qa"]["schema_version"] == "m81_asset_factory_qa_v1"
+    assert any(item["asset_name"].endswith("_visual_review") for item in manifest["results"])
     assert Path(manifest["manifest_path"]).exists()
 
 

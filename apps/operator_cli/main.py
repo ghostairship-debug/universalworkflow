@@ -5,6 +5,7 @@ from typing import Optional
 import typer
 
 from apps.operator_cli.admin_commands import config_app, db_app, governance_app, task_app
+from apps.operator_cli.asset_commands import asset_app
 from apps.operator_cli.automation_commands import automation_app
 from apps.operator_cli.catalog_commands import (
     capability_app,
@@ -29,6 +30,7 @@ app = typer.Typer(help="Workflow operator CLI.")
 
 app.add_typer(test_app, name="test")
 app.add_typer(validation_app, name="validation")
+app.add_typer(asset_app, name="asset")
 app.add_typer(automation_app, name="automation")
 app.add_typer(run_app, name="run")
 app.add_typer(pipeline_app, name="pipeline")

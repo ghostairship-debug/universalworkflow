@@ -357,33 +357,30 @@
       "introduced_in": "M80 provider runtime stabilization",
       "repaid_in": "M80",
       "result": "Added verified-only capability health, provider alias live-proof aggregation, and 30-day provider route stats with success, failure class, latency, fallback policy, and cost hints."
-    }
-  ],
-  "open_items": [
+    },
     {
       "debt_id": "M77-PROVIDER-001",
       "description": "OpenAI API, Codex CLI, MiniMax/DeepSeek direct API, OpenCode CLI, MMX/GCP/Vertex generation, MCP tools, and LangChain experimental agent roles were too easy to conflate in docs and routing policy",
       "introduced_in": "M77 provider-access evaluation",
-      "planned_repayment_phase": "M77 P0-P2",
-      "current_status": "partially_repaid",
-      "blocking_impact": "provider access contract, docs, tests, and direct API controlled patch apply now separate access categories; broader route evidence still needs to accumulate"
+      "repaid_in": "M80",
+      "result": "Provider access contracts, verified-only capability health, provider alias live-proof aggregation, and provider route stats now separate API, CLI, MCP, asset generation, and experimental agent surfaces."
     },
     {
       "debt_id": "M77-MMX-001",
       "description": "MMX/MiniMax was primarily wired as text evidence rather than true image, speech, and music asset generation",
       "introduced_in": "M77 multimodal generation evaluation",
-      "planned_repayment_phase": "M77 P3",
-      "current_status": "partially_repaid",
-      "blocking_impact": "API wrapper, binary artifact writing, manifest, image/speech/music live proof, and a real Cocos commercial asset-manifest batch run are present; M78 also fed generated assets into a real E2E scaffold, but commercial game acceptance still requires editor-visible native UI, prefab/component structure, animation, level flow, and full game-body integration"
+      "repaid_in": "M81",
+      "result": "MiniMax image/speech/music wrappers, binary live proof, Cocos asset manifest, reusable asset factory, hash dedupe, retry, and required-asset NO-GO gates are implemented."
     },
     {
       "debt_id": "M77-VERTEX-001",
       "description": "Vertex was primarily wired as text evidence while gcloud/GCP TTS were conflated with Vertex generation APIs",
       "introduced_in": "M77 Vertex evaluation",
-      "planned_repayment_phase": "M77 P4",
-      "current_status": "partially_repaid",
-      "blocking_impact": "GCP TTS is now split as gcp_tts_api and has verified binary live proof; Vertex Imagen and Gemini visual-review REST wrappers/probes are implemented and have passed live proof in M77 evidence"
-    },
+      "repaid_in": "M81",
+      "result": "GCP TTS is split as gcp_tts_api, Vertex Imagen and Gemini visual-review wrappers/probes are live, and M81 asset factory QA consumes Vertex visual review as a review/fallback path."
+    }
+  ],
+  "open_items": [
     {
       "debt_id": "M77-LANGCHAIN-001",
       "description": "LangChain remains present as an agent adapter but does not currently provide a mainline capability that direct APIs, MCP broker, or CLI agents cannot cover",

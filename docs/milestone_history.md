@@ -6,7 +6,7 @@
 
 - 日期：2026-04-27
 - 最新接受实现基线：`M79`
-- 下一阶段建议：执行 M80-M83 能力层恢复：provider runtime truth、asset factory、workflow self-development、commercial Cocos pipeline template。
+- 下一阶段建议：继续 M82-M83 能力层恢复：workflow self-development 与 commercial Cocos pipeline template。
 - 产品前提：个人自用 / 本地 operator runtime。
 - 主入口：CLI、API、Web operator console、`/ui/workbench` streaming chat workbench。
 - 当前硬规则：workflow 共同开发、bug-first、scoped receipt、provider live proof、route/evidence/operator packet、phase 多 task card。
@@ -37,7 +37,8 @@
 | M77 | Provider/asset generation repair：修正 OpenAI/Codex 边界、MiniMax/DeepSeek direct coding proposal、MMX/GCP/Vertex 生成能力与 pipeline 假完成风险 | 已完成主要接入修复 |
 | M78 | Cocos commercial game body E2E scaffold：真实跑通生成资产、Cocos build、browser playtest 和商业化特征 coverage | 已完成 E2E scaffold；商业化 Cocos 成品仍未完成 |
 | M79 | Cocos commercial pipeline v1：补真实 Cocos Scene/Node/Component/UI、资产绑定、动画/粒子、皮肤/关卡/道具入口、Web Mobile build 与 browser playtest | 已完成并推送；后续 M83 需模板化 |
-| M80 | Provider runtime stabilization：verified-only health、provider route stats、30 天成功率/失败/延迟/fallback/cost 摘要 | 执行中 |
+| M80 | Provider runtime stabilization：verified-only health、provider route stats、30 天成功率/失败/延迟/fallback/cost 摘要 | 已完成 |
+| M81 | Multimodal asset factory：style guide、prompt manifest、provenance、hash 去重、批量生成、失败重试、required asset NO-GO、Vertex visual QA | 已完成 |
 
 ## M73-M78 关键结论
 
@@ -48,6 +49,7 @@
 - Pipeline 已形成最小产品层，不替代既有 OrchestrationPlan，也不创建第二套 mutation 真相源。
 - Cocos E2E 以桌面 PDF 为输入，生成真实 Cocos Creator 3.8 项目并跑 Web Mobile 浏览器验证。
 - 事后评估确认：M78 产物是可运行脚手架；M79 已补编辑器可见商业化 v1 结构。M83 的重点是把该链路模板化和复用化，而不是再次做一次性脚本。
+- M80-M81 已把 provider truth 和 asset generation 从具体 Cocos 脚本里抽出来；M82-M83 的剩余重点是 workflow 自开发闭环和 commercial Cocos pipeline template。
 
 ## 历史材料治理
 

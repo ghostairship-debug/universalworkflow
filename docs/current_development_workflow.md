@@ -1,10 +1,10 @@
 # 当前开发工作流
 
-## Current Version: M80 Provider Runtime Stabilization
+## Current Version: M81 Multimodal Asset Factory
 
 - Package version: `0.66.0`.
 - Accepted implementation baseline: `M79` commercial Cocos pipeline v1.
-- Active repair entry: M80-M83 capability-layer recovery: provider runtime truth, reusable asset factory, workflow self-development, and templated commercial Cocos pipeline.
+- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth and M81 asset factory are implemented; M82-M83 continue with workflow self-development and templated commercial Cocos pipeline.
 - Active truth set: [README.md](../README.md), this workflow guide, [M77 issue register](../M77_ISSUE_REGISTER.md), [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
 - Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
@@ -71,7 +71,7 @@ GET 请求不得触发状态变更。所有文件写入必须解析明确 worksp
 - H5 游戏商业化是正式业务需求，应作为 pipeline 场景承载，而不是新增一堆 `game_*_cluster`。
 - Cocos 技术 smoke 与商业化验收必须分开；`workflowctl game cocos-e2e --require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时必须 NO-GO。
 - M79 已把 Cocos 产物从 E2E scaffold 推进到商业化 v1：真实 Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 绑定、Animation/Particle、皮肤/关卡/广告/道具入口和移动端 playtest。
-- M80-M83 恢复能力层开发，但只围绕 provider runtime truth、asset factory、workflow 自开发 proof 和可复用 commercial Cocos pipeline 模板推进。
+- M80-M83 恢复能力层开发，但只围绕 provider runtime truth、asset factory、workflow 自开发 proof 和可复用 commercial Cocos pipeline 模板推进。M81 之后，Cocos asset path 必须消费 asset factory manifest，不能退回游戏专用一次性生成函数。
 
 ## Validation Rules
 
@@ -111,3 +111,10 @@ python -m pytest -q --run-slow
 - `workflowctl capability health --verified-only` must only include capabilities backed by live probe evidence or recent successful runtime invocation.
 - `workflowctl capability routes stats --days 30` is the operator-facing provider route ledger summary: transport, modalities, auth source, live-proof status, latency, failure class, fallback policy, and cost hint.
 - Descriptor presence, configured tools, MCP profile existence, or a failed runtime attempt cannot by itself mark a provider as `verified_ready`.
+
+## M81 Asset Factory Notes
+
+- `workflowctl asset factory run --style-guide ... --manifest ... --output-dir ...` is the reusable asset production entry. The prompt manifest must list assets with name, modality, provider, filename, prompt, and required flag.
+- `workflowctl asset factory qa --asset-manifest ... --evidence-dir ...` runs visual QA over completed image assets and writes `asset_factory_qa_report.json`.
+- Required assets missing, blocked, or lacking artifact paths force `NO-GO`; generated manifests alone do not count as commercial readiness.
+- Cocos-specific `workflowctl game cocos-assets` remains as a wrapper over the generic factory plus Cocos coverage checks.

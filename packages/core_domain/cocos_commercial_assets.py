@@ -15,6 +15,11 @@ from packages.core_domain.asset_generation import (
     generate_vertex_gemini_visual_review,
     write_asset_manifest,
 )
+from packages.core_domain.asset_factory import (
+    AssetFactoryGenerators,
+    qa_asset_factory_manifest,
+    run_asset_factory,
+)
 
 AssetGenerator = Callable[[AssetGenerationRequest], AssetGenerationResult]
 REQUIRED_COMMERCIAL_ASSET_NAMES = {
@@ -98,111 +103,35 @@ def generate_cocos_commercial_asset_manifest(
     visual_review_generator: AssetGenerator = generate_vertex_gemini_visual_review,
 ) -> dict[str, Any]:
     root = Path(output_dir).resolve()
-    asset_dir = root / "commercial_assets"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    results: list[dict[str, Any]] = []
-
-    image_specs = [
-        (
-            "background",
-            "background.png",
-            f"{style_prompt}; vertical 390x844 mobile game background, clean playfield safe area, no text",
-        ),
-        (
-            "block_skin_neon",
-            "block_skin_neon.png",
-            f"{style_prompt}; glossy square block tile skin sprite sheet, no text, crisp edges",
-        ),
-        (
-            "particle_clear",
-            "particle_clear.png",
-            f"{style_prompt}; transparent-feeling sparkle particle burst for line clear, no text",
-        ),
-    ]
-    for name, filename, prompt in image_specs:
-        result = _generate_with_retries(
-            image_generator,
-            AssetGenerationRequest(
-                provider="mmx_generation_api",
-                modality="image",
-                prompt=prompt,
-                output_dir=asset_dir / "images",
-                filename=filename,
-            ),
-        )
-        results.append(_result_payload(name, result))
-
-    audio_specs = [
-        ("sfx_place", "sfx_place.mp3", "short polished mobile puzzle block placement sound"),
-        ("sfx_clear", "sfx_clear.mp3", "short bright line clear reward sound for casual mobile puzzle game"),
-    ]
-    for name, filename, prompt in audio_specs:
-        result = _generate_with_retries(
-            speech_generator,
-            AssetGenerationRequest(
-                provider="mmx_generation_api",
-                modality="audio",
-                prompt=prompt,
-                output_dir=asset_dir / "audio",
-                filename=filename,
-            ),
-        )
-        results.append(_result_payload(name, result))
-
-    music_result = _generate_with_retries(
-        music_generator,
-        AssetGenerationRequest(
-            provider="mmx_generation_api",
-            modality="music",
-            prompt="short seamless upbeat premium casual puzzle game background loop, no vocals",
-            output_dir=asset_dir / "audio",
-            filename="bgm_loop.mp3",
-        ),
-        attempts=3,
+    root.mkdir(parents=True, exist_ok=True)
+    prompt_manifest_path = root / "commercial_asset_prompt_manifest.json"
+    prompt_manifest_path.write_text(
+        json.dumps(_cocos_asset_factory_prompt_manifest(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
-    results.append(_result_payload("bgm_loop", music_result))
-
-    voice_result = _generate_with_retries(
-        tts_generator,
-        AssetGenerationRequest(
-            provider="gcp_tts_api",
-            modality="audio",
-            prompt="Great clear. Keep going.",
-            output_dir=asset_dir / "audio",
-            filename="voice_reward.mp3",
+    factory_manifest = run_asset_factory(
+        style_guide=style_prompt,
+        manifest_path=prompt_manifest_path,
+        output_dir=root / "commercial_asset_factory",
+        generators=AssetFactoryGenerators(
+            image=image_generator,
+            speech=speech_generator,
+            music=music_generator,
+            tts=tts_generator,
+            visual_review=visual_review_generator,
         ),
+        max_attempts=2,
     )
-    results.append(_result_payload("voice_reward", voice_result))
-
-    review_result_payload: dict[str, Any] | None = None
+    results: list[dict[str, Any]] = list(factory_manifest["results"])
+    qa_report: dict[str, Any] | None = None
     if include_vertex_review:
-        first_image = next(
-            (
-                item
-                for item in results
-                if item.get("status") == "completed"
-                and item.get("modality") == "image"
-                and item.get("artifact_paths")
-            ),
-            None,
+        qa_report = qa_asset_factory_manifest(
+            asset_manifest_path=factory_manifest["manifest_path"],
+            evidence_dir=root / "commercial_asset_factory" / "qa",
+            visual_review_generator=visual_review_generator,
         )
-        if first_image:
-            review_result = _generate_with_retries(
-                visual_review_generator,
-                AssetGenerationRequest(
-                    provider="vertex_generation_api",
-                    modality="vision_review",
-                    prompt=(
-                        "Review this mobile game asset for commercial readiness. "
-                        "Return concise JSON-like notes covering polish, readability, and game fit."
-                    ),
-                    output_dir=asset_dir / "reviews",
-                    filename="vertex_visual_review.json",
-                    metadata={"image_path": first_image["artifact_paths"][0]},
-                ),
-            )
-            review_result_payload = _result_payload("vertex_visual_review", review_result)
-            results.append(review_result_payload)
+        for review in qa_report["visual_reviews"]:
+            results.append({**review, "asset_name": f"{review['asset_name']}_visual_review"})
 
     coverage = _coverage(results)
     blockers = _blocked_required_assets(results)
@@ -210,11 +139,13 @@ def generate_cocos_commercial_asset_manifest(
         "schema_version": "m77_cocos_commercial_assets_v1",
         "created_at": datetime.now(UTC).isoformat(),
         "style_prompt": style_prompt,
-        "asset_root": asset_dir.as_posix(),
+        "asset_root": factory_manifest["asset_root"],
         "results": results,
         "feature_coverage": coverage,
         "blockers": blockers,
         "go_no_go": "GO" if all(coverage.values()) and not blockers else "NO-GO",
+        "asset_factory_manifest": factory_manifest,
+        "asset_factory_qa": qa_report,
     }
     manifest_path = root / "commercial_asset_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -231,3 +162,67 @@ def generate_cocos_commercial_asset_manifest(
     )
     manifest["manifest_path"] = manifest_path.as_posix()
     return manifest
+
+
+def _cocos_asset_factory_prompt_manifest() -> dict[str, Any]:
+    return {
+        "schema_version": "m81_asset_factory_prompt_manifest_v1",
+        "assets": [
+            {
+                "name": "background",
+                "modality": "image",
+                "provider": "mmx_generation_api",
+                "filename": "background.png",
+                "required": True,
+                "prompt": "{style_guide}; vertical 390x844 mobile game background, clean playfield safe area, no text",
+            },
+            {
+                "name": "block_skin_neon",
+                "modality": "image",
+                "provider": "mmx_generation_api",
+                "filename": "block_skin_neon.png",
+                "required": True,
+                "prompt": "{style_guide}; glossy square block tile skin sprite sheet, no text, crisp edges",
+            },
+            {
+                "name": "particle_clear",
+                "modality": "image",
+                "provider": "mmx_generation_api",
+                "filename": "particle_clear.png",
+                "required": True,
+                "prompt": "{style_guide}; transparent-feeling sparkle particle burst for line clear, no text",
+            },
+            {
+                "name": "sfx_place",
+                "modality": "audio",
+                "provider": "mmx_generation_api",
+                "filename": "sfx_place.mp3",
+                "required": True,
+                "prompt": "short polished mobile puzzle block placement sound",
+            },
+            {
+                "name": "sfx_clear",
+                "modality": "audio",
+                "provider": "mmx_generation_api",
+                "filename": "sfx_clear.mp3",
+                "required": True,
+                "prompt": "short bright line clear reward sound for casual mobile puzzle game",
+            },
+            {
+                "name": "bgm_loop",
+                "modality": "music",
+                "provider": "mmx_generation_api",
+                "filename": "bgm_loop.mp3",
+                "required": True,
+                "prompt": "short seamless upbeat premium casual puzzle game background loop, no vocals",
+            },
+            {
+                "name": "voice_reward",
+                "modality": "audio",
+                "provider": "gcp_tts_api",
+                "filename": "voice_reward.mp3",
+                "required": True,
+                "prompt": "Great clear. Keep going.",
+            },
+        ],
+    }

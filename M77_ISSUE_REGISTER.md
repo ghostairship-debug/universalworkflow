@@ -13,9 +13,9 @@
 
 | ID | 状态 | 问题 | 当前处理 |
 | --- | --- | --- | --- |
-| M77-PROVIDER-001 | partially_repaid | OpenAI API、Codex CLI、MiniMax/DeepSeek API、OpenCode CLI、MMX/Vertex generation、MCP tool、LangChain experimental 的边界混乱 | 已新增 provider access contract，明确 Codex CLI 是当前 OpenAI-family 主路径，OpenAI API 只是可选 API route；MiniMax/DeepSeek direct coding API、MMX/GCP/Vertex asset generator、MCP tool、LangChain experimental 分层已进入 capability 描述和测试。 |
-| M77-MMX-001 | partially_repaid | MMX/MiniMax 之前主要是 text evidence，没有真实 image/speech/music 生成主路径 | 已新增 MiniMax image/speech/music generation API wrapper、二进制资产落盘、manifest 和 live probe 路径；本轮真实跑通 image、speech、music 三类二进制 live proof，并真实跑通 Cocos commercial asset manifest 批量调用。商业化风格管理和 game body 集成仍需继续。 |
-| M77-VERTEX-001 | partially_repaid | Vertex/gcloud/GCP TTS 边界混乱，Vertex 主要停留在文本 evidence | 已把 Cloud Text-to-Speech 拆为 `gcp_tts_api`，旧 `vertex_tts` 仅兼容 alias；已修复 Windows gcloud shim、ADC quota project、IAM Service Usage Consumer、Vertex AI API/IAM 和 token source 选择，并真实跑通 GCP TTS、`vertex_imagen`、`vertex_gemini_review` live proof。 |
+| M77-PROVIDER-001 | repaid | OpenAI API、Codex CLI、MiniMax/DeepSeek API、OpenCode CLI、MMX/Vertex generation、MCP tool、LangChain experimental 的边界混乱 | M80 已新增 verified-only capability health、provider alias live-proof 聚合和 30 天 route stats；provider、transport、modality、auth、fallback、cost hint 均可查询，OpenAI API 继续不冒充 ready。 |
+| M77-MMX-001 | repaid | MMX/MiniMax 之前主要是 text evidence，没有真实 image/speech/music 生成主路径 | M77-M81 已新增 MiniMax image/speech/music generation API wrapper、二进制资产落盘、live proof、Cocos asset manifest、通用 asset factory、hash 去重、批量生成和 required asset NO-GO gate。 |
+| M77-VERTEX-001 | repaid | Vertex/gcloud/GCP TTS 边界混乱，Vertex 主要停留在文本 evidence | 已把 Cloud Text-to-Speech 拆为 `gcp_tts_api`，`gcloud` 只作为认证/环境工具；Vertex Imagen 与 Gemini visual review 已进入 generation/review wrapper、live proof 和 M81 asset factory QA。 |
 | M77-LANGCHAIN-001 | partially_repaid | LangChain 容易被误认为默认主路由 | provider contract 和文档已降级为 experimental / opt-in agent framework，不再作为默认 provider control plane。仍保留现有 adapter 兼容旧测试和实验用途。 |
 | M77-PIPE-001 | partially_repaid | Pipeline run 会把未真实执行的 stage 标成 completed | 已修复为真实 stage 状态机：planning/review 只产 evidence，未显式执行的 capability stage 返回 blocked，validation gate 会短路，CLI 非 completed 返回非零退出码；AutomationLease 可约束 pipeline write_set。仍需把 workflow run / capability invocation 全量接入 stage executor。 |
 | M77-COCOS-001 | repaid | Cocos E2E 仍偏技术 demo / E2E scaffold，缺编辑器可见的商业化 UI、美术、音效、动画、粒子、皮肤和关卡闭环 | M79 已完成商业化 Cocos pipeline v1：真实 Cocos Scene/Prefab/Component/UI/Audio/Animation/Particle/skin/level 结构、资产绑定、Web Mobile build 与浏览器 playtest。后续 M83 只处理模板化复用，不再把半成品 scaffold 视为完成。 |
@@ -35,12 +35,11 @@
 
 ## 下一步
 
-1. 把 MiniMax image/speech/music live proof 从单点 probe 扩展为 Cocos asset manifest 批量生成。
-2. 补 Vertex Imagen/Gemini image/visual review，TTS 之外的生成能力不能继续停留在计划中。
-3. 把 Pipeline stage executor 继续接到真实 workflow run、capability invocation 和 validation command manifest。
-4. M79 重做 Cocos 商业化小游戏 pipeline，要求真实 Cocos Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 绑定、Animation/Particle、皮肤、关卡、广告点位、道具和移动端视觉 playtest。
+1. 把 Pipeline stage executor 继续接到真实 workflow run、capability invocation 和 validation command manifest。
+2. M83 把 M79 Cocos 商业化小游戏 pipeline 模板化，要求从 PDF/brief 到 asset factory、Cocos project、build、playtest 和 commercial readiness report 全链路可复用。
 ## M77 当前补充
 
 - `M77-VERTEX-001`：已新增并真实跑通 `vertex_imagen` 与 `vertex_gemini_review` 两条 REST probe/wrapper；`gcp_tts_api` 继续独立表示 Cloud Text-to-Speech。
 - `M77-MMX-001`：已新增并真实跑通 Cocos commercial asset manifest 批量生成，覆盖 MMX image/speech/music、GCP TTS voice 和可选 Vertex Gemini review。
 - `M77-COCOS-001`：M79 真实跑通商业化 Cocos pipeline v1、Web Mobile build、browser playtest 和生成资产绑定；M83 的剩余目标是模板化为可复用 `commercial_cocos_game` pipeline。
+- `M81-ASSET-FACTORY`：已新增通用 asset factory，支持 style guide、prompt manifest、provenance、hash 去重、批量生成、失败重试、required asset NO-GO 和 Vertex visual QA。
