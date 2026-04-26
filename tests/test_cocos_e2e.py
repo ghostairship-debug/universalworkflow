@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -54,6 +55,50 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     assert "bootBlockPuzzleStandalone()" in script
     assert "campaignFirstSevenLevels" in script
     assert "Math.floor(this.score / 10 + offset)" in script
+
+
+def test_cocos_build_accepts_creator_success_exit_code_36(tmp_path: Path, monkeypatch) -> None:
+    build_output = tmp_path / "build" / "web-mobile"
+    (build_output / "assets").mkdir(parents=True)
+    (build_output / "index.html").write_text("<canvas></canvas>", encoding="utf-8")
+
+    def _fake_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build Task (web-mobile) Finished")
+        stderr.write("构建参数 debug 校验失败, 将会使用默认值 false")
+        return subprocess.CompletedProcess(command, 36)
+
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _fake_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+    )
+
+    assert build["creator_exit_code"] == 36
+    assert build["artifact_success"] is True
+    assert build["fatal_marker_detected"] is False
+
+
+def test_cocos_build_rejects_success_code_with_fatal_runtime_marker(tmp_path: Path, monkeypatch) -> None:
+    build_output = tmp_path / "build" / "web-mobile"
+    (build_output / "assets").mkdir(parents=True)
+    (build_output / "index.html").write_text("<canvas></canvas>", encoding="utf-8")
+
+    def _fake_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build Task (web-mobile) Finished")
+        stderr.write("Missing class: BlockPuzzleGame")
+        return subprocess.CompletedProcess(command, 36)
+
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _fake_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+    )
+
+    assert build["creator_exit_code"] == 36
+    assert build["artifact_success"] is False
+    assert build["fatal_marker_detected"] is True
 
 
 def test_cli_game_cocos_e2e_generates_manifest_without_build(tmp_path: Path) -> None:
@@ -165,7 +210,14 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
     creator.write_text("", encoding="utf-8")
 
     def _fake_manifest(*, output_dir, **_kwargs):
-        manifest_path = Path(output_dir) / "commercial_asset_manifest.json"
+        output_root = Path(output_dir)
+        image_path = output_root / "commercial_assets" / "images" / "background.png"
+        audio_path = output_root / "commercial_assets" / "audio" / "sfx_place.mp3"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"image")
+        audio_path.write_bytes(b"audio")
+        manifest_path = output_root / "commercial_asset_manifest.json"
         manifest_path.write_text("{}", encoding="utf-8")
         return {
             "manifest_path": manifest_path.as_posix(),
@@ -177,7 +229,24 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
                 "particle_effects": True,
                 "commercial_polish_pass": True,
             },
-            "results": [],
+            "results": [
+                {
+                    "asset_name": "background",
+                    "provider": "mmx_generation_api",
+                    "modality": "image",
+                    "status": "completed",
+                    "artifact_paths": [image_path.as_posix()],
+                    "mime_type": "image/png",
+                },
+                {
+                    "asset_name": "sfx_place",
+                    "provider": "mmx_generation_api",
+                    "modality": "audio",
+                    "status": "completed",
+                    "artifact_paths": [audio_path.as_posix()],
+                    "mime_type": "audio/mpeg",
+                },
+            ],
         }
 
     monkeypatch.setattr(cocos_e2e_module, "generate_cocos_commercial_asset_manifest", _fake_manifest)
@@ -193,9 +262,18 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
 
     assert payload["commercial_feature_coverage"]["generated_art_assets"] is True
     assert payload["commercial_feature_coverage"]["generated_audio_assets"] is True
-    assert payload["commercial_go_no_go"] == "NO-GO"
-    assert "native_cocos_ui_nodes" in payload["commercial_blockers"]
+    assert payload["commercial_go_no_go"] == "GO"
+    assert payload["commercial_feature_coverage"]["native_cocos_ui_nodes"] is True
+    assert payload["commercial_feature_coverage"]["animation_timeline"] is True
+    assert payload["commercial_feature_coverage"]["level_switching_ui"] is True
     assert "commercial_missing_generated_art_assets" not in payload["manifest"]["blockers"]
+    script = (Path(payload["project"]["project_path"]) / "assets" / "scripts" / "BlockPuzzleGame.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "CommercialNativeUIRoot" in script
+    assert "animation_timeline_started" in script
+    assert "level_switching_ui_opened" in script
+    assert Path(payload["commercial_body"]["manifest_path"]).exists()
 
 
 def test_cli_game_cocos_assets_uses_commercial_manifest(tmp_path: Path, monkeypatch) -> None:

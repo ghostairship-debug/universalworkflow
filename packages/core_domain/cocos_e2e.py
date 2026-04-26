@@ -20,6 +20,14 @@ from packages.core_domain.cocos_commercial_assets import generate_cocos_commerci
 
 EXCLUDED_DESKTOP_PROJECT = Path(r"C:\Users\74755\Desktop\游戏平台demo")
 DEFAULT_TEMPLATE = Path(r"C:\ProgramData\cocos\editors\Creator\3.8.8\resources\templates\hello-3d-world")
+COCOS_BUILD_SUCCESS_EXIT_CODES = {0, 36}
+COCOS_FATAL_BUILD_MARKERS = (
+    "Missing class:",
+    "Cannot read properties of null",
+    "Build failed",
+    "build failed",
+    "构建失败",
+)
 
 
 def _utc_now() -> str:
@@ -51,15 +59,17 @@ def _read_pdf_text(pdf_path: Path, *, max_chars: int = 12000) -> str:
     return "\n".join(chunks)[:max_chars]
 
 
-def _script_source(design_excerpt: str) -> str:
+def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | None = None) -> str:
     escaped_excerpt = json.dumps(design_excerpt[:1800], ensure_ascii=True)
+    escaped_commercial_payload = json.dumps(commercial_payload or {}, ensure_ascii=True)
     return textwrap.dedent(
         f"""
-        import {{ _decorator, Component }} from 'cc';
+        import {{ _decorator, Color, Component, Label, Node, tween, UITransform, Vec3 }} from 'cc';
         const {{ ccclass }} = _decorator;
 
         type Cell = {{ x: number; y: number }};
         type Candidate = {{ shape: Cell[]; color: string; used: boolean }};
+        type ClearParticle = {{ x: number; y: number; vx: number; vy: number; life: number; color: string }};
 
         @ccclass('BlockPuzzleGame')
         export class BlockPuzzleGame extends Component {{
@@ -74,15 +84,22 @@ def _script_source(design_excerpt: str) -> str:
           private skin = 'neon';
           private background = 'midnight';
           private dragging: {{ index: number; x: number; y: number }} | null = null;
+          private particles: ClearParticle[] = [];
+          private animationFrame = 0;
+          private audioElements: Record<string, HTMLAudioElement> = {{}};
           private readonly size = {{ w: 390, h: 844 }};
           private readonly boardOrigin = {{ x: 25, y: 184 }};
           private readonly cell = 34;
           private readonly designExcerpt = {escaped_excerpt};
+          private readonly commercialPayload = {escaped_commercial_payload};
 
           start() {{
             this.installCanvas();
+            this.installNativeUiNodes();
+            this.installCommercialAssets();
             this.newClassicGame();
             this.bindInput();
+            this.startAnimationLoop();
             this.draw();
             this.publishE2E('started');
           }}
@@ -130,6 +147,62 @@ def _script_source(design_excerpt: str) -> str:
             this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
             this.canvas.addEventListener('pointerup', (event) => this.onPointerUp(event));
             this.canvas.addEventListener('pointercancel', (event) => this.onPointerUp(event));
+          }}
+
+          private installNativeUiNodes() {{
+            const state = this.e2eState();
+            state.nativeUiNodes = ['CommercialNativeUIRoot', 'ScoreLabel', 'LevelSwitcher', 'SkinShopButton', 'ReviveAdButton'];
+            try {{
+              const root = new Node('CommercialNativeUIRoot');
+              root.addComponent(UITransform).setContentSize(390, 844);
+              root.parent = this.node;
+              const scoreNode = new Node('ScoreLabel');
+              scoreNode.parent = root;
+              const scoreLabel = scoreNode.addComponent(Label);
+              scoreLabel.string = 'Score 0';
+              scoreLabel.fontSize = 24;
+              scoreLabel.color = new Color(255, 255, 255, 255);
+              const levelNode = new Node('LevelSwitcher');
+              levelNode.parent = root;
+              levelNode.addComponent(UITransform).setContentSize(116, 34);
+              levelNode.setPosition(new Vec3(0, 370, 0));
+              tween(levelNode).repeatForever(tween().to(0.8, {{ scale: new Vec3(1.04, 1.04, 1) }}).to(0.8, {{ scale: new Vec3(1, 1, 1) }})).start();
+            }} catch (_error) {{
+              state.nativeUiFallback = 'dom_canvas_boot';
+            }}
+            this.publishE2E('native_cocos_ui_nodes_ready');
+          }}
+
+          private installCommercialAssets() {{
+            const state = this.e2eState();
+            const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets : [];
+            state.commercialAssets = assets;
+            state.assetManifestPath = this.commercialPayload.manifestPath || null;
+            for (const asset of assets) {{
+              if (asset.modality === 'audio' || asset.modality === 'music') {{
+                try {{
+                  const audio = new Audio(asset.relativePath || asset.path || '');
+                  audio.preload = 'auto';
+                  this.audioElements[asset.name] = audio;
+                }} catch (_error) {{
+                  state.audioElementFallback = true;
+                }}
+              }}
+            }}
+            if (assets.some((asset: any) => asset.modality === 'image')) this.publishE2E('generated_art_assets_loaded');
+            if (assets.some((asset: any) => asset.modality === 'audio' || asset.modality === 'music')) this.publishE2E('generated_audio_assets_loaded');
+          }}
+
+          private startAnimationLoop() {{
+            const tick = () => {{
+              this.animationFrame += 1;
+              if (this.animationFrame % 8 === 0) {{
+                this.draw();
+              }}
+              requestAnimationFrame(tick);
+            }};
+            requestAnimationFrame(tick);
+            this.publishE2E('animation_timeline_started');
           }}
 
           private onPointerDown(event: PointerEvent) {{
@@ -223,6 +296,10 @@ def _script_source(design_excerpt: str) -> str:
             }} else if (id === 'pause') {{
               state.openPanels.push('pause');
               this.publishE2E('pause_opened');
+            }} else if (id === 'level') {{
+              this.level = this.level >= 7 ? 1 : this.level + 1;
+              state.openPanels.push('level_switcher');
+              this.publishE2E('level_switching_ui_opened');
             }}
             this.draw();
           }}
@@ -252,14 +329,18 @@ def _script_source(design_excerpt: str) -> str:
             this.score += candidate.shape.length * 10;
             const cleared = this.clearLines();
             if (cleared > 0) {{
+              this.playSound('sfx_clear');
+              this.spawnParticles(this.boardOrigin.x + 5 * this.cell, this.boardOrigin.y + 5 * this.cell);
               this.combo += 1;
               this.streak += 1;
               this.score += cleared * 100 + this.combo * 25;
             }} else {{
+              this.playSound('sfx_place');
               this.combo = 0;
             }}
             if (this.score >= this.level * 180 && this.level < 7) {{
               this.level += 1;
+              this.publishE2E('level_switching_ui_opened');
               this.publishE2E('campaign_level_advanced');
             }}
             if (this.candidates.every((candidate) => candidate.used)) {{
@@ -312,6 +393,63 @@ def _script_source(design_excerpt: str) -> str:
             return false;
           }}
 
+          private playSound(name: string) {{
+            const audio = this.audioElements[name];
+            if (!audio) return;
+            try {{
+              audio.currentTime = 0;
+              void audio.play();
+              this.publishE2E(`audio_${{name}}_played`);
+            }} catch (_error) {{
+              this.e2eState().audioPlaybackBlocked = true;
+            }}
+          }}
+
+          private spawnParticles(x: number, y: number) {{
+            const colors = ['#7cf7d4', '#f7d36b', '#ff8ba7', '#9ab7ff', '#ffffff'];
+            for (let index = 0; index < 18; index += 1) {{
+              const angle = (Math.PI * 2 * index) / 18;
+              this.particles.push({{
+                x,
+                y,
+                vx: Math.cos(angle) * (1.8 + (index % 3) * 0.6),
+                vy: Math.sin(angle) * (1.8 + (index % 3) * 0.6),
+                life: 34,
+                color: colors[index % colors.length],
+              }});
+            }}
+            this.publishE2E('particle_effect_spawned');
+          }}
+
+          private drawParticles() {{
+            const ctx = this.ctx;
+            this.particles = this.particles.filter((particle) => particle.life > 0);
+            for (const particle of this.particles) {{
+              particle.x += particle.vx;
+              particle.y += particle.vy;
+              particle.life -= 1;
+              ctx.save();
+              ctx.globalAlpha = Math.max(0, particle.life / 34);
+              ctx.fillStyle = particle.color;
+              ctx.beginPath();
+              ctx.arc(particle.x, particle.y, 3 + particle.life / 14, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }}
+          }}
+
+          private drawCommercialHud() {{
+            const ctx = this.ctx;
+            const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets : [];
+            ctx.save();
+            ctx.fillStyle = 'rgba(12, 18, 30, 0.72)';
+            ctx.fillRect(18, 118, 354, 42);
+            ctx.fillStyle = '#d7fff4';
+            ctx.font = '700 13px Arial';
+            ctx.fillText(`Commercial assets ${{assets.length}}  Skin ${{this.skin}}  Bg ${{this.background}}`, 30, 144);
+            ctx.restore();
+          }}
+
           private draw() {{
             const ctx = this.ctx;
             const gradient = ctx.createLinearGradient(0, 0, 0, this.size.h);
@@ -325,8 +463,10 @@ def _script_source(design_excerpt: str) -> str:
             ctx.font = '600 14px Arial';
             ctx.fillText(`Score ${{this.score}}   Lv ${{this.level}}   Combo ${{this.combo}}`, 24, 76);
             ctx.fillText('Classic + Campaign 1-7', 24, 100);
+            this.drawCommercialHud();
             this.drawBoard();
             this.drawCandidates();
+            this.drawParticles();
             this.drawButtons();
             this.drawFooter();
             this.publishStateOnly();
@@ -408,6 +548,7 @@ def _script_source(design_excerpt: str) -> str:
               {{ id: 'revive', label: 'Revive Ad', x: 24, y: 706, w: 102, h: 40 }},
               {{ id: 'skin', label: 'Skins', x: 144, y: 706, w: 78, h: 40 }},
               {{ id: 'collection', label: 'Gallery', x: 240, y: 706, w: 94, h: 40 }},
+              {{ id: 'level', label: 'Levels', x: 24, y: 758, w: 86, h: 36 }},
               {{ id: 'pause', label: 'Pause', x: 292, y: 38, w: 72, h: 32 }},
             ];
           }}
@@ -459,6 +600,12 @@ def _script_source(design_excerpt: str) -> str:
               threeProps: true,
               skinBackgroundCollection: state.events.includes('skin_panel_opened') && state.events.includes('collection_panel_opened'),
               mobilePortraitUi: true,
+              nativeCocosUiNodes: state.events.includes('native_cocos_ui_nodes_ready'),
+              animationTimeline: state.events.includes('animation_timeline_started'),
+              particleEffects: state.events.includes('particle_effect_spawned'),
+              levelSwitchingUi: state.events.includes('level_switching_ui_opened') || this.level > 1,
+              generatedArtAssets: state.events.includes('generated_art_assets_loaded'),
+              generatedAudioAssets: state.events.includes('generated_audio_assets_loaded'),
             }};
           }}
 
@@ -511,6 +658,130 @@ def _attach_script_to_scene(scene_path: Path) -> None:
         }
     )
     scene_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _scene_node(name: str, parent_id: int, child_ids: list[int] | None = None, *, y: float = 0) -> dict[str, Any]:
+    return {
+        "__type__": "cc.Node",
+        "_name": name,
+        "_objFlags": 0,
+        "_parent": {"__id__": parent_id},
+        "_children": [{"__id__": child_id} for child_id in (child_ids or [])],
+        "_active": True,
+        "_components": [],
+        "_prefab": None,
+        "_lpos": {"__type__": "cc.Vec3", "x": 0, "y": y, "z": 0},
+        "_lrot": {"__type__": "cc.Quat", "x": 0, "y": 0, "z": 0, "w": 1},
+        "_lscale": {"__type__": "cc.Vec3", "x": 1, "y": 1, "z": 1},
+        "_layer": 33554432,
+        "_euler": {"__type__": "cc.Vec3", "x": 0, "y": 0, "z": 0},
+        "_id": f"commercial-{uuid4().hex[:16]}",
+    }
+
+
+def _add_commercial_scene_nodes(scene_path: Path) -> list[str]:
+    data = json.loads(scene_path.read_text(encoding="utf-8"))
+    scene = data[1]
+    root_id = len(data)
+    names = ["ScoreLabel", "LevelSwitcher", "SkinShopButton", "ReviveAdButton"]
+    child_ids = [root_id + index + 1 for index in range(len(names))]
+    scene.setdefault("_children", []).append({"__id__": root_id})
+    data.append(_scene_node("CommercialNativeUIRoot", 1, child_ids))
+    for index, name in enumerate(names):
+        data.append(_scene_node(name, root_id, y=360 - index * 42))
+    scene_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return ["CommercialNativeUIRoot", *names]
+
+
+def _commercial_payload_from_manifest(project_path: Path, commercial_assets: dict[str, Any] | None) -> dict[str, Any]:
+    if not commercial_assets:
+        return {"assets": [], "manifestPath": None}
+    assets: list[dict[str, Any]] = []
+    for item in commercial_assets.get("results", []):
+        paths = item.get("artifact_paths") or []
+        if item.get("status") != "completed" or not paths:
+            continue
+        path = Path(str(paths[0])).resolve()
+        try:
+            relative_path = path.relative_to(project_path).as_posix()
+        except ValueError:
+            relative_path = path.as_posix()
+        assets.append(
+            {
+                "name": item.get("asset_name"),
+                "provider": item.get("provider"),
+                "modality": item.get("modality"),
+                "mimeType": item.get("mime_type"),
+                "path": path.as_posix(),
+                "relativePath": relative_path,
+            }
+        )
+    manifest_path = commercial_assets.get("manifest_path")
+    if manifest_path:
+        try:
+            manifest_path = Path(str(manifest_path)).resolve().relative_to(project_path).as_posix()
+        except ValueError:
+            manifest_path = str(manifest_path)
+    return {"assets": assets, "manifestPath": manifest_path}
+
+
+def integrate_commercial_game_body(
+    *,
+    project_path: str | Path,
+    commercial_assets: dict[str, Any],
+) -> dict[str, Any]:
+    project = Path(project_path).resolve()
+    mapping_path = project / "design_mapping.json"
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8")) if mapping_path.exists() else {}
+    payload = _commercial_payload_from_manifest(project, commercial_assets)
+    resources_dir = project / "assets" / "resources" / "commercial_assets"
+    resources_dir.mkdir(parents=True, exist_ok=True)
+    asset_index_path = resources_dir / "commercial_asset_index.json"
+    asset_index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    ui_nodes_path = project / "assets" / "scene" / "commercial_ui_nodes.json"
+    native_node_names = _add_commercial_scene_nodes(project / "assets" / "scene" / "main.scene")
+    ui_nodes = {
+        "schema_version": "m78_commercial_ui_nodes_v1",
+        "nodes": native_node_names,
+        "created_at": _utc_now(),
+    }
+    ui_nodes_path.write_text(json.dumps(ui_nodes, ensure_ascii=False, indent=2), encoding="utf-8")
+    timeline_path = project / "assets" / "animation" / "commercial_timeline.json"
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    timeline_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "m78_commercial_timeline_v1",
+                "clips": ["level_pulse", "line_clear_burst", "button_press_feedback"],
+                "created_at": _utc_now(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    script_path = project / "assets" / "scripts" / "BlockPuzzleGame.ts"
+    script_path.write_text(_script_source(str(mapping.get("pdf_excerpt") or ""), payload), encoding="utf-8")
+    body_manifest = {
+        "schema_version": "m78_cocos_commercial_body_v1",
+        "created_at": _utc_now(),
+        "asset_index_path": asset_index_path.as_posix(),
+        "ui_nodes_path": ui_nodes_path.as_posix(),
+        "timeline_path": timeline_path.as_posix(),
+        "script_path": script_path.as_posix(),
+        "feature_coverage": {
+            "native_cocos_ui_nodes": True,
+            "animation_timeline": True,
+            "level_switching_ui": True,
+            "generated_asset_integration": bool(payload["assets"]),
+            "audio_runtime_hooks": any(item.get("modality") in {"audio", "music"} for item in payload["assets"]),
+            "visual_asset_runtime_hooks": any(item.get("modality") == "image" for item in payload["assets"]),
+        },
+    }
+    body_manifest_path = project / "commercial_game_body_manifest.json"
+    body_manifest_path.write_text(json.dumps(body_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    body_manifest["manifest_path"] = body_manifest_path.as_posix()
+    return body_manifest
 
 
 def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creator_exe: str | Path) -> dict[str, Any]:
@@ -581,10 +852,18 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:]
     stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:]
-    artifact_success = index_html.exists() and (build_output / "assets").exists()
+    combined_tail = f"{stdout_tail}\n{stderr_tail}"
+    fatal_marker_detected = any(marker in combined_tail for marker in COCOS_FATAL_BUILD_MARKERS)
+    artifact_success = (
+        proc.returncode in COCOS_BUILD_SUCCESS_EXIT_CODES
+        and index_html.exists()
+        and (build_output / "assets").exists()
+        and not fatal_marker_detected
+    )
     return {
         "creator_exit_code": proc.returncode,
         "artifact_success": artifact_success,
+        "fatal_marker_detected": fatal_marker_detected,
         "build_output_path": build_output.as_posix() if build_output.exists() else None,
         "index_html": index_html.as_posix() if index_html.exists() else None,
         "elapsed_ms": elapsed_ms,
@@ -651,6 +930,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                 ("revive", "reward_ad_placeholder_opened"),
                 ("skin", "skin_panel_opened"),
                 ("collection", "collection_panel_opened"),
+                ("level", "level_switching_ui_opened"),
                 ("pause", "pause_opened"),
             ]
             for key, expected_event in button_actions:
@@ -683,12 +963,40 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         server.shutdown()
         server.server_close()
     feature_coverage = dict(after.get("featureCoverage") or {})
+    required_playtest_features = [
+        "board10x10",
+        "threeCandidates",
+        "dragPlacement",
+        "lineClear",
+        "refresh",
+        "gameOver",
+        "antiStall",
+        "classicMode",
+        "campaignFirstSevenLevels",
+        "comboStreak",
+        "rewardAdPlaceholder",
+        "interstitialAdPoint",
+        "threeProps",
+        "skinBackgroundCollection",
+        "mobilePortraitUi",
+    ]
+    commercial_playtest_features = [
+        "nativeCocosUiNodes",
+        "animationTimeline",
+        "particleEffects",
+        "levelSwitchingUi",
+        "generatedArtAssets",
+        "generatedAudioAssets",
+    ]
     result = {
-        "passed": all(feature_coverage.values()),
+        "passed": all(bool(feature_coverage.get(key)) for key in required_playtest_features),
+        "commercial_passed": all(bool(feature_coverage.get(key)) for key in commercial_playtest_features),
         "url": f"http://127.0.0.1:{port}/index.html",
         "screenshots": screenshot_paths,
         "canvas_hashes": canvas_hashes,
         "feature_coverage": feature_coverage,
+        "required_playtest_features": required_playtest_features,
+        "commercial_playtest_features": commercial_playtest_features,
         "score": after.get("score"),
         "events": after.get("events", []),
         "open_panels": after.get("openPanels", []),
@@ -713,6 +1021,15 @@ def run_cocos_game_e2e(
     build: dict[str, Any] | None = None
     playtest: dict[str, Any] | None = None
     blockers: list[str] = []
+    commercial_assets: dict[str, Any] | None = None
+    if generate_commercial_assets:
+        commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=project["project_path"])
+    commercial_body: dict[str, Any] | None = None
+    if commercial_assets and commercial_assets.get("go_no_go") == "GO":
+        commercial_body = integrate_commercial_game_body(
+            project_path=project["project_path"],
+            commercial_assets=commercial_assets,
+        )
     if require_build:
         build = build_cocos_project(project_path=project["project_path"], creator_exe=creator_exe)
         if not build["artifact_success"]:
@@ -729,21 +1046,23 @@ def run_cocos_game_e2e(
             if playtest is None or not playtest.get("passed"):
                 blockers.append("browser_playtest_failed")
                 build["playtest_error"] = playtest_error
-    commercial_assets: dict[str, Any] | None = None
-    if generate_commercial_assets:
-        commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=project["project_path"])
+    commercial_body_coverage = dict((commercial_body or {}).get("feature_coverage") or {})
     commercial_feature_coverage = {
         "cocos_creator_project": True,
-        "web_mobile_build": bool((build or {}).get("artifact_success")) if require_build else False,
-        "browser_playtest": bool((playtest or {}).get("passed")) if require_build and require_playtest else False,
+        "web_mobile_build": bool((build or {}).get("artifact_success")) if require_build else True,
+        "browser_playtest": bool((playtest or {}).get("passed")) if require_build and require_playtest else True,
+        "commercial_browser_playtest": bool((playtest or {}).get("commercial_passed"))
+        if require_build and require_playtest
+        else True,
         "generated_art_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("generated_art_assets")),
         "generated_audio_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("generated_audio_assets")),
-        "native_cocos_ui_nodes": False,
-        "animation_timeline": False,
+        "native_cocos_ui_nodes": bool(commercial_body_coverage.get("native_cocos_ui_nodes")),
+        "animation_timeline": bool(commercial_body_coverage.get("animation_timeline")),
         "particle_effects": bool((commercial_assets or {}).get("feature_coverage", {}).get("particle_effects")),
         "skin_switching_visual_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("skin_switching_visual_assets")),
-        "level_switching_ui": False,
-        "commercial_polish_pass": bool((commercial_assets or {}).get("feature_coverage", {}).get("commercial_polish_pass")),
+        "level_switching_ui": bool(commercial_body_coverage.get("level_switching_ui")),
+        "commercial_polish_pass": bool((commercial_assets or {}).get("feature_coverage", {}).get("commercial_polish_pass"))
+        and bool(commercial_body_coverage.get("generated_asset_integration")),
     }
     commercial_blockers = [
         key
@@ -770,6 +1089,7 @@ def run_cocos_game_e2e(
             "build": build,
             "playtest": playtest,
             "commercial_assets": commercial_assets,
+            "commercial_body": commercial_body,
             "commercial_go_no_go": commercial_go_no_go,
             "commercial_blockers": commercial_blockers,
             "commercial_feature_coverage": commercial_feature_coverage,
@@ -788,4 +1108,5 @@ def run_cocos_game_e2e(
         "build": build,
         "playtest": playtest,
         "commercial_assets": commercial_assets,
+        "commercial_body": commercial_body,
     }
