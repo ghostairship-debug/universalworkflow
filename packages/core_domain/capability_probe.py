@@ -56,6 +56,7 @@ PROVIDERS = [
 ASSET_GENERATION_PROVIDERS = {"mmx_image", "mmx_speech", "mmx_music", "vertex_imagen", "gcp_tts", "vertex_tts"}
 VISION_REVIEW_PROVIDERS = {"vertex_gemini_review"}
 DEFAULT_PROBE_TIMEOUT_SECONDS = 120
+PROVIDER_PROBE_TIMEOUT_SECONDS = {"mmx_music": 180}
 GENERIC_ASSISTANT_PATTERNS = (
     "how can i help",
     "how may i help",
@@ -522,14 +523,14 @@ def probe_provider(
         )
 
 
-def _probe_timeout_seconds() -> int:
+def _probe_timeout_seconds(provider: str | None = None) -> int:
     raw_value = os.getenv("WORKFLOW_CAPABILITY_PROBE_TIMEOUT_SECONDS")
     if not raw_value:
-        return DEFAULT_PROBE_TIMEOUT_SECONDS
+        return PROVIDER_PROBE_TIMEOUT_SECONDS.get(provider or "", DEFAULT_PROBE_TIMEOUT_SECONDS)
     try:
         return max(1, int(raw_value))
     except ValueError:
-        return DEFAULT_PROBE_TIMEOUT_SECONDS
+        return PROVIDER_PROBE_TIMEOUT_SECONDS.get(provider or "", DEFAULT_PROBE_TIMEOUT_SECONDS)
 
 
 def probe_provider_with_timeout(
@@ -539,7 +540,7 @@ def probe_provider_with_timeout(
     evidence_dir: Path,
     require_live: bool,
 ) -> CapabilityProbeResult:
-    timeout_seconds = _probe_timeout_seconds()
+    timeout_seconds = _probe_timeout_seconds(provider)
     command = [
         sys.executable,
         "-m",

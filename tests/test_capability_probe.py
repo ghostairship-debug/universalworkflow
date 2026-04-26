@@ -468,6 +468,16 @@ def test_capability_probe_sets_adapter_timeout_below_outer_watchdog(tmp_path: Pa
     assert adapter.observed_timeout_seconds == 25
 
 
+def test_capability_probe_uses_provider_specific_timeout_for_slow_music_probe(monkeypatch) -> None:
+    monkeypatch.delenv("WORKFLOW_CAPABILITY_PROBE_TIMEOUT_SECONDS", raising=False)
+
+    assert capability_probe._probe_timeout_seconds("shell") == 120
+    assert capability_probe._probe_timeout_seconds("mmx_music") == 180
+
+    monkeypatch.setenv("WORKFLOW_CAPABILITY_PROBE_TIMEOUT_SECONDS", "30")
+    assert capability_probe._probe_timeout_seconds("mmx_music") == 30
+
+
 def test_capability_probe_rejects_generic_artifact_false_positive(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(capability_probe, "_adapter_for_provider", lambda provider: _GenericArtifactAdapter())
 

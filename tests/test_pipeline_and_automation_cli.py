@@ -46,6 +46,13 @@ def test_pipeline_preview_exposes_commercial_cocos_game_template(tmp_path: Path)
         "cocos_creator_cli",
         None,
     ]
+    stage_ids = [stage["stage_id"] for stage in payload["stages"]]
+    assert [stage["depends_on"] for stage in payload["stages"]] == [
+        [],
+        [stage_ids[0]],
+        [stage_ids[1]],
+        [stage_ids[2]],
+    ]
 
 
 def test_pipeline_run_does_not_fake_unexecuted_capability_stage(tmp_path: Path) -> None:

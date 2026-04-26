@@ -26,6 +26,7 @@ def _stage(
     preset_id: str | None = None,
     task_kind: TaskKind | None = None,
     adapter_name: str | None = None,
+    depends_on: list[str] | None = None,
     write_set: list[str] | None = None,
     validation_commands: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -38,6 +39,7 @@ def _stage(
         preset_id=preset_id,
         task_kind=task_kind,
         adapter_name=adapter_name,
+        depends_on=list(depends_on or []),
         write_set=list(write_set or []),
         validation_commands=list(validation_commands or []),
         metadata=metadata or {},
@@ -60,60 +62,62 @@ def _normalized_template(template: str | None) -> str | None:
 
 
 def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
-    return [
-        _stage(
-            name="PDF/brief requirement mapping",
-            kind=PipelineStageKind.agent_role,
-            order_index=0,
-            goal="Map the source PDF or brief into game requirements, commercial checks, and acceptance criteria.",
-            preset_id="research_spike",
-            task_kind=TaskKind.shell_exec,
-            metadata={"planning_mode": "template", "direct_mutation_allowed": False, "template": template_id},
-        ),
-        _stage(
-            name="Commercial asset factory",
-            kind=PipelineStageKind.capability,
-            order_index=1,
-            goal="Generate required commercial image, audio, music, voice, provenance, and QA assets.",
-            preset_id="feature_delivery",
-            task_kind=TaskKind.shell_exec,
-            write_set=["state/pipeline_runs"],
-            metadata={
-                "planning_mode": "template",
-                "capability": "cocos_asset_factory",
-                "template": template_id,
-                "required_for_go": True,
-            },
-        ),
-        _stage(
-            name="Cocos production generation",
-            kind=PipelineStageKind.capability,
-            order_index=2,
-            goal="Generate, build, and optionally browser-playtest the Cocos Creator Web Mobile project.",
-            preset_id="feature_delivery",
-            task_kind=TaskKind.shell_exec,
-            write_set=["state/pipeline_runs"],
-            metadata={
-                "planning_mode": "manual",
-                "capability": "cocos_creator_cli",
-                "template": template_id,
-                "requires_asset_factory_manifest": True,
-            },
-        ),
-        _stage(
-            name="Commercial readiness gate",
-            kind=PipelineStageKind.validation_gate,
-            order_index=3,
-            goal="Validate technical build, commercial UI/assets, browser playtest, and final GO/NO-GO.",
-            validation_commands=["workflowctl game cocos-e2e --require-commercial"],
-            metadata={
-                "planning_mode": "template",
-                "direct_mutation_allowed": False,
-                "validation": "cocos_manifest_go_no_go",
-                "template": template_id,
-            },
-        ),
-    ]
+    intake = _stage(
+        name="PDF/brief requirement mapping",
+        kind=PipelineStageKind.agent_role,
+        order_index=0,
+        goal="Map the source PDF or brief into game requirements, commercial checks, and acceptance criteria.",
+        preset_id="research_spike",
+        task_kind=TaskKind.shell_exec,
+        metadata={"planning_mode": "template", "direct_mutation_allowed": False, "template": template_id},
+    )
+    asset_factory = _stage(
+        name="Commercial asset factory",
+        kind=PipelineStageKind.capability,
+        order_index=1,
+        goal="Generate required commercial image, audio, music, voice, provenance, and QA assets.",
+        preset_id="feature_delivery",
+        task_kind=TaskKind.shell_exec,
+        depends_on=[intake.stage_id],
+        write_set=["state/pipeline_runs"],
+        metadata={
+            "planning_mode": "template",
+            "capability": "cocos_asset_factory",
+            "template": template_id,
+            "required_for_go": True,
+        },
+    )
+    cocos_generation = _stage(
+        name="Cocos production generation",
+        kind=PipelineStageKind.capability,
+        order_index=2,
+        goal="Generate, build, and optionally browser-playtest the Cocos Creator Web Mobile project.",
+        preset_id="feature_delivery",
+        task_kind=TaskKind.shell_exec,
+        depends_on=[asset_factory.stage_id],
+        write_set=["state/pipeline_runs"],
+        metadata={
+            "planning_mode": "manual",
+            "capability": "cocos_creator_cli",
+            "template": template_id,
+            "requires_asset_factory_manifest": True,
+        },
+    )
+    readiness_gate = _stage(
+        name="Commercial readiness gate",
+        kind=PipelineStageKind.validation_gate,
+        order_index=3,
+        goal="Validate technical build, commercial UI/assets, browser playtest, and final GO/NO-GO.",
+        depends_on=[cocos_generation.stage_id],
+        validation_commands=["workflowctl game cocos-e2e --require-commercial"],
+        metadata={
+            "planning_mode": "template",
+            "direct_mutation_allowed": False,
+            "validation": "cocos_manifest_go_no_go",
+            "template": template_id,
+        },
+    )
+    return [intake, asset_factory, cocos_generation, readiness_gate]
 
 
 def preview_workflow_pipeline(
