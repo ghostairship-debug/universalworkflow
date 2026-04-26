@@ -132,8 +132,8 @@ def _file_sha256(path: Path) -> str | None:
 
 def _json_metadata(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        payload = json.loads(_read_metadata_text(path))
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -143,6 +143,18 @@ def _json_metadata(path: Path) -> dict[str, Any]:
         "status": payload.get("status") or (payload.get("run") or {}).get("status"),
         "test_result": payload.get("test_result") or payload.get("test_results"),
     }
+
+
+def _read_metadata_text(path: Path) -> str:
+    last_error: UnicodeError | None = None
+    for encoding in ("utf-8", "utf-8-sig", "utf-16"):
+        try:
+            return path.read_text(encoding=encoding)
+        except UnicodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return path.read_text(encoding="utf-8")
 
 
 def _provenance_trace_links(

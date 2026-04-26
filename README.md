@@ -1,10 +1,10 @@
 # Universal Agentic Workflow OS
 
-## Current Version: M81 Multimodal Asset Factory
+## Current Version: M82 Workflow Self-Development Loop
 
 - Package version: `0.66.0`.
-- Accepted implementation baseline: `M79` commercial Cocos pipeline v1 and provider/asset repair.
-- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth and M81 reusable asset factory are implemented; M82-M83 continue with workflow self-development and templated commercial Cocos pipeline.
+- Accepted implementation baseline: `M82` active truth and workflow self-development proof.
+- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth, M81 reusable asset factory, and M82 active truth/workflow dogfood proof are implemented; M83 continues with templated commercial Cocos pipeline.
 - Beginner overview: [项目全景介绍](PROJECT_OVERVIEW_FOR_BEGINNERS.md).
 - Governance source of truth: [structured tech debt registry](docs/governance/tech_debt_registry.json).
 
@@ -41,7 +41,8 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - M79 已把 Cocos E2E 从 scaffold 推进到商业化 v1：生成真实 Cocos Creator 3.8 工程、编辑器可见 Scene/Node/Component/UI、SpriteFrame/AudioClip 绑定、动画/粒子/皮肤/关卡/道具入口，并完成 Web Mobile build 与浏览器 playtest。
 - M80 已把 provider runtime truth 固化为可查询事实：`capability health --verified-only` 只展示 live proof 或真实成功调用支撑的能力，route stats 提供 30 天成功率、失败类型、延迟、fallback 和成本提示。
 - M81 已新增通用 asset factory：style guide、prompt manifest、provenance、hash 去重、批量生成、失败重试、required asset NO-GO 和 Vertex visual QA。Cocos asset pipeline 现在消费 asset factory manifest。
-- M82-M83 的当前主线是 workflow 自开发 proof 与可复用 `commercial_cocos_game` pipeline 模板。
+- M82 已新增 active truth check，用于检查 README、issue register、tech debt 和 milestone history 是否与 evidence/commit 状态矛盾；本轮 dogfood 还修复了 DeepSeek direct API 对 `deepseek/...` 路由模型名的兼容问题。
+- M83 的当前主线是可复用 `commercial_cocos_game` pipeline 模板。
 
 ## Architecture Map
 
@@ -103,6 +104,7 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability routes stats --days 30
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" asset factory run --style-guide "premium neon casual puzzle" --manifest state/asset_factory/prompt_manifest.json --output-dir state/asset_factory/run
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" asset factory qa --asset-manifest state/asset_factory/run/asset_factory_manifest.json --evidence-dir state/asset_factory/qa
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" governance active-truth-check --strict --output-path state/governance/active_truth_check.json
 ```
 
 Pipeline 入口：
@@ -169,7 +171,7 @@ python -m pytest -q --run-slow
 - `gcp_tts_api` is Google Cloud Text-to-Speech; legacy `vertex_tts` remains only as a compatibility alias.
 - Local GCP probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` to force ADC.
 - `workflowctl game cocos-assets` generates a commercial asset manifest from MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review.
-- M79 replaced the old scaffold with editor-visible Cocos production structure and strict commercial checks. M80 added provider route truth, and M81 added the reusable asset factory used by the Cocos asset wrapper. M82-M83 turn the delivery path into workflow self-development proof and a reusable pipeline template.
+- M79 replaced the old scaffold with editor-visible Cocos production structure and strict commercial checks. M80 added provider route truth, M81 added the reusable asset factory used by the Cocos asset wrapper, and M82 adds `governance active-truth-check`. M83 turns the delivery path into a reusable pipeline template.
 - `workflowctl capability health --verified-only` filters out descriptor-only readiness; `workflowctl capability routes stats --days 30` summarizes provider probe/runtime success, latency, failure classes, fallback policy, and cost hint.
 
 ```powershell

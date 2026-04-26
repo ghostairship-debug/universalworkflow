@@ -1,10 +1,10 @@
 # 当前开发工作流
 
-## Current Version: M81 Multimodal Asset Factory
+## Current Version: M82 Workflow Self-Development Loop
 
 - Package version: `0.66.0`.
-- Accepted implementation baseline: `M79` commercial Cocos pipeline v1.
-- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth and M81 asset factory are implemented; M82-M83 continue with workflow self-development and templated commercial Cocos pipeline.
+- Accepted implementation baseline: `M82` active truth and workflow self-development proof.
+- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth, M81 asset factory, and M82 active truth/workflow dogfood proof are implemented; M83 continues with templated commercial Cocos pipeline.
 - Active truth set: [README.md](../README.md), this workflow guide, [M77 issue register](../M77_ISSUE_REGISTER.md), [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
 - Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
@@ -118,3 +118,10 @@ python -m pytest -q --run-slow
 - `workflowctl asset factory qa --asset-manifest ... --evidence-dir ...` runs visual QA over completed image assets and writes `asset_factory_qa_report.json`.
 - Required assets missing, blocked, or lacking artifact paths force `NO-GO`; generated manifests alone do not count as commercial readiness.
 - Cocos-specific `workflowctl game cocos-assets` remains as a wrapper over the generic factory plus Cocos coverage checks.
+
+## M82 Active Truth Notes
+
+- `workflowctl governance active-truth-check --strict` checks that active docs do not describe completed milestones as planned/current/open.
+- The check currently catches stale M79 planned language, stale M78 baseline after M79 evidence, debt IDs duplicated in `repaid_items` and `open_items`, and open items claiming `current_status=repaid`.
+- M82 dogfood caught a real DeepSeek direct API issue: router-style `deepseek/deepseek-v4-flash` ids are now normalized to direct API model ids before proposal calls.
+- This command is part of the workflow self-development gate before declaring future capability-layer milestones ready.

@@ -70,6 +70,28 @@ class _FakeClient:
         self.chat = SimpleNamespace(completions=_FakeChatCompletions())
 
 
+class _CapturingChatCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="## Summary\nProvider-prefixed model normalized.\n\n## Tests\nRun targeted tests.",
+                    )
+                )
+            ]
+        )
+
+
+class _CapturingClient:
+    def __init__(self) -> None:
+        self.chat = SimpleNamespace(completions=_CapturingChatCompletions())
+
+
 class _FakePatchClient:
     def __init__(self) -> None:
         self.chat = SimpleNamespace(completions=_FakePatchChatCompletions())
@@ -136,6 +158,23 @@ def test_generate_coding_proposal_uses_direct_api_without_mutation(tmp_path: Pat
     assert result.evidence_path is not None
     payload = json.loads(Path(result.evidence_path).read_text(encoding="utf-8"))
     assert payload["proposal_text"].startswith("## Summary")
+
+
+def test_generate_coding_proposal_normalizes_router_style_deepseek_model() -> None:
+    client = _CapturingClient()
+
+    result = generate_coding_proposal(
+        CodingProposalRequest(
+            provider="deepseek",
+            model="deepseek/deepseek-v4-flash",
+            goal="Review a small patch",
+        ),
+        client=client,
+    )
+
+    assert result.status == "completed"
+    assert result.model == "deepseek-v4-flash"
+    assert client.chat.completions.calls[0]["model"] == "deepseek-v4-flash"
 
 
 def test_extract_unified_diff_from_fenced_proposal() -> None:

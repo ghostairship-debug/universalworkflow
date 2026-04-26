@@ -77,16 +77,30 @@ def _provider_settings(provider: str, model: str | None) -> dict[str, str | None
             "provider": "minimax_api",
             "api_key_env": "MINIMAX_API_KEY" if os.getenv("MINIMAX_API_KEY") else "MINIMAX_TOKEN",
             "base_url": base_url.rstrip("/"),
-            "model": model or os.getenv("WORKFLOW_MINIMAX_MODEL") or "MiniMax-M2.7",
+            "model": _provider_api_model(model or os.getenv("WORKFLOW_MINIMAX_MODEL") or "MiniMax-M2.7", {"minimax", "mmx"}),
         }
     if normalized in {"deepseek", "deepseek_api"}:
         return {
             "provider": "deepseek_api",
             "api_key_env": "DEEPSEEK_API_KEY",
             "base_url": (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/"),
-            "model": model or os.getenv("WORKFLOW_DEEPSEEK_MODEL") or "deepseek-v4-flash",
+            "model": _provider_api_model(
+                model or os.getenv("WORKFLOW_DEEPSEEK_MODEL") or "deepseek-v4-flash",
+                {"deepseek", "deepseek_api"},
+            ),
         }
     raise ValueError(f"unsupported coding API provider: {provider}")
+
+
+def _provider_api_model(model: str, provider_prefixes: set[str]) -> str:
+    """Normalize router-style provider/model ids for direct provider APIs."""
+
+    if "/" not in model:
+        return model
+    prefix, value = model.split("/", 1)
+    if prefix.strip().lower() in provider_prefixes and value.strip():
+        return value.strip()
+    return model
 
 
 def _proposal_prompt(request: CodingProposalRequest) -> str:

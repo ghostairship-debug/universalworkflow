@@ -73,6 +73,23 @@ def test_self_development_manifest_blocks_single_card_phase_without_exception(tm
     assert manifest["milestones"][0]["provenance"]["traceability_status"] == "complete"
 
 
+def test_self_development_manifest_reads_utf16_powershell_evidence(tmp_path: Path) -> None:
+    _write_milestone_fixture(tmp_path, "M82")
+    evidence_path = tmp_path / "state" / "m82_demo" / "evidence" / "M82-powershell.json"
+    evidence_path.write_text(json.dumps({"status": "completed", "evidence_id": "evidence_utf16"}), encoding="utf-16")
+
+    manifest = build_self_development_manifest(tmp_path, milestones=["M82"])
+
+    assert manifest["go_no_go"] == "GO"
+    utf16_link = next(
+        item
+        for item in manifest["milestones"][0]["provenance"]["trace_links"]
+        if item["path"].endswith("M82-powershell.json")
+    )
+    assert utf16_link["status"] == "completed"
+    assert utf16_link["evidence_id"] == "evidence_utf16"
+
+
 def test_cli_governance_self_development_manifest_writes_output(tmp_path: Path) -> None:
     _write_milestone_fixture(tmp_path, "M71")
     output_path = tmp_path / "manifest.json"

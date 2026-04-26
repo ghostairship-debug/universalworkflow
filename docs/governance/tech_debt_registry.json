@@ -378,6 +378,13 @@
       "introduced_in": "M77 Vertex evaluation",
       "repaid_in": "M81",
       "result": "GCP TTS is split as gcp_tts_api, Vertex Imagen and Gemini visual-review wrappers/probes are live, and M81 asset factory QA consumes Vertex visual review as a review/fallback path."
+    },
+    {
+      "debt_id": "M82-ACTIVE-TRUTH-001",
+      "description": "active docs could again describe completed milestone work as planned/current/open after evidence and commits already existed",
+      "introduced_in": "M82 workflow self-development closeout",
+      "repaid_in": "M82",
+      "result": "Added workflowctl governance active-truth-check, stale M79/baseline/debt consistency checks, M82 dogfood evidence, and a DeepSeek direct API model-prefix normalization regression."
     }
   ],
   "open_items": [

@@ -15,7 +15,7 @@
 - M73-M76 已落地 workflow dogfood、capability control、MCP broker、AutomationLease、Pipeline 最小入口、Cocos E2E 生成与验证路径的骨架，但最近评估确认存在实现降级项。
 - M77/M78 已修复 OpenAI API/Codex CLI 边界、MiniMax/DeepSeek direct coding API 与受控 patch apply 入口、LangChain 默认路由降级、Pipeline 假完成风险、MMX/GCP/Vertex generation live proof，以及 Cocos 真实 build/playtest scaffold。
 - M79 已把 Cocos 产物推进到商业化 v1：编辑器可见 Cocos Scene/Node/Component/UI、资产绑定、动画/粒子、皮肤/关卡/道具入口、Web Mobile build 和浏览器 playtest。
-- M80-M81 已恢复能力层基础：provider route truth 和通用 asset factory 均已落地；M82-M83 继续推进 workflow dogfood、自开发 proof 和 commercial Cocos pipeline template。
+- M80-M82 已恢复能力层基础：provider route truth、通用 asset factory、active truth check 和 workflow dogfood proof 均已落地；M83 继续推进 commercial Cocos pipeline template。
 - 留存策略本轮暂不处理；大型清理仍会持续发生。
 
 ## 已偿还债务摘要
@@ -42,6 +42,7 @@
 | M77-PROVIDER-001 | Provider / Tool / Agent / Asset 接入边界混乱 | M80 | provider contract、verified-only health、route stats 与文档已把 API/CLI/MCP/asset/experimental agent 分开 |
 | M77-MMX-001 | MMX/MiniMax 缺真实 image/speech/music 资产生成主路径 | M81 | 已加入 MiniMax image/speech/music wrapper、live proof、Cocos manifest、通用 asset factory、hash 去重和 required asset NO-GO |
 | M77-VERTEX-001 | Vertex/gcloud/GCP TTS 边界混乱，缺视觉生成/审查实用路径 | M81 | 已拆出 GCP TTS，Vertex Imagen/Gemini review 进入 live proof 和 asset factory QA |
+| M82-ACTIVE-TRUTH-001 | 活跃文档可能再次把已完成 milestone 写成 planned/current/open | M82 | 已新增 `workflowctl governance active-truth-check`，并在 dogfood 中修复 DeepSeek direct API 模型名前缀兼容问题 |
 
 ## 当前未偿还债务
 

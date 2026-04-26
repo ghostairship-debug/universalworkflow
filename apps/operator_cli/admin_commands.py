@@ -15,6 +15,7 @@ from apps.operator_cli.shared import (
     _workspace_root_from_context,
 )
 from packages.core_domain.db import get_migration_status, migrate, reset_db, workspace_scoped_db_path
+from packages.core_domain.active_truth import build_active_truth_check
 from packages.core_domain.governance import (
     build_domain_pack_platform_report,
     build_governance_alert_report,
@@ -194,6 +195,18 @@ def governance_self_development_manifest(
             min_task_cards_per_phase=min_task_cards,
         )
     )
+
+
+@governance_app.command("active-truth-check")
+def governance_active_truth_check(
+    ctx: typer.Context,
+    output_path: Optional[str] = typer.Option(None, "--output-path", help="Optional JSON output path."),
+    strict: bool = typer.Option(False, "--strict", help="Exit non-zero when active truth issues are found."),
+) -> None:
+    payload = build_active_truth_check(_workspace_root_from_context(ctx), output_path=output_path)
+    _emit_json(payload)
+    if strict and payload["issue_count"]:
+        raise typer.Exit(code=1)
 
 
 @config_app.command("show")
