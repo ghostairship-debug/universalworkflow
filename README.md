@@ -1,10 +1,10 @@
 # Universal Agentic Workflow OS
 
-## Current Version: M82 Workflow Self-Development Loop
+## Current Version: M83 Commercial Cocos Pipeline Template
 
 - Package version: `0.66.0`.
-- Accepted implementation baseline: `M82` active truth and workflow self-development proof.
-- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth, M81 reusable asset factory, and M82 active truth/workflow dogfood proof are implemented; M83 continues with templated commercial Cocos pipeline.
+- Accepted implementation baseline: `M83` reusable commercial Cocos game pipeline template.
+- Active repair entry: M80-M83 capability-layer recovery is implemented. Post-M83 work is the deep evaluation and repair loop before broader capability expansion.
 - Beginner overview: [项目全景介绍](PROJECT_OVERVIEW_FOR_BEGINNERS.md).
 - Governance source of truth: [structured tech debt registry](docs/governance/tech_debt_registry.json).
 
@@ -42,7 +42,7 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - M80 已把 provider runtime truth 固化为可查询事实：`capability health --verified-only` 只展示 live proof 或真实成功调用支撑的能力，route stats 提供 30 天成功率、失败类型、延迟、fallback 和成本提示。
 - M81 已新增通用 asset factory：style guide、prompt manifest、provenance、hash 去重、批量生成、失败重试、required asset NO-GO 和 Vertex visual QA。Cocos asset pipeline 现在消费 asset factory manifest。
 - M82 已新增 active truth check，用于检查 README、issue register、tech debt 和 milestone history 是否与 evidence/commit 状态矛盾；本轮 dogfood 还修复了 DeepSeek direct API 对 `deepseek/...` 路由模型名的兼容问题。
-- M83 的当前主线是可复用 `commercial_cocos_game` pipeline 模板。
+- M83 已把商业化 Cocos 小游戏交付链路模板化为 `commercial_cocos_game` pipeline：显式执行需求映射、asset factory、Cocos production generation/build/playtest 和 commercial readiness gate。
 
 ## Architecture Map
 
@@ -110,8 +110,8 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 Pipeline 入口：
 
 ```powershell
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline preview --goal "交付一个商业化 H5 小游戏"
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --goal "交付一个商业化 H5 小游戏" --execute-capabilities --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline preview --template commercial_cocos_game
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --template commercial_cocos_game --execute-capabilities --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --require-commercial
 ```
 
 Cocos E2E 入口：
@@ -171,7 +171,7 @@ python -m pytest -q --run-slow
 - `gcp_tts_api` is Google Cloud Text-to-Speech; legacy `vertex_tts` remains only as a compatibility alias.
 - Local GCP probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` to force ADC.
 - `workflowctl game cocos-assets` generates a commercial asset manifest from MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review.
-- M79 replaced the old scaffold with editor-visible Cocos production structure and strict commercial checks. M80 added provider route truth, M81 added the reusable asset factory used by the Cocos asset wrapper, and M82 adds `governance active-truth-check`. M83 turns the delivery path into a reusable pipeline template.
+- M79 replaced the old scaffold with editor-visible Cocos production structure and strict commercial checks. M80 added provider route truth, M81 added the reusable asset factory used by the Cocos asset wrapper, M82 added `governance active-truth-check`, and M83 turns the delivery path into a reusable `commercial_cocos_game` pipeline template.
 - `workflowctl capability health --verified-only` filters out descriptor-only readiness; `workflowctl capability routes stats --days 30` summarizes provider probe/runtime success, latency, failure classes, fallback policy, and cost hint.
 
 ```powershell

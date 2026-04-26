@@ -2,7 +2,7 @@
 
 ## 当前里程碑
 
-当前接受实现基线是 `M78: provider/asset repair + real Cocos E2E scaffold`。下一阶段主线是 `M79: Cocos commercial pipeline repair`，必须先把游戏 pipeline 从“能真实 E2E 验证”升级到“能产出完整商业化 Cocos 工程”，再恢复更大范围能力层开发。
+当前接受实现基线是 `M83: reusable commercial Cocos game pipeline template`。M80-M83 已完成 provider runtime truth、asset factory、active truth/workflow dogfood proof 和 `commercial_cocos_game` pipeline template；下一阶段先做深度评估与修复循环，连续两轮无 P0-P2 可执行项后再恢复更大范围能力层开发。
 
 本仓库是个人自用 / local-first agentic workflow runtime，不是公开 SaaS、多租户平台、插件市场、自动 PR 发布器或外部托管执行服务。
 
@@ -46,7 +46,8 @@
 - H5/Cocos 商业化游戏是正式业务需求，不是示例 demo。
 - M78 只证明了真实 Cocos Creator 项目生成、Web Mobile 构建、浏览器 playtest 和 MMX/GCP/Vertex 资产链路可以跑通；它不是商业化成品验收。
 - 不得把 `commercial_go_no_go=GO`、feature flag、canvas 非空或浏览器事件覆盖写成“完整商业化游戏已生成”。
-- M79 需要产出编辑器可见、可维护的真实 Cocos 2D 工程：Scene / Node / Prefab / Component / UI、SpriteFrame、AudioClip、Animation、Particle、皮肤、关卡、广告占位和道具闭环。
+- M79 已产出编辑器可见、可维护的真实 Cocos 2D 工程：Scene / Node / Prefab / Component / UI、SpriteFrame、AudioClip、Animation、Particle、皮肤、关卡、广告占位和道具闭环。
+- M83 已将该链路模板化为 `workflowctl pipeline run --template commercial_cocos_game --execute-capabilities --require-build --require-commercial`，后续不得退回一次性脚本或 manifest-only 完成。
 - 技术 smoke、E2E scaffold、商业化成品验收必须分开记录。半成品可以作为 evidence，但不能标记为 final commercial ready。
 
 ## 并发与编排

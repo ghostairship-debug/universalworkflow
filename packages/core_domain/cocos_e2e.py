@@ -1651,13 +1651,17 @@ def run_cocos_game_e2e(
     require_playtest: bool = True,
     require_commercial: bool = False,
     generate_commercial_assets: bool = False,
+    commercial_assets_payload: dict[str, Any] | None = None,
+    commercial_asset_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
     project = create_cocos_project(pdf_path=pdf_path, output_dir=output_dir, creator_exe=creator_exe)
     build: dict[str, Any] | None = None
     playtest: dict[str, Any] | None = None
     blockers: list[str] = []
-    commercial_assets: dict[str, Any] | None = None
-    if generate_commercial_assets:
+    commercial_assets: dict[str, Any] | None = commercial_assets_payload
+    if commercial_assets is None and commercial_asset_manifest_path is not None:
+        commercial_assets = json.loads(Path(commercial_asset_manifest_path).read_text(encoding="utf-8"))
+    if commercial_assets is None and generate_commercial_assets:
         commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=project["project_path"])
     commercial_body: dict[str, Any] | None = None
     if commercial_assets and commercial_assets.get("go_no_go") == "GO":

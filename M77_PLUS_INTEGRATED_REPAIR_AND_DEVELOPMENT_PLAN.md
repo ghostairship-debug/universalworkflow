@@ -157,7 +157,7 @@ gcloud 的角色：
 
 ## 4. M78-M83 后续开发计划
 
-M77/M78 已完成 provider/asset/E2E scaffold 关键修复；M79 已完成商业化 Cocos pipeline v1。当前恢复能力层开发的顺序是 M80 provider runtime truth、M81 asset factory、M82 workflow 自开发闭环、M83 commercial Cocos pipeline template。
+M77/M78 已完成 provider/asset/E2E scaffold 关键修复；M79 已完成商业化 Cocos pipeline v1。M80 provider runtime truth、M81 asset factory、M82 workflow 自开发闭环、M83 commercial Cocos pipeline template 均已完成；后续进入深度评估与修复循环。
 
 ### M78：Provider/Asset Repair + Cocos E2E Scaffold（已执行）
 
@@ -180,34 +180,33 @@ M77/M78 已完成 provider/asset/E2E scaffold 关键修复；M79 已完成商业
   - 构建与 playtest。
 - 支持商业化检查：广告点位、付费/道具入口、留存任务、移动端性能、首屏体验、编辑器可见性、视觉质量、半成品拒绝。
 
-### M80：Provider Runtime 体系稳定化（当前执行）
+### M80：Provider Runtime 体系稳定化（已执行）
 
 - 完成 provider registry：每个 provider 记录 transport、modality、成本等级、凭据来源、live proof、fallback 策略。
 - CLI/API capability health 的 `--verified-only` / `verified_only=true` 只展示 live probe 或近期真实成功调用支撑的 provider。
 - 增加 provider route decision ledger，统计最近 30 天成功率、失败类型、延迟、成本估计。
 
-### M81：多模态资产工厂
+### M81：多模态资产工厂（已执行）
 
 - 建立 asset manifest、prompt manifest、style guide、asset provenance。
 - 支持批量生成、失败重试、同风格变体、素材 hash 去重。
 - 引入视觉 QA：截图审查、UI 遮挡检测、风格一致性检查。
 - 后续可加入视频素材生成，但不作为 v1 阻塞。
 
-### M82：Workflow 自开发闭环
+### M82：Workflow 自开发闭环（已执行）
 
 - 用 workflow 自己完成一个中等规模内部改进作为 dogfood demo。
 - 真实使用并发 task cards、route decision、provider fallback、review gate、test gate。
 - 输出完整 run manifest，从 task card 到 evidence、test、commit 可追踪。
 
-### M83：能力层开发恢复
+### M83：能力层开发恢复（已执行）
 
-在 M77-M82 通过后，恢复更高层能力开发：
+在 M77-M82 通过后，M83 已恢复一个受控能力层 v1：
 
-- 更完整的 game pipeline。
-- 多模态内容生产。
-- 模板化商业化 H5 项目。
-- provider adaptive routing。
-- 可选接入 OpenCode OMO / Gemini CLI / 更多 provider。
+- `commercial_cocos_game_pipeline` 模板化能力。
+- 从 PDF/brief 进入 pipeline，经需求映射、asset factory、Cocos project generation、build、browser playtest、commercial readiness report。
+- pipeline stage 必须真实执行 workflow run、capability invocation 或 validation command；未执行 stage 不得标记 completed。
+- 可选接入 OpenCode OMO / Gemini CLI / 更多 provider 仍是 future candidate。
 
 ## 5. 验收标准
 
@@ -220,8 +219,8 @@ M77-M83 closeout 必须满足：
 - Vertex image/visual review 或 GCP TTS 至少完成一个真实 live proof；不可用时标记 blocked，不冒充 fallback success。
 - LangChain 不在默认主 route 中，只作为 experimental opt-in。
 - AutomationLease 接入无人值守执行路径。
-- Pipeline run 不再假 completed。
-- Cocos pipeline 不能只生成 E2E scaffold；商业化验收必须打开 Cocos Creator 可见真实 2D 场景、UI、Prefab/Component、SpriteFrame/AudioClip、Animation/Particle、皮肤、关卡、广告/道具入口。M79 已完成 v1，M83 需模板化复用。
+- Pipeline run 不再假 completed；M83 的 `commercial_cocos_game` template 已提供真实 stage execution evidence。
+- Cocos pipeline 不能只生成 E2E scaffold；商业化验收必须打开 Cocos Creator 可见真实 2D 场景、UI、Prefab/Component、SpriteFrame/AudioClip、Animation/Particle、皮肤、关卡、广告/道具入口。M79 已完成 v1，M83 已模板化复用。
 - workflow 编排和并发至少完成：
   - artifact-only 并发成功。
   - disjoint write_set 并发成功。
@@ -260,4 +259,4 @@ M77-M83 closeout 必须满足：
 
 - `vertex_imagen` and `vertex_gemini_review` now exist as Vertex AI REST wrappers and capability probes; `gcp_tts_api` remains the separate Google Cloud Text-to-Speech route.
 - `workflowctl game cocos-assets` now batches MMX/MiniMax image, speech, music, GCP TTS voice, and optional Vertex Gemini visual review into a commercial asset manifest.
-- M78 added a real Cocos E2E scaffold and browser playtest with generated assets; M79 then added the commercial Cocos v1 body with editor-visible native Cocos UI, component manifests, animation/particle evidence, level/skin systems, asset bindings, Web Mobile build, and browser playtest evidence. M83 should template this path rather than rebuild it as another one-off.
+- M78 added a real Cocos E2E scaffold and browser playtest with generated assets; M79 then added the commercial Cocos v1 body with editor-visible native Cocos UI, component manifests, animation/particle evidence, level/skin systems, asset bindings, Web Mobile build, and browser playtest evidence. M83 templates this path through `commercial_cocos_game` rather than rebuilding it as another one-off.

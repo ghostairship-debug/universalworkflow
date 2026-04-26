@@ -17,7 +17,7 @@
 | M77-MMX-001 | repaid | MMX/MiniMax 之前主要是 text evidence，没有真实 image/speech/music 生成主路径 | M77-M81 已新增 MiniMax image/speech/music generation API wrapper、二进制资产落盘、live proof、Cocos asset manifest、通用 asset factory、hash 去重、批量生成和 required asset NO-GO gate。 |
 | M77-VERTEX-001 | repaid | Vertex/gcloud/GCP TTS 边界混乱，Vertex 主要停留在文本 evidence | 已把 Cloud Text-to-Speech 拆为 `gcp_tts_api`，`gcloud` 只作为认证/环境工具；Vertex Imagen 与 Gemini visual review 已进入 generation/review wrapper、live proof 和 M81 asset factory QA。 |
 | M77-LANGCHAIN-001 | partially_repaid | LangChain 容易被误认为默认主路由 | provider contract 和文档已降级为 experimental / opt-in agent framework，不再作为默认 provider control plane。仍保留现有 adapter 兼容旧测试和实验用途。 |
-| M77-PIPE-001 | partially_repaid | Pipeline run 会把未真实执行的 stage 标成 completed | 已修复为真实 stage 状态机：planning/review 只产 evidence，未显式执行的 capability stage 返回 blocked，validation gate 会短路，CLI 非 completed 返回非零退出码；AutomationLease 可约束 pipeline write_set。仍需把 workflow run / capability invocation 全量接入 stage executor。 |
+| M77-PIPE-001 | repaid | Pipeline run 会把未真实执行的 stage 标成 completed | M83 已新增 `commercial_cocos_game` template，并真实执行 asset factory、Cocos generation/build/playtest 和 commercial readiness gate；未执行 capability stage 仍返回 blocked，失败会短路，stage evidence 已落盘。 |
 | M77-COCOS-001 | repaid | Cocos E2E 仍偏技术 demo / E2E scaffold，缺编辑器可见的商业化 UI、美术、音效、动画、粒子、皮肤和关卡闭环 | M79 已完成商业化 Cocos pipeline v1：真实 Cocos Scene/Prefab/Component/UI/Audio/Animation/Particle/skin/level 结构、资产绑定、Web Mobile build 与浏览器 playtest。后续 M83 只处理模板化复用，不再把半成品 scaffold 视为完成。 |
 | M67-CARRY-001 | carry_forward | 若干大文件仍偏大 | 当前不阻塞 provider/pipeline/Cocos 修复；后续能力开发触发痛点时再拆。 |
 
@@ -36,7 +36,7 @@
 ## 下一步
 
 1. 把 Pipeline stage executor 继续接到真实 workflow run、capability invocation 和 validation command manifest。
-2. M83 把 M79 Cocos 商业化小游戏 pipeline 模板化，要求从 PDF/brief 到 asset factory、Cocos project、build、playtest 和 commercial readiness report 全链路可复用。
+2. M83 已把 M79 Cocos 商业化小游戏 pipeline 模板化：从 PDF/brief 到 asset factory、Cocos project、build、playtest 和 commercial readiness report 全链路可复用。
 ## M77 当前补充
 
 - `M77-VERTEX-001`：已新增并真实跑通 `vertex_imagen` 与 `vertex_gemini_review` 两条 REST probe/wrapper；`gcp_tts_api` 继续独立表示 Cloud Text-to-Speech。

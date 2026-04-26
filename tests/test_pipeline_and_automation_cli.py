@@ -33,6 +33,21 @@ def test_pipeline_preview_exposes_h5_game_commercialization_pipeline(tmp_path: P
     ]
 
 
+def test_pipeline_preview_exposes_commercial_cocos_game_template(tmp_path: Path) -> None:
+    result = _invoke(tmp_path, "pipeline", "preview", "--template", "commercial_cocos_game")
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "commercial_cocos_game_pipeline"
+    assert payload["metadata"]["template_id"] == "commercial_cocos_game"
+    assert [stage["metadata"].get("capability") for stage in payload["stages"]] == [
+        None,
+        "cocos_asset_factory",
+        "cocos_creator_cli",
+        None,
+    ]
+
+
 def test_pipeline_run_does_not_fake_unexecuted_capability_stage(tmp_path: Path) -> None:
     evidence_dir = tmp_path / "pipeline_evidence"
     result = _invoke(
@@ -104,6 +119,64 @@ def test_pipeline_run_uses_automation_lease_for_write_set(tmp_path: Path) -> Non
     assert payload["status"] == "blocked"
     status = _invoke(tmp_path, "automation", "lease", "status", lease["lease_id"])
     assert status.exit_code == 0
+
+
+def test_commercial_cocos_template_executes_asset_factory_before_cocos(tmp_path: Path, monkeypatch) -> None:
+    import packages.core_domain.pipeline as pipeline_module
+
+    calls: list[str] = []
+
+    def _fake_assets(*, output_dir: Path | str, **_kwargs):
+        calls.append("asset_factory")
+        manifest_path = Path(output_dir) / "commercial_asset_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "go_no_go": "GO",
+            "manifest_path": manifest_path.as_posix(),
+            "blockers": [],
+            "feature_coverage": {"commercial_polish_pass": True},
+            "results": [{"asset_name": "background", "status": "completed", "artifact_paths": ["background.png"]}],
+        }
+        manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    def _fake_cocos(**kwargs):
+        calls.append("cocos")
+        assert kwargs["commercial_assets_payload"]["go_no_go"] == "GO"
+        assert kwargs["generate_commercial_assets"] is False
+        manifest_path = tmp_path / "cocos_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+        return {
+            "manifest": {"go_no_go": "GO", "blockers": []},
+            "manifest_path": manifest_path.as_posix(),
+            "commercial_go_no_go": "GO",
+            "commercial_blockers": [],
+        }
+
+    monkeypatch.setattr(pipeline_module, "generate_cocos_commercial_asset_manifest", _fake_assets)
+    monkeypatch.setattr(pipeline_module, "run_cocos_game_e2e", _fake_cocos)
+
+    payload = pipeline_module.run_workflow_pipeline(
+        "commercial game",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "pipeline_evidence",
+        template="commercial_cocos_game",
+        execute_capabilities=True,
+        pdf_path=tmp_path / "design.pdf",
+        cocos_creator_exe=tmp_path / "CocosCreator.exe",
+        require_build=True,
+        require_commercial=True,
+    )
+
+    assert payload["status"] == "completed"
+    assert payload["pipeline"]["name"] == "commercial_cocos_game_pipeline"
+    assert [stage["status"] for stage in payload["stage_results"]] == [
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+    ]
+    assert calls == ["asset_factory", "cocos"]
 
 
 def test_automation_lease_create_status_and_revoke(tmp_path: Path) -> None:

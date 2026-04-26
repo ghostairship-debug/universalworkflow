@@ -9,10 +9,12 @@ from typing import Any, Callable
 from packages.contracts import PipelineStage, PipelineStageKind, TaskKind, WorkflowPipeline
 from packages.contracts.models import new_id
 from packages.core_domain.automation_lease import record_automation_lease_use, validate_automation_lease
+from packages.core_domain.cocos_commercial_assets import generate_cocos_commercial_asset_manifest
 from packages.core_domain.cocos_e2e import run_cocos_game_e2e
 
 
 CommandRunner = Callable[[str, Path, int], dict[str, Any]]
+COMMERCIAL_COCOS_GAME_TEMPLATE = "commercial_cocos_game"
 
 
 def _stage(
@@ -48,8 +50,83 @@ def _is_h5_game_goal(goal: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
-def preview_workflow_pipeline(goal: str, *, pipeline_id: str | None = None) -> WorkflowPipeline:
-    if _is_h5_game_goal(goal):
+def _normalized_template(template: str | None) -> str | None:
+    value = (template or "").strip().lower().replace("-", "_")
+    if not value:
+        return None
+    if value in {COMMERCIAL_COCOS_GAME_TEMPLATE, "commercial_cocos", "cocos_commercial_game"}:
+        return COMMERCIAL_COCOS_GAME_TEMPLATE
+    return value
+
+
+def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
+    return [
+        _stage(
+            name="PDF/brief requirement mapping",
+            kind=PipelineStageKind.agent_role,
+            order_index=0,
+            goal="Map the source PDF or brief into game requirements, commercial checks, and acceptance criteria.",
+            preset_id="research_spike",
+            task_kind=TaskKind.shell_exec,
+            metadata={"planning_mode": "template", "direct_mutation_allowed": False, "template": template_id},
+        ),
+        _stage(
+            name="Commercial asset factory",
+            kind=PipelineStageKind.capability,
+            order_index=1,
+            goal="Generate required commercial image, audio, music, voice, provenance, and QA assets.",
+            preset_id="feature_delivery",
+            task_kind=TaskKind.shell_exec,
+            write_set=["state/pipeline_runs"],
+            metadata={
+                "planning_mode": "template",
+                "capability": "cocos_asset_factory",
+                "template": template_id,
+                "required_for_go": True,
+            },
+        ),
+        _stage(
+            name="Cocos production generation",
+            kind=PipelineStageKind.capability,
+            order_index=2,
+            goal="Generate, build, and optionally browser-playtest the Cocos Creator Web Mobile project.",
+            preset_id="feature_delivery",
+            task_kind=TaskKind.shell_exec,
+            write_set=["state/pipeline_runs"],
+            metadata={
+                "planning_mode": "manual",
+                "capability": "cocos_creator_cli",
+                "template": template_id,
+                "requires_asset_factory_manifest": True,
+            },
+        ),
+        _stage(
+            name="Commercial readiness gate",
+            kind=PipelineStageKind.validation_gate,
+            order_index=3,
+            goal="Validate technical build, commercial UI/assets, browser playtest, and final GO/NO-GO.",
+            validation_commands=["workflowctl game cocos-e2e --require-commercial"],
+            metadata={
+                "planning_mode": "template",
+                "direct_mutation_allowed": False,
+                "validation": "cocos_manifest_go_no_go",
+                "template": template_id,
+            },
+        ),
+    ]
+
+
+def preview_workflow_pipeline(
+    goal: str,
+    *,
+    pipeline_id: str | None = None,
+    template: str | None = None,
+) -> WorkflowPipeline:
+    template_id = _normalized_template(template)
+    if template_id == COMMERCIAL_COCOS_GAME_TEMPLATE:
+        stages = _commercial_cocos_game_stages(template_id)
+        name = "commercial_cocos_game_pipeline"
+    elif _is_h5_game_goal(goal):
         stages = [
             _stage(
                 name="PDF/game intake",
@@ -132,6 +209,7 @@ def preview_workflow_pipeline(goal: str, *, pipeline_id: str | None = None) -> W
             "pipeline_semantics": "plan_of_plans",
             "planning_modes": ["manual", "template", "hybrid"],
             "direct_mutation_allowed": False,
+            "template_id": template_id,
         },
     )
 
@@ -188,15 +266,17 @@ def run_workflow_pipeline(
     pipeline_id: str | None = None,
     automation_lease_id: str | None = None,
     execute_capabilities: bool = False,
+    template: str | None = None,
     pdf_path: str | Path | None = None,
     cocos_creator_exe: str | Path | None = None,
     cocos_output_dir: str | Path | None = None,
     require_build: bool = False,
     require_playtest: bool = True,
+    require_commercial: bool = True,
     command_runner: CommandRunner | None = None,
     command_timeout_seconds: int = 180,
 ) -> dict[str, Any]:
-    pipeline = preview_workflow_pipeline(goal, pipeline_id=pipeline_id)
+    pipeline = preview_workflow_pipeline(goal, pipeline_id=pipeline_id, template=template)
     root = Path(workspace_root).resolve()
     target_dir = Path(evidence_dir) if evidence_dir is not None else root / "state" / "pipeline_runs"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -274,6 +354,26 @@ def run_workflow_pipeline(
                 )
                 pipeline_status = "blocked"
                 stop_reason = "capability_stage_not_executed"
+            elif capability == "cocos_asset_factory":
+                commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=target_dir / "commercial_asset_factory")
+                shared_outputs["commercial_assets"] = commercial_assets
+                go_no_go = commercial_assets.get("go_no_go")
+                result.update(
+                    {
+                        "status": "completed" if go_no_go == "GO" else "failed",
+                        "failure_class": None if go_no_go == "GO" else "asset_factory_no_go",
+                        "execution_backend": "asset_factory",
+                        "output": {
+                            "manifest_path": commercial_assets.get("manifest_path"),
+                            "go_no_go": go_no_go,
+                            "blockers": commercial_assets.get("blockers", []),
+                            "feature_coverage": commercial_assets.get("feature_coverage", {}),
+                        },
+                    }
+                )
+                if go_no_go != "GO":
+                    pipeline_status = "failed"
+                    stop_reason = "asset_factory_no_go"
             elif capability == "cocos_creator_cli":
                 if pdf_path is None or cocos_creator_exe is None:
                     result.update(
@@ -289,14 +389,16 @@ def run_workflow_pipeline(
                     stop_reason = "cocos_inputs_missing"
                 else:
                     output_dir = cocos_output_dir or root / "state" / "pipeline_runs" / pipeline.pipeline_id / "cocos_project"
+                    commercial_assets = shared_outputs.get("commercial_assets")
                     cocos_payload = run_cocos_game_e2e(
                         pdf_path=pdf_path,
                         output_dir=output_dir,
                         creator_exe=cocos_creator_exe,
                         require_build=require_build,
                         require_playtest=require_playtest,
-                        require_commercial=True,
-                        generate_commercial_assets=True,
+                        require_commercial=require_commercial,
+                        generate_commercial_assets=commercial_assets is None,
+                        commercial_assets_payload=commercial_assets if isinstance(commercial_assets, dict) else None,
                     )
                     shared_outputs["cocos_e2e"] = cocos_payload
                     go_no_go = cocos_payload["manifest"]["go_no_go"]
@@ -339,6 +441,8 @@ def run_workflow_pipeline(
                             "go_no_go": go_no_go,
                             "manifest_path": (cocos_payload or {}).get("manifest_path"),
                             "blockers": (cocos_payload or {}).get("manifest", {}).get("blockers", []),
+                            "commercial_go_no_go": (cocos_payload or {}).get("commercial_go_no_go"),
+                            "commercial_blockers": (cocos_payload or {}).get("commercial_blockers", []),
                         },
                     }
                 )

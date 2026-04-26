@@ -385,6 +385,13 @@
       "introduced_in": "M82 workflow self-development closeout",
       "repaid_in": "M82",
       "result": "Added workflowctl governance active-truth-check, stale M79/baseline/debt consistency checks, M82 dogfood evidence, and a DeepSeek direct API model-prefix normalization regression."
+    },
+    {
+      "debt_id": "M77-PIPE-001",
+      "description": "Pipeline run still needed proof that stages truly execute workflow runs, capability invocations, validation gates, failure short-circuiting, and evidence chain output",
+      "introduced_in": "M75-M76 downgrade review",
+      "repaid_in": "M83",
+      "result": "Added the commercial_cocos_game template and real M83 pipeline evidence: asset factory, Cocos generation/build/playtest, commercial readiness gate, blocked short-circuit semantics, and stage evidence paths."
     }
   ],
   "open_items": [
@@ -395,14 +402,6 @@
       "planned_repayment_phase": "M77 P5",
       "current_status": "partially_repaid",
       "blocking_impact": "LangChain is now documented and surfaced as experimental/opt-in; old adapter compatibility remains"
-    },
-    {
-      "debt_id": "M77-PIPE-001",
-      "description": "Pipeline run still needs proof that stages truly execute workflow runs, capability invocations, validation gates, failure short-circuiting, and evidence chain output",
-      "introduced_in": "M75-M76 downgrade review",
-      "planned_repayment_phase": "M77 P7",
-      "current_status": "partially_repaid",
-      "blocking_impact": "pipeline run no longer fakes completed capability stages and now writes stage evidence with blocked/failed/skipped short-circuiting; full workflow run and capability invocation execution still need integration"
     },
     {
       "debt_id": "M67-CARRY-001",

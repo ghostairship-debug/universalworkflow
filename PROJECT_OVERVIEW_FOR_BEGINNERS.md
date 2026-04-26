@@ -186,20 +186,21 @@ Pipeline 是更高一层的产品语义，可以理解为“计划之上的计�
 
 ## 当前阶段
 
-当前已推进到 M78，下一阶段重点是 M79：
+当前已推进到 M83：
 
 - workflow 已能参与开发。
 - route preview、task card、evidence、operator packet 已成为默认要求。
 - capability live proof 已成为硬门禁。
-- Pipeline 有了最小 contract 和 CLI 入口。
+- Pipeline 有了可复用模板入口。
 - Cocos H5 游戏 E2E 已有真实生成、构建和浏览器测试入口。
 - MMX/MiniMax、GCP TTS、Vertex 已能参与生成或审查游戏素材。
+- `commercial_cocos_game` pipeline template 已能把需求映射、asset factory、Cocos 生成/构建/playtest 和 commercial readiness gate 串起来。
 
-但这里有一个非常重要的限制：
+但这里仍有一个重要限制：
 
-> 当前 Cocos game pipeline 能证明“链路能跑通”，还不能证明“完整商业化游戏已经生成”。
+> 当前 Cocos game pipeline 已经能产出商业化 v1 工程和复用模板，但它仍是生产线基线，不等同于最终上线运营级游戏。
 
-M78 生成的工程可以构建、可以浏览器测试，也有生成素材和商业化特征 evidence；但如果你用 Cocos Creator 打开它，会发现它更像一个可运行脚手架，而不是完整商业化成品。下一阶段 M79 要解决的正是这个问题：把游戏从 canvas/runtime 主导的 E2E scaffold，升级为编辑器里可见、可维护、可继续制作的 Cocos 2D 商业化工程。
+M79 已把工程升级为编辑器里可见、可维护、可继续制作的 Cocos 2D 商业化 v1；M83 已把这条链路模板化。后续如果要做真正上线级项目，还需要围绕玩法深度、美术统筹、音频体验、数值和运营体系继续迭代。
 
 ## 一个最小使用路径
 
@@ -209,10 +210,10 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider all --require-live --evidence-dir state/capability_probes
 ```
 
-如果要跑 Cocos H5 小游戏 E2E：
+如果要跑可复用商业 Cocos pipeline：
 
 ```powershell
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" game cocos-e2e --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --output-dir state/m79_cocos_commercial_pipeline/cocos_project --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --generate-commercial-assets --require-commercial
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --template commercial_cocos_game --execute-capabilities --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --require-commercial
 ```
 
-这个命令当前用于验证链路和生成 evidence。直到 M79 完成前，它不应被理解为“一键生成完整商业化小游戏”。
+这个命令用于验证模板化生产线和生成 evidence。它可以生成商业化 v1 工程，但不应被理解为“无需后续制作即可直接上线运营”。

@@ -5,8 +5,8 @@
 ## 当前基线
 
 - 日期：2026-04-27
-- 最新接受实现基线：`M82`
-- 下一阶段建议：继续 M83 能力层恢复：commercial Cocos pipeline template。
+- 最新接受实现基线：`M83`
+- 下一阶段建议：进入 M83 后深度评估与修复循环；若连续两轮无 P0-P2 可执行项，再恢复更广能力层开发。
 - 产品前提：个人自用 / 本地 operator runtime。
 - 主入口：CLI、API、Web operator console、`/ui/workbench` streaming chat workbench。
 - 当前硬规则：workflow 共同开发、bug-first、scoped receipt、provider live proof、route/evidence/operator packet、phase 多 task card。
@@ -40,7 +40,7 @@
 | M80 | Provider runtime stabilization：verified-only health、provider route stats、30 天成功率/失败/延迟/fallback/cost 摘要 | 已完成 |
 | M81 | Multimodal asset factory：style guide、prompt manifest、provenance、hash 去重、批量生成、失败重试、required asset NO-GO、Vertex visual QA | 已完成 |
 | M82 | Workflow self-development loop：active truth check、truth-set stale 检测、workflow dogfood evidence、DeepSeek direct API 模型名归一化和 batch-resume 并发证明 | 已完成 |
-| M83 | 能力层恢复 v1：把 commercial Cocos game 交付链路模板化为可复用 pipeline | 计划中 |
+| M83 | 能力层恢复 v1：把 commercial Cocos game 交付链路模板化为可复用 pipeline，并真实跑通 asset factory → Cocos build/playtest → commercial readiness gate | 已完成 |
 
 ## M73-M78 关键结论
 
@@ -51,7 +51,7 @@
 - Pipeline 已形成最小产品层，不替代既有 OrchestrationPlan，也不创建第二套 mutation 真相源。
 - Cocos E2E 以桌面 PDF 为输入，生成真实 Cocos Creator 3.8 项目并跑 Web Mobile 浏览器验证。
 - 事后评估确认：M78 产物是可运行脚手架；M79 已补编辑器可见商业化 v1 结构。M83 的重点是把该链路模板化和复用化，而不是再次做一次性脚本。
-- M80-M82 已把 provider truth、asset generation 和 active truth/workflow dogfood proof 从具体 Cocos 脚本里抽出来；M83 的剩余重点是 commercial Cocos pipeline template。
+- M80-M83 已把 provider truth、asset generation、active truth/workflow dogfood proof 和 commercial Cocos delivery template 从具体 Cocos 脚本里抽出来；后续重点是深度评估闭环和能力层开发恢复判断。
 
 ## 历史材料治理
 

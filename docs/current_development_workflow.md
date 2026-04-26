@@ -1,10 +1,10 @@
 # 当前开发工作流
 
-## Current Version: M82 Workflow Self-Development Loop
+## Current Version: M83 Commercial Cocos Pipeline Template
 
 - Package version: `0.66.0`.
-- Accepted implementation baseline: `M82` active truth and workflow self-development proof.
-- Active repair entry: M80-M83 capability-layer recovery. M80 provider runtime truth, M81 asset factory, and M82 active truth/workflow dogfood proof are implemented; M83 continues with templated commercial Cocos pipeline.
+- Accepted implementation baseline: `M83` reusable commercial Cocos game pipeline template.
+- Active repair entry: M80-M83 capability-layer recovery is implemented. Post-M83 work is the deep evaluation and repair loop before broader capability expansion.
 - Active truth set: [README.md](../README.md), this workflow guide, [M77 issue register](../M77_ISSUE_REGISTER.md), [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
 - Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
 - Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
@@ -71,7 +71,7 @@ GET 请求不得触发状态变更。所有文件写入必须解析明确 worksp
 - H5 游戏商业化是正式业务需求，应作为 pipeline 场景承载，而不是新增一堆 `game_*_cluster`。
 - Cocos 技术 smoke 与商业化验收必须分开；`workflowctl game cocos-e2e --require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时必须 NO-GO。
 - M79 已把 Cocos 产物从 E2E scaffold 推进到商业化 v1：真实 Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 绑定、Animation/Particle、皮肤/关卡/广告/道具入口和移动端 playtest。
-- M80-M83 恢复能力层开发，但只围绕 provider runtime truth、asset factory、workflow 自开发 proof 和可复用 commercial Cocos pipeline 模板推进。M81 之后，Cocos asset path 必须消费 asset factory manifest，不能退回游戏专用一次性生成函数。
+- M80-M83 恢复能力层开发，但只围绕 provider runtime truth、asset factory、workflow 自开发 proof 和可复用 commercial Cocos pipeline 模板推进。M83 之后，Cocos game pipeline 必须通过 `commercial_cocos_game` template 显式执行 asset factory、Cocos production generation 和 commercial readiness gate，不能退回一次性脚本或 manifest-only 完成。
 
 ## Validation Rules
 
@@ -104,7 +104,7 @@ python -m pytest -q --run-slow
 
 - M78 committed and pushed a real Cocos E2E scaffold: real project generation, real Web Mobile build, real browser playtest, MMX image/speech/music, GCP TTS, and Vertex review evidence.
 - M79 committed and pushed the commercial Cocos pipeline v1: editor-visible scene hierarchy, component scripts, generated asset binding manifests, UI panels, animations, particles, level/skin switching, Web Mobile build, and browser playtest evidence.
-- M83 should turn the M79 one-off delivery path into a reusable `commercial_cocos_game` template; it must not regress to manifest-only, canvas-only, or dry-run completion.
+- M83 turned the M79 one-off delivery path into a reusable `commercial_cocos_game` template; future game delivery must not regress to manifest-only, canvas-only, or dry-run completion.
 
 ## M80 Provider Runtime Notes
 
@@ -125,3 +125,10 @@ python -m pytest -q --run-slow
 - The check currently catches stale M79 planned language, stale M78 baseline after M79 evidence, debt IDs duplicated in `repaid_items` and `open_items`, and open items claiming `current_status=repaid`.
 - M82 dogfood caught a real DeepSeek direct API issue: router-style `deepseek/deepseek-v4-flash` ids are now normalized to direct API model ids before proposal calls.
 - This command is part of the workflow self-development gate before declaring future capability-layer milestones ready.
+
+## M83 Pipeline Template Notes
+
+- `workflowctl pipeline preview --template commercial_cocos_game` exposes the reusable commercial Cocos pipeline.
+- `workflowctl pipeline run --template commercial_cocos_game --execute-capabilities --require-build --require-commercial` must execute real stages; unexecuted capability stages remain `blocked`.
+- The template executes asset factory first and passes the resulting commercial asset manifest into Cocos generation instead of letting Cocos hide asset generation inside a one-off script.
+- Commercial readiness requires both editor-visible Cocos production checks and browser/playtest checks to pass.
