@@ -86,6 +86,7 @@ GET 请求不得触发状态变更。所有文件写入必须解析明确 worksp
 - `packages/core_domain` 只应包含 control plane、receipt/lease、workspace/write_set、provider truth、evidence/governance、generic pipeline contract 等通用核心能力。
 - Cocos/H5/game executor、commercial asset generator、业务 pipeline template、垂直 QA/playtest runner 不应新增到 `core_domain`。
 - 兼容 shim 必须写明 `remove_after_milestone`，默认不晚于 M89，并禁止新代码继续依赖旧路径；延期必须以 shim 命中率或下游迁移 evidence 支撑。
+- M105.1 启动前必须先运行 `rg -n "remove_after_milestone" . -g "!state/**"`。如果命中生产 shim，必须先删除，或写明延期 milestone、理由和验证证据；不能把过期 shim 带进新的 Cocos 开发。
 - LOC 纪律使用 production/core/file ratchet，不用包含 tests 的总 LOC 作为唯一硬门禁。
 
 ## LangGraph 收敛规则
@@ -146,14 +147,24 @@ python -m pytest -q
 ## 下一阶段开发计划
 
 - M105-M108 是当前活跃方案。
+- Cocos 当前投入预算锁定为 M105-M108 四个 milestone。M108 closeout 必须进入 review，决定停止、外部评估，或另开 M109+；不得自动续成“继续做游戏”。
 - M85-M90、M91-M98、M99-M104 已压缩进 `docs/milestone_history.md` 和 `docs/architecture/langgraph_runtime_notes.md`，不再保留根目录散装计划书。
 - 范围：用 LangGraph-backed 底座推进 Cocos command、构建配置、工程检查、真实 UI/Prefab、浏览器试玩和玩家视角验收。
 - 暂不纳入：Gemini CLI、视频生成、GitHub 自动化、Hugging Face Jobs、远程 worker 扩展、托管 SaaS、广告 SDK 和 IAP。
 - active phase 开始后才生成 task card；phase closeout 必须包含 workflow 实际执行范围、Codex 兜底范围和 evidence。
 
+### Acceptable Detours
+
+M105-M108 以 Cocos 为主线，但不能冻结 workflow 和 LangGraph 底座。每个 milestone 最多允许 1 个 detour，且只能用于：
+
+- workflow bug、receipt/lease、repo mutation、pipeline truth、active truth、provider live proof、安全 command runner、LangGraph runtime blocker。
+- 会阻塞当前 milestone 的测试矩阵、evidence、operator packet 或 repair loop 问题。
+
+detour 必须写明原因、范围、write_set、测试命令和 closeout。detour 不能引入新的业务路线，也不能提前生成非 active phase 的 task card。
+
 ### M105：Cocos 真实工程底座
 
-- M105.1：Cocos command 与构建配置真相，明确命令、配置文件、项目路径、输出路径和失败证据。
+- M105.1：Cocos command、构建配置与 gate 真相，明确命令、配置文件、项目路径、输出路径和失败证据；同时让 `technical_smoke_go`、`production_scaffold_go`、`commercial_playable_go` 三层 gate 从本 phase 起生效，避免 M105/M106 继续沿用旧 gate 误报。
 - M105.2：Cocos project inspector v2，检查真实工程结构、场景、脚本、资源、Prefab/Panel、构建配置和入口场景。
 - M105.3：运行方式与交付方式真相，区分 HTTP 服务运行、双击 HTML、移动端预览和打包说明。
 - M105.4：Cocos graph evidence bridge，把生成、检查、构建、试玩和修复接入 graph evidence，同时保留 workflow 安全规则。
@@ -170,13 +181,13 @@ python -m pytest -q
 - M107.1：浏览器试玩证据，补充桌面与移动视口截图、事件、控制台、加载、画布和可见 UI 证据。
 - M107.2：面板与流程验收，验证开始、暂停、结算、设置、关卡、皮肤、画廊等流程真的可见可点。
 - M107.3：音频、动效与移动端体验，检查突兀音效、动效反馈、遮挡、按钮可点性和文字溢出。
-- M107.4：商业化 GO/NO-GO 重分层，继续区分 technical smoke、production scaffold 和 commercial playable。
+- M107.4：玩家视角 gate 强化验收，继续使用 M105.1 已生效的三层 gate，但把 `commercial_playable_go` 绑定到玩家可见 UI、移动端、音频、关卡、皮肤、画廊和操作反馈证据。
 
 ### M108：真实样机闭环
 
 - M108.1：样机目标与验收口径，选一个小目标并写清玩法、界面、资产、运行方式和 GO/NO-GO。
 - M108.2：真实工程生成，用 M105/M106 的能力生成项目并保存 evidence。
 - M108.3：构建、试玩与修复循环，用 M107 验收；发现问题进入 repair loop。
-- M108.4：关闭报告，诚实说明哪些能力已成、哪些只是样机、哪些还不能宣称商业化可玩。
+- M108.4：关闭报告与预算 review，诚实说明哪些能力已成、哪些只是样机、哪些还不能宣称商业化可玩；如果 `commercial_playable_go` 仍为 false，默认停止 Cocos milestone 自动续期，并进入外部评估或人工决策。
 
-建议起点是 M105.1。原因很简单：如果 Cocos 命令、构建配置、输出目录和失败证据不够真，后面的 UI、Prefab、试玩验收都会继续踩空。
+建议起点是 M105.1。原因很简单：如果 Cocos 命令、构建配置、输出目录、三层 gate 和失败证据不够真，后面的 UI、Prefab、试玩验收都会继续踩空。
