@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
+from packages.core_domain import active_truth as active_truth_module
 from packages.core_domain.active_truth import build_active_truth_check
 
 
@@ -18,7 +19,7 @@ def _write_minimal_truth_set(root: Path, *, stale_m79: bool = False) -> None:
         else "## Current Version: M81 Multimodal Asset Factory\n",
         encoding="utf-8",
     )
-    (root / "docs" / "current_development_workflow.md").write_text(
+    (root / "CURRENT_DEVELOPMENT_WORKFLOW.md").write_text(
         "- M79 通过前，不恢复能力层开发。\n" if stale_m79 else "- M81 asset factory is complete.\n",
         encoding="utf-8",
     )
@@ -63,6 +64,20 @@ def test_active_truth_check_passes_consistent_truth_set(tmp_path: Path) -> None:
 
     assert payload["go_no_go"] == "GO"
     assert payload["issue_count"] == 0
+
+
+def test_active_truth_check_accepts_future_milestone_ranges() -> None:
+    issues = active_truth_module._check_current_version(
+        {
+            "current_version": "M105-M108 Cocos 真实工程接入计划",
+            "m80_commit_present": True,
+            "m81_commit_present": True,
+            "latest_milestone_baseline": "M104",
+            "m79_evidence_present": False,
+        }
+    )
+
+    assert issues == []
 
 
 def test_active_truth_check_blocks_debt_id_in_repaid_and_open(tmp_path: Path) -> None:

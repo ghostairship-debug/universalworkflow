@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from packages.contracts import PipelineStage, PipelineStageKind, TaskKind, WorkflowPipeline
+from packages.contracts import GraphCheckpointRecord, PipelineStage, PipelineStageKind, TaskKind, WorkflowPipeline
 from packages.contracts.models import new_id
 from packages.core_domain.automation_lease import record_automation_lease_use, validate_automation_lease
-from packages.core_domain.cocos_commercial_assets import generate_cocos_commercial_asset_manifest
-from packages.core_domain.cocos_e2e import run_cocos_game_e2e
+from packages.runtime_integrations.cocos import generate_cocos_commercial_asset_manifest, run_cocos_game_e2e
+from packages.runtime_langgraph.checkpoint_store import build_graph_repair_decision
+from packages.runtime_langgraph.execution_kernel import run_artifact_only_graph
+from packages.runtime_security.safe_command_runner import SAFE_COMMAND_TIMEOUT_EXIT_CODE, run_safe_command
 
 
 CommandRunner = Callable[[str, Path, int], dict[str, Any]]
@@ -71,14 +72,30 @@ def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
         task_kind=TaskKind.shell_exec,
         metadata={"planning_mode": "template", "direct_mutation_allowed": False, "template": template_id},
     )
+    graph_pressure = _stage(
+        name="Cocos graph pressure preflight",
+        kind=PipelineStageKind.capability,
+        order_index=1,
+        goal="Run a small Cocos improvement planning artifact through the graph checkpoint and repair path.",
+        preset_id="advisory_delivery",
+        task_kind=TaskKind.shell_exec,
+        write_set=["state/pipeline_runs"],
+        metadata={
+            "planning_mode": "graph_backed",
+            "capability": "cocos_graph_pressure_test",
+            "template": template_id,
+            "graph_backed": True,
+            "side_effect_level": "artifact_only",
+        },
+    )
     asset_factory = _stage(
         name="Commercial asset factory",
         kind=PipelineStageKind.capability,
-        order_index=1,
+        order_index=2,
         goal="Generate required commercial image, audio, music, voice, provenance, and QA assets.",
         preset_id="feature_delivery",
         task_kind=TaskKind.shell_exec,
-        depends_on=[intake.stage_id],
+        depends_on=[graph_pressure.stage_id],
         write_set=["state/pipeline_runs"],
         metadata={
             "planning_mode": "template",
@@ -90,7 +107,7 @@ def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
     cocos_generation = _stage(
         name="Cocos production generation",
         kind=PipelineStageKind.capability,
-        order_index=2,
+        order_index=3,
         goal="Generate, build, and optionally browser-playtest the Cocos Creator Web Mobile project.",
         preset_id="feature_delivery",
         task_kind=TaskKind.shell_exec,
@@ -106,7 +123,7 @@ def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
     readiness_gate = _stage(
         name="Commercial readiness gate",
         kind=PipelineStageKind.validation_gate,
-        order_index=3,
+        order_index=4,
         goal="Validate technical build, commercial UI/assets, browser playtest, and final GO/NO-GO.",
         depends_on=[cocos_generation.stage_id],
         validation_commands=["workflowctl game cocos-e2e --require-commercial"],
@@ -117,7 +134,7 @@ def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
             "template": template_id,
         },
     )
-    return [intake, asset_factory, cocos_generation, readiness_gate]
+    return [intake, graph_pressure, asset_factory, cocos_generation, readiness_gate]
 
 
 def preview_workflow_pipeline(
@@ -231,34 +248,64 @@ def _write_stage_artifact(root: Path, stage: PipelineStage, payload: dict[str, A
 
 
 def _default_command_runner(command: str, cwd: Path, timeout_seconds: int) -> dict[str, Any]:
-    started_at = datetime.now(UTC)
-    completed = subprocess.run(
+    return run_safe_command(
         command,
-        cwd=str(cwd),
-        shell=True,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
+        working_directory=cwd,
+        timeout_seconds=timeout_seconds,
+        output_limit_bytes=12_000,
     )
-    return {
-        "command": command,
-        "cwd": cwd.as_posix(),
-        "exit_code": completed.returncode,
-        "stdout": completed.stdout[-12000:],
-        "stderr": completed.stderr[-12000:],
-        "started_at": started_at.isoformat(),
-        "finished_at": datetime.now(UTC).isoformat(),
-    }
 
 
 def _command_result_for_error(command: str, cwd: Path, error: Exception) -> dict[str, Any]:
     return {
         "command": command,
         "cwd": cwd.as_posix(),
-        "exit_code": 124 if isinstance(error, subprocess.TimeoutExpired) else 1,
+        "exit_code": SAFE_COMMAND_TIMEOUT_EXIT_CODE if error.__class__.__name__ == "TimeoutExpired" else 1,
         "stdout": getattr(error, "stdout", "") or "",
         "stderr": f"{type(error).__name__}: {error}",
         "finished_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _cocos_readiness(cocos_payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = cocos_payload or {}
+    manifest = payload.get("manifest") or {}
+    metadata = manifest.get("metadata") or {}
+    commercial_feature_coverage = (
+        payload.get("commercial_feature_coverage")
+        or metadata.get("commercial_feature_coverage")
+        or {}
+    )
+    commercial_blockers = list(payload.get("commercial_blockers") or metadata.get("commercial_blockers") or [])
+    technical_smoke_go = manifest.get("go_no_go") == "GO"
+    production_scaffold_go = bool(
+        payload.get("production_scaffold_go")
+        or metadata.get("production_scaffold_go")
+        or payload.get("commercial_go_no_go") == "GO"
+        or metadata.get("commercial_go_no_go") == "GO"
+    )
+    player_visible_checks = payload.get("player_visible_checks") or metadata.get("player_visible_checks") or {}
+    commercial_playable_go = bool(
+        payload.get("commercial_playable_go")
+        or metadata.get("commercial_playable_go")
+        or (
+            player_visible_checks
+            and all(bool(value) for value in player_visible_checks.values())
+        )
+    )
+    commercial_playable_blockers = list(payload.get("commercial_playable_blockers") or metadata.get("commercial_playable_blockers") or [])
+    if not commercial_playable_go and not commercial_playable_blockers:
+        commercial_playable_blockers.append("missing_player_visible_commercial_playable_evidence")
+    return {
+        "technical_smoke_go": technical_smoke_go,
+        "production_scaffold_go": production_scaffold_go,
+        "commercial_playable_go": commercial_playable_go,
+        "commercial_go_no_go": "GO" if commercial_playable_go else "NO-GO",
+        "commercial_blockers": commercial_blockers,
+        "commercial_playable_blockers": commercial_playable_blockers,
+        "commercial_feature_coverage": commercial_feature_coverage,
+        "player_visible_checks": player_visible_checks,
+        "judge_priority": "automatic_playwright_vlm_then_human_fallback_default_no_go",
     }
 
 
@@ -303,7 +350,7 @@ def run_workflow_pipeline(
 
     for stage in sorted(pipeline.stages, key=lambda item: item.order_index):
         dependency_statuses = [status_by_stage.get(stage_id) for stage_id in stage.depends_on]
-        if any(status not in {"completed", "skipped"} for status in dependency_statuses):
+        if any(status != "completed" for status in dependency_statuses):
             result = {
                 "stage_id": stage.stage_id,
                 "name": stage.name,
@@ -334,12 +381,13 @@ def run_workflow_pipeline(
         if stage_kind in {str(PipelineStageKind.agent_role), str(PipelineStageKind.cluster)}:
             result.update(
                 {
-                    "status": "completed",
+                    "status": "stubbed",
+                    "failure_class": "stage_executor_not_registered",
                     "execution_backend": "artifact_only_planning",
                     "output": {
                         "goal": stage.goal,
                         "direct_mutation_allowed": bool(stage.metadata.get("direct_mutation_allowed")),
-                        "note": "Planning/review stage produced evidence only; it did not mutate the workspace.",
+                        "note": "Planning/review stage has no registered executor in this serial pipeline and is recorded as stubbed evidence, not completed work.",
                     },
                 }
             )
@@ -378,6 +426,40 @@ def run_workflow_pipeline(
                 if go_no_go != "GO":
                     pipeline_status = "failed"
                     stop_reason = "asset_factory_no_go"
+            elif capability == "cocos_graph_pressure_test":
+                graph_payload = run_artifact_only_graph(
+                    goal=stage.goal,
+                    workspace_root=root,
+                    evidence_dir=target_dir / "cocos_graph_pressure",
+                    preset_id=stage.preset_id,
+                )
+                checkpoint_payload = graph_payload.get("persistent_checkpoint") or {}
+                repair_decision = None
+                if checkpoint_payload:
+                    repair_decision = build_graph_repair_decision(
+                        checkpoint=GraphCheckpointRecord.model_validate(checkpoint_payload),
+                        failure_class=graph_payload.get("failure_class"),
+                    ).model_dump(mode="json")
+                shared_outputs["cocos_graph_pressure"] = graph_payload
+                graph_completed = graph_payload.get("status") == "completed"
+                result.update(
+                    {
+                        "status": "completed" if graph_completed else "failed",
+                        "failure_class": None if graph_completed else graph_payload.get("failure_class") or "cocos_graph_pressure_failed",
+                        "execution_backend": "langgraph_artifact_only_kernel",
+                        "output": {
+                            "graph_status": graph_payload.get("status"),
+                            "graph_evidence_path": graph_payload.get("evidence_path"),
+                            "graph_state_path": graph_payload.get("graph_state_path"),
+                            "persistent_checkpoint": checkpoint_payload,
+                            "repair_decision": repair_decision,
+                            "commercial_claim": "pressure_test_only_not_commercial_ready",
+                        },
+                    }
+                )
+                if not graph_completed:
+                    pipeline_status = "failed"
+                    stop_reason = "cocos_graph_pressure_failed"
             elif capability == "cocos_creator_cli":
                 if pdf_path is None or cocos_creator_exe is None:
                     result.update(
@@ -406,6 +488,7 @@ def run_workflow_pipeline(
                     )
                     shared_outputs["cocos_e2e"] = cocos_payload
                     go_no_go = cocos_payload["manifest"]["go_no_go"]
+                    readiness = _cocos_readiness(cocos_payload)
                     result.update(
                         {
                             "status": "completed" if go_no_go == "GO" else "failed",
@@ -414,6 +497,7 @@ def run_workflow_pipeline(
                                 "manifest_path": cocos_payload["manifest_path"],
                                 "go_no_go": go_no_go,
                                 "blockers": cocos_payload["manifest"].get("blockers", []),
+                                "commercial_readiness": readiness,
                             },
                         }
                     )
@@ -437,20 +521,24 @@ def run_workflow_pipeline(
             if stage.metadata.get("validation") == "cocos_manifest_go_no_go":
                 cocos_payload = shared_outputs.get("cocos_e2e")
                 go_no_go = (cocos_payload or {}).get("manifest", {}).get("go_no_go")
+                readiness = _cocos_readiness(cocos_payload if isinstance(cocos_payload, dict) else None)
+                gate_go = bool(readiness["commercial_playable_go"] if require_commercial else readiness["technical_smoke_go"])
                 result.update(
                     {
-                        "status": "completed" if go_no_go == "GO" else "failed",
-                        "failure_class": None if go_no_go == "GO" else "cocos_validation_failed",
+                        "status": "completed" if gate_go else "failed",
+                        "failure_class": None if gate_go else "cocos_validation_failed",
                         "output": {
                             "go_no_go": go_no_go,
                             "manifest_path": (cocos_payload or {}).get("manifest_path"),
                             "blockers": (cocos_payload or {}).get("manifest", {}).get("blockers", []),
                             "commercial_go_no_go": (cocos_payload or {}).get("commercial_go_no_go"),
                             "commercial_blockers": (cocos_payload or {}).get("commercial_blockers", []),
+                            "commercial_readiness": readiness,
+                            "required_gate": "commercial_playable_go" if require_commercial else "technical_smoke_go",
                         },
                     }
                 )
-                if go_no_go != "GO":
+                if not gate_go:
                     pipeline_status = "failed" if pipeline_status == "completed" else pipeline_status
                     stop_reason = stop_reason or "cocos_validation_failed"
             else:

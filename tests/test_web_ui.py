@@ -155,7 +155,7 @@ def test_web_ui_workbench_post_flow_redirects_through_preview_clarify_and_launch
             "cluster_template_id": "dev_cluster",
             "constraints": "keep operator checkpoints visible",
             "assumptions": "workspace is clean",
-            "referenced_artifact_paths": "docs/current_development_workflow.md",
+            "referenced_artifact_paths": "CURRENT_DEVELOPMENT_WORKFLOW.md",
             "followup_context": "prior review asked for a launch checkpoint",
         },
         follow_redirects=False,

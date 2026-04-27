@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "updated_at": "2026-04-27",
-  "summary": "M84 hygiene cleanup keeps commercial game pipeline code as an active capability, but resets commercial readiness claims after real playtest feedback showed the generated game is not yet commercial-playable. M85-M90 shifts the next long-term priority to LangGraph/workflow convergence so the project does not keep reimplementing generic orchestration primitives.",
+  "summary": "M104 is the accepted implementation baseline: LangGraph local runtime, SQLite checkpoint, interrupt/resume, repair loop, subgraph/supervisor probe, stream evidence, Studio graph configuration, and Cocos graph pressure test are integrated. M105-M108 now focus on Cocos real-project quality and player-view validation while preserving workflow receipt, lease, write_set, provider live proof, evidence, and operator packet rules.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -107,6 +107,34 @@
       "introduced_in": "M82",
       "repaid_in": "M82",
       "result": "Added workflowctl governance active-truth-check and stale truth checks."
+    },
+    {
+      "debt_id": "M84-CORE-PURITY-001",
+      "description": "Cocos, asset generation, asset factory, and business pipeline template code entered packages/core_domain, weakening the boundary between workflow control-plane code and vertical business production code.",
+      "introduced_in": "M77-M83 commercial Cocos and asset pipeline work",
+      "repaid_in": "M90",
+      "result": "Moved vertical asset/Cocos implementations to packages/contributions, removed expired core_domain compatibility shims, and routed core callers through runtime_integrations adapters."
+    },
+    {
+      "debt_id": "M84-PIPELINE-TRUTH-001",
+      "description": "Pipeline execution semantics could overstate truth: placeholders were completed, skipped dependencies could satisfy downstream stages, validation commands used shell execution, and commercial gates could miss player-visible commercial_playable_go.",
+      "introduced_in": "M85 integrated pipeline truth review",
+      "repaid_in": "M90",
+      "result": "Stage placeholders are stubbed/blocked, required dependencies need completed status, validation uses the safe command runner, and commercial gates bind --require-commercial to commercial_playable_go."
+    },
+    {
+      "debt_id": "M84-RATCHET-001",
+      "description": "The project lacked production/core/file ratchets that prevent unchecked growth while preserving necessary test growth.",
+      "introduced_in": "M85 Opus/GPT Pro evaluation synthesis",
+      "repaid_in": "M90",
+      "result": "Added core_domain purity, production LOC, business file size, and architecture-doc tests, with M88/M90 growth explicitly ratcheted."
+    },
+    {
+      "debt_id": "M85-LANGGRAPH-DUP-001",
+      "description": "Workflow had custom orchestration, checkpoint, review gate, resume, parallelism, and repair-loop behavior that overlapped with LangGraph primitives.",
+      "introduced_in": "M85 LangGraph/workflow convergence evaluation",
+      "repaid_in": "M104",
+      "result": "Established the boundary where LangGraph carries graph state, checkpoint, interrupt/resume, subgraph/supervisor probes, repair loops, stream evidence, and Cocos graph pressure execution while workflow keeps receipts, leases, write_set audit, provider live proof, evidence, and operator packets."
     }
   ],
   "open_items": [
@@ -125,14 +153,6 @@
       "planned_repayment_phase": "Next commercial game quality milestone",
       "current_status": "open",
       "blocking_impact": "Blocks future GO decisions for commercial game generation until the gate distinguishes technical smoke, production scaffold, and commercial-playable output."
-    },
-    {
-      "debt_id": "M85-LANGGRAPH-DUP-001",
-      "description": "Workflow has custom orchestration, checkpoint, review gate, resume, parallelism, and repair-loop behavior that overlaps with LangGraph primitives.",
-      "introduced_in": "M85 LangGraph/workflow convergence evaluation",
-      "planned_repayment_phase": "M85-M90 LangGraph workflow convergence",
-      "current_status": "open",
-      "blocking_impact": "Blocks confident long-term capability expansion because new development may continue duplicating LangGraph features and increase future migration cost."
     },
     {
       "debt_id": "M77-LANGCHAIN-001",
@@ -159,6 +179,10 @@
     "Do all capability providers pass provider-specific live-proof contracts without simulated, dry-run, generic, or fallback-only evidence?",
     "Do active docs avoid claiming zero debt, scheduler consensus, automatic PR publication, Gemini CLI support, or provider readiness beyond verified runtime facts?",
     "Does workflowctl governance self-development-manifest remain GO before declaring a milestone ready for capability-layer work?",
+    "Does the active development plan stop at milestone/phase level and defer task-card generation until a phase is active?",
+    "Does packages/core_domain remain free of new Cocos/H5/game executor, commercial asset generator, business pipeline template, and vertical QA/playtest modules?",
+    "Do pipeline stage results distinguish completed, blocked, failed, skipped, stubbed, and simulated without marking unexecuted work completed?",
+    "Do validation commands use packages/runtime_security/safe_command_runner.py with shell metacharacter rejection and shell=False by default?",
     "Do active game-pipeline docs and gates distinguish technical smoke, E2E scaffold success, production scaffold success, and final commercial-playable readiness?",
     "Does any new graph-backed execution keep receipt, lease, workspace root, write_set, provider live proof, and evidence/operator packet semantics outside LangGraph shortcuts?"
   ]

@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIVING_DOCS = [
     Path("README.md"),
     Path("AGENTS.md"),
-    Path("docs/current_development_workflow.md"),
+    Path("CURRENT_DEVELOPMENT_WORKFLOW.md"),
     Path("docs/tech-debt-registry.md"),
     Path("docs/milestone_history.md"),
     Path("docs/governance/tech_debt_registry.json"),

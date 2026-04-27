@@ -1,79 +1,24 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import shlex
-import subprocess
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
+
+from packages.runtime_security.safe_command_runner import (
+    SAFE_COMMAND_BLOCKED_EXIT_CODE as TEST_COMMAND_BLOCKED_EXIT_CODE,
+    SAFE_COMMAND_NOT_FOUND_EXIT_CODE as TEST_COMMAND_NOT_FOUND_EXIT_CODE,
+    SAFE_COMMAND_OUTPUT_LIMIT_BYTES as TEST_COMMAND_OUTPUT_LIMIT_BYTES,
+    SAFE_COMMAND_TIMEOUT_EXIT_CODE as TEST_COMMAND_TIMEOUT_EXIT_CODE,
+    SAFE_COMMAND_TIMEOUT_SECONDS as TEST_COMMAND_TIMEOUT_SECONDS,
+    SafeCommandSpec as TestCommandSpec,
+    run_safe_commands as run_test_commands,
+)
 
 
 _HUNK_HEADER_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
-TEST_COMMAND_TIMEOUT_SECONDS = 120
-TEST_COMMAND_OUTPUT_LIMIT_BYTES = 64 * 1024
-TEST_COMMAND_BLOCKED_EXIT_CODE = 126
-TEST_COMMAND_NOT_FOUND_EXIT_CODE = 127
-TEST_COMMAND_TIMEOUT_EXIT_CODE = 124
-
-_SECRET_ENV_NAME_RE = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|AUTH|COOKIE)", re.IGNORECASE)
-_SHELL_METACHAR_RE = re.compile(r"[\r\n|&;<>`]|(?:\$\()|(?:\$\{)")
-_TEST_ENV_ALLOWLIST = {
-    "APPDATA",
-    "COMSPEC",
-    "HOME",
-    "HOMEDRIVE",
-    "HOMEPATH",
-    "LANG",
-    "LC_ALL",
-    "LOCALAPPDATA",
-    "PATH",
-    "PATHEXT",
-    "PROGRAMDATA",
-    "PROGRAMFILES",
-    "PROGRAMFILES(X86)",
-    "SYSTEMROOT",
-    "TEMP",
-    "TERM",
-    "TMP",
-    "TZ",
-    "USER",
-    "USERNAME",
-    "USERPROFILE",
-    "VIRTUAL_ENV",
-    "WINDIR",
-}
-_TEST_ENV_ALLOWLIST_PREFIXES = (
-    "CONDA",
-    "PIP_",
-    "PYTEST_",
-    "PYTHON",
-    "UV_",
-)
-_DANGEROUS_PROGRAMS = {
-    "bash",
-    "cmd",
-    "curl",
-    "del",
-    "erase",
-    "nc",
-    "netcat",
-    "powershell",
-    "pwsh",
-    "rd",
-    "rmdir",
-    "rm",
-    "scp",
-    "sftp",
-    "sh",
-    "ssh",
-    "telnet",
-    "wget",
-}
 
 
 @dataclass(slots=True)
@@ -101,14 +46,6 @@ class FilePatch:
     @property
     def touched_path(self) -> str:
         return self.new_path or self.old_path or ""
-
-
-@dataclass(frozen=True, slots=True)
-class TestCommandSpec:
-    command: str | list[str]
-    timeout_seconds: int = TEST_COMMAND_TIMEOUT_SECONDS
-    output_limit_bytes: int = TEST_COMMAND_OUTPUT_LIMIT_BYTES
-    env: Mapping[str, str] | None = None
 
 
 def _workspace_root(path: str | Path) -> Path:
@@ -348,214 +285,3 @@ def apply_unified_diff(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(new_text, encoding="utf-8")
     return sorted(set(touched_paths))
-
-
-def _is_secret_env_name(name: str) -> bool:
-    return bool(_SECRET_ENV_NAME_RE.search(name))
-
-
-def _strip_wrapping_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
-def _secret_values_from_env() -> list[str]:
-    values = {
-        value
-        for name, value in os.environ.items()
-        if value and len(value) >= 4 and _is_secret_env_name(name.upper())
-    }
-    return sorted(values, key=len, reverse=True)
-
-
-def _redact_text(value: str | bytes | None) -> str:
-    if value is None:
-        text = ""
-    elif isinstance(value, bytes):
-        text = value.decode("utf-8", errors="replace")
-    else:
-        text = str(value)
-    for secret_value in _secret_values_from_env():
-        text = text.replace(secret_value, "[REDACTED]")
-    return text
-
-
-def _truncate_output(value: str | bytes | None, *, limit: int) -> tuple[str, bool]:
-    text = _redact_text(value)
-    if len(text) <= limit:
-        return text, False
-    marker = "\n...[truncated]"
-    keep = max(limit - len(marker), 0)
-    return f"{text[:keep]}{marker}", True
-
-
-def _build_test_command_env(extra_env: Mapping[str, str] | None = None) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for name, value in os.environ.items():
-        upper_name = name.upper()
-        if _is_secret_env_name(upper_name):
-            continue
-        if upper_name in _TEST_ENV_ALLOWLIST or any(upper_name.startswith(prefix) for prefix in _TEST_ENV_ALLOWLIST_PREFIXES):
-            env[name] = value
-    if extra_env:
-        for name, value in extra_env.items():
-            upper_name = str(name).upper()
-            if _is_secret_env_name(upper_name):
-                continue
-            env[str(name)] = str(value)
-    return env
-
-
-def _command_display(command: str | list[str]) -> str:
-    if isinstance(command, str):
-        return command
-    return " ".join(str(part) for part in command)
-
-
-def _parse_test_command(command: str | list[str]) -> list[str]:
-    if isinstance(command, list):
-        argv = [str(part) for part in command]
-    else:
-        if _SHELL_METACHAR_RE.search(command):
-            raise ValueError("shell metacharacters are not allowed in test commands")
-        try:
-            argv = shlex.split(command, posix=False)
-        except ValueError as exc:
-            raise ValueError(f"test command could not be parsed safely: {exc}") from exc
-        argv = [_strip_wrapping_quotes(part) for part in argv]
-    argv = [part for part in argv if part]
-    if not argv:
-        raise ValueError("test command is empty")
-    program_name = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
-    for suffix in (".exe", ".cmd", ".bat", ".ps1"):
-        if program_name.endswith(suffix):
-            program_name = program_name[: -len(suffix)]
-            break
-    if program_name in _DANGEROUS_PROGRAMS:
-        raise ValueError(f"test command program `{program_name}` requires manual review")
-    return argv
-
-
-def _attempt_payload(
-    *,
-    command: str,
-    argv: list[str],
-    return_code: int,
-    stdout: str | bytes | None,
-    stderr: str | bytes | None,
-    duration_ms: int,
-    output_limit_bytes: int,
-    status: str,
-    blocked_reason: str | None = None,
-    timeout_seconds: int | None = None,
-) -> dict[str, object]:
-    stdout_text, stdout_truncated = _truncate_output(stdout, limit=output_limit_bytes)
-    stderr_text, stderr_truncated = _truncate_output(stderr, limit=output_limit_bytes)
-    payload: dict[str, object] = {
-        "command": command,
-        "argv": argv,
-        "return_code": return_code,
-        "stdout": stdout_text,
-        "stderr": stderr_text,
-        "duration_ms": duration_ms,
-        "passed": return_code == 0,
-        "status": status,
-        "timeout_seconds": timeout_seconds,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
-        "output_limit_bytes": output_limit_bytes,
-    }
-    if blocked_reason is not None:
-        payload["blocked_reason"] = blocked_reason
-        payload["review_required"] = True
-    return payload
-
-
-def _coerce_test_command_spec(command: str | TestCommandSpec) -> TestCommandSpec:
-    if isinstance(command, TestCommandSpec):
-        return command
-    return TestCommandSpec(command=command)
-
-
-def run_test_commands(commands: list[str | TestCommandSpec], *, working_directory: str | Path) -> list[dict[str, object]]:
-    attempts: list[dict[str, object]] = []
-    for raw_command in commands:
-        spec = _coerce_test_command_spec(raw_command)
-        command = _command_display(spec.command)
-        started_at = perf_counter()
-        try:
-            argv = _parse_test_command(spec.command)
-        except ValueError as exc:
-            duration_ms = max(int((perf_counter() - started_at) * 1000), 0)
-            attempts.append(
-                _attempt_payload(
-                    command=command,
-                    argv=[],
-                    return_code=TEST_COMMAND_BLOCKED_EXIT_CODE,
-                    stdout="",
-                    stderr=str(exc),
-                    duration_ms=duration_ms,
-                    output_limit_bytes=spec.output_limit_bytes,
-                    status="blocked",
-                    blocked_reason=str(exc),
-                    timeout_seconds=spec.timeout_seconds,
-                )
-            )
-            break
-        try:
-            completed = subprocess.run(
-                argv,
-                cwd=str(_workspace_root(working_directory)),
-                shell=False,
-                capture_output=True,
-                text=True,
-                env=_build_test_command_env(spec.env),
-                timeout=spec.timeout_seconds,
-                check=False,
-            )
-            duration_ms = max(int((perf_counter() - started_at) * 1000), 0)
-            attempt = _attempt_payload(
-                command=command,
-                argv=argv,
-                return_code=completed.returncode,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
-                duration_ms=duration_ms,
-                output_limit_bytes=spec.output_limit_bytes,
-                status="passed" if completed.returncode == 0 else "failed",
-                timeout_seconds=spec.timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            duration_ms = max(int((perf_counter() - started_at) * 1000), 0)
-            stderr = _redact_text(exc.stderr)
-            timeout_message = f"command timed out after {spec.timeout_seconds}s"
-            stderr = f"{stderr.rstrip()}\n{timeout_message}".strip() if stderr else timeout_message
-            attempt = _attempt_payload(
-                command=command,
-                argv=argv,
-                return_code=TEST_COMMAND_TIMEOUT_EXIT_CODE,
-                stdout=exc.stdout if hasattr(exc, "stdout") else exc.output,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                output_limit_bytes=spec.output_limit_bytes,
-                status="timeout",
-                timeout_seconds=spec.timeout_seconds,
-            )
-        except FileNotFoundError:
-            duration_ms = max(int((perf_counter() - started_at) * 1000), 0)
-            attempt = _attempt_payload(
-                command=command,
-                argv=argv,
-                return_code=TEST_COMMAND_NOT_FOUND_EXIT_CODE,
-                stdout="",
-                stderr=f"command not found: {argv[0]}",
-                duration_ms=duration_ms,
-                output_limit_bytes=spec.output_limit_bytes,
-                status="not_found",
-                timeout_seconds=spec.timeout_seconds,
-            )
-        attempts.append(attempt)
-        if not bool(attempt["passed"]):
-            break
-    return attempts

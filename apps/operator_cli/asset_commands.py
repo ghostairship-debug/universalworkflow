@@ -6,7 +6,7 @@ from typing import Optional
 import typer
 
 from apps.operator_cli.shared import _emit_json, _workspace_root_from_context
-from packages.core_domain.asset_factory import qa_asset_factory_manifest, run_asset_factory
+from packages.contributions.asset_factory.factory import qa_asset_factory_manifest, run_asset_factory
 
 
 asset_app = typer.Typer(help="Asset factory commands.")

@@ -16,7 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 from packages.contracts import CocosGameE2EManifest
-from packages.core_domain.cocos_commercial_assets import generate_cocos_commercial_asset_manifest
+from packages.contributions.games.cocos.commercial_assets import generate_cocos_commercial_asset_manifest
 
 
 EXCLUDED_DESKTOP_PROJECT = Path(r"C:\Users\74755\Desktop\游戏平台demo")

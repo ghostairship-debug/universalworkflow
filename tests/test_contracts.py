@@ -82,6 +82,7 @@ from packages.contracts import (
     SimulationRecordSource,
     SimulationReport,
     SimulationTriggerPolicy,
+    SideEffectLevel,
     RepoMutationResult,
     RuntimeClaim,
     RuntimeClaimStatus,
@@ -98,6 +99,8 @@ from packages.contracts import (
     TerminationRule,
     ToolProjectionEntry,
     TrustTier,
+    WorkflowGraphNodeResult,
+    WorkflowGraphState,
     WorkerLease,
     WorkerLeaseStatus,
     allowed_run_status_transitions,
@@ -276,7 +279,7 @@ def test_wave1_contracts_round_trip() -> None:
     )
     mutation_contract = MutationContract(
         task_card_ref="M16-1A",
-        task_card_path="docs/current_development_workflow.md",
+        task_card_path="CURRENT_DEVELOPMENT_WORKFLOW.md",
         write_set=["packages/core_domain/services.py"],
         read_set=["packages/contracts/models.py"],
         test_commands=["python -m pytest tests/test_execution_loop.py -q"],
@@ -665,6 +668,63 @@ def test_m31_graph_and_capability_contracts_round_trip() -> None:
     assert envelope.authority_mode == "single_store_quorum"
     assert graph.engine_version == "m31_v1"
     assert graph.barriers[0].member_node_ids == ["node_reviewer"]
+
+
+def test_m85_workflow_graph_state_is_projection_contract() -> None:
+    run = Run(goal="Audit LangGraph fit.", preset_id="feature_delivery")
+    task_card = TaskCard(
+        run_id=run.run_id,
+        title="Write fit matrix",
+        description="Classify workflow surfaces.",
+        acceptance_criteria=["matrix covers core surfaces"],
+    )
+    node_result = WorkflowGraphNodeResult(
+        node_id="node_fit_audit",
+        status="completed",
+        side_effect_level=SideEffectLevel.artifact_only,
+        evidence_path="state/evidence/fit.json",
+        next_action="continue",
+    )
+    graph_state = WorkflowGraphState(
+        run_id=run.run_id,
+        phase_id="M85-phase-1",
+        pipeline_id="pipeline_m85",
+        plan_graph_id="plangraph_m85",
+        task_cards=[task_card],
+        write_set=["docs/architecture/langgraph_runtime_notes.md"],
+        receipt_state={"required": False},
+        capability_proof={"source": "provider_live_proof_ledger"},
+        evidence_refs=["state/evidence/fit.json"],
+        node_results=[node_result],
+        checkpoint_refs=[{"checkpoint_id": "chk_1", "thread_id": "thread_1"}],
+    )
+
+    dumped = graph_state.model_dump(mode="json")
+    restored = WorkflowGraphState.model_validate(dumped)
+
+    assert restored.model_dump(mode="json") == dumped
+    assert restored.authority_mode == "projection_not_source_of_truth"
+    assert "run_lifecycle" in restored.source_authorities
+    assert restored.provider_readiness_authority == "provider_live_proof_ledger"
+
+
+def test_m85_high_risk_graph_node_results_require_workflow_gate() -> None:
+    with pytest.raises(ValidationError):
+        WorkflowGraphNodeResult(
+            node_id="node_patch",
+            status="blocked",
+            side_effect_level=SideEffectLevel.repo_mutation,
+        )
+
+    gated = WorkflowGraphNodeResult(
+        node_id="node_patch",
+        status="blocked",
+        side_effect_level=SideEffectLevel.repo_mutation,
+        workflow_gate_required=True,
+        next_action="request_operator_action_receipt",
+    )
+
+    assert gated.workflow_gate_required is True
 
 
 def test_m32_interaction_and_cluster_contracts_round_trip() -> None:

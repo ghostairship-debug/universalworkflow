@@ -11,7 +11,7 @@ from typing import Any
 ACTIVE_TRUTH_FILES = [
     "README.md",
     "AGENTS.md",
-    "docs/current_development_workflow.md",
+    "CURRENT_DEVELOPMENT_WORKFLOW.md",
     "docs/milestone_history.md",
     "docs/tech-debt-registry.md",
 ]
@@ -116,8 +116,7 @@ def _check_stale_m79_truth(docs: dict[str, str], facts: dict[str, Any]) -> list[
 def _check_current_version(facts: dict[str, Any]) -> list[dict[str, Any]]:
     current_version = str(facts.get("current_version") or "")
     issues: list[dict[str, Any]] = []
-    current_tokens = ("M81", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "M90")
-    if facts.get("m81_commit_present") and not any(token in current_version for token in current_tokens):
+    if facts.get("m81_commit_present") and not _mentions_milestone_at_least(current_version, 81):
         issues.append(
             {
                 "code": "current_version_not_m81_after_m81_commit",
@@ -127,7 +126,7 @@ def _check_current_version(facts: dict[str, Any]) -> list[dict[str, Any]]:
                 "current_version": current_version,
             }
         )
-    elif facts.get("m80_commit_present") and not any(token in current_version for token in ("M80", *current_tokens)):
+    elif facts.get("m80_commit_present") and not _mentions_milestone_at_least(current_version, 80):
         issues.append(
             {
                 "code": "current_version_stale_after_m80_commit",
@@ -147,6 +146,10 @@ def _check_current_version(facts: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return issues
+
+
+def _mentions_milestone_at_least(text: str, minimum: int) -> bool:
+    return any(int(match.group(1)) >= minimum for match in re.finditer(r"\bM([0-9]+)\b", text))
 
 
 def _check_tech_debt_consistency(payload: dict[str, Any]) -> list[dict[str, Any]]:

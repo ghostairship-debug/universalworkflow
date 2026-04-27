@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from packages.core_domain.asset_generation import (
+from packages.contributions.asset_factory.asset_generation import (
     AssetGenerationRequest,
     AssetGenerationResult,
     generate_gcp_tts,
@@ -15,7 +15,7 @@ from packages.core_domain.asset_generation import (
     generate_vertex_gemini_visual_review,
     write_asset_manifest,
 )
-from packages.core_domain.asset_factory import (
+from packages.contributions.asset_factory.factory import (
     AssetFactoryGenerators,
     qa_asset_factory_manifest,
     run_asset_factory,

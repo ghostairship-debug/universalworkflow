@@ -25,7 +25,7 @@ from packages.contracts import (
 )
 from packages.core_domain.capability_plane import TOOL_PROJECTION_MANIFEST_ENV_KEY, dump_tool_projection_manifest
 from packages.core_domain.domain_packs import DOMAIN_PACK_RESOLUTION_ENV_KEY, dump_domain_pack_resolution
-from packages.contributions.games.local_game_artifacts import local_artifacts_for_goal
+from packages.runtime_integrations.local_game_artifacts import local_artifacts_for_goal
 from packages.core_domain.memory import MEMORY_RETRIEVAL_PREVIEW_ENV_KEY, dump_memory_retrieval_preview
 
 
@@ -130,7 +130,7 @@ def _python_command_for(
         "projected_tools=projected_tools"
         ")\n"
         "path.write_text(content, encoding='utf-8')\n"
-        "from packages.contributions.games.local_game_artifacts import local_artifacts_for_goal\n"
+        "from packages.runtime_integrations.local_game_artifacts import local_artifacts_for_goal\n"
         "for local_path, local_content in local_artifacts_for_goal("
         f"{effective_goal!r}"
         "):\n"

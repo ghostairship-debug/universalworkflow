@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
-import packages.core_domain.asset_generation as asset_generation_module
+import packages.contributions.asset_factory.asset_generation as asset_generation_module
 from apps.operator_cli.main import app
 from packages.core_domain import capability_probe
-from packages.core_domain.asset_generation import (
+from packages.contributions.asset_factory.asset_generation import (
     AssetGenerationRequest,
     generate_gcp_tts,
     generate_minimax_image,
@@ -510,7 +510,7 @@ def test_capability_probe_asset_provider_requires_binary_live_proof(tmp_path: Pa
     monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
 
     def _fake_generate(request, **_kwargs):
-        from packages.core_domain.asset_generation import AssetGenerationResult
+        from packages.contributions.asset_factory.asset_generation import AssetGenerationResult
 
         output = Path(request.output_dir) / request.filename
         output.parent.mkdir(parents=True, exist_ok=True)

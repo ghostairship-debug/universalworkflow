@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 
 import apps.operator_cli.asset_commands as asset_commands
 from apps.operator_cli.main import app
-from packages.core_domain.asset_factory import AssetFactoryGenerators, qa_asset_factory_manifest, run_asset_factory
-from packages.core_domain.asset_generation import AssetGenerationRequest, AssetGenerationResult
+from packages.contributions.asset_factory.asset_generation import AssetGenerationRequest, AssetGenerationResult
+from packages.contributions.asset_factory.factory import AssetFactoryGenerators, qa_asset_factory_manifest, run_asset_factory
 
 
 def _fake_asset_generator(request: AssetGenerationRequest) -> AssetGenerationResult:

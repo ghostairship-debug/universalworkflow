@@ -137,6 +137,23 @@ class PipelineStageKind(StrEnum):
     external_worker = "external_worker"
 
 
+class SideEffectLevel(StrEnum):
+    none = "none"
+    artifact_only = "artifact_only"
+    workspace_write = "workspace_write"
+    repo_mutation = "repo_mutation"
+    external_action = "external_action"
+
+
+HIGH_RISK_SIDE_EFFECT_LEVELS = frozenset(
+    {
+        SideEffectLevel.workspace_write,
+        SideEffectLevel.repo_mutation,
+        SideEffectLevel.external_action,
+    }
+)
+
+
 class AgentRoleType(StrEnum):
     planner = "planner"
     coder = "coder"
@@ -678,6 +695,112 @@ class WorkflowPipeline(PersistedContractModel):
     execution_mode: str = "serial"
     stages: list[PipelineStage] = Field(default_factory=list)
     source: str = "workflow_pipeline"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphCheckpointRef(ContractModel):
+    checkpoint_id: str
+    thread_id: str | None = None
+    checkpoint_ns: str = ""
+    source: str = "langgraph"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphEvidenceManifest(ContractModel):
+    evidence_id: str = Field(default_factory=lambda: new_id("graphevidence"))
+    evidence_path: str | None = None
+    operator_packet_path: str | None = None
+    stage_evidence_paths: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowGraphNodeResult(ContractModel):
+    node_id: str
+    status: str
+    side_effect_level: SideEffectLevel | str = SideEffectLevel.none
+    evidence_path: str | None = None
+    next_action: str | None = None
+    workflow_gate_required: bool = False
+    failure_class: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _high_risk_nodes_must_return_to_workflow_gate(self) -> "WorkflowGraphNodeResult":
+        if SideEffectLevel(self.side_effect_level) in HIGH_RISK_SIDE_EFFECT_LEVELS and not self.workflow_gate_required:
+            raise ValueError("workspace_write, repo_mutation, and external_action nodes require a workflow gate")
+        return self
+
+
+class WorkflowGraphState(PersistedContractModel):
+    graph_state_id: str = Field(default_factory=lambda: new_id("graphstate"))
+    run_id: str
+    phase_id: str | None = None
+    pipeline_id: str | None = None
+    plan_graph_id: str | None = None
+    task_cards: list[TaskCard] = Field(default_factory=list)
+    write_set: list[str] = Field(default_factory=list)
+    receipt_state: dict[str, Any] = Field(default_factory=dict)
+    capability_proof: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    node_results: list[WorkflowGraphNodeResult] = Field(default_factory=list)
+    checkpoint_refs: list[GraphCheckpointRef] = Field(default_factory=list)
+    failure_class: str | None = None
+    authority_mode: str = "projection_not_source_of_truth"
+    source_authorities: list[str] = Field(
+        default_factory=lambda: ["run_lifecycle", "orchestration_plan_graph", "workflow_pipeline"]
+    )
+    provider_readiness_authority: str = "provider_live_proof_ledger"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class HumanApprovalInterrupt(PersistedContractModel):
+    interrupt_id: str = Field(default_factory=lambda: new_id("interrupt"))
+    run_id: str
+    thread_id: str | None = None
+    checkpoint_id: str | None = None
+    requested_action: str
+    scope_payload: dict[str, Any] = Field(default_factory=dict)
+    write_set: list[str] = Field(default_factory=list)
+    risk_level: str = "high"
+    operator_hint: str | None = None
+    receipt_required: bool = True
+    automation_lease_allowed: bool = True
+    status: str = "pending"
+    idempotent_resume_contract: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _payload_must_be_json_serializable(self) -> "HumanApprovalInterrupt":
+        import json
+
+        json.dumps(self.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
+        return self
+
+
+class GraphCheckpointRecord(PersistedContractModel):
+    checkpoint_id: str
+    run_id: str
+    thread_id: str | None = None
+    status: str
+    node: str | None = None
+    evidence_path: str | None = None
+    graph_state_path: str | None = None
+    parent_checkpoint_id: str | None = None
+    fork_reason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphRepairDecision(PersistedContractModel):
+    repair_decision_id: str = Field(default_factory=lambda: new_id("graphrepair"))
+    checkpoint_id: str
+    status: str
+    action: str
+    failure_class: str | None = None
+    next_node: str | None = None
+    max_fix_iterations: int = Field(default=2, ge=0)
+    human_review_required: bool = False
+    evidence_path: str | None = None
+    reason: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

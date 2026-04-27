@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from packages.contracts import CapabilityProbeResult, MutationMode, TaskKind, TaskPacket
-from packages.core_domain.asset_generation import (
+from packages.runtime_integrations.asset_generation import (
     AssetGenerationRequest,
     generate_gcp_tts,
     generate_minimax_image,

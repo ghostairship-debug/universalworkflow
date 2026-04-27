@@ -8,10 +8,10 @@ from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
 import apps.operator_cli.game_commands as game_commands
-import packages.core_domain.cocos_e2e as cocos_e2e_module
-from packages.core_domain.asset_generation import AssetGenerationRequest, AssetGenerationResult
-from packages.core_domain.cocos_commercial_assets import generate_cocos_commercial_asset_manifest
-from packages.core_domain.cocos_e2e import run_cocos_game_e2e
+import packages.contributions.games.cocos.e2e as cocos_e2e_module
+from packages.contributions.asset_factory.asset_generation import AssetGenerationRequest, AssetGenerationResult
+from packages.contributions.games.cocos.commercial_assets import generate_cocos_commercial_asset_manifest
+from packages.contributions.games.cocos.e2e import run_cocos_game_e2e
 
 
 def _fake_asset_generator(request: AssetGenerationRequest) -> AssetGenerationResult:

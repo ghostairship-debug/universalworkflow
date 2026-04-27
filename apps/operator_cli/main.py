@@ -16,6 +16,7 @@ from apps.operator_cli.catalog_commands import (
 )
 from apps.operator_cli.doctor_payload import _build_doctor_payload
 from apps.operator_cli.game_commands import game_app
+from apps.operator_cli.graph_commands import graph_app
 from apps.operator_cli.interaction_commands import interaction_app
 from apps.operator_cli.pipeline_commands import pipeline_app
 from apps.operator_cli.run_commands import run_app
@@ -34,6 +35,7 @@ app.add_typer(asset_app, name="asset")
 app.add_typer(automation_app, name="automation")
 app.add_typer(run_app, name="run")
 app.add_typer(pipeline_app, name="pipeline")
+app.add_typer(graph_app, name="graph")
 app.add_typer(game_app, name="game")
 app.add_typer(interaction_app, name="interaction")
 app.add_typer(task_app, name="task")

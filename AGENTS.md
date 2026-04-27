@@ -2,19 +2,24 @@
 
 ## 当前基线
 
-当前接受实现基线是 `M83`：provider runtime truth、asset factory、active truth check、workflow dogfood proof 和 `commercial_cocos_game` pipeline 模板已经落地。
+当前接受实现基线是 `M104`：本地 LangGraph 运行时接入、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、stream evidence、Studio graph 配置和 Cocos graph pressure test 已落地。
 
-M84 的当前修正是：商业化 Cocos 游戏生成是正式需求，相关功能和 pipeline 必须保留并继续优化；但最近一次真实生成结果质量不足，不能再宣称“完整商业化游戏已完成”。
+商业化 Cocos 游戏生成是正式需求，相关功能和 pipeline 必须保留并继续优化；但最近一次真实生成结果质量不足，不能宣称“完整商业化游戏已完成”。
 
-M85-M90 的下一阶段主线是 LangGraph 与 workflow 的长线收敛。优先避免继续重复实现 LangGraph 已具备的状态机、checkpoint/resume、human interrupt、subgraph、多 agent 和 repair loop；商业化游戏暂时作为后续压力测试，不作为当前最高优先能力开发。
+当前主线是 `M105-M108` Cocos 真实工程接入：用已经接入的 LangGraph 底座承载 Cocos 生成、构建、试玩、修复和证据闭环。LangGraph 可以承接状态推进、checkpoint、人审暂停、subgraph、多 agent 和 repair loop；workflow 仍负责 receipt、lease、write_set、provider live proof、evidence 和 operator packet。
 
 本仓库是个人自用、本地优先的 agentic workflow runtime，不是公开 SaaS、多租户平台、插件市场、自动 PR 发布器或外部托管执行服务。
 
 ## 开发规则
 
-- 优先读取 `README.md`、`docs/current_development_workflow.md`、`docs/milestone_history.md` 和 `docs/governance/tech_debt_registry.json`。
-- 当前长线方案见 `M85_M90_LANGGRAPH_WORKFLOW_CONVERGENCE_PLAN.md`。
-- milestone / phase / task card 必须保持三层语义：一个 milestone 包含多个 phase；一个 phase 默认包含多个 task card；task card 是最小可执行单元。
+- 优先读取 `README.md`、`CURRENT_DEVELOPMENT_WORKFLOW.md`、`docs/milestone_history.md` 和 `docs/governance/tech_debt_registry.json`。
+- 当前活跃开发方案见 `CURRENT_DEVELOPMENT_WORKFLOW.md` 的“下一阶段开发计划”。
+- M85-M90、M91-M98、M99-M104 只在 `docs/milestone_history.md` 和 `docs/architecture/langgraph_runtime_notes.md` 中保留压缩摘要，不再保留根目录散装计划书。
+- `packages/core_domain` 不应新增 Cocos/H5/game executor、commercial asset generator、业务 pipeline template 或垂直 QA/playtest runner；需要兼容 shim 时必须写明 `remove_after_milestone`。
+- pipeline stage truth 必须区分 `completed / blocked / failed / skipped / stubbed / simulated`；未真实执行、无 provider proof 或无 evidence contract 的 stage 不得标记 completed。
+- validation command 默认必须走 `packages/runtime_security/safe_command_runner.py` 的安全 argv runner 和 `shell=False`；required dependency 不得由 skipped stage 满足。
+- plan / milestone / phase / task card 必须保持四层语义：一个 plan 包含多个 milestone；一个 milestone 包含多个 phase；一个 phase 默认包含多个 task card；task card 是最小可执行单元。
+- 开发计划文档只写到 milestone 和 phase，不提前生成 task card；只有 active phase 才生成 task card。
 - 不要把“一 phase = 一 task card”当作默认模式。若某 phase 只有一张 task card，必须写明 `single_card_exception`。
 - phase 级 operator packet 必须汇总该 phase 内所有 task card 的 write_set、test commands、evidence 和阻塞项。
 - 简单低风险任务优先通过 `workflowctl run from-task-card ... --adapter opencode --execute` 走 workflow；复杂安全协议和架构切片可以使用 Codex 或本地补丁兜底。

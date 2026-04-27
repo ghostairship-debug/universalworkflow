@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from packages.core_domain.asset_generation import (
+from packages.contributions.asset_factory.asset_generation import (
     AssetGenerationRequest,
     AssetGenerationResult,
     generate_gcp_tts,

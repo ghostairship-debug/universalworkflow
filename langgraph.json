@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "workflow_studio_preview": "./packages/runtime_langgraph/studio_graph.py:graph"
+  },
+  "env": ".env.langgraph.example",
+  "pip_installer": "pip"
+}

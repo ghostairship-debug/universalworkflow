@@ -40,6 +40,8 @@ class _FakeApiClient:
 
 
 OPEN_DEBT_IDS: list[str] = [
+    "M77-COCOS-001",
+    "M84-GAME-QA-001",
     "M77-LANGCHAIN-001",
     "M67-CARRY-001",
 ]
@@ -319,7 +321,7 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
             "preferred_cluster_template_ids": ["dev_cluster"],
             "constraints": ["keep operator checkpoints visible"],
             "assumptions": ["workspace is clean"],
-            "referenced_artifact_paths": ["docs/current_development_workflow.md"],
+            "referenced_artifact_paths": ["CURRENT_DEVELOPMENT_WORKFLOW.md"],
             "followup_context": ["prior review asked for a launch checkpoint"],
         },
     )
@@ -342,7 +344,7 @@ def test_api_can_create_get_and_launch_interaction_session(tmp_path: Path) -> No
     assert create_payload["goal_packet"]["selected_clusters"][0]["template_id"] == "dev_cluster"
     assert create_payload["session"]["intent_packet"]["constraints"] == ["keep operator checkpoints visible"]
     assert create_payload["session"]["intent_packet"]["assumptions"] == ["workspace is clean"]
-    assert create_payload["session"]["intent_packet"]["referenced_artifact_paths"] == ["docs/current_development_workflow.md"]
+    assert create_payload["session"]["intent_packet"]["referenced_artifact_paths"] == ["CURRENT_DEVELOPMENT_WORKFLOW.md"]
     assert create_payload["session"]["intent_packet"]["followup_context"] == ["prior review asked for a launch checkpoint"]
     assert create_payload["followup_requests"] == []
     assert create_payload["active_run_operator_view"] is None
@@ -971,7 +973,7 @@ def test_api_exposes_governance_tech_debt_report(tmp_path: Path) -> None:
     assert payload["open_debt_count"] == len(OPEN_DEBT_IDS)
     assert payload["blocking_open_count"] == len(BLOCKING_OPEN_DEBT_IDS)
     assert payload["carry_forward_count"] == 1
-    assert payload["status_counts"] == {"partially_repaid": 1, "carry_forward": 1}
+    assert payload["status_counts"] == {"partially_repaid": 2, "open": 1, "carry_forward": 1}
     assert [item["debt_id"] for item in payload["open_items"]] == OPEN_DEBT_IDS
     assert [item["debt_id"] for item in payload["blocking_open_items"]] == BLOCKING_OPEN_DEBT_IDS
     assert payload["source_path"].endswith("docs/governance/tech_debt_registry.json")

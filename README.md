@@ -1,12 +1,13 @@
 # Universal Agentic Workflow OS
 
-## 当前状态：M85-M90 LangGraph 与 Workflow 长线收敛规划
+## 当前状态：M105-M108 Cocos 真实工程接入计划
 
 - 包版本：`0.66.0`。
-- 当前实现基线：M83 已完成 provider runtime truth、通用 asset factory、active truth check、workflow dogfood proof，以及 `commercial_cocos_game` pipeline 模板。
+- 当前接受实现基线：M104 已完成本地 LangGraph 运行时接入、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、stream evidence 和 Cocos graph pressure test。
 - 当前质量结论：商业化 Cocos 游戏生成是正式需求，功能代码和 pipeline 继续保留；但最近一次真实生成结果只达到“可构建技术样机/生产线验证”，没有达到商业化可玩成品质量。
-- 当前工作重点：先收敛 LangGraph 与 workflow 的长期边界，避免继续重复实现状态机、checkpoint、人审、并发和 repair loop；商业化游戏后移为新底座的压力测试。
-- 长线开发方案：[M85_M90_LANGGRAPH_WORKFLOW_CONVERGENCE_PLAN.md](M85_M90_LANGGRAPH_WORKFLOW_CONVERGENCE_PLAN.md)。
+- 当前工作重点：用已接入的 LangGraph 底座推进 Cocos 真实工程接入，先从 Cocos command、构建配置、工程检查和玩家视角证据开始。
+- 活跃开发方案见：[CURRENT_DEVELOPMENT_WORKFLOW.md](CURRENT_DEVELOPMENT_WORKFLOW.md)。
+- 历史收敛方案已压缩进里程碑历史和架构笔记，不再在根目录保留散装计划书。
 - 治理真相源：[docs/governance/tech_debt_registry.json](docs/governance/tech_debt_registry.json)。
 
 Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。它的目标不是公开 SaaS、多租户平台或插件市场，而是让个人开发者把 AI、CLI、代码仓库、测试、审查、证据和自动化任务组织成可恢复、可审计、可长期推进的工作流。
@@ -22,7 +23,7 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - 本地优先：默认使用本地仓库、本地数据库、本地 CLI 和本地 Web console。
 - 证据优先：重要动作需要 task card、route preview、测试输出、capability probe、operator packet 或恢复指针。
 - 安全边界优先：高风险动作需要 receipt 或 lease，provider ready 需要真实 live proof。
-- 长程任务优先：milestone、phase、task card、checkpoint、评估与修复循环都必须可恢复。
+- 长程任务优先：plan、milestone、phase、task card、checkpoint、评估与修复循环都必须可恢复。
 
 项目主要由 `workflowctl` CLI、本地 FastAPI/Web operator console、core domain、adapter/provider、pipeline 和治理文档组成。Pipeline 是“计划之上的计划”，用于把需求解析、资产生成、代码实现、构建、浏览器测试和 GO/NO-GO 串成可审计流程。
 
@@ -30,7 +31,7 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 
 后续开发优先参考这些文件：
 
-- [当前开发工作流](docs/current_development_workflow.md)
+- [当前开发工作流](CURRENT_DEVELOPMENT_WORKFLOW.md)
 - [里程碑历史](docs/milestone_history.md)
 - [技术债登记表](docs/tech-debt-registry.md)
 - [结构化技术债 JSON](docs/governance/tech_debt_registry.json)
@@ -43,6 +44,7 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 - 本地 API：FastAPI orchestrator API
 - 本地 Web operator console：`/ui`、`/ui/workbench`、`/ui/reviews`、`/ui/config`
 - 核心能力：run 生命周期、task card、route preview、evidence、operator packet、receipt/lease 高风险门禁、repo mutation、test matrix、offline validation、pipeline preview/run
+- LangGraph 本地能力：SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、stream evidence、Studio graph 配置和 Cocos graph pressure test
 - 已接入 provider/adapter：Codex CLI、OpenCode CLI、Claude CLI、MMX/MiniMax、Vertex/GCP、LangChain、Shell/Noop
 - OpenAI API 当前不声明 ready；OpenAI-family coding 主路径是 Codex CLI
 - Gemini CLI 暂未接入；Gemini-family 能力短期通过 Vertex/GCP
@@ -117,7 +119,10 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 
 ## Workflow Dogfood 规则
 
+- 一个 plan 应包含多个 milestone。
 - 一个 milestone 应包含多个 phase。
+- 开发计划文档只写到 milestone 和 phase，不提前生成 task card。
+- 只有 active phase 才生成 task card。
 - 一个 phase 默认应包含多张 task card；单卡 phase 必须标记 `single_card_exception`。
 - phase 前运行并保存 `plan-graph`、`policy-preview`、`goal-packet`。
 - 简单低风险任务优先交给 workflow + OpenCode/MiniMax。
