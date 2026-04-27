@@ -1,39 +1,44 @@
 # 当前开发工作流
 
-## Current Version: M83 Commercial Cocos Pipeline Template
+## 当前版本说明
 
-- Package version: `0.66.0`.
-- Accepted implementation baseline: `M83` reusable commercial Cocos game pipeline template.
-- Active repair entry: M80-M83 capability-layer recovery is implemented. Post-M83 work is the deep evaluation and repair loop before broader capability expansion.
-- Active truth set: [README.md](../README.md), this workflow guide, [M77 issue register](../M77_ISSUE_REGISTER.md), [milestone history](milestone_history.md), [tech debt registry](tech-debt-registry.md), and [structured governance registry](governance/tech_debt_registry.json).
-- Historical evaluations, long-term roadmaps, old recovery plans, stage reports, and duplicate root docs are removed from the active worktree. Use git history for exact archival text.
-- Scheduler semantics are local-first. `LocalSchedulerLeaseArbiter` is the default local lease arbiter; `scheduler-authority` names are legacy compatibility surfaces unless the cluster flag is explicitly enabled.
-- PR publication remains manual unless the operator explicitly asks for commit, push, or PR creation.
+- 当前工作状态：M85-M90 LangGraph 与 workflow 长线收敛规划。
+- 接受实现基线：M83 的 provider runtime truth、asset factory、active truth check、workflow dogfood proof、`commercial_cocos_game` pipeline 模板。
+- 当前纠偏：商业化 Cocos 游戏生产线保留为正式能力，但短期不作为最高优先级；下一阶段先收敛 LangGraph 与 workflow 的编排边界，避免继续重复造轮子。
+- 活跃真相集：`README.md`、`AGENTS.md`、本文件、`docs/milestone_history.md`、`docs/tech-debt-registry.md`、`docs/governance/tech_debt_registry.json`。
+- 历史评估、旧路线图、旧计划和生成态 evidence 不保留为活跃工作树文档。需要逐字审计时使用 Git 历史。
 
-本文档是后续开发的最高优先级操作说明。项目当前仍是个人自用、本地优先的 operator runtime；所有计划、文档和验证都服务于“能否稳定继续使用它”，不服务于外部 SaaS、多租户、公开 onboarding 或第三方生态。
+本项目仍是个人自用、本地优先的 operator runtime。所有计划、文档和验证都服务于“能否稳定、诚实、可恢复地继续开发”，不服务于公开 SaaS、多租户、公共 onboarding 或第三方托管执行。
 
-## M76+ Development Rules
+## Milestone / Phase / Task Card
 
-- 新能力开发可以恢复，但必须继续使用 workflow 共同开发。
-- 一个 milestone 应包含多个 phase；一个 phase 默认应包含多张 task card，task card 是最小可执行单元。
-- 单卡 phase 必须显式写入 `single_card_exception`，并说明为什么不能拆分。
-- 每个 phase 前运行 `plan-graph`、`policy-preview`、`goal-packet` 并保存 evidence。
+- 一个 milestone 应包含多个 phase。
+- 一个 phase 默认应包含多张 task card。
+- task card 是最小可执行单元。
+- 单卡 phase 必须显式写入 `single_card_exception` 并说明原因。
+- 每个 phase 前运行并保存 `plan-graph`、`policy-preview`、`goal-packet`。
 - 每个 phase 至少输出 task cards、route evidence、test evidence、operator packet 和 closeout summary。
-- workflow、dogfood、receipt、probe、evidence、route、repo mutation、test matrix 任一路径出现 bug，先修 workflow bug 并补回归测试，再继续原 phase。
-- artifact-only 与 disjoint write_set 任务可以并发；patch apply 只有 write_set 不相交时才能并发，最多 `--max-workers 2`。
-- SQLite lock、dirty worktree 命中 write_set、write_set conflict 或 repo mutation 异常时自动降级串行。
 - 成功 phase 可以 1 phase 1 commit；失败 phase 不提交，只保留 evidence 和恢复指针。
 
-## Routing Defaults
+## Bug-First 规则
+
+workflow、dogfood、receipt、probe、evidence、route、repo mutation、test matrix 任一路径出现 bug 时，暂停业务 phase：
+
+1. 生成 workflow bug task card。
+2. 修复 workflow bug。
+3. 补回归测试。
+4. 再恢复原 phase。
+
+## 路由默认值
 
 - OpenAI API 当前不是已配置主路径；OpenAI-family coding 真实入口是 Codex CLI。
-- MiniMax / DeepSeek API 可以直接生成 plan、review、patch proposal；需要写仓库时必须通过 `workflowctl capability coding-apply`，并携带允许 `coding_patch_apply` 的 `AutomationLease` 与明确 `write_set`。
-- simple 杂活：可走 OpenCode + `minimax/MiniMax-M2.7`，但 OpenCode 当前主要是低成本 coding CLI 壳，不宣称 OMO 生态已接入。
-- medium review / validation / security：优先 DeepSeek API 或 `deepseek/deepseek-v4-flash`；失败直接 fallback Codex，不 fallback MiniMax。
-- complex 架构、安全协议、repo mutation：Codex CLI 或本地补丁兜底；workflow 仍负责 task card、route evidence 和 operator packet。
-- MMX/MiniMax 的主要新增价值是 image / speech / music / future video 资产生成，而不是只做文本 evidence 或视觉提取。
-- Vertex 生成能力应走 API/SDK；`gcloud` 是 Vertex/GCP 凭据与环境工具，不是独立 worker adapter。
-- Cloud Text-to-Speech 不是 Vertex AI 本体，能力名使用 `gcp_tts_api`；旧 `vertex_tts` 仅保留为兼容 alias。
+- MiniMax / DeepSeek API 可以直接生成 plan、review、patch proposal；需要写仓库时必须通过受控 patch apply。
+- simple 杂活：OpenCode + `minimax/MiniMax-M2.7`。
+- medium review / validation：DeepSeek V4 Flash，失败直接 fallback Codex。
+- complex 架构、安全协议、repo mutation：Codex CLI 或本地补丁兜底。
+- MMX/MiniMax 的主要价值是 image / speech / music / future video 资产生成，不是只做文本 evidence。
+- Vertex 生成能力走 API/SDK；`gcloud` 只是 Vertex/GCP 认证与环境工具。
+- Cloud Text-to-Speech 使用 `gcp_tts_api`；旧 `vertex_tts` 只作为兼容 alias。
 - Gemini CLI 暂不接入；Gemini-family 能力短期通过 Vertex/GCP。
 - LangChain 是 experimental / opt-in agent framework，不进入默认主路由。
 
@@ -42,13 +47,12 @@
 - Capability health 必须来自 runtime ledger / live probe，而不是 descriptor 自我声明。
 - `verified_ready` 或 `recently_successful` 只能由真实 provider-specific live proof 产生。
 - simulated、dry-run、generic greeting、fallback-only、非真实调用不能标记为 ready。
-- text evidence、coding proposal、asset generation 必须分开声明；生成类能力必须有真实二进制 artifact、mime、hash 和 evidence。
-- `workflowctl capability probe --provider all --require-live` 是能力 closeout 的硬门禁。
-- GCP 本地开发需设置 ADC quota project，并给 ADC 实际账号授予 `roles/serviceusage.serviceUsageConsumer` 或等价 `serviceusage.services.use` 权限。
+- text evidence、coding proposal、asset generation 必须分开声明。
+- 生成类能力必须有真实二进制 artifact、mime、hash 和 evidence。
 
-## High-Risk Action Boundary
+## 高风险动作边界
 
-以下动作必须由 scope-bound `OperatorActionReceipt` 或明确的 `AutomationLease` 授权，并且消费时校验实际 request scope：
+以下动作必须使用 scope-bound `OperatorActionReceipt` 或明确的 `AutomationLease`，并在消费时校验实际 request scope：
 
 - `launch_execute`
 - `resume_run`
@@ -62,18 +66,41 @@
 
 GET 请求不得触发状态变更。所有文件写入必须解析明确 workspace root。
 
-## Pipeline Rules
+## Pipeline 规则
 
 - `WorkflowPipeline` 是 `OrchestrationPlan` 之上的 plan-of-plans，不是 cluster 的别名。
-- Pipeline stage 类型固定为 `agent_role | cluster | capability | human_checkpoint | sub_pipeline | validation_gate | external_worker`。
-- Pipeline preview 不直接 mutation；execution 当前只支持受控串行 stage，未真实执行的 capability stage 必须返回 `blocked`，不得伪装 `completed`。
-- Pipeline run 需要写 stage evidence，并在 validation/capability 失败后短路后续 stage；复杂写入仍走既有 run/control-plane。
-- H5 游戏商业化是正式业务需求，应作为 pipeline 场景承载，而不是新增一堆 `game_*_cluster`。
-- Cocos 技术 smoke 与商业化验收必须分开；`workflowctl game cocos-e2e --require-commercial` 缺真实美术/音效/UI/动画/粒子/皮肤/关卡闭环时必须 NO-GO。
-- M79 已把 Cocos 产物从 E2E scaffold 推进到商业化 v1：真实 Scene / Node / Prefab / Component / UI、SpriteFrame/AudioClip 绑定、Animation/Particle、皮肤/关卡/广告/道具入口和移动端 playtest。
-- M80-M83 恢复能力层开发，但只围绕 provider runtime truth、asset factory、workflow 自开发 proof 和可复用 commercial Cocos pipeline 模板推进。M83 之后，Cocos game pipeline 必须通过 `commercial_cocos_game` template 显式执行 asset factory、Cocos production generation 和 commercial readiness gate，不能退回一次性脚本或 manifest-only 完成。
+- Pipeline preview 不直接 mutation。
+- Pipeline run 必须写 stage evidence。
+- 未真实执行的 capability stage 必须返回 `blocked`，不得伪装 `completed`。
+- validation/capability 失败后必须短路后续 stage。
+- 复杂写入仍走既有 run/control-plane、receipt/lease、write_set 和 repo mutation 语义。
 
-## Validation Rules
+## LangGraph 收敛规则
+
+- LangGraph 适合承担状态机、checkpoint/resume、human interrupt、multi-agent/subgraph、repair loop 和 graph observability。
+- LangGraph 不得绕过 `OperatorActionReceipt`、`AutomationLease`、workspace root、write_set audit、provider live proof 或 evidence/operator packet。
+- 短期目标不是全量迁移，而是将 workflow 的执行内核逐步映射到 graph-backed executor。
+- `workflowctl run ...`、`pipeline preview/run`、`capability probe/health`、`test matrix` 必须保持兼容。
+- graph-backed phase 仍必须遵守 milestone / phase / task card 三层语义。
+
+## 商业化 Cocos 游戏规则
+
+商业化 H5/Cocos 游戏是正式业务需求，应作为 pipeline 场景承载，而不是新增一堆 `game_*_cluster`。
+
+必须区分：
+
+- 技术 smoke：工程能生成、构建能跑。
+- E2E scaffold：有 Cocos 工程、资产绑定和自动试玩 evidence。
+- 商业化可玩成品：真实 UI、可用面板、玩法闭环、关卡流程、皮肤/画廊、音频设计、动效反馈、移动端体验都达到玩家可接受标准。
+
+当前结论：
+
+- M78/M79/M83 证明了 Cocos 项目生成、asset factory、Web Mobile build、browser playtest 和 pipeline 模板可以跑通。
+- M84 真实试玩反馈确认：当前产物仍是样机级，不具备商业化可玩质量。
+- `workflowctl game cocos-e2e --require-commercial` 的验收门禁必须升级，不能继续只看状态变量或事件覆盖。
+- 后续修复重点是可玩性与玩家视角质量，而不是再生成更多 manifest。
+
+## 验证规则
 
 文档变更至少运行：
 
@@ -89,46 +116,12 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" test matrix --suite integration
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" validation run --suite full --skip-offline-probe
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability probe --provider all --require-live --evidence-dir state/<milestone>/capability_probes
-python -m pytest -q --run-slow
+python -m pytest -q
 ```
 
-## M77 Provider And Asset Generation Notes
+## 卫生清理规则
 
-- Vertex/GCP routes are split by real execution surface: `vertex_imagen` uses Vertex AI Imagen REST, `vertex_gemini_review` uses Vertex Gemini visual review over an image, and `gcp_tts_api` uses Google Cloud Text-to-Speech.
-- `gcloud` remains an authentication and environment helper, not a worker adapter. Local workflow probes prefer the active `gcloud auth print-access-token` user and fall back to ADC; set `WORKFLOW_GCP_AUTH_MODE=adc` when ADC must be forced.
-- MMX/MiniMax generation is the preferred commercial game asset path for image, speech, and music. Vertex is a fallback/review path, and GCP TTS is a voice fallback.
-- `workflowctl game cocos-assets` is the asset-manifest batch step. It does not by itself make the Cocos game commercial-ready unless `cocos-e2e --require-commercial` also passes the UI, animation, level, and playtest gates.
-- Provider health must still come from live proof. Descriptor presence, dry-runs, fallback-only output, or generated manifests with blocked assets do not count as `verified_ready`.
-
-## M78/M79 Game Pipeline Notes
-
-- M78 committed and pushed a real Cocos E2E scaffold: real project generation, real Web Mobile build, real browser playtest, MMX image/speech/music, GCP TTS, and Vertex review evidence.
-- M79 committed and pushed the commercial Cocos pipeline v1: editor-visible scene hierarchy, component scripts, generated asset binding manifests, UI panels, animations, particles, level/skin switching, Web Mobile build, and browser playtest evidence.
-- M83 turned the M79 one-off delivery path into a reusable `commercial_cocos_game` template; future game delivery must not regress to manifest-only, canvas-only, or dry-run completion.
-
-## M80 Provider Runtime Notes
-
-- `workflowctl capability health --verified-only` must only include capabilities backed by live probe evidence or recent successful runtime invocation.
-- `workflowctl capability routes stats --days 30` is the operator-facing provider route ledger summary: transport, modalities, auth source, live-proof status, latency, failure class, fallback policy, and cost hint.
-- Descriptor presence, configured tools, MCP profile existence, or a failed runtime attempt cannot by itself mark a provider as `verified_ready`.
-
-## M81 Asset Factory Notes
-
-- `workflowctl asset factory run --style-guide ... --manifest ... --output-dir ...` is the reusable asset production entry. The prompt manifest must list assets with name, modality, provider, filename, prompt, and required flag.
-- `workflowctl asset factory qa --asset-manifest ... --evidence-dir ...` runs visual QA over completed image assets and writes `asset_factory_qa_report.json`.
-- Required assets missing, blocked, or lacking artifact paths force `NO-GO`; generated manifests alone do not count as commercial readiness.
-- Cocos-specific `workflowctl game cocos-assets` remains as a wrapper over the generic factory plus Cocos coverage checks.
-
-## M82 Active Truth Notes
-
-- `workflowctl governance active-truth-check --strict` checks that active docs do not describe completed milestones as planned/current/open.
-- The check currently catches stale M79 planned language, stale M78 baseline after M79 evidence, debt IDs duplicated in `repaid_items` and `open_items`, and open items claiming `current_status=repaid`.
-- M82 dogfood caught a real DeepSeek direct API issue: router-style `deepseek/deepseek-v4-flash` ids are now normalized to direct API model ids before proposal calls.
-- This command is part of the workflow self-development gate before declaring future capability-layer milestones ready.
-
-## M83 Pipeline Template Notes
-
-- `workflowctl pipeline preview --template commercial_cocos_game` exposes the reusable commercial Cocos pipeline.
-- `workflowctl pipeline run --template commercial_cocos_game --execute-capabilities --require-build --require-commercial` must execute real stages; unexecuted capability stages remain `blocked`.
-- The template executes asset factory first and passes the resulting commercial asset manifest into Cocos generation instead of letting Cocos hide asset generation inside a one-off script.
-- Commercial readiness requires both editor-visible Cocos production checks and browser/playtest checks to pass.
+- `state/` 是生成态目录，默认不进入 Git；工作树只应保留 `.gitkeep`、必要的本地 `workflow.db` 和正在使用的短期 evidence。
+- 大型 Cocos 工程、APK/HTML 包、pytest 临时目录、旧 evidence、离线验证 scratch DB 都应按需清理。
+- 清理文件不等于清理功能。商业化游戏 pipeline 代码、测试和说明继续保留。
+- 删除递归目录前必须确认目标解析后仍在当前 workspace 或明确目标目录内。

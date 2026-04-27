@@ -10,17 +10,16 @@ from typing import Any
 
 ACTIVE_TRUTH_FILES = [
     "README.md",
+    "AGENTS.md",
     "docs/current_development_workflow.md",
     "docs/milestone_history.md",
     "docs/tech-debt-registry.md",
-    "M77_ISSUE_REGISTER.md",
-    "M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md",
 ]
 
 STALE_M79_PATTERNS = [
     ("m79_planned_title", re.compile(r"M79\s+Cocos\s+Commercial\s+Pipeline\s+Repair\s+Planned", re.IGNORECASE)),
-    ("m79_pre_completion_gate", re.compile(r"M79\s*(?:通过|完成)前")),
-    ("m79_current_priority", re.compile(r"M79[^\\n]*(?:当前最优先|当前主线|focused on true commercial)", re.IGNORECASE)),
+    ("m79_pre_completion_gate", re.compile(r"M79[^\n]*(?:通过前|完成前|鍓|planned|before completion)", re.IGNORECASE)),
+    ("m79_current_priority", re.compile(r"M79[^\n]*(?:当前最优先|当前主线|focused on true commercial)", re.IGNORECASE)),
     ("m79_open_acceptance", re.compile(r"(?:remain open M79|M79 acceptance work)", re.IGNORECASE)),
 ]
 
@@ -81,13 +80,16 @@ def _load_tech_debt(root: Path) -> dict[str, Any]:
 
 
 def _extract_current_version(readme_text: str) -> str | None:
-    match = re.search(r"^## Current Version:\s*(.+)$", readme_text, flags=re.MULTILINE)
+    match = re.search(r"^## (?:Current Version|当前状态)[:：]\s*(.+)$", readme_text, flags=re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
 def _extract_latest_baseline(history_text: str) -> str | None:
-    match = re.search(r"最新接受实现基线：`([^`]+)`", history_text)
-    return match.group(1).strip() if match else None
+    match = re.search(r"(?:Latest accepted baseline|最新接受实现基线)[:：]\s*`([^`]+)`", history_text)
+    if match:
+        return match.group(1).strip()
+    legacy = re.search(r"`(M[0-9]+)`", history_text)
+    return legacy.group(1).strip() if legacy else None
 
 
 def _check_stale_m79_truth(docs: dict[str, str], facts: dict[str, Any]) -> list[dict[str, Any]]:
@@ -114,17 +116,18 @@ def _check_stale_m79_truth(docs: dict[str, str], facts: dict[str, Any]) -> list[
 def _check_current_version(facts: dict[str, Any]) -> list[dict[str, Any]]:
     current_version = str(facts.get("current_version") or "")
     issues: list[dict[str, Any]] = []
-    if facts.get("m81_commit_present") and not any(token in current_version for token in ("M81", "M82", "M83")):
+    current_tokens = ("M81", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "M90")
+    if facts.get("m81_commit_present") and not any(token in current_version for token in current_tokens):
         issues.append(
             {
                 "code": "current_version_not_m81_after_m81_commit",
                 "severity": "P2",
                 "file": "README.md",
-                "detail": "git history contains M81, but README current version does not mention M81.",
+                "detail": "git history contains M81, but README current version does not mention M81 or newer.",
                 "current_version": current_version,
             }
         )
-    elif facts.get("m80_commit_present") and not any(token in current_version for token in ("M80", "M81", "M82", "M83")):
+    elif facts.get("m80_commit_present") and not any(token in current_version for token in ("M80", *current_tokens)):
         issues.append(
             {
                 "code": "current_version_stale_after_m80_commit",

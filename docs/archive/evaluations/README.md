@@ -8,7 +8,6 @@ Current truth lives in:
 
 - `README.md`
 - `AGENTS.md`
-- `PROJECT_OVERVIEW_FOR_BEGINNERS.md`
 - `docs/current_development_workflow.md`
 - `docs/milestone_history.md`
 - `docs/tech-debt-registry.md`

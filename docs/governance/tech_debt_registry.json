@@ -1,415 +1,154 @@
 {
   "schema_version": "v1",
+  "updated_at": "2026-04-27",
+  "summary": "M84 hygiene cleanup keeps commercial game pipeline code as an active capability, but resets commercial readiness claims after real playtest feedback showed the generated game is not yet commercial-playable. M85-M90 shifts the next long-term priority to LangGraph/workflow convergence so the project does not keep reimplementing generic orchestration primitives.",
   "repaid_items": [
     {
-      "debt_id": "TD-002",
-      "description": "`PresetResolver` only supported `manual_select` and had no deterministic suggestion path",
-      "introduced_in": "M0",
-      "repaid_in": "M1",
-      "result": "Added deterministic offline `suggest()` while keeping execution explicit"
-    },
-    {
-      "debt_id": "TD-003",
-      "description": "`HandoffLite` was frozen only as a contract and not persisted",
-      "introduced_in": "M0",
-      "repaid_in": "M1",
-      "result": "Added persistence plus `status-detail`, `handoffs`, smoke, and offline-validation coverage"
-    },
-    {
-      "debt_id": "TD-004",
-      "description": "thin compile existed only as an internal placeholder and not as a public lifecycle surface",
-      "introduced_in": "M0",
-      "repaid_in": "M1",
-      "result": "Added explicit public `compile / recompile / resume` lifecycle surfaces"
-    },
-    {
-      "debt_id": "TD-005",
-      "description": "execution initially relied on a shell-only lane with no stable GPT-capable CLI route",
-      "introduced_in": "M0",
-      "repaid_in": "M5 Phase 3",
-      "result": "`WorkerRouter`, multi-route capability selection, adapter pinning, `NoopAdapter`, and `OpenCodeAdapter` now provide a real multi-adapter execution baseline"
-    },
-    {
-      "debt_id": "TD-011",
-      "description": "`packages/core_domain/services.py` concentrated too much orchestration, projection, memory, simulation, and lifecycle logic in one file",
-      "introduced_in": "M2-M7",
-      "repaid_in": "Pre-M8 Phase C",
-      "result": "Extracted bounded service modules for projection/reporting, memory/simulation, and lifecycle/review while keeping `OrchestratorService` as the public facade"
-    },
-    {
-      "debt_id": "TD-016",
-      "description": "subprocess-backed adapters did not enforce declared timeout budgets and inherited too much parent environment state",
-      "introduced_in": "M5-M7",
-      "repaid_in": "Pre-M8 Phase B",
-      "result": "Added timeout enforcement, subprocess env allowlisting, interpreter-portable compile commands, and explicit local execution trust-boundary docs"
-    },
-    {
-      "debt_id": "TD-012",
-      "description": "`infra/scripts/offline_validation.py` had grown into an oversized validation script instead of a modular validation package",
-      "introduced_in": "M5-M7",
-      "repaid_in": "Pre-M8 Phase D",
-      "result": "Split validation flows into `infra/validation/` modules and reduced `offline_validation.py` to a thin entry wrapper"
-    },
-    {
-      "debt_id": "TD-013",
-      "description": "runtime-brief and memory-retrieval assembly lacked a hard context-budget preflight and explicit pruning guard path",
-      "introduced_in": "M5-M7",
-      "repaid_in": "Pre-M8 Phase D",
-      "result": "Added diagnostics-first `context_budget`, gateway preflight guarding, trace context, and ADR-006 for the next-step pruning strategy"
-    },
-    {
-      "debt_id": "TD-014",
-      "description": "key runtime dependencies were pinned with narrow upper bounds, making routine compatibility and security updates harder than necessary",
-      "introduced_in": "M5-M7",
-      "repaid_in": "Pre-M8 Phase E",
-      "result": "Widened core runtime upper bounds selectively and documented the repository's dependency/versioning policy before `M8`"
-    },
-    {
-      "debt_id": "TD-015",
-      "description": "governance reports parsed Markdown debt prose directly instead of consuming a structured canonical source",
-      "introduced_in": "M3-M7",
-      "repaid_in": "Pre-M8 Phase D",
-      "result": "Added canonical JSON governance sources with Markdown compatibility fallback and explicit source-contract reporting"
-    },
-    {
-      "debt_id": "TD-017",
-      "description": "clean source-package/export flow was not productized, so review or handoff snapshots could include local state, DBs, artifacts, and repo noise",
-      "introduced_in": "M5-M7",
-      "repaid_in": "Pre-M8 Phase E",
-      "result": "Added source-package manifest/export tooling, minimal automation gates, and freeze-review provenance for handoff claims"
-    },
-    {
-      "debt_id": "TD-018",
-      "description": "canonical repo docs mixed local absolute links and current/historical guidance without a portable source map",
-      "introduced_in": "M1-M7",
-      "repaid_in": "Pre-M8 Phase E",
-      "result": "Finished portable-link cleanup for living docs and formalized current-vs-historical doc governance in the active workflow guide"
-    },
-    {
-      "debt_id": "TD-006",
-      "description": "review policy breadth stopped at `auto_only`, `recommended`, `human_required`, and `mandatory`; `optional` was reference-only",
-      "introduced_in": "M0",
-      "repaid_in": "M9",
-      "result": "Added executable `optional` advisory-review runtime behavior, seed coverage, and governance/readiness parity"
-    },
-    {
-      "debt_id": "TD-007",
-      "description": "`run_events` and trace export lacked replay-grade linkage and first-class run metrics",
-      "introduced_in": "M0",
-      "repaid_in": "M9",
-      "result": "Added replay-packet projection, end-to-end run metrics, and richer audit/status observability surfaces"
-    },
-    {
-      "debt_id": "TD-008",
-      "description": "the durable pilot still lacked explicit interrupt/resume/checkpoint lineage and reconciliation semantics",
-      "introduced_in": "M0",
-      "repaid_in": "M9",
-      "result": "Added structured durable lineage history, durable transition inspection, and terminal/review checkpoint reconciliation"
-    },
-    {
-      "debt_id": "TD-010",
-      "description": "governance visibility remained document-centric and lacked quantitative automation and alerts",
-      "introduced_in": "M0",
-      "repaid_in": "M9",
-      "result": "Added quantitative governance metrics, automated alert reports, and updated release-readiness integration"
-    },
-    {
-      "debt_id": "TD-001",
-      "description": "claim and worker-lease semantics remained local-only and did not provide explicit repository-owned ownership topology",
-      "introduced_in": "M0",
-      "repaid_in": "M10",
-      "result": "Added explicit claim/worker ownership topology, attempt-aware claim and lease linkage, coherent ownership projections, and local batch-domain semantics without turning the runtime into a multi-node scheduler"
-    },
-    {
-      "debt_id": "TD-009",
-      "description": "execution semantics were still serial-first and did not implement claim/lease/barrier-aware local batch concurrency",
-      "introduced_in": "M0",
-      "repaid_in": "M10",
-      "result": "Added local batch-barrier events, parallel batch resume semantics, projection surfaces, and CLI/API batch-resume entry points for the supported local control plane"
-    },
-    {
-      "debt_id": "TD-020",
-      "description": "the full operator web UI and human control surface were still missing beyond CLI/API and the read-mostly TUI",
-      "introduced_in": "M5-M13",
-      "repaid_in": "M14",
-      "result": "Added a built-in FastAPI web operator surface with dashboard, run explorer, pending-review console, governance/config pages, and controller-owned human action routes"
-    },
-    {
-      "debt_id": "TD-019",
-      "description": "hosted remote worker pools and multi-node scheduling were still not productized beyond the shipped local-first / loopback external-worker baseline",
-      "introduced_in": "M10",
-      "repaid_in": "M15",
-      "result": "Added single-control-plane remote HTTP worker pools, callback-driven lease renewal/completion recording, remote worker bootstrap packaging, and remote worker recovery coverage while keeping repository truth in the control plane"
-    },
-    {
-      "debt_id": "TD-021",
-      "description": "a centralized scheduler-authority first slice existed for multi-control-plane identity, lease proposal, and arbitration provenance, but true distributed scheduler consensus and cross-control-plane failover were still incomplete",
-      "introduced_in": "M15",
-      "repaid_in": "M20",
-      "result": "Added a single-store quorum-style scheduler-authority layer, committed cross-control-plane lease ownership, fencing-token enforced remote callbacks, takeover handoff lineage, cluster operator surfaces, and offline cutover validation while keeping repository truth inside the control planes"
-    },
-    {
-      "debt_id": "TD-STRUCT-002",
-      "description": "post-`M31 Phase 0` truth was still partially duplicated across freeze reviews, the current workflow guide, retained phase/task-card artifacts, and root rebaseline bundles until the opening material was fully absorbed and pruned",
-      "introduced_in": "M31",
-      "repaid_in": "M32 Phase 0",
-      "result": "Absorbed the opening-bundle and backup-workspace truth into accepted freeze reviews and archive notes, then cleaned the repository back to one primary worktree"
-    },
-    {
-      "debt_id": "TD-STRUCT-004",
-      "description": "orchestration logic still carried `project_delivery`-shaped assumptions even after the first shared graph substrate extraction",
-      "introduced_in": "M30-M31",
-      "repaid_in": "M33 Phase 0",
-      "result": "Contracted default planning, preview, and execution onto a shared orchestration service and canonical plan builder for the shipped multi-role presets"
-    },
-    {
-      "debt_id": "TD-CODEX-CLI-001",
-      "description": "`CodexAdapter` assembled `codex exec` with prompt/options ordering and Windows text handling that could break model selection or artifact output",
-      "introduced_in": "M41 Phase 8",
-      "repaid_in": "M41 Phase 13",
-      "result": "Codex CLI execution now passes options before prompt, uses stdin for real prompts, decodes UTF-8 safely, creates artifact directories, and supports bounded local timeout overrides"
-    },
-    {
-      "debt_id": "TD-DOGFOOD-002",
-      "description": "orchestration child failures could be silently approved as completed, hiding non-zero evidence during fallback",
-      "introduced_in": "M41 Phase 13 dogfood",
-      "repaid_in": "M41 Phase 13",
-      "result": "Failed child runs now stay failed or are rejected before fallback; successful artifact-only child runs can be approved only when return_code is zero"
-    },
-    {
-      "debt_id": "TD-MODEL-ACCESS-001",
-      "description": "local Codex CLI could not access the desired dogfood model version before the CLI upgrade",
-      "introduced_in": "M41 Phase 8",
-      "repaid_in": "M41 Phase 13",
-      "result": "Upgraded npm `@openai/codex` to `0.125.0`; local `codex exec --model gpt-5.5` smoke succeeded"
-    },
-    {
-      "debt_id": "TD-CODEX-PROCESS-001",
-      "description": "Codex CLI on Windows could leave node/native child processes alive after workflow timeout, causing long dogfood runs to hang",
-      "introduced_in": "M42 smoke",
-      "repaid_in": "M42",
-      "result": "Real Codex CLI execution now uses process-tree timeout cleanup; the M42 management-cluster tree-timeout smoke completed with no residual `codex.exe`"
-    },
-    {
-      "debt_id": "TD-SHELL-UTF8-001",
-      "description": "ShellAdapter captured subprocess output in text mode with the platform default encoding, which could fail or corrupt Chinese/UTF-8 artifact output on Windows",
-      "introduced_in": "M43 PDF artifact smoke",
-      "repaid_in": "M43",
-      "result": "ShellAdapter now captures bytes and decodes with UTF-8 plus system-codepage fallback; Chinese artifact stdout is covered by regression tests"
-    },
-    {
-      "debt_id": "TD-CLUSTER-GRAPH-001",
-      "description": "Dynamic multi-cluster launches selected several clusters, but status detail projected only the first cluster graph",
-      "introduced_in": "M45 dynamic routing smoke",
-      "repaid_in": "M46",
-      "result": "Cluster preview now builds a composite graph with all selected cluster_template_ids and per-cluster subgraphs"
-    },
-    {
       "debt_id": "TD-STRUCT-001",
-      "description": "`OrchestratorService` and adjacent CLI/Web/chat surfaces still concentrated too much behavior behind large facade files",
+      "description": "Orchestrator/CLI/Web/chat surfaces concentrated too much behavior in large facade files.",
       "introduced_in": "M31",
       "repaid_in": "M62/M63",
-      "result": "Reduced `services.py` below the 2600-line ratchet, capped direct facade methods at <=120, split interaction services, converted chat runtime into a package facade, split CLI command families, and split the Web UI shell with receipt-gated high-risk actions"
+      "result": "Facade ratchets, interaction split, chat runtime package, CLI command families, and Web UI split landed."
     },
     {
       "debt_id": "TD-STRUCT-003",
-      "description": "scheduler-authority naming and docs could overstate consensus-style guarantees beyond the local-first lease semantics",
+      "description": "scheduler-authority naming could overstate consensus guarantees beyond local lease semantics.",
       "introduced_in": "M20-M31",
       "repaid_in": "M65/M66",
-      "result": "Documented `LocalSchedulerLeaseArbiter` as the default local lease arbiter and retained scheduler-authority names only as legacy compatibility or explicit cluster-on surfaces"
+      "result": "Default semantics now use LocalSchedulerLeaseArbiter; scheduler-authority names are legacy compatibility or explicit cluster-on surfaces."
     },
     {
       "debt_id": "TD-STRUCT-005",
-      "description": "capability health still relied too much on descriptor readiness instead of runtime probe evidence",
+      "description": "capability health relied too much on descriptor readiness instead of runtime probe evidence.",
       "introduced_in": "M30-M31",
       "repaid_in": "M64",
-      "result": "Added `CapabilityProbeResult`, runtime ledger evidence, API/CLI health projection, and require-live probes that passed for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain"
-    },
-    {
-      "debt_id": "TD-STRUCT-006",
-      "description": "future platform objects from the M31 bundle and ZIP lacked a governed promotion path into current contracts",
-      "introduced_in": "M31",
-      "repaid_in": "M66 governance classification",
-      "result": "Classified these objects as archived reference material outside the active local-personal runtime scope; no current contract claims them ready, and any future promotion must start with a new explicit governance task"
-    },
-    {
-      "debt_id": "TD-DOGFOOD-001",
-      "description": "multi-agent dogfood capability claims still depended on degraded/fallback paths for several provider lanes",
-      "introduced_in": "M41",
-      "repaid_in": "M64",
-      "result": "`workflowctl capability probe --provider all --require-live` passed for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain with evidence under `state/m61_m66_execution/capability_probes/`"
-    },
-    {
-      "debt_id": "TD-CODEX-LATENCY-001",
-      "description": "Codex CLI review/doc artifact-only roles could be slow and lacked role-level latency diagnostics",
-      "introduced_in": "M41 Phase 13",
-      "repaid_in": "M66",
-      "result": "Shrank dogfood artifact prompts by capping runtime brief, handoff context, and responsibility lists, and added role-level prompt telemetry to Codex execution metadata with regression coverage"
-    },
-    {
-      "debt_id": "TD-MULTIMODAL-001",
-      "description": "MMX/Vertex multimodal lanes were modeled but lacked live primary-path evidence",
-      "introduced_in": "M41",
-      "repaid_in": "M64",
-      "result": "Require-live capability probes produced successful MMX and Vertex evidence; missing credentials or fallback-only results are no longer accepted as closeout success"
+      "result": "CapabilityProbeResult, runtime ledger evidence, API/CLI health projection, and require-live probes were added."
     },
     {
       "debt_id": "M67-SEC-001",
-      "description": "OperatorActionReceipt validated action/workspace/ttl/single-use but did not bind the confirmed receipt to the actual request scope through scope_hash or scope_payload",
-      "introduced_in": "M49/M66 receipt gate",
+      "description": "OperatorActionReceipt lacked request scope binding.",
+      "introduced_in": "M49/M66",
       "repaid_in": "M67 P2",
-      "result": "Added scope_hash and scope_payload to the contract/DB/repository, bound high-risk API/UI/chat receipt consumption to actual run/body/session scope, rejected legacy receipts without scope_hash, and moved watchdog auto-apply from mutating GET to POST plus receipt"
+      "result": "Added scope_hash and scope_payload, and rejected legacy high-risk receipts without scope binding."
     },
     {
       "debt_id": "M67-PROBE-001",
-      "description": "Capability live probes could accept generic, simulated, dry-run, or fallback-only provider output as verified readiness for non-codex/opencode providers",
-      "introduced_in": "M64/M66 capability closeout",
+      "description": "Capability probes could accept simulated, dry-run, generic, or fallback-only evidence.",
+      "introduced_in": "M64/M66",
       "repaid_in": "M67 P3",
-      "result": "Added provider-specific M67 live-proof contracts, rejected generic/simulated/dry-run/fallback-only evidence, forced Codex/OpenCode/Claude/LangChain probe paths to emit scoped proof after real backend execution, and passed require-live probes for shell, Codex, OpenCode, MMX, Vertex, Claude, and LangChain"
+      "result": "Provider-specific live-proof contracts now reject false-positive readiness evidence."
     },
     {
       "debt_id": "M67-VAL-001",
-      "description": "offline validation was not shardable/freshness-safe enough; timeout paths could leave stale success reports available to operators",
-      "introduced_in": "M61-M66 validation closeout",
+      "description": "offline validation lacked shard/freshness/timeout reporting.",
+      "introduced_in": "M61-M66",
       "repaid_in": "M67 P4",
-      "result": "Added quick/full/shard validation entrypoints, per-flow timeout reports with command traces and last-command evidence, result-file subprocess transfer to avoid Windows multiprocessing Queue deadlocks, a quick CLI smoke path separate from the full closeout flow, scoped receipt v2 helpers for API/cluster validation, and milestone-neutral pytest basetemp"
+      "result": "Added quick/full/shard entrypoints, timeout traces, and last-command evidence."
     },
     {
       "debt_id": "M67-WEB-001",
-      "description": "operator Web UI still depends on inline CSS/JS allowances and contribution game templates still contain browser-surface innerHTML paths",
-      "introduced_in": "M63/M66 Web split",
+      "description": "Operator Web UI still depended on inline CSP exceptions and unsafe browser-surface paths.",
+      "introduced_in": "M63/M66",
       "repaid_in": "M67 P5",
-      "result": "Moved operator UI CSS/JS to local static assets, removed unsafe-inline from CSP, gated reconcile/high-risk UI actions through receipt confirmation, and replaced contribution game template innerHTML clearing with DOM replaceChildren."
+      "result": "Moved operator CSS/JS to static assets, removed unsafe-inline, and replaced unsafe innerHTML paths."
     },
     {
-      "debt_id": "M67-SCHED-001",
-      "description": "default scheduler wording and boot path are not fully aligned with local lease arbiter semantics; cluster-era support objects and repositories remain too visible in the flag-off path",
-      "introduced_in": "M65/M66 scheduler rename",
-      "repaid_in": "M67 P6",
-      "result": "Changed default Web and CLI wording to local scheduler lease arbiter semantics, kept legacy scheduler-authority JSON/API names compatible, moved default support import to SchedulerLeaseProjectionService, and verified flag-off construction avoids scheduler_authority and legacy support modules while flag-on lazy imports the cluster runtime."
+      "debt_id": "M73-MCP-001",
+      "description": "MCP include_mcp behavior could expose too broad a profile set.",
+      "introduced_in": "M73",
+      "repaid_in": "M73",
+      "result": "Added canonical tool id, selector, and collision guard semantics."
     },
     {
-      "debt_id": "M67-ARCH-001",
-      "description": "hot-file slimming and default-path cleanup needed to reduce services.py, service_interaction_chat.py, local_scheduler_lease_arbiter.py, web_ui_components.py, local game artifacts, and core_domain/test_matrix.py toward the M67 target shape",
-      "introduced_in": "M62-M66 decomposition carry-forward",
-      "repaid_in": "M67 P7 / M73 preflight",
-      "result": "Extracted RepositoryBundle/WorkerRuntimeBundle and service inspection/chat LLM mixins, split local scheduler handoff helpers and game templates into smaller modules, moved test matrix implementation to infra with a compatibility wrapper, removed private helper re-exports from the chat runtime facade, deleted the stale core_domain local game artifact shim in M73 preflight, and verified targeted tests plus line-count ratchets."
+      "debt_id": "M74-PIPE-001",
+      "description": "Pipeline lacked a formal product-layer contract.",
+      "introduced_in": "M74",
+      "repaid_in": "M74",
+      "result": "Added WorkflowPipeline and PipelineStage contracts."
     },
     {
-      "debt_id": "M67-WF-001",
-      "description": "workflow self-development still needed tracked M67 task-card, route, batch-resume, evidence-manifest, and operator-packet proof for the active milestone rather than relying on manual execution alone",
-      "introduced_in": "M67 intake",
-      "repaid_in": "M67 P8",
-      "result": "Ran real workflow task-card execution for simple, medium, and complex tasks; generated route previews, tracked evidence manifest, checkpoint, and operator packet; and fixed workflow bugs found during dogfood before closing the phase."
-    },
-    {
-      "debt_id": "M67-AUTO-001",
-      "description": "bounded-autonomy policy was fragmented: execute=true and auto-apply style paths needed a shared auditable authorization boundary instead of route-specific checks",
-      "introduced_in": "M67 autonomy-policy evaluation",
-      "repaid_in": "M67 P2/P5/P8",
-      "result": "Bound high-risk execute, batch-resume, reconcile apply, chat confirmation, and watchdog auto-apply paths to scoped OperatorActionReceipt consumption, rejected GET auto-apply mutation, and verified the receipt boundary through API/Web/validation closeout. Broader Command/PolicyEngine/AutomationLease consolidation remains a non-blocking M69 control-plane design concern."
-    },
-    {
-      "debt_id": "M67-ROUTE-001",
-      "description": "adaptive routing and dynamic cluster routing had only P0 rehearsal evidence and still needed end-to-end simple/medium/complex workflow tasks plus a successful batch-resume max-workers=2 proof",
-      "introduced_in": "M67 workflow-dogfood plan",
-      "repaid_in": "M67 P8",
-      "result": "Completed MiniMax/OpenCode simple lane, DeepSeek medium lane, Codex fallback, cluster_parallel complex orchestration, cluster route stats, and a batch-resume --max-workers 2 run over disjoint simple tasks."
-    },
-    {
-      "debt_id": "M69-CONTROL-001",
-      "description": "capability invocation policy still needed one auditable decision surface tying provider live proof, write_set requirements, mutation mode, and operator receipt state together",
-      "introduced_in": "M67-M68 trusted closeout",
-      "repaid_in": "M69",
-      "result": "Added capability control-plane policy decisions, exposed write_set/live-proof/receipt decisions in invocation envelopes and execution receipts, and added CLI/test coverage for allowed, blocked, and needs_receipt outcomes."
-    },
-    {
-      "debt_id": "M70-PROVIDER-001",
-      "description": "provider facts were easy to misstate: Vertex, gcloud, Gemini CLI, OpenCode, MMX, Claude, LangChain, and Shell did not share one contract registry",
-      "introduced_in": "M67-M69 provider routing discussion",
-      "repaid_in": "M70",
-      "result": "Added provider contract registry and CLI provider-contracts output. The docs and contract now state that Gemini CLI is not currently an adapter, Gemini-family access goes through Vertex, and gcloud is a credential/environment tool rather than a worker adapter."
-    },
-    {
-      "debt_id": "M71-CONCURRENCY-001",
-      "description": "batch-resume could execute in parallel but lacked a formal preflight contract for disjoint write_set auditing, dirty workspace degradation, SQLite readiness, and partial-failure resume guidance",
-      "introduced_in": "M67-M70 workflow concurrency dogfood",
-      "repaid_in": "M71",
-      "result": "Added a parallel batch contract, serial degradation for write_set conflicts/dirty write_set/SQLite lock, richer batch result metadata, partial failure resume hints, and cluster route stats source/dynamic counters."
-    },
-    {
-      "debt_id": "M72-GOV-001",
-      "description": "workflow self-development closeout evidence and the multi-task-card phase rule were still human-convention only rather than machine-checkable",
-      "introduced_in": "M67-M71 governance closeout",
-      "repaid_in": "M72",
-      "result": "Added workflowctl governance self-development-manifest, which checks execution reports, task cards, evidence files, operator packets, git commits, and the rule that single-card phases require a single_card_exception marker."
-    },
-    {
-      "debt_id": "M77-COCOS-001",
-      "description": "Cocos E2E proved a technical build/playtest path but did not deliver editor-visible commercial UI, art/audio binding, animation, particles, skins, props, and level flow",
-      "introduced_in": "M76 Cocos E2E review",
-      "repaid_in": "M79",
-      "result": "M79 generated a commercial Cocos pipeline v1 with editor-visible scene/component/UI structure, generated SpriteFrame/AudioClip binding manifests, animation/particle evidence, skin/level/prop/ad entry points, Web Mobile build, and browser playtest evidence."
-    },
-    {
-      "debt_id": "M80-PROVIDER-001",
-      "description": "provider health and routing evidence needed one runtime truth view so descriptor-only readiness was not confused with verified provider readiness",
-      "introduced_in": "M80 provider runtime stabilization",
-      "repaid_in": "M80",
-      "result": "Added verified-only capability health, provider alias live-proof aggregation, and 30-day provider route stats with success, failure class, latency, fallback policy, and cost hints."
+      "debt_id": "M75-PIPE-EXEC-001",
+      "description": "Pipeline lacked a minimum execution entrypoint.",
+      "introduced_in": "M75",
+      "repaid_in": "M75",
+      "result": "Added serial workflowctl pipeline run with stage evidence and short-circuit semantics."
     },
     {
       "debt_id": "M77-PROVIDER-001",
-      "description": "OpenAI API, Codex CLI, MiniMax/DeepSeek direct API, OpenCode CLI, MMX/GCP/Vertex generation, MCP tools, and LangChain experimental agent roles were too easy to conflate in docs and routing policy",
-      "introduced_in": "M77 provider-access evaluation",
+      "description": "OpenAI API, Codex CLI, MiniMax/DeepSeek API, OpenCode CLI, MMX/GCP/Vertex generation, MCP tools, and LangChain were too easy to conflate.",
+      "introduced_in": "M77",
       "repaid_in": "M80",
-      "result": "Provider access contracts, verified-only capability health, provider alias live-proof aggregation, and provider route stats now separate API, CLI, MCP, asset generation, and experimental agent surfaces."
+      "result": "Provider contracts, verified-only capability health, provider alias live-proof aggregation, and route stats separate API, CLI, MCP, asset generation, and experimental agent surfaces."
     },
     {
       "debt_id": "M77-MMX-001",
-      "description": "MMX/MiniMax was primarily wired as text evidence rather than true image, speech, and music asset generation",
-      "introduced_in": "M77 multimodal generation evaluation",
+      "description": "MMX/MiniMax was primarily wired as text evidence rather than true image, speech, and music generation.",
+      "introduced_in": "M77",
       "repaid_in": "M81",
       "result": "MiniMax image/speech/music wrappers, binary live proof, Cocos asset manifest, reusable asset factory, hash dedupe, retry, and required-asset NO-GO gates are implemented."
     },
     {
       "debt_id": "M77-VERTEX-001",
-      "description": "Vertex was primarily wired as text evidence while gcloud/GCP TTS were conflated with Vertex generation APIs",
-      "introduced_in": "M77 Vertex evaluation",
+      "description": "Vertex, gcloud, and GCP TTS boundaries were unclear.",
+      "introduced_in": "M77",
       "repaid_in": "M81",
-      "result": "GCP TTS is split as gcp_tts_api, Vertex Imagen and Gemini visual-review wrappers/probes are live, and M81 asset factory QA consumes Vertex visual review as a review/fallback path."
-    },
-    {
-      "debt_id": "M82-ACTIVE-TRUTH-001",
-      "description": "active docs could again describe completed milestone work as planned/current/open after evidence and commits already existed",
-      "introduced_in": "M82 workflow self-development closeout",
-      "repaid_in": "M82",
-      "result": "Added workflowctl governance active-truth-check, stale M79/baseline/debt consistency checks, M82 dogfood evidence, and a DeepSeek direct API model-prefix normalization regression."
+      "result": "GCP TTS is split as gcp_tts_api; Vertex Imagen and Gemini visual-review wrappers/probes are live and consumed by asset factory QA."
     },
     {
       "debt_id": "M77-PIPE-001",
-      "description": "Pipeline run still needed proof that stages truly execute workflow runs, capability invocations, validation gates, failure short-circuiting, and evidence chain output",
-      "introduced_in": "M75-M76 downgrade review",
+      "description": "Pipeline run needed proof that stages truly execute, short-circuit on failure, and write evidence.",
+      "introduced_in": "M75-M76",
       "repaid_in": "M83",
-      "result": "Added the commercial_cocos_game template and real M83 pipeline evidence: asset factory, Cocos generation/build/playtest, commercial readiness gate, blocked short-circuit semantics, and stage evidence paths."
+      "result": "commercial_cocos_game template executes asset factory, Cocos generation/build/playtest, readiness gate, and writes stage evidence."
+    },
+    {
+      "debt_id": "M82-ACTIVE-TRUTH-001",
+      "description": "Active docs could describe completed work as planned/current/open.",
+      "introduced_in": "M82",
+      "repaid_in": "M82",
+      "result": "Added workflowctl governance active-truth-check and stale truth checks."
     }
   ],
   "open_items": [
     {
-      "debt_id": "M77-LANGCHAIN-001",
-      "description": "LangChain remains present as an agent adapter but does not currently provide a mainline capability that direct APIs, MCP broker, or CLI agents cannot cover",
-      "introduced_in": "M77 LangChain utility evaluation",
-      "planned_repayment_phase": "M77 P5",
+      "debt_id": "M77-COCOS-001",
+      "description": "Cocos game pipeline can generate, build, playtest, and package a project, but the generated result is not yet commercial-playable: UI is primitive, panels are shallow, level switching is mostly state mutation, audio/voice design is poor, and double-click HTML launch is unsupported.",
+      "introduced_in": "M76-M84 commercial game evaluation",
+      "planned_repayment_phase": "Next commercial game quality milestone",
       "current_status": "partially_repaid",
-      "blocking_impact": "LangChain is now documented and surfaced as experimental/opt-in; old adapter compatibility remains"
+      "blocking_impact": "Blocks claiming final commercial game readiness; does not block preserving and improving the commercial game pipeline."
+    },
+    {
+      "debt_id": "M84-GAME-QA-001",
+      "description": "Commercial readiness tests rely too much on internal E2E state flags and not enough on player-visible UI, usable panels, gameplay depth, audio experience, and mobile visual quality.",
+      "introduced_in": "M84 real generated game review",
+      "planned_repayment_phase": "Next commercial game quality milestone",
+      "current_status": "open",
+      "blocking_impact": "Blocks future GO decisions for commercial game generation until the gate distinguishes technical smoke, production scaffold, and commercial-playable output."
+    },
+    {
+      "debt_id": "M85-LANGGRAPH-DUP-001",
+      "description": "Workflow has custom orchestration, checkpoint, review gate, resume, parallelism, and repair-loop behavior that overlaps with LangGraph primitives.",
+      "introduced_in": "M85 LangGraph/workflow convergence evaluation",
+      "planned_repayment_phase": "M85-M90 LangGraph workflow convergence",
+      "current_status": "open",
+      "blocking_impact": "Blocks confident long-term capability expansion because new development may continue duplicating LangGraph features and increase future migration cost."
+    },
+    {
+      "debt_id": "M77-LANGCHAIN-001",
+      "description": "LangChain remains present as an agent adapter but does not currently provide a mainline capability that direct APIs, MCP broker, or CLI agents cannot cover.",
+      "introduced_in": "M77 LangChain utility evaluation",
+      "planned_repayment_phase": "Future opt-in agent framework evaluation",
+      "current_status": "partially_repaid",
+      "blocking_impact": "Non-blocking; documented as experimental/opt-in."
     },
     {
       "debt_id": "M67-CARRY-001",
-      "description": "repositories.py, service_lifecycle.py, service_projection.py, interaction_catalog.py, and models.py remain large; they are registered as carry-forward unless they block the M67 hot-file targets directly",
+      "description": "repositories.py, service_lifecycle.py, service_projection.py, interaction_catalog.py, and models.py remain large.",
       "introduced_in": "M47-M66 structure evaluation",
-      "planned_repayment_phase": "M73+ capability-driven maintenance",
+      "planned_repayment_phase": "Capability-driven maintenance",
       "current_status": "carry_forward",
-      "blocking_impact": "non-blocking maintainability debt; revisit only if capability development exposes real friction"
+      "blocking_impact": "Non-blocking maintainability debt; revisit when capability development exposes real friction."
     }
   ],
   "obsolete_items": [],
@@ -420,6 +159,7 @@
     "Do all capability providers pass provider-specific live-proof contracts without simulated, dry-run, generic, or fallback-only evidence?",
     "Do active docs avoid claiming zero debt, scheduler consensus, automatic PR publication, Gemini CLI support, or provider readiness beyond verified runtime facts?",
     "Does workflowctl governance self-development-manifest remain GO before declaring a milestone ready for capability-layer work?",
-    "Do active game-pipeline docs and gates distinguish technical smoke, E2E scaffold success, and final commercial Cocos readiness?"
+    "Do active game-pipeline docs and gates distinguish technical smoke, E2E scaffold success, production scaffold success, and final commercial-playable readiness?",
+    "Does any new graph-backed execution keep receipt, lease, workspace root, write_set, provider live proof, and evidence/operator packet semantics outside LangGraph shortcuts?"
   ]
 }

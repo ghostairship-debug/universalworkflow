@@ -27,8 +27,6 @@ def _write_minimal_truth_set(root: Path, *, stale_m79: bool = False) -> None:
         encoding="utf-8",
     )
     (root / "docs" / "tech-debt-registry.md").write_text("# 技术债登记表\n", encoding="utf-8")
-    (root / "M77_ISSUE_REGISTER.md").write_text("# M77 Issue Register\n", encoding="utf-8")
-    (root / "M77_PLUS_INTEGRATED_REPAIR_AND_DEVELOPMENT_PLAN.md").write_text("# Historical plan\n", encoding="utf-8")
     (root / "docs" / "governance" / "tech_debt_registry.json").write_text(
         json.dumps(
             {
