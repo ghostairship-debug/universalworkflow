@@ -6,7 +6,7 @@ from typing import Optional
 import typer
 
 from apps.operator_cli.shared import _emit_json, _workspace_root_from_context
-from packages.core_domain.pipeline import preview_workflow_pipeline, run_workflow_pipeline
+from packages.contributions.pipelines import preview_workflow_pipeline, run_workflow_pipeline
 
 pipeline_app = typer.Typer(help="WorkflowPipeline preview and serial execution commands.")
 
@@ -70,9 +70,9 @@ def pipeline_run(
         automation_lease_id=automation_lease_id,
         execute_capabilities=execute_capabilities,
         template=template,
-        pdf_path=pdf_path,
-        cocos_creator_exe=cocos_creator_exe,
-        cocos_output_dir=cocos_output_dir,
+        source_path=pdf_path,
+        creator_exe=cocos_creator_exe,
+        output_dir=cocos_output_dir,
         require_build=require_build,
         require_playtest=require_playtest,
         require_commercial=require_commercial,

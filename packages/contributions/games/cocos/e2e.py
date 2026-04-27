@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -9,14 +9,17 @@ import textwrap
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from threading import Thread
 from typing import Any
 from uuid import uuid4
 
 from packages.contracts import CocosGameE2EManifest
-from packages.contributions.games.cocos.commercial_assets import generate_cocos_commercial_asset_manifest
+from packages.contributions.games.cocos.commercial_assets import (
+    generate_cocos_commercial_asset_manifest,
+    generate_cocos_local_stable_asset_manifest,
+)
+from packages.contributions.games.cocos.player_validation import validate_cocos_player_visible_evidence
+from packages.contributions.games.cocos.playtest import playtest_cocos_build
 
 
 EXCLUDED_DESKTOP_PROJECT = Path(r"C:\Users\74755\Desktop\游戏平台demo")
@@ -58,6 +61,26 @@ PRODUCTION_COMPONENT_FILES = {
     "AudioFxComponent.ts": "AudioFxComponent",
     "ParticleFxComponent.ts": "ParticleFxComponent",
 }
+PRODUCTION_PREFAB_FILES = {
+    "StartPanel.prefab": "StartPanel",
+    "PausePanel.prefab": "PausePanel",
+    "GameOverPanel.prefab": "GameOverPanel",
+    "SettingsPanel.prefab": "SettingsPanel",
+    "SkinShopPanel.prefab": "SkinShopPanel",
+    "GalleryPanel.prefab": "GalleryPanel",
+    "ReviveDialog.prefab": "ReviveDialog",
+}
+GAMEPLAY_INTERACTION_EVENTS = [
+    "pointer_drag_place",
+    "line_clear_feedback",
+    "level_goal_progress",
+    "skin_unlock_preview",
+    "gallery_open",
+    "audio_toggle",
+    "pause_resume",
+    "revive_reward",
+]
+COCOS_RUNTIME_CONFIG_SCHEMA = "m105_cocos_runtime_config_v1"
 
 
 def _utc_now() -> str:
@@ -96,6 +119,58 @@ def _assert_not_excluded(path: Path) -> None:
     excluded = EXCLUDED_DESKTOP_PROJECT.resolve()
     if resolved == excluded or excluded in resolved.parents:
         raise ValueError(f"Cocos E2E output must not touch excluded desktop project: {excluded}")
+
+
+def build_cocos_runtime_config(
+    *,
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    creator_exe: str | Path,
+    require_build: bool = False,
+    require_playtest: bool = True,
+    require_commercial: bool = False,
+) -> dict[str, Any]:
+    resolved_pdf = Path(pdf_path).resolve()
+    resolved_output = Path(output_dir).resolve()
+    resolved_creator = Path(creator_exe).resolve()
+    excluded = EXCLUDED_DESKTOP_PROJECT.resolve()
+    output_excluded = resolved_output == excluded or excluded in resolved_output.parents
+    build_command = [resolved_creator.as_posix(), "--project", resolved_output.as_posix(), "--build", "platform=web-mobile;debug=false"]
+    issues = []
+    if not resolved_pdf.exists():
+        issues.append("pdf_path_missing")
+    if not resolved_creator.exists():
+        issues.append("creator_exe_missing")
+    if not DEFAULT_TEMPLATE.exists():
+        issues.append("default_template_missing")
+    if output_excluded:
+        issues.append("output_dir_excluded")
+    return {
+        "schema_version": COCOS_RUNTIME_CONFIG_SCHEMA,
+        "created_at": _utc_now(),
+        "pdf_path": resolved_pdf.as_posix(),
+        "pdf_exists": resolved_pdf.exists(),
+        "creator_exe": resolved_creator.as_posix(),
+        "creator_exists": resolved_creator.exists(),
+        "template_path": DEFAULT_TEMPLATE.resolve().as_posix(),
+        "template_exists": DEFAULT_TEMPLATE.exists(),
+        "output_dir": resolved_output.as_posix(),
+        "output_parent": resolved_output.parent.as_posix(),
+        "output_parent_exists": resolved_output.parent.exists(),
+        "output_dir_excluded": output_excluded,
+        "require_build": bool(require_build),
+        "require_playtest": bool(require_playtest),
+        "require_commercial": bool(require_commercial),
+        "build_command": build_command,
+        "run_modes": {
+            "editor_build": "required" if require_build else "optional",
+            "browser_playtest_http": "required" if require_build and require_playtest else "optional",
+            "double_click_html": "not_claimed",
+            "mobile_preview": "not_claimed",
+        },
+        "issues": issues,
+        "go_no_go": "GO" if not issues else "NO-GO",
+    }
 
 
 def _cocos_creator_pids() -> set[int]:
@@ -1142,6 +1217,48 @@ def _write_production_component_scripts(project: Path) -> dict[str, Any]:
     return manifest
 
 
+def _write_production_prefabs(project: Path) -> dict[str, Any]:
+    prefab_dir = project / "assets" / "prefab" / "commercial_panels"
+    prefab_dir.mkdir(parents=True, exist_ok=True)
+    _write_directory_meta(prefab_dir)
+    prefabs: list[dict[str, str]] = []
+    for filename, node_name in PRODUCTION_PREFAB_FILES.items():
+        path = prefab_dir / filename
+        payload = [
+            {"__type__": "cc.Prefab", "_name": node_name, "data": {"__id__": 1}},
+            {"__type__": "cc.Node", "_name": node_name, "_active": True, "_children": []},
+        ]
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        prefabs.append({"name": node_name, "path": path.as_posix()})
+    manifest = {
+        "schema_version": "m106_cocos_prefab_manifest_v1",
+        "created_at": _utc_now(),
+        "prefab_dir": prefab_dir.as_posix(),
+        "prefabs": prefabs,
+        "prefab_count": len(prefabs),
+        "required_prefabs": list(PRODUCTION_PREFAB_FILES.values()),
+    }
+    manifest_path = project / "commercial_prefab_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["manifest_path"] = manifest_path.as_posix()
+    return manifest
+
+
+def _write_gameplay_interaction_contract(project: Path) -> dict[str, Any]:
+    manifest = {
+        "schema_version": "m106_gameplay_interaction_contract_v1",
+        "created_at": _utc_now(),
+        "events": GAMEPLAY_INTERACTION_EVENTS,
+        "input_model": ["pointer", "touch", "mouse"],
+        "feedback_channels": ["score_delta", "particles", "panel_state", "audio_event", "level_progress"],
+        "player_loops": ["drag_place_clear", "level_goal_unlock", "skin_gallery_preview"],
+    }
+    manifest_path = project / "gameplay_interaction_contract.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["manifest_path"] = manifest_path.as_posix()
+    return manifest
+
+
 def _copy_commercial_assets_to_cocos_resources(
     project_path: Path, commercial_assets: dict[str, Any] | None
 ) -> dict[str, Any]:
@@ -1282,6 +1399,8 @@ def integrate_commercial_game_body(
     mapping = json.loads(mapping_path.read_text(encoding="utf-8")) if mapping_path.exists() else {}
     editor_structure = _write_production_scene(project)
     component_manifest = _write_production_component_scripts(project)
+    prefab_manifest = _write_production_prefabs(project)
+    interaction_contract = _write_gameplay_interaction_contract(project)
     asset_binding_manifest = _copy_commercial_assets_to_cocos_resources(project, commercial_assets)
     payload = _payload_from_asset_bindings(project, commercial_assets, asset_binding_manifest, editor_structure, component_manifest)
     resources_dir = project / "assets" / "resources" / "commercial_assets"
@@ -1320,6 +1439,8 @@ def integrate_commercial_game_body(
         "asset_binding_manifest_path": asset_binding_manifest["manifest_path"],
         "editor_structure_manifest_path": editor_structure["manifest_path"],
         "component_manifest_path": component_manifest["manifest_path"],
+        "prefab_manifest_path": prefab_manifest["manifest_path"],
+        "interaction_contract_path": interaction_contract["manifest_path"],
         "ui_nodes_path": ui_nodes_path.as_posix(),
         "timeline_path": timeline_path.as_posix(),
         "script_path": script_path.as_posix(),
@@ -1327,6 +1448,8 @@ def integrate_commercial_game_body(
             "native_cocos_ui_nodes": True,
             "animation_timeline": True,
             "level_switching_ui": True,
+            "production_prefabs": True,
+            "gameplay_interaction_contract": True,
             "generated_asset_integration": bool(payload["assets"]),
             "audio_runtime_hooks": any(item.get("modality") in {"audio", "music"} for item in payload["assets"]),
             "visual_asset_runtime_hooks": any(item.get("modality") == "image" for item in payload["assets"]),
@@ -1419,6 +1542,8 @@ def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creato
     design_text = _read_pdf_text(resolved_pdf)
     _write_production_scene(resolved_output)
     _write_production_component_scripts(resolved_output)
+    _write_production_prefabs(resolved_output)
+    _write_gameplay_interaction_contract(resolved_output)
     assets_scripts = resolved_output / "assets" / "scripts"
     assets_scripts.mkdir(parents=True, exist_ok=True)
     (assets_scripts / "BlockPuzzleGame.ts").write_text(_script_source(design_text), encoding="utf-8")
@@ -1499,149 +1624,6 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     }
 
 
-class _QuietHandler(SimpleHTTPRequestHandler):
-    def log_message(self, format: str, *args: Any) -> None:
-        return
-
-
-def _serve_directory(directory: Path) -> tuple[ThreadingHTTPServer, int]:
-    class Handler(_QuietHandler):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, directory=str(directory), **kwargs)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, int(server.server_address[1])
-
-
-def _sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | Path) -> dict[str, Any]:
-    from playwright.sync_api import sync_playwright
-
-    build_dir = Path(build_output_path).resolve()
-    evidence = Path(evidence_dir).resolve()
-    evidence.mkdir(parents=True, exist_ok=True)
-    server, port = _serve_directory(build_dir)
-    screenshot_paths: list[str] = []
-    canvas_hashes: list[str] = []
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-            page.goto(f"http://127.0.0.1:{port}/index.html", wait_until="networkidle", timeout=60000)
-            page.wait_for_selector("#block-puzzle-canvas", timeout=60000)
-            page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.started === true", timeout=60000)
-            before = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
-            before_hash = page.evaluate(
-                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png').slice(0, 2000)"
-            )
-            canvas_hashes.append(_sha256_text(before_hash))
-            shot = evidence / "cocos_playtest_initial.png"
-            page.screenshot(path=str(shot), full_page=True)
-            screenshot_paths.append(shot.as_posix())
-            candidate = before["candidateCenters"][0]
-            target = before["clearTarget"]
-            page.mouse.move(candidate["x"], candidate["y"])
-            page.mouse.down()
-            page.mouse.move(target["x"], target["y"], steps=12)
-            page.mouse.up()
-            page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.score > 0", timeout=10000)
-            button_actions = [
-                ("refresh", "refresh_used"),
-                ("hammer", "prop_hammer_used"),
-                ("shuffle", "prop_shuffle_used"),
-                ("bomb", "prop_bomb_used"),
-                ("revive", "reward_ad_placeholder_opened"),
-                ("skin", "skin_panel_opened"),
-                ("collection", "collection_panel_opened"),
-                ("level", "level_switching_ui_opened"),
-                ("pause", "pause_opened"),
-            ]
-            for key, expected_event in button_actions:
-                for _ in range(3):
-                    state = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
-                    if expected_event in state.get("events", []):
-                        break
-                    center = state["buttonCenters"][key]
-                    page.mouse.click(center["x"], center["y"])
-                    page.wait_for_timeout(120)
-                page.wait_for_function(
-                    "(eventName) => window.__COCOS_BLOCK_PUZZLE_E2E__?.events?.includes(eventName)",
-                    arg=expected_event,
-                    timeout=3000,
-                )
-            page.wait_for_function(
-                "() => Object.values(window.__COCOS_BLOCK_PUZZLE_E2E__?.featureCoverage || {}).filter(Boolean).length >= 14",
-                timeout=3000,
-            )
-            after = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
-            after_hash = page.evaluate(
-                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png').slice(0, 2000)"
-            )
-            canvas_hashes.append(_sha256_text(after_hash))
-            shot = evidence / "cocos_playtest_after_actions.png"
-            page.screenshot(path=str(shot), full_page=True)
-            screenshot_paths.append(shot.as_posix())
-            browser.close()
-    finally:
-        server.shutdown()
-        server.server_close()
-    feature_coverage = dict(after.get("featureCoverage") or {})
-    required_playtest_features = [
-        "board10x10",
-        "threeCandidates",
-        "dragPlacement",
-        "lineClear",
-        "refresh",
-        "gameOver",
-        "antiStall",
-        "classicMode",
-        "campaignFirstSevenLevels",
-        "comboStreak",
-        "rewardAdPlaceholder",
-        "interstitialAdPoint",
-        "threeProps",
-        "propUse",
-        "skinBackgroundCollection",
-        "mobilePortraitUi",
-        "modalUi",
-    ]
-    commercial_playtest_features = [
-        "nativeCocosUiNodes",
-        "animationTimeline",
-        "particleEffects",
-        "levelSwitchingUi",
-        "generatedArtAssets",
-        "generatedAudioAssets",
-        "cocosAssetBindings",
-        "editorVisibleSceneHierarchy",
-        "productionComponentScripts",
-        "spriteframeAssetBindings",
-        "audioclipAssetBindings",
-    ]
-    result = {
-        "passed": all(bool(feature_coverage.get(key)) for key in required_playtest_features),
-        "commercial_passed": all(bool(feature_coverage.get(key)) for key in commercial_playtest_features),
-        "url": f"http://127.0.0.1:{port}/index.html",
-        "screenshots": screenshot_paths,
-        "canvas_hashes": canvas_hashes,
-        "feature_coverage": feature_coverage,
-        "required_playtest_features": required_playtest_features,
-        "commercial_playtest_features": commercial_playtest_features,
-        "score": after.get("score"),
-        "events": after.get("events", []),
-        "open_panels": after.get("openPanels", []),
-    }
-    output = evidence / "cocos_playtest_result.json"
-    output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    result["result_path"] = output.as_posix()
-    return result
-
-
 def run_cocos_game_e2e(
     *,
     pdf_path: str | Path,
@@ -1651,16 +1633,29 @@ def run_cocos_game_e2e(
     require_playtest: bool = True,
     require_commercial: bool = False,
     generate_commercial_assets: bool = False,
+    use_local_stable_assets: bool = False,
     commercial_assets_payload: dict[str, Any] | None = None,
     commercial_asset_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
+    runtime_config = build_cocos_runtime_config(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator_exe,
+        require_build=require_build,
+        require_playtest=require_playtest,
+        require_commercial=require_commercial,
+    )
     project = create_cocos_project(pdf_path=pdf_path, output_dir=output_dir, creator_exe=creator_exe)
+    runtime_config_path = Path(project["project_path"]) / "cocos_runtime_config.json"
+    runtime_config_path.write_text(json.dumps(runtime_config, ensure_ascii=False, indent=2), encoding="utf-8")
     build: dict[str, Any] | None = None
     playtest: dict[str, Any] | None = None
-    blockers: list[str] = []
+    technical_blockers: list[str] = []
     commercial_assets: dict[str, Any] | None = commercial_assets_payload
     if commercial_assets is None and commercial_asset_manifest_path is not None:
         commercial_assets = json.loads(Path(commercial_asset_manifest_path).read_text(encoding="utf-8"))
+    if commercial_assets is None and use_local_stable_assets:
+        commercial_assets = generate_cocos_local_stable_asset_manifest(output_dir=Path(project["project_path"]) / "local_assets")
     if commercial_assets is None and generate_commercial_assets:
         commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=project["project_path"])
     commercial_body: dict[str, Any] | None = None
@@ -1673,7 +1668,7 @@ def run_cocos_game_e2e(
     if require_build:
         build = build_cocos_project(project_path=project["project_path"], creator_exe=creator_exe)
         if not build["artifact_success"]:
-            blockers.append("cocos_build_artifacts_missing")
+            technical_blockers.append("cocos_build_artifacts_missing")
         if build.get("artifact_success") and require_playtest:
             playtest_error: str | None = None
             try:
@@ -1684,7 +1679,7 @@ def run_cocos_game_e2e(
             except Exception as exc:
                 playtest_error = f"{type(exc).__name__}: {exc}"
             if playtest is None or not playtest.get("passed"):
-                blockers.append("browser_playtest_failed")
+                technical_blockers.append("browser_playtest_failed")
                 build["playtest_error"] = playtest_error
     commercial_body_coverage = dict((commercial_body or {}).get("feature_coverage") or {})
     production_coverage = dict(commercial_project_inspection.get("feature_coverage") or {})
@@ -1702,6 +1697,8 @@ def run_cocos_game_e2e(
         "particle_effects": bool((commercial_assets or {}).get("feature_coverage", {}).get("particle_effects")),
         "skin_switching_visual_assets": bool((commercial_assets or {}).get("feature_coverage", {}).get("skin_switching_visual_assets")),
         "level_switching_ui": bool(commercial_body_coverage.get("level_switching_ui")),
+        "production_prefabs": bool(commercial_body_coverage.get("production_prefabs")),
+        "gameplay_interaction_contract": bool(commercial_body_coverage.get("gameplay_interaction_contract")),
         "commercial_polish_pass": bool((commercial_assets or {}).get("feature_coverage", {}).get("commercial_polish_pass"))
         and bool(commercial_body_coverage.get("generated_asset_integration")),
         "editor_visible_scene_hierarchy": bool(production_coverage.get("editor_visible_scene_hierarchy")),
@@ -1718,8 +1715,22 @@ def run_cocos_game_e2e(
         if key not in {"cocos_creator_project"} and not covered
     ]
     commercial_go_no_go = "GO" if not commercial_blockers else "NO-GO"
+    technical_smoke_go = runtime_config["go_no_go"] == "GO" and not technical_blockers
+    production_scaffold_go = commercial_go_no_go == "GO"
+    player_validation = validate_cocos_player_visible_evidence(
+        playtest=playtest,
+        inspection=commercial_project_inspection,
+        technical_smoke=technical_smoke_go,
+        production_scaffold=production_scaffold_go,
+        evidence_dir=Path(project["project_path"]) / "player_visible_evidence",
+    )
+    player_visible_checks = player_validation["player_visible_checks"]
+    commercial_readiness = player_validation["commercial_readiness"]
+    blockers = list(technical_blockers)
     if require_commercial and commercial_blockers:
         blockers.extend(f"commercial_missing_{item}" for item in commercial_blockers)
+    if require_commercial and not commercial_readiness["commercial_playable_go"]:
+        blockers.append("commercial_playable_no_go")
     manifest = CocosGameE2EManifest(
         pdf_path=Path(pdf_path).resolve().as_posix(),
         cocos_creator_path=Path(creator_exe).resolve().as_posix(),
@@ -1734,13 +1745,23 @@ def run_cocos_game_e2e(
             "created_at": _utc_now(),
             "pdf_text_chars": project["pdf_text_chars"],
             "design_mapping_path": project["design_mapping_path"],
+            "runtime_config_path": runtime_config_path.as_posix(),
+            "runtime_config": runtime_config,
             "build": build,
             "playtest": playtest,
             "commercial_assets": commercial_assets,
             "commercial_body": commercial_body,
             "commercial_project_inspection": commercial_project_inspection,
+            "technical_smoke_go": technical_smoke_go,
+            "technical_blockers": technical_blockers,
+            "production_scaffold_go": production_scaffold_go,
             "commercial_go_no_go": commercial_go_no_go,
             "commercial_blockers": commercial_blockers,
+            "commercial_playable_go": commercial_readiness["commercial_playable_go"],
+            "commercial_playable_blockers": commercial_readiness["commercial_playable_blockers"],
+            "commercial_readiness": commercial_readiness,
+            "player_visible_evidence": player_validation,
+            "player_visible_checks": player_visible_checks,
             "commercial_feature_coverage": commercial_feature_coverage,
             "commercial_gate_required": require_commercial,
         },
@@ -1749,7 +1770,17 @@ def run_cocos_game_e2e(
     manifest_path.write_text(json.dumps(manifest.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
     return {
         "manifest": manifest.model_dump(mode="json"),
+        "runtime_config": runtime_config,
+        "runtime_config_path": runtime_config_path.as_posix(),
+        "technical_smoke_go": technical_smoke_go,
+        "technical_blockers": technical_blockers,
+        "production_scaffold_go": production_scaffold_go,
         "commercial_go_no_go": commercial_go_no_go,
+        "commercial_playable_go": commercial_readiness["commercial_playable_go"],
+        "commercial_playable_blockers": commercial_readiness["commercial_playable_blockers"],
+        "commercial_readiness": commercial_readiness,
+        "player_visible_evidence": player_validation,
+        "player_visible_checks": player_visible_checks,
         "commercial_blockers": commercial_blockers,
         "commercial_feature_coverage": commercial_feature_coverage,
         "manifest_path": manifest_path.as_posix(),

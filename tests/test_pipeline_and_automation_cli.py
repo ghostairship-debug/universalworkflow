@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
+from packages.contributions.games.cocos.capabilities import REQUIRED_PLAYER_VISIBLE_CHECKS
 
 
 runner = CliRunner()
@@ -16,6 +17,21 @@ def _invoke(tmp_path: Path, *args: str):
         app,
         ["--db-path", str(tmp_path / "workflow.db"), "--workspace-root", str(tmp_path), *args],
     )
+
+
+def _valid_player_visible_checks(tmp_path: Path) -> dict[str, dict[str, str]]:
+    evidence_path = tmp_path / "player_visible_checks.json"
+    evidence_path.write_text("{}", encoding="utf-8")
+    return {
+        check_name: {
+            "status": "pass",
+            "method": "playwright",
+            "evidence_path": evidence_path.as_posix(),
+            "evidence_hash": f"sha256:{check_name}",
+            "validator_version": "test-v1",
+        }
+        for check_name in REQUIRED_PLAYER_VISIBLE_CHECKS
+    }
 
 
 def test_pipeline_preview_exposes_h5_game_commercialization_pipeline(tmp_path: Path) -> None:
@@ -132,7 +148,8 @@ def test_pipeline_run_uses_automation_lease_for_write_set(tmp_path: Path) -> Non
 
 
 def test_commercial_cocos_template_executes_asset_factory_before_cocos(tmp_path: Path, monkeypatch) -> None:
-    import packages.core_domain.pipeline as pipeline_module
+    import packages.contributions.pipelines.registry as pipeline_registry
+    import packages.contributions.pipelines.workflow_runtime as pipeline_module
 
     calls: list[str] = []
 
@@ -162,11 +179,11 @@ def test_commercial_cocos_template_executes_asset_factory_before_cocos(tmp_path:
             "commercial_go_no_go": "GO",
             "commercial_blockers": [],
             "commercial_playable_go": True,
-            "player_visible_checks": {"ui_completeness": True, "mobile_viewport": True},
+            "player_visible_checks": _valid_player_visible_checks(tmp_path),
         }
 
-    monkeypatch.setattr(pipeline_module, "generate_cocos_commercial_asset_manifest", _fake_assets)
-    monkeypatch.setattr(pipeline_module, "run_cocos_game_e2e", _fake_cocos)
+    monkeypatch.setattr(pipeline_registry, "generate_cocos_commercial_asset_manifest", _fake_assets)
+    monkeypatch.setattr(pipeline_registry, "run_cocos_game_e2e", _fake_cocos)
 
     payload = pipeline_module.run_workflow_pipeline(
         "commercial game",
@@ -174,8 +191,8 @@ def test_commercial_cocos_template_executes_asset_factory_before_cocos(tmp_path:
         evidence_dir=tmp_path / "pipeline_evidence",
         template="commercial_cocos_game",
         execute_capabilities=True,
-        pdf_path=tmp_path / "design.pdf",
-        cocos_creator_exe=tmp_path / "CocosCreator.exe",
+        source_path=tmp_path / "design.pdf",
+        creator_exe=tmp_path / "CocosCreator.exe",
         require_build=True,
         require_commercial=True,
     )
@@ -248,7 +265,8 @@ def test_pipeline_skipped_dependency_does_not_satisfy_required_dependency(tmp_pa
 
 
 def test_cocos_require_commercial_uses_commercial_playable_go(tmp_path: Path, monkeypatch) -> None:
-    import packages.core_domain.pipeline as pipeline_module
+    import packages.contributions.pipelines.registry as pipeline_registry
+    import packages.contributions.pipelines.workflow_runtime as pipeline_module
 
     def _fake_assets(*, output_dir: Path | str, **_kwargs):
         manifest_path = Path(output_dir) / "commercial_asset_manifest.json"
@@ -267,8 +285,8 @@ def test_cocos_require_commercial_uses_commercial_playable_go(tmp_path: Path, mo
             "commercial_blockers": [],
         }
 
-    monkeypatch.setattr(pipeline_module, "generate_cocos_commercial_asset_manifest", _fake_assets)
-    monkeypatch.setattr(pipeline_module, "run_cocos_game_e2e", _fake_cocos)
+    monkeypatch.setattr(pipeline_registry, "generate_cocos_commercial_asset_manifest", _fake_assets)
+    monkeypatch.setattr(pipeline_registry, "run_cocos_game_e2e", _fake_cocos)
 
     payload = pipeline_module.run_workflow_pipeline(
         "commercial game",
@@ -276,8 +294,8 @@ def test_cocos_require_commercial_uses_commercial_playable_go(tmp_path: Path, mo
         evidence_dir=tmp_path / "pipeline_evidence",
         template="commercial_cocos_game",
         execute_capabilities=True,
-        pdf_path=tmp_path / "design.pdf",
-        cocos_creator_exe=tmp_path / "CocosCreator.exe",
+        source_path=tmp_path / "design.pdf",
+        creator_exe=tmp_path / "CocosCreator.exe",
         require_build=True,
         require_commercial=True,
     )
@@ -296,7 +314,8 @@ def test_commercial_cocos_pipeline_records_graph_pressure_stage_without_commerci
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import packages.core_domain.pipeline as pipeline_module
+    import packages.contributions.pipelines.registry as pipeline_registry
+    import packages.contributions.pipelines.workflow_runtime as pipeline_module
 
     def _fake_assets(*, output_dir: Path | str, **_kwargs):
         manifest_path = Path(output_dir) / "commercial_asset_manifest.json"
@@ -316,8 +335,8 @@ def test_commercial_cocos_pipeline_records_graph_pressure_stage_without_commerci
             "commercial_blockers": [],
         }
 
-    monkeypatch.setattr(pipeline_module, "generate_cocos_commercial_asset_manifest", _fake_assets)
-    monkeypatch.setattr(pipeline_module, "run_cocos_game_e2e", _fake_cocos)
+    monkeypatch.setattr(pipeline_registry, "generate_cocos_commercial_asset_manifest", _fake_assets)
+    monkeypatch.setattr(pipeline_registry, "run_cocos_game_e2e", _fake_cocos)
 
     payload = pipeline_module.run_workflow_pipeline(
         "commercial game",
@@ -325,8 +344,8 @@ def test_commercial_cocos_pipeline_records_graph_pressure_stage_without_commerci
         evidence_dir=tmp_path / "pipeline_evidence",
         template="commercial_cocos_game",
         execute_capabilities=True,
-        pdf_path=tmp_path / "design.pdf",
-        cocos_creator_exe=tmp_path / "CocosCreator.exe",
+        source_path=tmp_path / "design.pdf",
+        creator_exe=tmp_path / "CocosCreator.exe",
         require_build=False,
         require_commercial=True,
     )

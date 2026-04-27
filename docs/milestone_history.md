@@ -5,8 +5,8 @@
 ## 当前基线
 
 - 日期：2026-04-27
-- 最新接受实现基线：`M104`
-- 当前活跃计划：`M105-M108` Cocos 真实工程接入
+- 最新接受实现基线：`M108`
+- 当前活跃计划：M108 后 review / 外部评估前状态
 - 产品前提：个人自用、本地优先的 operator runtime
 - 当前硬规则：workflow 共同开发、bug-first、scoped receipt、provider live proof、route/evidence/operator packet、plan/milestone/phase/task card 四层语义，active phase 才生成 task card
 
@@ -39,7 +39,7 @@
 | M84-M90 | architecture discipline gate 与 LangGraph/workflow 收敛：core_domain 边界、pipeline truth、安全 command runner、ratchet、图模型权威、graph execution kernel、interrupt/receipt 融合、checkpoint、subgraph、Cocos pressure test | 已完成 |
 | M91-M98 | LangGraph 与 Cocos 生态扩展：Studio graph、stream evidence、Cocos graph bridge、生态边界整理 | 已完成 |
 | M99-M104 | LangGraph 本地能力补齐：SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、Cocos-safe runtime 配置 | 已完成 |
-| M105-M108 | Cocos 真实工程接入：command/config truth、project inspector v2、真实 UI/Prefab、玩家视角验收、真实样机闭环 | 活跃计划 |
+| M105-M108 | Cocos 真实工程接入：command/config truth、project inspector v2、本地稳定资产、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge、小目标样机 closeout | 已完成样机闭环；商业化可玩仍需真实玩家证据 |
 
 ## M104/M105 关键结论
 
@@ -48,7 +48,7 @@
 - 最近一次真实生成质量不足：UI 原始、关卡浅层、面板不可用、音频突兀、HTML 双击不可玩。
 - 不能再把状态变量覆盖、feature flag、HTML/APK 打包或浏览器事件覆盖当成商业化成品验收。
 - LangGraph 底座已可用于后续开发：状态推进、checkpoint、人审暂停、subgraph、repair loop 和 stream evidence 可以优先走 graph-backed 路径。
-- 下一阶段转向 Cocos 真实工程接入；开发计划只写到 milestone 和 phase，task card 只在 active phase 生成。
+- M105-M108 已完成到小目标样机闭环；下一步必须 review，决定停止、外部评估、人工试玩修复或新开 M109+。
 
 ## 历史材料治理
 

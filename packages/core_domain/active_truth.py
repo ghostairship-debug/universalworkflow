@@ -16,6 +16,14 @@ ACTIVE_TRUTH_FILES = [
     "docs/tech-debt-registry.md",
 ]
 
+LEGACY_ACTIVE_WORKFLOW_FILES = [
+    "docs/current_development_workflow.md",
+]
+
+STALE_ACTIVE_WORKFLOW_PATTERNS = [
+    ("stale_m34_current_workflow", re.compile(r"(?:no post-M34|M34[^\n]*(?:current|currently|active))", re.IGNORECASE)),
+]
+
 STALE_M79_PATTERNS = [
     ("m79_planned_title", re.compile(r"M79\s+Cocos\s+Commercial\s+Pipeline\s+Repair\s+Planned", re.IGNORECASE)),
     ("m79_pre_completion_gate", re.compile(r"M79[^\n]*(?:通过前|完成前|鍓|planned|before completion)", re.IGNORECASE)),
@@ -42,6 +50,8 @@ def build_active_truth_check(
     }
     issues: list[dict[str, Any]] = []
     issues.extend(_check_stale_m79_truth(docs, facts))
+    issues.extend(_check_active_workflow_uniqueness(root))
+    issues.extend(_check_stale_active_workflow_patterns(docs))
     issues.extend(_check_current_version(facts))
     issues.extend(_check_tech_debt_consistency(tech_debt))
     payload = {
@@ -66,6 +76,10 @@ def build_active_truth_check(
 def _load_active_docs(root: Path) -> dict[str, str]:
     docs: dict[str, str] = {}
     for relative in ACTIVE_TRUTH_FILES:
+        path = root / relative
+        if path.exists():
+            docs[relative] = path.read_text(encoding="utf-8")
+    for relative in LEGACY_ACTIVE_WORKFLOW_FILES:
         path = root / relative
         if path.exists():
             docs[relative] = path.read_text(encoding="utf-8")
@@ -145,6 +159,62 @@ def _check_current_version(facts: dict[str, Any]) -> list[dict[str, Any]]:
                 "detail": "M79 evidence exists, but milestone history still says the accepted baseline is M78.",
             }
         )
+    return issues
+
+
+def _check_active_workflow_uniqueness(root: Path) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    canonical = root / "CURRENT_DEVELOPMENT_WORKFLOW.md"
+    if not canonical.exists():
+        issues.append(
+            {
+                "code": "missing_canonical_active_workflow",
+                "severity": "P1",
+                "file": "CURRENT_DEVELOPMENT_WORKFLOW.md",
+                "detail": "The canonical active workflow file is missing.",
+            }
+        )
+    for relative in LEGACY_ACTIVE_WORKFLOW_FILES:
+        legacy = root / relative
+        if not legacy.exists():
+            continue
+        text = legacy.read_text(encoding="utf-8")
+        if _is_active_workflow_redirect(text):
+            continue
+        issues.append(
+            {
+                "code": "duplicate_active_workflow_source",
+                "severity": "P1",
+                "file": relative,
+                "detail": "A legacy active workflow file exists without a redirect/archive notice, which can split the source of truth.",
+            }
+        )
+    return issues
+
+
+def _is_active_workflow_redirect(text: str) -> bool:
+    lowered = text.lower()
+    return "current_development_workflow.md" in lowered and (
+        "redirect" in lowered or "archived" in lowered or "moved" in lowered or "canonical" in lowered
+    )
+
+
+def _check_stale_active_workflow_patterns(docs: dict[str, str]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for relative, text in docs.items():
+        for code, pattern in STALE_ACTIVE_WORKFLOW_PATTERNS:
+            match = pattern.search(text)
+            if match is None:
+                continue
+            issues.append(
+                {
+                    "code": code,
+                    "severity": "P1",
+                    "file": relative,
+                    "detail": "An active truth file still contains an obsolete workflow baseline statement.",
+                    "match": match.group(0),
+                }
+            )
     return issues
 
 

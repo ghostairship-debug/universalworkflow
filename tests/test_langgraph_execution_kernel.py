@@ -67,7 +67,7 @@ def test_graph_execution_kernel_blocks_high_risk_side_effects(tmp_path: Path) ->
     assert policy_result["next_action"] == "return_to_workflow_receipt_or_lease_gate"
 
 
-def test_graph_execution_kernel_reuses_existing_artifact_and_evidence_paths(tmp_path: Path) -> None:
+def test_graph_execution_kernel_uses_unique_run_attempt_paths_by_default(tmp_path: Path) -> None:
     first = run_artifact_only_graph(
         goal="Idempotent graph artifact",
         workspace_root=tmp_path,
@@ -79,10 +79,38 @@ def test_graph_execution_kernel_reuses_existing_artifact_and_evidence_paths(tmp_
         evidence_dir=tmp_path / "graph_evidence",
     )
 
+    assert second["run_id"] != first["run_id"]
+    assert second["attempt_id"] != first["attempt_id"]
+    assert second["thread_id"] != first["thread_id"]
+    assert second["artifact_path"] != first["artifact_path"]
+    assert second["evidence_path"] != first["evidence_path"]
+    assert second["graph_state_path"] != first["graph_state_path"]
+
+
+def test_graph_execution_kernel_can_reuse_explicit_artifact_without_overwriting_evidence(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "graph_evidence" / "shared_artifact.md"
+    first = run_artifact_only_graph(
+        goal="Explicit graph artifact",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "graph_evidence",
+        artifact_path=artifact_path,
+        run_id="run_fixed",
+        phase_id="M105.0",
+        attempt_id="attempt_one",
+    )
+    second = run_artifact_only_graph(
+        goal="Explicit graph artifact",
+        workspace_root=tmp_path,
+        evidence_dir=tmp_path / "graph_evidence",
+        artifact_path=artifact_path,
+        run_id="run_fixed",
+        phase_id="M105.0",
+        attempt_id="attempt_two",
+    )
+
     assert second["artifact_reused"] is True
     assert second["artifact_path"] == first["artifact_path"]
-    assert second["evidence_path"] == first["evidence_path"]
-    assert second["graph_state_path"] == first["graph_state_path"]
+    assert second["evidence_path"] != first["evidence_path"]
 
 
 def test_graph_cli_preview_and_artifact_run(tmp_path: Path) -> None:

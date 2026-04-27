@@ -32,3 +32,24 @@ jobs:
         run: python -m pytest tests/test_operator_action_receipt.py -q
       - name: Offline validation
         run: python -m infra.scripts.offline_validation --suite quick --skip-offline-probe
+  langgraph-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install package with LangGraph runtime
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip install -e ".[langgraph_runtime]"
+      - name: LangGraph runtime tests
+        run: |
+          python -m pytest \
+            tests/test_langgraph_checkpoints.py \
+            tests/test_langgraph_execution_kernel.py \
+            tests/test_langgraph_interrupts.py \
+            tests/test_langgraph_multi_agent.py \
+            tests/test_m91_m98_langgraph_cocos.py \
+            tests/test_runtime_boundary.py \
+            -q

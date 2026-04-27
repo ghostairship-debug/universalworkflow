@@ -2,9 +2,9 @@
 
 ## 当前版本说明
 
-- 当前工作状态：M105-M108 Cocos 真实工程接入计划。
-- 接受实现基线：M104 的本地 LangGraph 运行时、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、stream evidence、Studio graph 配置和 Cocos graph pressure test。
-- 当前纠偏：LangGraph 底座已经可用于后续开发；当前重点转向 Cocos 真实工程能力和玩家视角验收，但仍不能把技术 smoke 宣称为商业化成品。
+- 当前工作状态：M108 Cocos 小目标样机闭环已完成，进入 review / 外部评估前状态。
+- 接受实现基线：M108 的 Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout。
+- 当前纠偏：Cocos 生产线可生成可检查的本地样机工程，但 `commercial_playable_go` 仍必须依赖真实玩家视角证据；缺少 build/playtest 证据时只能标为样机，不能宣称商业化成品。
 - 活跃真相集：`README.md`、`AGENTS.md`、本文件、`docs/milestone_history.md`、`docs/tech-debt-registry.md`、`docs/governance/tech_debt_registry.json`。
 - 历史评估、旧路线图、旧计划和生成态 evidence 不保留为活跃工作树文档。需要逐字审计时使用 Git 历史。
 
@@ -140,16 +140,19 @@ python -m pytest -q
 
 - `state/` 是生成态目录，默认不进入 Git；工作树只应保留 `.gitkeep`、必要的本地 `workflow.db` 和正在使用的短期 evidence。
 - 大型 Cocos 工程、APK/HTML 包、pytest 临时目录、旧 evidence、离线验证 scratch DB 都应按需清理。
-- `state/.pytest-tmp-workflow/` 是测试临时工作区；测试后可以整目录删除，不影响 `workflow.db`。
+- `state/.pytest-tmp-workflow/` 是测试临时工作区；`workflowctl test matrix` 成功后会自动删除本次 pytest 临时目录，不影响 `workflow.db`。
+- 测试失败时默认保留本次临时目录，方便排查；下一次测试会按 24 小时 TTL 和 256MB 上限清理旧目录。
+- 如需临时保留所有测试产物，设置 `WORKFLOW_KEEP_TEST_TEMP=1`；如需调整阈值，使用 `WORKFLOW_TEST_TEMP_TTL_HOURS` 和 `WORKFLOW_TEST_TEMP_MAX_MB`。
 - 清理文件不等于清理功能。商业化游戏 pipeline 代码、测试和说明继续保留。
 - 删除递归目录前必须确认目标解析后仍在当前 workspace 或明确目标目录内。
 
 ## 下一阶段开发计划
 
-- M105-M108 是当前活跃方案。
-- Cocos 当前投入预算锁定为 M105-M108 四个 milestone。M108 closeout 必须进入 review，决定停止、外部评估，或另开 M109+；不得自动续成“继续做游戏”。
+- M105-M108 已完成并收口。
+- Cocos 当前投入预算到 M108 已用完；下一步必须进入 review，决定停止、外部评估，或另开 M109+；不得自动续成“继续做游戏”。
 - M85-M90、M91-M98、M99-M104 已压缩进 `docs/milestone_history.md` 和 `docs/architecture/langgraph_runtime_notes.md`，不再保留根目录散装计划书。
 - 范围：用 LangGraph-backed 底座推进 Cocos command、构建配置、工程检查、真实 UI/Prefab、浏览器试玩和玩家视角验收。
+- 当前入口：M108 closeout 后先 review；如继续 Cocos，必须新开 M109+ 并重新写 milestone/phase 级计划。
 - 暂不纳入：Gemini CLI、视频生成、GitHub 自动化、Hugging Face Jobs、远程 worker 扩展、托管 SaaS、广告 SDK 和 IAP。
 - active phase 开始后才生成 task card；phase closeout 必须包含 workflow 实际执行范围、Codex 兜底范围和 evidence。
 
@@ -164,10 +167,19 @@ detour 必须写明原因、范围、write_set、测试命令和 closeout。deto
 
 ### M105：Cocos 真实工程底座
 
+- M105.0：Runtime hygiene and pipeline boundary，先处理 active truth 唯一性、pipeline registry 归属、graph run/thread/evidence identity、player-visible evidence schema 和 LangGraph runtime CI 覆盖。此 phase 不做新的 Cocos 功能，只保证后续 Cocos 开发不会绕过 M84-M104 建立的纪律。
 - M105.1：Cocos command、构建配置与 gate 真相，明确命令、配置文件、项目路径、输出路径和失败证据；同时让 `technical_smoke_go`、`production_scaffold_go`、`commercial_playable_go` 三层 gate 从本 phase 起生效，避免 M105/M106 继续沿用旧 gate 误报。
 - M105.2：Cocos project inspector v2，检查真实工程结构、场景、脚本、资源、Prefab/Panel、构建配置和入口场景。
 - M105.3：运行方式与交付方式真相，区分 HTTP 服务运行、双击 HTML、移动端预览和打包说明。
 - M105.4：Cocos graph evidence bridge，把生成、检查、构建、试玩和修复接入 graph evidence，同时保留 workflow 安全规则。
+
+M105.0 closeout 必须回答：
+
+- active truth 是否只有一个当前开发工作流入口，且旧 milestone 口径不会污染 active truth。
+- `packages/core_domain/pipeline.py` 是否仍直接包含 Cocos/H5/business template；若仍保留，必须给出迁移计划和阻塞理由。
+- graph `run_id`、`thread_id`、`checkpoint_id`、`evidence_path` 是否能避免同 goal 重跑覆盖旧 evidence 或 resume 到错误 thread。
+- `commercial_playable_go` 是否只接受带 method、evidence_path、hash、validator_version 的 player-visible evidence；布尔字段不能单独通过商业化 gate。
+- CI 是否显式覆盖真实 `langgraph_runtime` 依赖路径；fallback backend 必须在 evidence 中明确标记。
 
 ### M106：Cocos 原生内容生产
 
@@ -190,4 +202,4 @@ detour 必须写明原因、范围、write_set、测试命令和 closeout。deto
 - M108.3：构建、试玩与修复循环，用 M107 验收；发现问题进入 repair loop。
 - M108.4：关闭报告与预算 review，诚实说明哪些能力已成、哪些只是样机、哪些还不能宣称商业化可玩；如果 `commercial_playable_go` 仍为 false，默认停止 Cocos milestone 自动续期，并进入外部评估或人工决策。
 
-建议起点是 M105.1。原因很简单：如果 Cocos 命令、构建配置、输出目录、三层 gate 和失败证据不够真，后面的 UI、Prefab、试玩验收都会继续踩空。
+M108 closeout 的结论是：底座和样机生产线已经补齐到可检查状态，但商业化可玩仍需要真实 build/playtest 玩家证据或外部评估，不能自动进入 M109。

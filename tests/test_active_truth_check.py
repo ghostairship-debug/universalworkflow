@@ -80,6 +80,33 @@ def test_active_truth_check_accepts_future_milestone_ranges() -> None:
     assert issues == []
 
 
+def test_active_truth_check_blocks_duplicate_legacy_workflow_doc(tmp_path: Path) -> None:
+    _write_minimal_truth_set(tmp_path, stale_m79=False)
+    (tmp_path / "docs" / "current_development_workflow.md").write_text(
+        "# old active workflow\nno post-M34 workflow is currently open\n",
+        encoding="utf-8",
+    )
+
+    payload = build_active_truth_check(tmp_path)
+
+    assert payload["go_no_go"] == "NO-GO"
+    codes = {issue["code"] for issue in payload["issues"]}
+    assert "duplicate_active_workflow_source" in codes
+    assert "stale_m34_current_workflow" in codes
+
+
+def test_active_truth_check_allows_legacy_workflow_redirect(tmp_path: Path) -> None:
+    _write_minimal_truth_set(tmp_path, stale_m79=False)
+    (tmp_path / "docs" / "current_development_workflow.md").write_text(
+        "Redirect: canonical active workflow moved to CURRENT_DEVELOPMENT_WORKFLOW.md\n",
+        encoding="utf-8",
+    )
+
+    payload = build_active_truth_check(tmp_path)
+
+    assert payload["go_no_go"] == "GO"
+
+
 def test_active_truth_check_blocks_debt_id_in_repaid_and_open(tmp_path: Path) -> None:
     _write_minimal_truth_set(tmp_path, stale_m79=False)
     registry_path = tmp_path / "docs" / "governance" / "tech_debt_registry.json"

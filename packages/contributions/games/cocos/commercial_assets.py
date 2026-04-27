@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import wave
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -31,6 +32,11 @@ REQUIRED_COMMERCIAL_ASSET_NAMES = {
     "bgm_loop",
     "voice_reward",
 }
+LOCAL_STABLE_ASSET_SCHEMA = "m106_cocos_local_stable_assets_v1"
+_PNG_1X1 = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c636000000200015d0b2a"
+    "b40000000049454e44ae426082"
+)
 
 
 def _result_payload(name: str, result: AssetGenerationResult) -> dict[str, Any]:
@@ -162,6 +168,63 @@ def generate_cocos_commercial_asset_manifest(
     )
     manifest["manifest_path"] = manifest_path.as_posix()
     return manifest
+
+
+def generate_cocos_local_stable_asset_manifest(*, output_dir: str | Path) -> dict[str, Any]:
+    root = Path(output_dir).resolve()
+    image_dir = root / "local_stable_assets" / "images"
+    audio_dir = root / "local_stable_assets" / "audio"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    asset_specs = [
+        ("background", "image", image_dir / "background.png", "image/png"),
+        ("block_skin_neon", "image", image_dir / "block_skin_neon.png", "image/png"),
+        ("particle_clear", "image", image_dir / "particle_clear.png", "image/png"),
+        ("sfx_place", "audio", audio_dir / "sfx_place.wav", "audio/wav"),
+        ("sfx_clear", "audio", audio_dir / "sfx_clear.wav", "audio/wav"),
+        ("bgm_loop", "music", audio_dir / "bgm_loop.wav", "audio/wav"),
+        ("voice_reward", "audio", audio_dir / "voice_reward.wav", "audio/wav"),
+    ]
+    results: list[dict[str, Any]] = []
+    for name, modality, path, mime_type in asset_specs:
+        if modality == "image":
+            path.write_bytes(_PNG_1X1)
+        else:
+            _write_silent_wav(path)
+        results.append(
+            {
+                "asset_name": name,
+                "provider": "local_stable_asset_pack",
+                "modality": modality,
+                "status": "completed",
+                "artifact_paths": [path.as_posix()],
+                "mime_type": mime_type,
+            }
+        )
+    coverage = _coverage(results)
+    manifest = {
+        "schema_version": LOCAL_STABLE_ASSET_SCHEMA,
+        "created_at": datetime.now(UTC).isoformat(),
+        "style_prompt": "local deterministic fallback assets for Cocos sample scaffolds",
+        "asset_root": root.as_posix(),
+        "results": results,
+        "feature_coverage": coverage,
+        "blockers": [],
+        "go_no_go": "GO" if all(coverage.values()) else "NO-GO",
+        "local_only": True,
+    }
+    manifest_path = root / "commercial_asset_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest["manifest_path"] = manifest_path.as_posix()
+    return manifest
+
+
+def _write_silent_wav(path: Path) -> None:
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(8000)
+        handle.writeframes(b"\x00\x00" * 800)
 
 
 def _cocos_asset_factory_prompt_manifest() -> dict[str, Any]:

@@ -5,10 +5,12 @@ from pathlib import Path
 
 PRODUCTION_ROOTS = (Path("packages"), Path("apps"), Path("infra"))
 PRODUCTION_SUFFIXES = {".css", ".js", ".json", ".ps1", ".py", ".sql"}
-# M99-M104 added the local SQLite LangGraph runtime, dynamic interrupt/resume,
-# Studio config, and Cocos graph pressure-test surface. Keep this tight enough
-# to catch accidental growth while allowing the accepted local graph runtime.
-PRODUCTION_LOC_LIMIT = 52_000
+# M99-M105 added the local LangGraph runtime, Studio config, Cocos graph
+# pressure-test surface, contribution pipeline boundary, Cocos foundation
+# inspectors, local native-content scaffolds, player-visible validation, and
+# sample closeout reporting. Keep this tight enough to catch accidental growth
+# while allowing the accepted runtime split.
+PRODUCTION_LOC_LIMIT = 53_150
 
 
 def _is_production_source(path: Path) -> bool:

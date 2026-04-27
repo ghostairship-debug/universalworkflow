@@ -10,8 +10,15 @@ from apps.operator_cli.main import app
 import apps.operator_cli.game_commands as game_commands
 import packages.contributions.games.cocos.e2e as cocos_e2e_module
 from packages.contributions.asset_factory.asset_generation import AssetGenerationRequest, AssetGenerationResult
-from packages.contributions.games.cocos.commercial_assets import generate_cocos_commercial_asset_manifest
+from packages.contributions.games.cocos.commercial_assets import (
+    generate_cocos_commercial_asset_manifest,
+    generate_cocos_local_stable_asset_manifest,
+)
 from packages.contributions.games.cocos.e2e import run_cocos_game_e2e
+from packages.contributions.games.cocos.graph_bridge import build_cocos_graph_evidence_bridge
+from packages.contributions.games.cocos.inspector import describe_cocos_delivery_modes, inspect_cocos_project_v2
+from packages.contributions.games.cocos.player_validation import validate_cocos_player_visible_evidence
+from packages.contributions.games.cocos.sample_closeout import run_cocos_small_goal_sample_closeout
 
 
 def _fake_asset_generator(request: AssetGenerationRequest) -> AssetGenerationResult:
@@ -69,12 +76,18 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     )
 
     assert payload["manifest"]["go_no_go"] == "GO"
+    assert payload["runtime_config"]["go_no_go"] == "GO"
+    assert Path(payload["runtime_config_path"]).exists()
+    assert payload["technical_smoke_go"] is True
+    assert payload["production_scaffold_go"] is False
     assert (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts").exists()
     assert (output_dir / "assets" / "scene" / "main.scene").exists()
     assert (output_dir / "design_mapping.json").exists()
     assert not (output_dir / "assets" / "model" / "helloWorld").exists()
     assert (output_dir / "commercial_editor_structure_manifest.json").exists()
     assert (output_dir / "commercial_component_manifest.json").exists()
+    assert (output_dir / "commercial_prefab_manifest.json").exists()
+    assert (output_dir / "gameplay_interaction_contract.json").exists()
     script = (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts").read_text(encoding="utf-8")
     assert "__COCOS_BLOCK_PUZZLE_E2E__" in script
     assert "bootBlockPuzzleStandalone()" in script
@@ -191,6 +204,339 @@ def test_cli_game_cocos_e2e_generates_manifest_without_build(tmp_path: Path) -> 
     payload = json.loads(result.stdout)
     assert payload["manifest"]["project_path"] == output_dir.as_posix()
     assert Path(payload["manifest_path"]).exists()
+    assert Path(payload["runtime_config_path"]).exists()
+
+
+def test_cli_game_cocos_config_reports_command_and_paths(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "config_project"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-config",
+            "--pdf-path",
+            str(pdf_path),
+            "--output-dir",
+            str(output_dir),
+            "--creator-exe",
+            str(creator),
+            "--require-build",
+            "--require-commercial",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "m105_cocos_runtime_config_v1"
+    assert payload["build_command"] == [
+        creator.resolve().as_posix(),
+        "--project",
+        output_dir.resolve().as_posix(),
+        "--build",
+        "platform=web-mobile;debug=false",
+    ]
+    assert payload["run_modes"]["browser_playtest_http"] == "required"
+    assert payload["run_modes"]["double_click_html"] == "not_claimed"
+
+
+def test_cocos_project_inspector_v2_reports_project_facts(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "inspect_project"
+    run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator,
+        require_build=False,
+    )
+
+    payload = inspect_cocos_project_v2(output_dir, evidence_dir=tmp_path / "inspection")
+
+    assert payload["schema_version"] == "m105_cocos_project_inspector_v2"
+    assert payload["technical_smoke_go"] is True
+    assert payload["facts"]["scene_main"] is True
+    assert payload["facts"]["runtime_config"] is True
+    assert payload["facts"]["no_hello_template_artifacts"] is True
+    assert payload["facts"]["prefab_manifest"] is True
+    assert payload["facts"]["required_prefabs"] is True
+    assert payload["facts"]["gameplay_interaction_contract"] is True
+    assert payload["facts"]["required_interaction_events"] is True
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cli_game_cocos_inspect_writes_evidence(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "cli_inspect_project"
+    run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator,
+        require_build=False,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-inspect",
+            "--project-path",
+            str(output_dir),
+            "--evidence-dir",
+            str(tmp_path / "cli_inspection"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["technical_smoke_go"] is True
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cocos_delivery_modes_do_not_claim_double_click_html(tmp_path: Path) -> None:
+    project = tmp_path / "delivery_project"
+    build = project / "build" / "web-mobile"
+    (build / "assets").mkdir(parents=True)
+    (build / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    payload = describe_cocos_delivery_modes(project, evidence_dir=tmp_path / "delivery_evidence")
+
+    assert payload["schema_version"] == "m105_cocos_delivery_modes_v1"
+    assert payload["modes"]["web_mobile_http"]["status"] == "available"
+    assert payload["modes"]["double_click_html"]["status"] == "not_claimed"
+    assert payload["modes"]["native_package"]["status"] == "not_claimed"
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cli_game_cocos_delivery_reports_modes(tmp_path: Path) -> None:
+    project = tmp_path / "cli_delivery_project"
+    build = project / "build" / "web-mobile"
+    (build / "assets").mkdir(parents=True)
+    (build / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-delivery",
+            "--project-path",
+            str(project),
+            "--evidence-dir",
+            str(tmp_path / "cli_delivery_evidence"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["modes"]["web_mobile_http"]["status"] == "available"
+    assert payload["modes"]["mobile_preview"]["status"] == "manual_device_check_required"
+
+
+def test_cocos_graph_evidence_bridge_links_graph_and_project_facts(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "bridge_project"
+    run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator,
+        require_build=False,
+    )
+
+    payload = build_cocos_graph_evidence_bridge(
+        workspace_root=tmp_path,
+        project_path=output_dir,
+        evidence_dir=tmp_path / "bridge_evidence",
+    )
+
+    assert payload["schema_version"] == "m105_cocos_graph_evidence_bridge_v1"
+    assert payload["status"] == "completed"
+    assert payload["graph"]["persistent_checkpoint"]["status"] == "completed"
+    assert Path(payload["graph"]["evidence_path"]).exists()
+    assert Path(payload["inspection"]["evidence_path"]).exists()
+    assert Path(payload["delivery"]["evidence_path"]).exists()
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cli_game_cocos_graph_evidence_writes_bridge(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "cli_bridge_project"
+    run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator,
+        require_build=False,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-graph-evidence",
+            "--project-path",
+            str(output_dir),
+            "--evidence-dir",
+            str(tmp_path / "cli_bridge_evidence"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "completed"
+    assert payload["graph"]["attempt_id"]
+
+
+def test_cocos_player_visible_validation_can_pass_with_complete_playtest(tmp_path: Path) -> None:
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(b"png")
+    playtest = {
+        "passed": True,
+        "commercial_passed": True,
+        "screenshots": [shot.as_posix()],
+        "canvas_hashes": ["abc"],
+        "score": 10,
+        "events": ["refresh_used", "pause_opened"],
+        "feature_coverage": {
+            "mobilePortraitUi": True,
+            "dragPlacement": True,
+            "campaignFirstSevenLevels": True,
+            "levelSwitchingUi": True,
+            "propUse": True,
+            "generatedAudioAssets": True,
+        },
+        "console_errors": [],
+        "page_errors": [],
+    }
+
+    payload = validate_cocos_player_visible_evidence(
+        playtest=playtest,
+        inspection={"scene": {"node_names": ["CommercialCanvas", "HUDRoot"]}},
+        technical_smoke=True,
+        production_scaffold=True,
+        evidence_dir=tmp_path / "player_validation",
+    )
+
+    assert payload["go_no_go"] == "GO"
+    assert payload["commercial_playable_go"] is True
+    assert all(item["status"] == "pass" for item in payload["player_visible_checks"].values())
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cli_game_cocos_player_validate_rejects_missing_playtest(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "player_validate_project"
+    run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        creator_exe=creator,
+        require_build=False,
+        use_local_stable_assets=True,
+        require_commercial=True,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-player-validate",
+            "--project-path",
+            str(output_dir),
+            "--evidence-dir",
+            str(tmp_path / "player_validation_evidence"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["commercial_playable_go"] is False
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cocos_sample_closeout_reports_honest_limits(tmp_path: Path) -> None:
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    payload = run_cocos_small_goal_sample_closeout(
+        workspace_root=tmp_path,
+        output_dir=tmp_path / "sample_project",
+        creator_exe=creator,
+        evidence_dir=tmp_path / "sample_evidence",
+        require_build=False,
+    )
+
+    assert payload["schema_version"] == "m108_cocos_sample_closeout_v1"
+    assert payload["status"] == "completed"
+    assert payload["claims"]["technical_smoke_go"] is True
+    assert payload["claims"]["production_scaffold_go"] is True
+    assert payload["claims"]["commercial_playable_go"] is False
+    assert payload["budget_review"]["auto_continue_to_m109"] is False
+    assert payload["honest_limits"]
+    assert Path(payload["evidence_path"]).exists()
+
+
+def test_cli_game_cocos_sample_closeout_writes_report(tmp_path: Path) -> None:
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-sample-closeout",
+            "--output-dir",
+            str(tmp_path / "cli_sample_project"),
+            "--evidence-dir",
+            str(tmp_path / "cli_sample_evidence"),
+            "--creator-exe",
+            str(creator),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "m108_cocos_sample_closeout_v1"
+    assert payload["budget_review"]["requires_review_before_more_cocos_milestones"] is True
 
 
 def test_cocos_e2e_commercial_gate_rejects_technical_demo(tmp_path: Path) -> None:
@@ -292,6 +638,50 @@ def test_cocos_commercial_asset_manifest_blocks_missing_bgm(tmp_path: Path) -> N
     assert "required_asset_bgm_loop_TimeoutError" in manifest["blockers"]
 
 
+def test_cocos_local_stable_assets_can_feed_commercial_scaffold(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "design.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    manifest = generate_cocos_local_stable_asset_manifest(output_dir=tmp_path / "local_assets")
+    payload = run_cocos_game_e2e(
+        pdf_path=pdf_path,
+        output_dir=tmp_path / "local_asset_project",
+        creator_exe=creator,
+        require_build=False,
+        require_commercial=True,
+        commercial_assets_payload=manifest,
+    )
+
+    assert manifest["go_no_go"] == "GO"
+    assert {item["provider"] for item in manifest["results"]} == {"local_stable_asset_pack"}
+    assert payload["commercial_go_no_go"] == "GO"
+    assert payload["commercial_playable_go"] is False
+    assert payload["manifest"]["go_no_go"] == "NO-GO"
+
+
+def test_cli_game_cocos_local_assets_writes_manifest(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(tmp_path / "workflow.db"),
+            "--workspace-root",
+            str(tmp_path),
+            "game",
+            "cocos-local-assets",
+            "--output-dir",
+            str(tmp_path / "cli_local_assets"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "m106_cocos_local_stable_assets_v1"
+    assert payload["go_no_go"] == "GO"
+
+
 def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path, monkeypatch) -> None:
     pdf_path = tmp_path / "design.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n% fake unit-test placeholder\n")
@@ -352,6 +742,9 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
     assert payload["commercial_feature_coverage"]["generated_art_assets"] is True
     assert payload["commercial_feature_coverage"]["generated_audio_assets"] is True
     assert payload["commercial_go_no_go"] == "GO"
+    assert payload["commercial_playable_go"] is False
+    assert payload["manifest"]["go_no_go"] == "NO-GO"
+    assert "commercial_playable_no_go" in payload["manifest"]["blockers"]
     assert payload["commercial_feature_coverage"]["native_cocos_ui_nodes"] is True
     assert payload["commercial_feature_coverage"]["animation_timeline"] is True
     assert payload["commercial_feature_coverage"]["level_switching_ui"] is True

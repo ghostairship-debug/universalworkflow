@@ -2,11 +2,11 @@
 
 ## 当前基线
 
-当前接受实现基线是 `M104`：本地 LangGraph 运行时接入、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、stream evidence、Studio graph 配置和 Cocos graph pressure test 已落地。
+当前接受实现基线是 `M108`：Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout 已落地。
 
 商业化 Cocos 游戏生成是正式需求，相关功能和 pipeline 必须保留并继续优化；但最近一次真实生成结果质量不足，不能宣称“完整商业化游戏已完成”。
 
-当前主线是 `M105-M108` Cocos 真实工程接入：用已经接入的 LangGraph 底座承载 Cocos 生成、构建、试玩、修复和证据闭环。LangGraph 可以承接状态推进、checkpoint、人审暂停、subgraph、多 agent 和 repair loop；workflow 仍负责 receipt、lease、write_set、provider live proof、evidence 和 operator packet。
+当前主线是 M108 后 review / 外部评估前状态：不得自动进入 M109+ 或继续扩大 Cocos 投入。LangGraph 可以承接状态推进、checkpoint、人审暂停、subgraph、多 agent 和 repair loop；workflow 仍负责 receipt、lease、write_set、provider live proof、evidence 和 operator packet。
 
 本仓库是个人自用、本地优先的 agentic workflow runtime，不是公开 SaaS、多租户平台、插件市场、自动 PR 发布器或外部托管执行服务。
 
@@ -24,6 +24,7 @@
 - phase 级 operator packet 必须汇总该 phase 内所有 task card 的 write_set、test commands、evidence 和阻塞项。
 - 简单低风险任务优先通过 `workflowctl run from-task-card ... --adapter opencode --execute` 走 workflow；复杂安全协议和架构切片可以使用 Codex 或本地补丁兜底。
 - bug-first：workflow、receipt、probe、evidence、route、repo mutation、test matrix 任一路径出 bug，先修 workflow bug 并补测试，再继续原 phase。
+- `workflowctl test matrix` 成功后会自动清理本次 `state/.pytest-tmp-workflow/` 临时目录；失败时默认保留现场。需要保留全部测试产物时设置 `WORKFLOW_KEEP_TEST_TEMP=1`。
 - 成功 phase 可以 1 phase 1 commit；不要把多个 phase 或多个 milestone 压成一个 commit，除非用户明确要求一次性收口提交。
 
 ## 高风险动作边界

@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from apps.operator_cli.main import app
 from packages.contributions.games.cocos.capabilities import (
     COCOS_CAPABILITIES,
+    REQUIRED_PLAYER_VISIBLE_CHECKS,
     cocos_capability_contracts,
     judge_commercial_readiness_layers,
 )
@@ -18,6 +19,21 @@ from packages.runtime_langgraph.execution_kernel import GRAPH_KERNEL_VERSION, ru
 from packages.runtime_langgraph.multi_agent_graph import run_multi_agent_artifact_graph
 from packages.runtime_langgraph.repair_loop import build_repair_loop_plan
 from packages.runtime_langgraph.checkpoint_store import describe_graph_checkpointer_backend
+
+
+def _valid_player_visible_checks(tmp_path: Path) -> dict[str, dict[str, str]]:
+    evidence_path = tmp_path / "player_visible_checks.json"
+    evidence_path.write_text("{}", encoding="utf-8")
+    return {
+        check_name: {
+            "status": "pass",
+            "method": "playwright",
+            "evidence_path": evidence_path.as_posix(),
+            "evidence_hash": f"sha256:{check_name}",
+            "validator_version": "test-v1",
+        }
+        for check_name in REQUIRED_PLAYER_VISIBLE_CHECKS
+    }
 
 
 def test_m91_kernel_labels_compiled_or_fallback_backend_and_streams(tmp_path: Path) -> None:
@@ -162,7 +178,7 @@ def test_m96_m98_cocos_contracts_and_player_visible_gate(tmp_path: Path) -> None
     accepted = judge_commercial_readiness_layers(
         technical_smoke=True,
         production_scaffold=True,
-        player_visible_checks={"ui": True, "mobile": True, "audio": True, "levels": True},
+        player_visible_checks=_valid_player_visible_checks(tmp_path),
     )
     assert missing_player["commercial_playable_go"] is False
     assert "player_visible_evidence" in missing_player["commercial_playable_blockers"]

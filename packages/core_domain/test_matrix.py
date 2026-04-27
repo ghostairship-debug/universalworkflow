@@ -7,6 +7,7 @@ from infra.test_matrix import (
     UNIT_TARGETS,
     MatrixSelection,
     build_pytest_command,
+    prune_pytest_temp_workspace,
     run_matrix,
     select_matrix,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "UNIT_TARGETS",
     "MatrixSelection",
     "build_pytest_command",
+    "prune_pytest_temp_workspace",
     "run_matrix",
     "select_matrix",
 ]

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
-from infra.test_matrix import build_pytest_command, select_matrix
+from infra.test_matrix import build_pytest_command, prune_pytest_temp_workspace, run_matrix, select_matrix
 from packages.core_domain.test_matrix import select_matrix as select_matrix_compat
 
 
@@ -63,3 +65,63 @@ def test_test_matrix_uses_milestone_neutral_basetemp(tmp_path: Path) -> None:
     assert ".pytest-tmp-workflow" in basetemp_text
     assert "m48m51" not in basetemp_text
     assert "m61m66" not in basetemp_text
+
+
+def test_test_matrix_success_removes_current_basetemp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(args=["pytest"], returncode=0, stdout="passed", stderr="")
+
+    monkeypatch.delenv("WORKFLOW_KEEP_TEST_TEMP", raising=False)
+    monkeypatch.setattr("infra.test_matrix.subprocess.run", fake_run)
+
+    payload = run_matrix(suite="unit", workspace_root=tmp_path)
+
+    basetemp = Path(payload["basetemp"])
+    assert payload["return_code"] == 0
+    assert payload["cleanup"]["post_run"]["status"] == "deleted"
+    assert not basetemp.exists()
+
+
+def test_test_matrix_failure_keeps_current_basetemp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(args=["pytest"], returncode=1, stdout="", stderr="failed")
+
+    monkeypatch.delenv("WORKFLOW_KEEP_TEST_TEMP", raising=False)
+    monkeypatch.setattr("infra.test_matrix.subprocess.run", fake_run)
+
+    payload = run_matrix(suite="unit", workspace_root=tmp_path)
+
+    basetemp = Path(payload["basetemp"])
+    assert payload["return_code"] == 1
+    assert payload["cleanup"]["post_run"]["reason"] == "test_failed"
+    assert payload["cleanup"]["kept_current_on_failure"] is True
+    assert basetemp.exists()
+
+
+def test_test_matrix_prunes_old_pytest_temp_dirs(tmp_path: Path) -> None:
+    temp_root = tmp_path / "state" / ".pytest-tmp-workflow"
+    old_dir = temp_root / "matrix-old"
+    old_dir.mkdir(parents=True)
+    (old_dir / "workflow.db").write_bytes(b"old")
+    old_timestamp = 1000
+    os.utime(old_dir, (old_timestamp, old_timestamp))
+
+    payload = prune_pytest_temp_workspace(tmp_path, ttl_hours=1, now_timestamp=old_timestamp + 7200)
+
+    assert payload["status"] == "ok"
+    assert payload["bytes_removed"] > 0
+    assert not old_dir.exists()
+
+
+def test_test_matrix_keep_env_disables_success_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(args=["pytest"], returncode=0, stdout="passed", stderr="")
+
+    monkeypatch.setenv("WORKFLOW_KEEP_TEST_TEMP", "1")
+    monkeypatch.setattr("infra.test_matrix.subprocess.run", fake_run)
+
+    payload = run_matrix(suite="unit", workspace_root=tmp_path)
+
+    basetemp = Path(payload["basetemp"])
+    assert payload["cleanup"]["post_run"]["reason"] == "WORKFLOW_KEEP_TEST_TEMP"
+    assert basetemp.exists()

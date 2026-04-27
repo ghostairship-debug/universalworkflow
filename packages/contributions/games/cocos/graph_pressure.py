@@ -10,6 +10,7 @@ from packages.contributions.games.cocos.capabilities import (
     cocos_capability_contracts,
     judge_commercial_readiness_layers,
 )
+from packages.contracts.models import new_id
 from packages.runtime_langgraph.checkpoint_store import persist_graph_checkpoint
 from packages.runtime_langgraph.checkpointer_factory import open_graph_checkpointer
 
@@ -43,8 +44,9 @@ def run_cocos_graph_pressure_test(
     project = Path(project_path).resolve()
     evidence_root = Path(evidence_dir).resolve() if evidence_dir else workspace / "state" / "cocos_graph_pressure"
     evidence_root.mkdir(parents=True, exist_ok=True)
-    run_id = _stable_ref("run", f"cocos:{project.as_posix()}")
-    thread_id = _stable_ref("thread", f"cocos:{run_id}")
+    attempt_id = new_id("attempt")
+    run_id = _stable_ref("run", f"cocos:{project.as_posix()}:{attempt_id}")
+    thread_id = _stable_ref("thread", f"cocos:{run_id}:{attempt_id}")
     handle = open_graph_checkpointer(workspace, graph_id="cocos_pressure")
     try:
         from langgraph.graph import END, START, StateGraph
@@ -88,6 +90,7 @@ def run_cocos_graph_pressure_test(
         initial_state = {
             "schema_version": COCOS_GRAPH_PRESSURE_SCHEMA,
             "run_id": run_id,
+            "attempt_id": attempt_id,
             "thread_id": thread_id,
             "project_path": project.as_posix(),
             "technical_smoke": bool(technical_smoke),
@@ -125,12 +128,15 @@ def run_cocos_graph_pressure_test(
                 }
             )
         latest_checkpoint = next((item for item in history if item.get("checkpoint_id")), {})
-        evidence_path = evidence_root / f"cocos_graph_pressure_{run_id}.json"
+        evidence_run_root = evidence_root / run_id / attempt_id
+        evidence_run_root.mkdir(parents=True, exist_ok=True)
+        evidence_path = evidence_run_root / "cocos_graph_pressure.json"
         payload = {
             "schema_version": COCOS_GRAPH_PRESSURE_SCHEMA,
             "status": final_state.get("status"),
             "failure_class": final_state.get("failure_class"),
             "run_id": run_id,
+            "attempt_id": attempt_id,
             "thread_id": thread_id,
             "project_path": project.as_posix(),
             "node_path": final_state.get("node_path", []),
@@ -150,6 +156,7 @@ def run_cocos_graph_pressure_test(
                 "run_id": run_id,
                 "thread_id": thread_id,
                 "phase_id": "M104",
+                "metadata": {"attempt_id": attempt_id},
                 "write_set": [],
                 "checkpoint_refs": [
                     {
@@ -166,6 +173,7 @@ def run_cocos_graph_pressure_test(
             thread_id=thread_id,
             metadata={
                 "graph_kind": "cocos_graph_pressure",
+                "attempt_id": attempt_id,
                 "checkpoint_backend": handle.describe(),
                 "langgraph_checkpoint_id": latest_checkpoint.get("checkpoint_id"),
                 "langgraph_checkpoint_history": history,

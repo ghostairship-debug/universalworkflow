@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "updated_at": "2026-04-27",
-  "summary": "M104 is the accepted implementation baseline: LangGraph local runtime, SQLite checkpoint, interrupt/resume, repair loop, subgraph/supervisor probe, stream evidence, Studio graph configuration, and Cocos graph pressure test are integrated. M105-M108 now focus on Cocos real-project quality and player-view validation while preserving workflow receipt, lease, write_set, provider live proof, evidence, and operator packet rules.",
+  "summary": "M108 is the accepted implementation baseline: Cocos command/config truth, project inspector v2, local stable assets, Prefab/Panel/interaction contracts, player-visible gate, graph evidence bridge, and small-goal sample closeout are integrated. Commercial playable readiness still requires real player-view build/playtest evidence before any product claim.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -140,19 +140,19 @@
   "open_items": [
     {
       "debt_id": "M77-COCOS-001",
-      "description": "Cocos game pipeline can generate, build, playtest, and package a project, but the generated result is not yet commercial-playable: UI is primitive, panels are shallow, level switching is mostly state mutation, audio/voice design is poor, and double-click HTML launch is unsupported.",
+      "description": "Cocos game pipeline can generate a real local project with command/config truth, inspector evidence, local stable assets, Prefab/Panel/interaction contracts, graph bridge, and sample closeout, but the generated result is not yet proven commercial-playable without real build/playtest player evidence.",
       "introduced_in": "M76-M84 commercial game evaluation",
-      "planned_repayment_phase": "Next commercial game quality milestone",
+      "planned_repayment_phase": "Review after M108; external evaluation or M109+ only if approved",
       "current_status": "partially_repaid",
-      "blocking_impact": "Blocks claiming final commercial game readiness; does not block preserving and improving the commercial game pipeline."
+      "blocking_impact": "Blocks claiming final commercial game readiness; does not block preserving the sample pipeline or running external evaluation."
     },
     {
       "debt_id": "M84-GAME-QA-001",
-      "description": "Commercial readiness tests rely too much on internal E2E state flags and not enough on player-visible UI, usable panels, gameplay depth, audio experience, and mobile visual quality.",
+      "description": "Commercial readiness now has a structured player-visible gate, but actual commercial GO still depends on real build/playtest screenshots, mobile UI, controls, audio, console, and level-flow evidence.",
       "introduced_in": "M84 real generated game review",
-      "planned_repayment_phase": "Next commercial game quality milestone",
-      "current_status": "open",
-      "blocking_impact": "Blocks future GO decisions for commercial game generation until the gate distinguishes technical smoke, production scaffold, and commercial-playable output."
+      "planned_repayment_phase": "External evaluation or real player playtest pass",
+      "current_status": "partially_repaid",
+      "blocking_impact": "Blocks commercial_playable_go until real player-visible evidence is present; the gate itself now distinguishes technical smoke, production scaffold, and commercial playable."
     },
     {
       "debt_id": "M77-LANGCHAIN-001",

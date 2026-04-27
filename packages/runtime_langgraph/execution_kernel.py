@@ -15,6 +15,7 @@ from packages.contracts import (
     WorkflowGraphNodeResult,
     WorkflowGraphState,
 )
+from packages.contracts.models import new_id
 from packages.runtime_langgraph.interrupts import build_human_approval_interrupt
 from packages.runtime_langgraph.checkpoint_store import persist_graph_checkpoint
 from packages.runtime_langgraph.checkpointer_factory import open_graph_checkpointer
@@ -196,12 +197,20 @@ class ArtifactOnlyGraphExecutionKernel:
         preset_id: str | None = None,
         requested_side_effect_level: SideEffectLevel | str = SideEffectLevel.artifact_only,
         artifact_path: str | Path | None = None,
+        run_id: str | None = None,
+        phase_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> dict[str, Any]:
         workspace = Path(workspace_root).resolve()
         evidence_root = Path(evidence_dir).resolve() if evidence_dir else workspace / "state" / "graph_kernel"
         evidence_root.mkdir(parents=True, exist_ok=True)
         requested_level = SideEffectLevel(requested_side_effect_level)
-        default_artifact_path = evidence_root / _safe_filename(goal)
+        resolved_run_id = run_id or new_id("run")
+        resolved_phase_id = phase_id or "graph-artifact"
+        resolved_attempt_id = attempt_id or new_id("attempt")
+        run_scope = f"{resolved_run_id}:{resolved_phase_id}:{resolved_attempt_id}"
+        thread_id = _stable_ref("thread", run_scope)
+        default_artifact_path = evidence_root / resolved_run_id / resolved_attempt_id / _safe_filename(goal)
         state: dict[str, Any] = {
             "schema_version": GRAPH_KERNEL_EVIDENCE_SCHEMA,
             "kernel_version": GRAPH_KERNEL_VERSION,
@@ -211,7 +220,10 @@ class ArtifactOnlyGraphExecutionKernel:
             "evidence_dir": evidence_root.as_posix(),
             "requested_side_effect_level": requested_level.value,
             "artifact_path": Path(artifact_path).resolve().as_posix() if artifact_path else default_artifact_path.as_posix(),
-            "run_id": _stable_ref("run", goal),
+            "run_id": resolved_run_id,
+            "phase_id": resolved_phase_id,
+            "attempt_id": resolved_attempt_id,
+            "thread_id": thread_id,
             "path": [],
             "node_timings": [],
             "node_results": [],
@@ -220,8 +232,6 @@ class ArtifactOnlyGraphExecutionKernel:
             "langgraph_stream_parts": [],
             "created_at": _utc_now_iso(),
         }
-        thread_id = _stable_ref("thread", state["run_id"])
-        state["thread_id"] = thread_id
         checkpointer_handle = open_graph_checkpointer(workspace, graph_id="artifact_kernel")
         state["checkpoint_backend"] = checkpointer_handle.describe()
         compiled_graph = self._compile_graph(checkpointer=checkpointer_handle.saver) if checkpointer_handle.saver else None
@@ -269,13 +279,13 @@ class ArtifactOnlyGraphExecutionKernel:
             )
             graph_state = WorkflowGraphState(
                 run_id=updated["run_id"],
-                phase_id="M86",
+                phase_id=updated.get("phase_id"),
                 task_cards=[task_card],
                 write_set=[updated["artifact_path"]],
                 checkpoint_refs=[
                     GraphCheckpointRef(
-                        checkpoint_id=_stable_ref("checkpoint", f"{updated['run_id']}:plan"),
-                        thread_id=_stable_ref("thread", updated["run_id"]),
+                        checkpoint_id=_stable_ref("checkpoint", f"{updated['run_id']}:{updated['attempt_id']}:plan"),
+                        thread_id=updated.get("thread_id"),
                         source="m86_artifact_kernel",
                     )
                 ],
@@ -309,8 +319,8 @@ class ArtifactOnlyGraphExecutionKernel:
                     requested_side_effect_level=requested_level.value,
                     write_set=[updated["artifact_path"]],
                     workspace_root=updated["workspace_root"],
-                    thread_id=_stable_ref("thread", updated["run_id"]),
-                    checkpoint_id=_stable_ref("checkpoint", f"{updated['run_id']}:policy_review"),
+                    thread_id=updated.get("thread_id"),
+                    checkpoint_id=_stable_ref("checkpoint", f"{updated['run_id']}:{updated['attempt_id']}:policy_review"),
                     operator_hint="Review the graph handoff before allowing any high-risk side effect.",
                     metadata={"goal": updated["goal"], "node_id": "policy_review"},
                 )
@@ -410,23 +420,33 @@ class ArtifactOnlyGraphExecutionKernel:
 
         def _apply(updated: dict[str, Any]) -> dict[str, Any]:
             evidence_root = Path(updated["evidence_dir"])
-            evidence_id = _stable_ref("graphevidence", updated["goal"])
-            evidence_path = evidence_root / f"{evidence_id}.json"
-            state_path = evidence_root / f"{_stable_ref('graphstate', updated['goal'])}.json"
-            stream_path = evidence_root / f"{_stable_ref('graphstream', updated['goal'])}.jsonl"
+            run_scope = f"{updated['run_id']}:{updated['attempt_id']}"
+            evidence_id = _stable_ref("graphevidence", run_scope)
+            run_evidence_root = evidence_root / updated["run_id"] / updated["attempt_id"]
+            run_evidence_root.mkdir(parents=True, exist_ok=True)
+            evidence_path = run_evidence_root / f"{evidence_id}.json"
+            state_path = run_evidence_root / f"{_stable_ref('graphstate', run_scope)}.json"
+            stream_path = run_evidence_root / f"{_stable_ref('graphstream', run_scope)}.jsonl"
             manifest = GraphEvidenceManifest(
                 evidence_id=evidence_id,
                 evidence_path=evidence_path.as_posix(),
                 stage_evidence_paths=[updated["artifact_path"]],
-                metadata={"schema_version": GRAPH_KERNEL_EVIDENCE_SCHEMA, "kernel_version": GRAPH_KERNEL_VERSION},
+                metadata={
+                    "schema_version": GRAPH_KERNEL_EVIDENCE_SCHEMA,
+                    "kernel_version": GRAPH_KERNEL_VERSION,
+                    "run_id": updated["run_id"],
+                    "phase_id": updated.get("phase_id"),
+                    "attempt_id": updated.get("attempt_id"),
+                    "thread_id": updated.get("thread_id"),
+                },
             )
             graph_state = WorkflowGraphState.model_validate(updated["graph_state"])
             graph_state.evidence_refs = [evidence_path.as_posix(), updated["artifact_path"]]
             graph_state.node_results = [WorkflowGraphNodeResult.model_validate(item) for item in updated["node_results"]]
             graph_state.checkpoint_refs.append(
                 GraphCheckpointRef(
-                    checkpoint_id=_stable_ref("checkpoint", f"{updated['run_id']}:evidence"),
-                    thread_id=_stable_ref("thread", updated["run_id"]),
+                    checkpoint_id=_stable_ref("checkpoint", f"{updated['run_id']}:{updated['attempt_id']}:evidence"),
+                    thread_id=updated.get("thread_id"),
                     source="m86_artifact_kernel",
                 )
             )
@@ -435,6 +455,10 @@ class ArtifactOnlyGraphExecutionKernel:
                 "schema_version": GRAPH_KERNEL_EVIDENCE_SCHEMA,
                 "kernel_version": GRAPH_KERNEL_VERSION,
                 "goal": updated["goal"],
+                "run_id": updated["run_id"],
+                "phase_id": updated.get("phase_id"),
+                "attempt_id": updated.get("attempt_id"),
+                "thread_id": updated.get("thread_id"),
                 "provider": self.provider,
                 "execution_backend": self.execution_backend,
                 "fallback_reason": self.fallback_reason,
@@ -578,6 +602,10 @@ class ArtifactOnlyGraphExecutionKernel:
             "status": state.get("status"),
             "goal": state.get("goal"),
             "preset_id": state.get("preset_id"),
+            "run_id": state.get("run_id"),
+            "phase_id": state.get("phase_id"),
+            "attempt_id": state.get("attempt_id"),
+            "thread_id": state.get("thread_id"),
             "path": state.get("path", []),
             "node_timings": state.get("node_timings", []),
             "node_results": state.get("node_results", []),
@@ -606,6 +634,10 @@ class ArtifactOnlyGraphExecutionKernel:
         graph_state_path = state.get("graph_state_path")
         if evidence_path and Path(evidence_path).exists():
             evidence_payload = json.loads(Path(evidence_path).read_text(encoding="utf-8"))
+            evidence_payload["run_id"] = state.get("run_id")
+            evidence_payload["phase_id"] = state.get("phase_id")
+            evidence_payload["attempt_id"] = state.get("attempt_id")
+            evidence_payload["thread_id"] = state.get("thread_id")
             evidence_payload["checkpoint_backend"] = state.get("checkpoint_backend")
             evidence_payload["langgraph_stream_parts"] = state.get("langgraph_stream_parts", [])
             evidence_payload["langgraph_state_snapshot"] = state.get("langgraph_state_snapshot")
@@ -615,6 +647,8 @@ class ArtifactOnlyGraphExecutionKernel:
         if graph_state_path and Path(graph_state_path).exists():
             graph_state_payload = json.loads(Path(graph_state_path).read_text(encoding="utf-8"))
             graph_state_payload.setdefault("metadata", {})
+            graph_state_payload["metadata"]["attempt_id"] = state.get("attempt_id")
+            graph_state_payload["metadata"]["thread_id"] = state.get("thread_id")
             graph_state_payload["metadata"]["checkpoint_backend"] = state.get("checkpoint_backend")
             graph_state_payload["metadata"]["langgraph_latest_checkpoint_id"] = state.get("langgraph_latest_checkpoint_id")
             Path(graph_state_path).write_text(json.dumps(graph_state_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -666,6 +700,9 @@ def run_artifact_only_graph(
     evidence_dir: str | Path | None = None,
     preset_id: str | None = None,
     artifact_path: str | Path | None = None,
+    run_id: str | None = None,
+    phase_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> dict[str, Any]:
     return ArtifactOnlyGraphExecutionKernel().run(
         goal=goal,
@@ -673,6 +710,9 @@ def run_artifact_only_graph(
         evidence_dir=evidence_dir,
         preset_id=preset_id,
         artifact_path=artifact_path,
+        run_id=run_id,
+        phase_id=phase_id,
+        attempt_id=attempt_id,
         requested_side_effect_level=SideEffectLevel.artifact_only,
     )
 
@@ -685,6 +725,9 @@ def run_graph_with_side_effect_policy(
     evidence_dir: str | Path | None = None,
     preset_id: str | None = None,
     artifact_path: str | Path | None = None,
+    run_id: str | None = None,
+    phase_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> dict[str, Any]:
     return ArtifactOnlyGraphExecutionKernel().run(
         goal=goal,
@@ -692,5 +735,8 @@ def run_graph_with_side_effect_policy(
         evidence_dir=evidence_dir,
         preset_id=preset_id,
         artifact_path=artifact_path,
+        run_id=run_id,
+        phase_id=phase_id,
+        attempt_id=attempt_id,
         requested_side_effect_level=requested_side_effect_level,
     )

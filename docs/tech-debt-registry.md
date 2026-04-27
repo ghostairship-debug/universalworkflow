@@ -12,12 +12,12 @@
 
 ## 当前结论
 
-- M80-M104 的 provider runtime truth、asset factory、active truth check、workflow dogfood proof、`commercial_cocos_game` pipeline template、LangGraph 本地运行时、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针和 Cocos graph pressure test 已落地。
+- M80-M108 的 provider runtime truth、asset factory、active truth check、workflow dogfood proof、`commercial_cocos_game` pipeline template、LangGraph 本地运行时、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、Cocos graph pressure test、Cocos inspector v2、本地稳定资产、玩家视角 gate 和小目标样机 closeout 已落地。
 - M84 卫生清理确认：仓库源代码规模可控，膨胀主要来自 `state/` 生成态 evidence、pytest 临时目录和 Cocos 构建产物。
 - 商业化游戏方向保留，但 M84 真实试玩反馈证明当前生成物不具备商业化可玩质量。
 - 因此 `M77-COCOS-001` 从“已偿还”调整为“部分偿还”：技术链路已通，成品质量门禁未达标。
 - M85-M104 已收敛 LangGraph 与 workflow 的主要边界：LangGraph 负责图状态、checkpoint、人审暂停、subgraph 和 repair loop；workflow 继续负责 receipt、lease、write_set、provider live proof、evidence 和 operator packet。
-- M105 起优先处理 Cocos 真实工程质量和玩家视角验收。
+- M105-M108 已补齐 Cocos 真实工程样机闭环；下一步必须先 review 或外部评估，不能自动续到 M109。
 - 留存策略本轮暂不处理；大型生成态清理仍会持续发生。
 
 ## 当前未偿还或部分偿还债务
@@ -25,7 +25,7 @@
 | ID | 描述 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- |
 | M77-COCOS-001 | Cocos pipeline 能生成、构建和试玩，但 UI、面板、关卡、音频和玩家视角可玩性没有达到商业化成品标准 | partially_repaid | 阻塞把商业化游戏生成声明为正式成品能力；不阻塞继续优化 pipeline |
-| M84-GAME-QA-001 | 商业化验收过度依赖内部状态变量和事件覆盖，缺少玩家视角 UI/UX/可玩性断言 | open | 阻塞下一次商业化游戏交付 GO |
+| M84-GAME-QA-001 | 商业化验收已有结构化玩家视角 gate，但真实商业 GO 仍缺少 build/playtest 截图、移动 UI、控制台、音频和关卡流程证据 | partially_repaid | 阻塞 `commercial_playable_go`，不阻塞样机和外部评估 |
 | M77-LANGCHAIN-001 | LangChain 保留为实验性 agent adapter，但当前没有主线不可替代价值 | partially_repaid | 非阻塞；继续保持 opt-in |
 | M67-CARRY-001 | `repositories.py`、`service_lifecycle.py`、`service_projection.py`、`interaction_catalog.py`、`models.py` 仍偏大 | carry_forward | 非阻塞；后续能力开发触发真实痛点时再拆 |
 
@@ -56,7 +56,7 @@
 
 ## 下一阶段建议
 
-1. 执行 `CURRENT_DEVELOPMENT_WORKFLOW.md` 里的 M105-M108 计划，从 M105.1 的 Cocos command/config truth 开始。
-2. 开发计划文档只写到 milestone 和 phase；task card 只在 active phase 生成。
-3. 升级商业化游戏验收和 Cocos-native 生产线，但继续区分 technical smoke、production scaffold 和 commercial playable。
+1. M108 后先 review，决定停止、外部评估、人工试玩修复或新开 M109+。
+2. 若新开 M109+，开发计划仍只写到 milestone 和 phase；task card 只在 active phase 生成。
+3. 继续区分 technical smoke、production scaffold 和 commercial playable。
 4. 保持 `state/` 生成态定期清理，避免 evidence 和构建产物再次膨胀到 GB 级。

@@ -1,11 +1,11 @@
 # Universal Agentic Workflow OS
 
-## 当前状态：M105-M108 Cocos 真实工程接入计划
+## 当前状态：M108 Cocos 小目标样机闭环完成
 
 - 包版本：`0.66.0`。
-- 当前接受实现基线：M104 已完成本地 LangGraph 运行时接入、SQLite checkpoint、interrupt/resume、repair loop、subgraph/supervisor 探针、stream evidence 和 Cocos graph pressure test。
-- 当前质量结论：商业化 Cocos 游戏生成是正式需求，功能代码和 pipeline 继续保留；但最近一次真实生成结果只达到“可构建技术样机/生产线验证”，没有达到商业化可玩成品质量。
-- 当前工作重点：用已接入的 LangGraph 底座推进 Cocos 真实工程接入，先从 Cocos command、构建配置、工程检查和玩家视角证据开始。
+- 当前接受实现基线：M108 已完成 Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout。
+- 当前质量结论：Cocos 生产线已能生成可检查的本地样机工程和诚实 closeout 报告；但在缺少真实 build/playtest 玩家证据时，`commercial_playable_go` 仍为 NO-GO，不能宣称商业化可玩成品。
+- 当前工作重点：M108 后必须先 review，再决定是否进入外部评估、人工试玩修复或 M109+；不得自动延续“继续做游戏”。
 - 活跃开发方案见：[CURRENT_DEVELOPMENT_WORKFLOW.md](CURRENT_DEVELOPMENT_WORKFLOW.md)。
 - 历史收敛方案已压缩进里程碑历史和架构笔记，不再在根目录保留散装计划书。
 - 治理真相源：[docs/governance/tech_debt_registry.json](docs/governance/tech_debt_registry.json)。
@@ -59,7 +59,7 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 2. **E2E scaffold**：有 Cocos 工程、资产绑定、自动试玩和 feature coverage。
 3. **商业化可玩成品**：有完整 UI、美术统筹、可用面板、真实关卡流程、音频设计、动效反馈、可玩性和移动端体验。
 
-当前代码已经具备前两层的生产线能力，但最近一次真实 Cocos 生成暴露了第三层不足：
+当前代码已经具备前两层和小目标样机 closeout 能力，并加入了结构化玩家视角 gate；但没有真实 build/playtest 玩家证据时，第三层仍为 NO-GO：
 
 - UI 仍像调试面板，缺少成品级界面设计。
 - 关卡切换、皮肤、画廊、复活等功能更多是事件标记或浅交互。
@@ -164,3 +164,5 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" validation run --suite full --skip-offline-probe
 python -m pytest -q
 ```
+
+`workflowctl test matrix` 会把 pytest 临时目录放到 `state/.pytest-tmp-workflow/`。测试成功后自动清掉本次临时目录；测试失败时保留现场。需要临时禁止清理时设置 `WORKFLOW_KEEP_TEST_TEMP=1`。
