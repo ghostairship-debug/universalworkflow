@@ -236,7 +236,8 @@ class InspectionServiceMixin:
                         "scheduler_authority_lease_expired",
                         "scheduler authority still projects an active lease decision whose lease has already expired",
                         "submit_scheduler_proposal_or_release_scheduler_lease",
-                        repairable=False,
+                        repairable=True,
+                        repair_action="release_scheduler_lease",
                         details={
                             "decision_id": active_decision.get("decision_id"),
                             "lease_id": active_decision.get("lease_id"),

@@ -137,9 +137,9 @@ def _external_capability_status(effective: dict[str, object], optional_commands:
                 adaptive_config.get("medium_model") if isinstance(adaptive_config, dict) else "deepseek/deepseek-v4-flash"
             ),
             "complex_model": (
-                adaptive_config.get("complex_model") if isinstance(adaptive_config, dict) else "minimax/MiniMax-M2.7"
+                adaptive_config.get("complex_model") if isinstance(adaptive_config, dict) else "gpt-5.4"
             ),
-            "coding_adapter": adaptive_config.get("coding_adapter") if isinstance(adaptive_config, dict) else "opencode",
+            "coding_adapter": adaptive_config.get("coding_adapter") if isinstance(adaptive_config, dict) else "codex",
         },
         "dynamic_cluster_routing": {
             "status": "enabled" if _env_bool("WORKFLOW_DYNAMIC_CLUSTER_ROUTING_ENABLED") else "disabled",

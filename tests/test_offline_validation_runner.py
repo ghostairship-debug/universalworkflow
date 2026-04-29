@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
-from infra.validation.common import _operator_action_scope_for_post, run_command
+from infra.validation.common import _operator_action_scope_for_post, http_get_json, review_policy_debt_linkage_is_current, run_command
 from infra.validation import runner
 
 
@@ -99,6 +99,28 @@ def test_offline_validation_command_trace_records_last_command(tmp_path: Path) -
     assert payload["last_command"]["last_event"] == "command_started"
 
 
+def test_offline_validation_http_timeout_includes_url_and_failure_class(monkeypatch, tmp_path: Path) -> None:
+    def _timeout(*_args, **_kwargs):
+        raise TimeoutError("timed out")
+
+    trace_path = tmp_path / "http.jsonl"
+    monkeypatch.setenv("WORKFLOW_OFFLINE_VALIDATION_TRACE", trace_path.as_posix())
+    monkeypatch.setattr("urllib.request.urlopen", _timeout)
+
+    try:
+        http_get_json("http://127.0.0.1:8011/slow", timeout=0.1)
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected timeout")
+
+    assert "validation_http_timeout" in message
+    assert "http://127.0.0.1:8011/slow" in message
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["event"] == "http_failed"
+    assert events[-1]["failure_class"] == "validation_http_timeout"
+
+
 def test_offline_validation_subprocess_returns_large_payload_without_queue_deadlock(tmp_path: Path) -> None:
     trace_path = tmp_path / "large.jsonl"
 
@@ -125,6 +147,12 @@ def test_offline_validation_receipt_scope_matches_high_risk_posts() -> None:
         "http://127.0.0.1:8011/runs/run_a/reconcile",
         {"apply": True, "action": "align_completed_runtime_state"},
     ) == {"run_id": "run_a", "apply": True, "action": "align_completed_runtime_state"}
+
+
+def test_offline_validation_accepts_current_or_legacy_review_policy_debt_linkage() -> None:
+    assert review_policy_debt_linkage_is_current("TD-006") is True
+    assert review_policy_debt_linkage_is_current(None) is True
+    assert review_policy_debt_linkage_is_current("unrelated-debt") is False
 
 
 def test_offline_validation_main_writes_failure_report_for_invalid_shard(tmp_path: Path) -> None:
@@ -182,4 +210,6 @@ def test_cli_validation_run_writes_report(tmp_path: Path, monkeypatch) -> None:
     payload = json.loads(result.stdout)
     assert payload["suite"] == "quick"
     assert payload["report_path"] == report_path.as_posix()
-    assert json.loads(report_path.read_text(encoding="utf-8"))["overall_passed"] is True
+    persisted = json.loads(report_path.read_text(encoding="utf-8"))
+    assert persisted["overall_passed"] is True
+    assert persisted["report_path"] == report_path.as_posix()

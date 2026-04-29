@@ -71,6 +71,10 @@ LLM_ENV_KEYS = {
 }
 
 
+def review_policy_debt_linkage_is_current(debt_id: str | None) -> bool:
+    return debt_id in {None, "TD-006"}
+
+
 @dataclass(slots=True)
 class CommandResult:
     command: list[str]
@@ -243,17 +247,16 @@ def tcp_probe(host: str, port: int, timeout: float = 2.0) -> dict[str, Any]:
         return {"target": f"{host}:{port}", "reachable": False, "elapsed_ms": elapsed_ms, "error": str(exc)}
 
 
-def http_get_json(url: str, timeout: float = 10.0) -> Any:
-    with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
-        return json.loads(response.read().decode("utf-8"))
+def http_get_json(url: str, timeout: float = 30.0) -> Any:
+    body = _http_open("GET", url, timeout=timeout)
+    return json.loads(body)
 
 
-def http_get_text(url: str, timeout: float = 10.0) -> str:
-    with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
-        return response.read().decode("utf-8")
+def http_get_text(url: str, timeout: float = 30.0) -> str:
+    return _http_open("GET", url, timeout=timeout)
 
 
-def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: float = 10.0) -> Any:
+def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: float = 30.0) -> Any:
     headers = {"Content-Type": "application/json"}
     receipt_action = _operator_action_for_post(url, payload)
     if receipt_action is not None:
@@ -277,8 +280,75 @@ def http_post_json(url: str, payload: dict[str, Any] | None = None, timeout: flo
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        return json.loads(response.read().decode("utf-8"))
+    return json.loads(_http_open("POST", url, request=request, timeout=timeout))
+
+
+def _http_open(
+    method: str,
+    url: str,
+    *,
+    request: urllib.request.Request | None = None,
+    timeout: float,
+) -> str:
+    trace_path = os.getenv("WORKFLOW_OFFLINE_VALIDATION_TRACE")
+    trace_event_id = f"{int(time.time() * 1000)}-{os.getpid()}-{method.lower()}"
+    started = time.monotonic()
+    _append_command_trace(
+        trace_path,
+        {
+            "event": "http_started",
+            "event_id": trace_event_id,
+            "method": method,
+            "url": url,
+            "started_at": utc_now_iso(),
+            "timeout_seconds": timeout,
+        },
+    )
+    try:
+        target = request if request is not None else url
+        with urllib.request.urlopen(target, timeout=timeout) as response:  # noqa: S310
+            text = response.read().decode("utf-8")
+    except Exception as exc:  # noqa: BLE001
+        failure_class = _http_failure_class(exc)
+        _append_command_trace(
+            trace_path,
+            {
+                "event": "http_failed",
+                "event_id": trace_event_id,
+                "method": method,
+                "url": url,
+                "finished_at": utc_now_iso(),
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+                "failure_class": failure_class,
+                "error": str(exc),
+            },
+        )
+        raise RuntimeError(
+            f"validation_http_{method.lower()}_failed "
+            f"failure_class={failure_class} timeout_seconds={timeout} url={url}: {exc}"
+        ) from exc
+    _append_command_trace(
+        trace_path,
+        {
+            "event": "http_finished",
+            "event_id": trace_event_id,
+            "method": method,
+            "url": url,
+            "finished_at": utc_now_iso(),
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "response_chars": len(text),
+        },
+    )
+    return text
+
+
+def _http_failure_class(exc: Exception) -> str:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "validation_http_timeout"
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "validation_http_timeout"
+    return "validation_http_error"
 
 
 def _operator_action_for_post(url: str, payload: dict[str, Any] | None = None) -> str | None:

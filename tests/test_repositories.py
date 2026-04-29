@@ -61,6 +61,7 @@ from packages.core_domain.repositories import (
     TaskRepository,
     WorkerLeaseRepository,
 )
+from packages.core_domain.task_card_store import TaskCardStore, task_card_quality_report
 
 
 def test_migrate_and_wal_mode(tmp_path: Path) -> None:
@@ -78,6 +79,7 @@ def test_migrate_and_wal_mode(tmp_path: Path) -> None:
     assert "010_m10_ownership_topology.sql" in applied
     assert "011_m16_repo_mutation_contracts.sql" in applied
     assert "012_m18_scheduler_authority.sql" in applied
+    assert "026_m108_task_card_store.sql" in applied
     assert get_journal_mode(db_path) == "wal"
 
     second_apply = migrate(db_path)
@@ -359,6 +361,45 @@ def test_run_task_and_timeline_round_trip(tmp_path: Path) -> None:
     assert stored_packet is not None
     assert stored_packet.mutation_contract is not None
     assert stored_packet.mutation_contract.mutation_mode == "patch_apply"
+
+
+def test_rich_task_card_store_round_trip_and_markdown_export(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    run = RunRepository(db_path).create(Run(goal="Create rich task cards", preset_id="feature_delivery"))
+    card = TaskRepository(db_path).create_task_card(
+        TaskCard(
+            schema_version="m108_task_card_v2",
+            run_id=run.run_id,
+            title="Tighten task card storage",
+            description="Store task cards in the database with enough execution detail for a model to act safely.",
+            acceptance_criteria=["database row is complete", "markdown export is generated"],
+            milestone="M108.5",
+            phase_name="task-card-store",
+            goal="Move task cards to the DB as source of truth and export markdown as a human snapshot.",
+            write_set=["packages/core_domain/task_card_store.py"],
+            read_set=["CURRENT_DEVELOPMENT_WORKFLOW.md"],
+            test_commands=["python -m pytest tests/test_repositories.py -q"],
+            evidence_requirements=["quality report", "markdown snapshot"],
+            blocking_conditions=["DB migration fails"],
+            model_guidance=["Use the structured fields before editing files."],
+            risk_level="medium",
+            provider_lane="codex",
+            execution_mode="patch_apply",
+            status="ready",
+        )
+    )
+
+    stored = TaskRepository(db_path).get_task_card(card.task_card_id)
+    assert stored is not None
+    assert stored.write_set == ["packages/core_domain/task_card_store.py"]
+    assert stored.milestone == "M108.5"
+    assert task_card_quality_report([stored])["go_no_go"] == "GO"
+
+    export = TaskCardStore(db_path).export_run_markdown(run.run_id, tmp_path / "task_cards.md")
+    exported = Path(export["output_path"]).read_text(encoding="utf-8")
+    assert "Generated from the workflow task card database" in exported
+    assert "Tighten task card storage" in exported
 
 
 def test_run_repository_lists_recent_runs_in_updated_order(tmp_path: Path) -> None:

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Barrier, BrokenBarrierError
+from datetime import timedelta
+from threading import Barrier, BrokenBarrierError, Event, Lock, Thread
 from typing import Any
 
 from packages.contracts import (
     BudgetLedger,
+    LeaseRenewalRecord,
     MutationContract,
     MutationMode,
     ReviewDecision,
@@ -53,6 +56,297 @@ from packages.worker_adapters.base import ExecutionResult
 
 
 class LifecycleServiceMixin:
+    def _default_patch_apply_adapter_name(self) -> str:
+        return "codex"
+
+    def _local_worker_heartbeat_interval_seconds(self, packet: TaskPacket) -> float:
+        raw_value = (
+            packet.env.get("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS")
+            or os.getenv("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS")
+            or "30"
+        )
+        try:
+            interval = float(raw_value)
+        except (TypeError, ValueError):
+            interval = 30.0
+        return max(interval, 0.05)
+
+    def _start_local_worker_heartbeat(
+        self,
+        worker_lease: Any,
+        packet: TaskPacket,
+    ) -> tuple[Event, Thread, list[dict[str, Any]]]:
+        interval_seconds = self._local_worker_heartbeat_interval_seconds(packet)
+        stop_event = Event()
+        renewals: list[dict[str, Any]] = []
+        renewals_lock = Lock()
+
+        def _append_renewal(renewal_payload: dict[str, Any]) -> None:
+            with renewals_lock:
+                renewals.append(renewal_payload)
+                del renewals[:-20]
+
+        def _record_heartbeat(sequence_no: int) -> bool:
+            heartbeat_at = self._utc_now()
+            lease_expires_at = heartbeat_at + timedelta(seconds=self.WORKER_LEASE_SECONDS)
+            callback_id = f"localhb_{worker_lease.lease_id}_{sequence_no}"
+            committed_lease = None
+            renewal_kwargs: dict[str, Any] = {}
+            try:
+                with unit_of_work(self.db_path) as heartbeat_connection:
+                    committed_lease = self.scheduler_authority_cluster.get_active_committed_lease_for_domain(
+                        domain_kind="runtime_task",
+                        domain_key=worker_lease.runtime_task_id,
+                        connection=heartbeat_connection,
+                    )
+                    if committed_lease is not None:
+                        renewal_kwargs = {
+                            "control_plane_id": committed_lease.control_plane_id,
+                            "committed_lease_id": committed_lease.committed_lease_id,
+                            "fencing_token": committed_lease.fencing_token,
+                            "term_no": committed_lease.term_no,
+                            "authority_term_no": committed_lease.authority_term_no,
+                            "commit_index": committed_lease.commit_index,
+                            "decision_index": committed_lease.decision_index,
+                        }
+            except Exception:
+                committed_lease = None
+                renewal_kwargs = {}
+            renewal = LeaseRenewalRecord(
+                run_id=worker_lease.run_id,
+                runtime_task_id=worker_lease.runtime_task_id,
+                worker_pool_id="local_worker",
+                lease_id=worker_lease.lease_id,
+                status="renewed",
+                renewed_at=heartbeat_at,
+                heartbeat_at=heartbeat_at,
+                lease_expires_at=lease_expires_at,
+                callback_id=callback_id,
+                source="local_worker_heartbeat",
+                **renewal_kwargs,
+            )
+            renewal_payload = renewal.model_dump(mode="json")
+            try:
+                with unit_of_work(self.db_path) as heartbeat_connection:
+                    touched = self.worker_lease_repo.touch(
+                        worker_lease.lease_id,
+                        heartbeat_at=heartbeat_at.isoformat(),
+                        lease_expires_at=lease_expires_at.isoformat(),
+                        connection=heartbeat_connection,
+                    )
+                    if touched is None:
+                        return False
+                    if getattr(worker_lease, "claim_id", None):
+                        heartbeat_connection.execute(
+                            """
+                            UPDATE runtime_claims
+                            SET lease_expires_at = ?
+                            WHERE claim_id = ? AND status = 'active'
+                            """,
+                            (lease_expires_at.isoformat(), worker_lease.claim_id),
+                        )
+                    heartbeat_connection.execute(
+                        """
+                        UPDATE scheduler_lease_decisions
+                        SET lease_expires_at = ?
+                        WHERE runtime_task_id = ?
+                          AND decision = 'granted'
+                          AND released_at IS NULL
+                        """,
+                        (lease_expires_at.isoformat(), worker_lease.runtime_task_id),
+                    )
+                    heartbeat_connection.execute(
+                        """
+                        UPDATE scheduler_committed_leases
+                        SET lease_expires_at = ?
+                        WHERE runtime_task_id = ? AND status = 'active'
+                        """,
+                        (lease_expires_at.isoformat(), worker_lease.runtime_task_id),
+                    )
+                    state_ref = self.runtime_state_repo.get_by_task(
+                        worker_lease.runtime_task_id,
+                        connection=heartbeat_connection,
+                    )
+                    if state_ref is not None:
+                        current_renewals = self._lease_renewals_for(state_ref, None)
+                        if callback_id not in {
+                            item.get("callback_id")
+                            for item in current_renewals
+                            if isinstance(item, dict)
+                        }:
+                            current_renewals.append(renewal_payload)
+                        payload_updates: dict[str, Any] = {
+                            "lease_renewals": current_renewals[-20:],
+                            "local_worker_heartbeat": {
+                                "lease_id": worker_lease.lease_id,
+                                "worker_pool_id": "local_worker",
+                                "callback_id": callback_id,
+                                "heartbeat_at": heartbeat_at.isoformat(),
+                                "lease_expires_at": lease_expires_at.isoformat(),
+                            },
+                        }
+                        scheduler_authority = (
+                            dict(state_ref.state_payload.get("scheduler_authority"))
+                            if isinstance(state_ref.state_payload.get("scheduler_authority"), dict)
+                            else None
+                        )
+                        if scheduler_authority is not None:
+                            for key in ("latest_decision", "active_decision"):
+                                decision_payload = scheduler_authority.get(key)
+                                if isinstance(decision_payload, dict):
+                                    decision_payload = dict(decision_payload)
+                                    decision_payload["lease_expires_at"] = lease_expires_at.isoformat()
+                                    scheduler_authority[key] = decision_payload
+                            committed_payload = scheduler_authority.get("active_committed_lease")
+                            if isinstance(committed_payload, dict):
+                                committed_payload = dict(committed_payload)
+                                committed_payload["lease_expires_at"] = lease_expires_at.isoformat()
+                                scheduler_authority["active_committed_lease"] = committed_payload
+                            decision_history = scheduler_authority.get("decision_history")
+                            if isinstance(decision_history, list):
+                                scheduler_authority["decision_history"] = [
+                                    {
+                                        **item,
+                                        "lease_expires_at": lease_expires_at.isoformat(),
+                                    }
+                                    if isinstance(item, dict)
+                                    and item.get("lease_id")
+                                    == (
+                                        scheduler_authority.get("latest_decision", {}).get("lease_id")
+                                        if isinstance(scheduler_authority.get("latest_decision"), dict)
+                                        else None
+                                    )
+                                    else item
+                                    for item in decision_history
+                                ]
+                            payload_updates["scheduler_authority"] = scheduler_authority
+                        arbitration_provenance = (
+                            dict(state_ref.state_payload.get("arbitration_provenance"))
+                            if isinstance(state_ref.state_payload.get("arbitration_provenance"), dict)
+                            else None
+                        )
+                        if arbitration_provenance is not None:
+                            arbitration_provenance["lease_expires_at"] = lease_expires_at.isoformat()
+                            payload_updates["arbitration_provenance"] = arbitration_provenance
+                        if committed_lease is not None:
+                            payload_updates["committed_scheduler_lease"] = (
+                                self._scheduler_committed_lease_payload(committed_lease)
+                            )
+                        self.runtime_state_repo.upsert(
+                            self._state_ref_with_payload_updates(state_ref, payload_updates),
+                            connection=heartbeat_connection,
+                        )
+                    self.event_repo.append(
+                        RunEvent(
+                            run_id=worker_lease.run_id,
+                            event_type=RunEventType.worker_heartbeat_received,
+                            object_type="worker_lease",
+                            object_id=worker_lease.lease_id,
+                            summary="Local worker heartbeat received",
+                            payload_json={
+                                "run_id": worker_lease.run_id,
+                                "runtime_task_id": worker_lease.runtime_task_id,
+                                "lease_id": worker_lease.lease_id,
+                                "worker_pool_id": "local_worker",
+                                "callback_id": callback_id,
+                                "heartbeat_at": heartbeat_at.isoformat(),
+                                "lease_expires_at": lease_expires_at.isoformat(),
+                            },
+                        ),
+                        connection=heartbeat_connection,
+                    )
+                _append_renewal(renewal_payload)
+                return True
+            except Exception as exc:
+                _append_renewal(
+                    {
+                        **renewal_payload,
+                        "status": "heartbeat_failed",
+                        "failure_class": type(exc).__name__,
+                        "failure_message": str(exc),
+                    }
+                )
+                return False
+
+        def _heartbeat_loop() -> None:
+            sequence_no = 0
+            if not _record_heartbeat(sequence_no):
+                return
+            while not stop_event.wait(interval_seconds):
+                sequence_no += 1
+                if not _record_heartbeat(sequence_no):
+                    break
+
+        thread = Thread(target=_heartbeat_loop, name=f"workflow-local-heartbeat-{worker_lease.lease_id}", daemon=True)
+        thread.start()
+        return stop_event, thread, renewals
+
+    def _stop_local_worker_heartbeat(
+        self,
+        heartbeat_control: tuple[Event, Thread, list[dict[str, Any]]] | None,
+    ) -> list[dict[str, Any]]:
+        if heartbeat_control is None:
+            return []
+        stop_event, thread, renewals = heartbeat_control
+        stop_event.set()
+        thread.join(timeout=2)
+        return list(renewals[-20:])
+
+    def _refresh_state_after_worker_callbacks(
+        self,
+        state_ref: RuntimeStateRef,
+        *,
+        runtime_task_id: str,
+        connection: Any,
+    ) -> RuntimeStateRef:
+        refreshed = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
+        return refreshed if refreshed is not None else state_ref
+
+    def _scheduler_lease_id_from_state(self, state_ref: RuntimeStateRef | None) -> str | None:
+        scheduler_authority = (
+            state_ref.state_payload.get("scheduler_authority")
+            if state_ref is not None and isinstance(state_ref.state_payload.get("scheduler_authority"), dict)
+            else None
+        )
+        if not isinstance(scheduler_authority, dict):
+            return None
+        for key in ("active_decision", "latest_decision"):
+            decision = scheduler_authority.get(key)
+            if isinstance(decision, dict) and decision.get("lease_id") and decision.get("released_at") is None:
+                return str(decision["lease_id"])
+        return None
+
+    def _release_scheduler_lease_for_state(
+        self,
+        state_ref: RuntimeStateRef,
+        *,
+        lease_id: str | None,
+        release_reason: str,
+        connection: Any,
+    ) -> RuntimeStateRef:
+        if not lease_id:
+            return state_ref
+        released = self.scheduler_authority_cluster.release_lease(
+            lease_id,
+            release_reason=release_reason,
+            connection=connection,
+        )
+        decision = (
+            SchedulerLeaseDecision.model_validate(released["decision"])
+            if isinstance(released.get("decision"), dict)
+            else None
+        )
+        if decision is None:
+            return state_ref
+        updates = self._scheduler_arbitration_updates(
+            state_ref,
+            control_plane_id=decision.control_plane_id,
+            decision=decision,
+            committed_lease=released.get("committed_lease"),
+            cluster=released.get("cluster"),
+        )
+        return self._state_ref_with_payload_updates(state_ref, updates)
+
     def _execution_result_from_exception(
         self,
         *,
@@ -278,19 +572,20 @@ class LifecycleServiceMixin:
             and requested_adapter is None
             and not self._adapter_supports_mutation_mode(resolved_execution.adapter_name, MutationMode.patch_apply)
         ):
+            patch_adapter = self._default_patch_apply_adapter_name()
             source_map = dict(resolved_execution.source_map)
             source_map["adapter_name"] = {
                 "scope": "mutation_contract",
                 "source": "patch_apply_enforcement",
-                "value": "opencode",
+                "value": patch_adapter,
             }
             resolved_execution = type(resolved_execution).model_validate(
                 {
                     **resolved_execution.model_dump(mode="json"),
-                    "adapter_name": "opencode",
-                    "selected_model": resolved_execution.opencode_model,
-                    "selected_model_kind": "opencode_model",
-                    "model_variant": resolved_execution.opencode_variant,
+                    "adapter_name": patch_adapter,
+                    "selected_model": resolved_execution.codex_model,
+                    "selected_model_kind": "codex_model",
+                    "model_variant": None,
                     "source_map": source_map,
                 }
             )
@@ -886,6 +1181,12 @@ class LifecycleServiceMixin:
 
             state_ref = self.runtime_state_repo.get_by_task(runtime_task.runtime_task_id, connection=connection)
             if state_ref is not None:
+                state_ref = self._release_scheduler_lease_for_state(
+                    state_ref,
+                    lease_id=self._scheduler_lease_id_from_state(state_ref),
+                    release_reason="human_review_terminal",
+                    connection=connection,
+                )
                 durable_refs = self._durable_refs_for_state(state_ref)
                 updated_durable_refs = (
                     self.durable_runtime_pilot.review_decision(durable_refs, decision=str(decision))
@@ -1026,6 +1327,12 @@ class LifecycleServiceMixin:
                 runtime_task=runtime_task,
                 connection=connection,
             )
+            scheduler_lease_id = (
+                str(scheduler_submission["decision"]["lease_id"])
+                if isinstance(scheduler_submission.get("decision"), dict)
+                and scheduler_submission["decision"].get("lease_id")
+                else None
+            )
             state_ref = self._state_ref_with_payload_updates(
                 state_ref,
                 self._scheduler_arbitration_updates(
@@ -1137,13 +1444,28 @@ class LifecycleServiceMixin:
                     {"capability_invocation_envelope": envelope.model_dump(mode="json")},
                 )
                 self.runtime_state_repo.upsert(resumed_state, connection=connection)
-            if (
+            if operator_receipt_id:
+                execution_packet = TaskPacket.model_validate(
+                    {
+                        **execution_packet.model_dump(mode="json"),
+                        "env": {
+                            **execution_packet.env,
+                            "WORKFLOW_OPERATOR_RECEIPT_ID": operator_receipt_id,
+                        },
+                    }
+                )
+            is_patch_apply = (
+                execution_packet.mutation_contract is not None
+                and execution_packet.mutation_contract.mutation_mode == MutationMode.patch_apply
+            )
+            capability_enforcement_pilot_enabled = bool(
                 self.effective_config.get("feature_flags", {})
                 .get("capability_enforcement_pilot", {})
                 .get("enabled")
-                and execution_packet.mutation_contract is not None
-                and execution_packet.mutation_contract.mutation_mode == MutationMode.patch_apply
-                and envelope is not None
+            )
+            missing_operator_receipt = envelope is not None and not envelope.operator_receipt_id
+            if envelope is not None and is_patch_apply and (
+                capability_enforcement_pilot_enabled or missing_operator_receipt
             ):
                 policy_decision = evaluate_capability_policy(
                     descriptor=envelope.descriptor,
@@ -1236,7 +1558,11 @@ class LifecycleServiceMixin:
                     connection=connection,
                 )
                 connection.commit()
+            local_heartbeat_control: tuple[Event, Thread, list[dict[str, Any]]] | None = None
             try:
+                if worker_pool_profile is None:
+                    connection.commit()
+                    local_heartbeat_control = self._start_local_worker_heartbeat(worker_lease, execution_packet)
                 is_cluster_member_run = bool(execution_packet.env.get("WORKFLOW_CLUSTER_MEMBER_ID"))
                 if not is_cluster_member_run and self._default_orchestration_plan_for_preset(
                     preset.preset_id,
@@ -1297,6 +1623,18 @@ class LifecycleServiceMixin:
                     adapter_name=adapter_name,
                     exc=exc,
                 )
+            finally:
+                lease_renewals = self._stop_local_worker_heartbeat(local_heartbeat_control)
+                if lease_renewals and "execution_result" in locals():
+                    existing_renewals = execution_result.metadata.get("lease_renewals")
+                    merged_renewals = list(existing_renewals) if isinstance(existing_renewals, list) else []
+                    merged_renewals.extend(lease_renewals)
+                    execution_result.metadata["lease_renewals"] = merged_renewals[-20:]
+            resumed_state = self._refresh_state_after_worker_callbacks(
+                resumed_state,
+                runtime_task_id=runtime_task.runtime_task_id,
+                connection=connection,
+            )
             if isinstance(execution_result.metadata.get("execution_target"), dict):
                 resumed_state = self._state_ref_with_payload_updates(
                     resumed_state,
@@ -1392,6 +1730,12 @@ class LifecycleServiceMixin:
                     worker_lease,
                     status=WorkerLeaseStatus.released,
                     reason="awaiting_human_review",
+                    connection=connection,
+                )
+                resumed_state = self._release_scheduler_lease_for_state(
+                    resumed_state,
+                    lease_id=scheduler_lease_id or self._scheduler_lease_id_from_state(resumed_state),
+                    release_reason="awaiting_human_review",
                     connection=connection,
                 )
                 awaiting_payload = {
@@ -1511,6 +1855,12 @@ class LifecycleServiceMixin:
                         worker_lease,
                         status=WorkerLeaseStatus.released,
                         reason="awaiting_human_review",
+                        connection=connection,
+                    )
+                    resumed_state = self._release_scheduler_lease_for_state(
+                        resumed_state,
+                        lease_id=scheduler_lease_id or self._scheduler_lease_id_from_state(resumed_state),
+                        release_reason="awaiting_human_review",
                         connection=connection,
                     )
                     awaiting_payload = {
@@ -1663,6 +2013,12 @@ class LifecycleServiceMixin:
                         )
                         terminal_graph_step = RuntimeGraphStep.failed
 
+                    resumed_state = self._release_scheduler_lease_for_state(
+                        resumed_state,
+                        lease_id=scheduler_lease_id or self._scheduler_lease_id_from_state(resumed_state),
+                        release_reason="run_terminal",
+                        connection=connection,
+                    )
                     terminal_payload = {
                         **resumed_state.state_payload,
                         "review_policy": preset.default_review_policy,

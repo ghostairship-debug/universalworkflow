@@ -22,6 +22,8 @@ from packages.core_domain.repo_mutation import (
 
 
 CODING_PATCH_APPLY_ACTION = "coding_patch_apply"
+READ_SET_CONTEXT_TOTAL_CHARS = 24000
+READ_SET_CONTEXT_FILE_CHARS = 12000
 
 
 @dataclass(slots=True)
@@ -33,7 +35,7 @@ class CodingProposalRequest:
     write_set: list[str] = field(default_factory=list)
     context: str | None = None
     model: str | None = None
-    max_tokens: int = 1800
+    max_tokens: int = 4000
 
 
 @dataclass(slots=True)
@@ -114,8 +116,54 @@ def _proposal_prompt(request: CodingProposalRequest) -> str:
         f"Task card:\n{request.task_card or 'none'}\n\n"
         f"Read set JSON: {json.dumps(request.read_set, ensure_ascii=False)}\n"
         f"Allowed write set JSON: {json.dumps(request.write_set, ensure_ascii=False)}\n\n"
+        f"Read set file excerpts:\n{_read_set_file_excerpts(request.read_set)}\n\n"
         f"Context:\n{request.context or 'none'}\n"
     )
+
+
+def _read_set_file_excerpts(read_set: list[str]) -> str:
+    if not read_set:
+        return "none"
+    root = Path.cwd().resolve()
+    chunks: list[str] = []
+    used_chars = 0
+    for raw_path in read_set:
+        if used_chars >= READ_SET_CONTEXT_TOTAL_CHARS:
+            chunks.append("READ_SET_CONTEXT_TRUNCATED: total character budget reached")
+            break
+        label = str(raw_path)
+        path = Path(label)
+        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+        try:
+            rel_path = resolved.relative_to(root).as_posix()
+        except ValueError:
+            chunks.append(f"READ_SET_FILE: {label}\nSTATUS: outside_workspace_skipped")
+            continue
+        if not resolved.exists():
+            chunks.append(f"READ_SET_FILE: {rel_path}\nSTATUS: missing")
+            continue
+        if resolved.is_dir():
+            chunks.append(f"READ_SET_FILE: {rel_path}\nSTATUS: directory_skipped")
+            continue
+        remaining = READ_SET_CONTEXT_TOTAL_CHARS - used_chars
+        per_file_budget = min(READ_SET_CONTEXT_FILE_CHARS, remaining)
+        try:
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            chunks.append(f"READ_SET_FILE: {rel_path}\nSTATUS: unreadable\nERROR: {exc.__class__.__name__}")
+            continue
+        excerpt = text[:per_file_budget]
+        used_chars += len(excerpt)
+        truncated = len(text) > len(excerpt)
+        chunks.append(
+            f"READ_SET_FILE: {rel_path}\n"
+            f"STATUS: included\n"
+            f"TRUNCATED: {str(truncated).lower()}\n"
+            "```text\n"
+            f"{excerpt}\n"
+            "```"
+        )
+    return "\n\n".join(chunks) if chunks else "none"
 
 
 _DIFF_FENCE_RE = re.compile(r"```(?:diff|patch)?\s*\n(?P<diff>.*?)(?:\n```|$)", re.IGNORECASE | re.DOTALL)

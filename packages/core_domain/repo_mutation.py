@@ -120,7 +120,7 @@ def restore_workspace_snapshot(
         absolute = root / entry.path
         if entry.exists:
             absolute.parent.mkdir(parents=True, exist_ok=True)
-            absolute.write_text(entry.content or "", encoding="utf-8")
+            absolute.write_text(entry.content or "", encoding="utf-8", newline="\n")
             continue
         if absolute.exists():
             absolute.unlink()
@@ -223,6 +223,10 @@ def _apply_hunks(original_lines: list[str], hunks: list[DiffHunk]) -> list[str]:
     cursor = 0
     for hunk in hunks:
         target_index = max(hunk.old_start - 1, 0)
+        if not _hunk_matches_at(original_lines, target_index, hunk.lines):
+            matched_index = _find_hunk_context(original_lines, hunk.lines, start=cursor)
+            if matched_index is not None:
+                target_index = matched_index
         if target_index < cursor:
             raise ValueError("overlapping or out-of-order hunks are not supported")
         output.extend(original_lines[cursor:target_index])
@@ -248,6 +252,31 @@ def _apply_hunks(original_lines: list[str], hunks: list[DiffHunk]) -> list[str]:
             raise ValueError(f"unsupported patch prefix `{prefix}`")
     output.extend(original_lines[cursor:])
     return output
+
+
+def _hunk_matches_at(original_lines: list[str], index: int, hunk_lines: list[str]) -> bool:
+    if index < 0:
+        return False
+    cursor = index
+    matched_existing_line = False
+    for raw_line in hunk_lines:
+        prefix = raw_line[:1]
+        if prefix == "+":
+            continue
+        if prefix not in {" ", "-"}:
+            return False
+        matched_existing_line = True
+        if cursor >= len(original_lines) or original_lines[cursor] != raw_line[1:]:
+            return False
+        cursor += 1
+    return matched_existing_line
+
+
+def _find_hunk_context(original_lines: list[str], hunk_lines: list[str], *, start: int) -> int | None:
+    for candidate in range(max(start, 0), len(original_lines) + 1):
+        if _hunk_matches_at(original_lines, candidate, hunk_lines):
+            return candidate
+    return None
 
 
 def apply_unified_diff(
@@ -283,5 +312,5 @@ def apply_unified_diff(
                 target.unlink()
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(new_text, encoding="utf-8")
+        target.write_text(new_text, encoding="utf-8", newline="\n")
     return sorted(set(touched_paths))

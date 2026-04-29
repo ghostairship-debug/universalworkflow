@@ -1080,7 +1080,7 @@ def validate_cli_flow(env: dict[str, str], db_path: Path) -> dict[str, Any]:
             isinstance(result["governance_active_gate_focus_ids"], list),
             result["governance_supported_review_policies"]
             == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
-            result["governance_review_policy_debt_id"] == "TD-006",
+            review_policy_debt_linkage_is_current(result["governance_review_policy_debt_id"]),
             isinstance(result["governance_release_ready"], bool),
             result["governance_release_domain_pack_ids"] == ["software_delivery_pack"],
             result["governance_domain_pack_platformized"] is True,

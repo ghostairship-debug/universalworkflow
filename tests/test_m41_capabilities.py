@@ -272,7 +272,7 @@ def test_langchain_agent_extracts_content_from_ai_message_like_objects() -> None
 def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path, monkeypatch) -> None:
     calls = []
 
-    def _fake_tree_runner(command, cwd, env, capture_output, text, check, timeout):
+    def _fake_tree_runner(command, cwd, env, capture_output, text, check, timeout, idle_timeout=None):
         content_match = re.search(r"<<<WORKFLOW_FILE>>>\n(.*?)<<<END_WORKFLOW_FILE>>>", command[-1], re.DOTALL)
         assert content_match is not None
         calls.append(
@@ -283,6 +283,7 @@ def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path
                 "text": text,
                 "check": check,
                 "timeout": timeout,
+                "idle_timeout": idle_timeout,
             }
         )
         return subprocess.CompletedProcess(
@@ -303,6 +304,7 @@ def test_opencode_adapter_uses_tree_timeout_runner_for_cli_launch(tmp_path: Path
 
     assert calls
     assert calls[0]["timeout"] == adapter.timeout_seconds
+    assert calls[0]["idle_timeout"] == 120
     assert result.stderr == ""
     assert "adapter: opencode" in (tmp_path / "opencode.md").read_text(encoding="utf-8")
 
@@ -461,6 +463,7 @@ def test_codex_dogfood_artifact_prompt_contains_role_handoff_and_keeps_patch_pro
     patch_prompt = adapter.build_command(patch_packet)[-1]
 
     assert "Return only one valid unified diff patch" in patch_prompt
+    assert "do not set [Console]::OutputEncoding" in patch_prompt
     assert "artifact-only workflow agent" not in patch_prompt
 
 
@@ -493,6 +496,22 @@ def test_codex_adapter_timeout_can_be_overridden_per_packet(tmp_path: Path, monk
     assert result.metadata["timeout_seconds"] == 12
 
 
+def test_codex_adapter_timeout_records_failure_class_and_stream_previews(tmp_path: Path) -> None:
+    adapter = CodexAdapter(runner=_fake_timeout_runner, executable=sys.executable)
+    packet = _packet(tmp_path, artifact="codex_timeout.md")
+
+    result = adapter.launch(packet)
+
+    assert result.return_code == 124
+    assert result.metadata["failure_class"] == "provider_timeout"
+    assert result.metadata["timeout_type"] == "wall_timeout"
+    assert result.metadata["timeout_failure_class"] == "provider_wall_timeout"
+    assert result.metadata["recovery_suggestion"] == "split_task_or_raise_wall_timeout_with_progress_evidence"
+    assert result.metadata["stdout_preview"] == "partial stdout"
+    assert "partial stderr" in result.metadata["stderr_preview"]
+    assert "timed out after" in result.metadata["stderr_preview"]
+
+
 def test_subprocess_tree_timeout_returns_124_for_hung_cli(tmp_path: Path) -> None:
     command = [
         sys.executable,
@@ -512,6 +531,50 @@ def test_subprocess_tree_timeout_returns_124_for_hung_cli(tmp_path: Path) -> Non
 
     assert completed.returncode == 124
     assert "command timed out after 1s" in completed.stderr
+    assert completed.timeout_type == "wall_timeout"
+
+
+def test_subprocess_progress_watchdog_records_idle_timeout_for_silent_cli(tmp_path: Path) -> None:
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", "import time; time.sleep(10)"],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        idle_timeout=1,
+    )
+
+    assert completed.returncode == 124
+    assert completed.timeout_type == "idle_timeout"
+    assert "idle_timeout" in completed.stderr
+    assert completed.stream_event_count == 0
+
+
+def test_subprocess_progress_watchdog_keeps_output_alive_until_wall_timeout(tmp_path: Path) -> None:
+    script = (
+        "import sys, time\n"
+        "for index in range(20):\n"
+        "    print(f'tick {index}', flush=True)\n"
+        "    time.sleep(0.2)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=2,
+        idle_timeout=1.5,
+    )
+
+    assert completed.returncode == 124
+    assert completed.timeout_type == "wall_timeout"
+    assert "tick" in completed.stdout
+    assert completed.stdout_event_count > 1
+    assert completed.stream_event_count > 1
 
 
 def test_subprocess_tree_timeout_decodes_utf8_stdout_when_text_requested(tmp_path: Path) -> None:

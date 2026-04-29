@@ -36,8 +36,9 @@ Decisions use `keep`, `wrap`, `migrate`, `delete`, and `later`.
 | Worker adapters | wrap | Provider-specific adapters remain execution boundaries. |
 | `runtime_langgraph.focused_runtime` | migrate | Reference path for graph node timing and evidence shape. |
 | Durable pilot/checkpointer | migrate | Useful for checkpoint and resume, synced to workflow snapshots. |
-| `commercial_cocos_game` | later | Pressure test only; commercial readiness stays three-layer GO/NO-GO. |
-| Local game artifact generation | later | Keep until Cocos pipeline is fully rebased. |
+| `commercial_game_production` | wrap | Real game production must be task-card driven; commercial readiness stays three-layer GO/NO-GO. |
+| Legacy `commercial_cocos_game` template | delete | Fixed-template delivery is removed and only a deprecation guard remains. |
+| Local game artifact generation | later | Keep only as diagnostic scaffolding until the real worker is implemented. |
 | Active truth / governance checks | keep | Active truth gates milestone closeout. |
 
 ## Boundary Contract
@@ -84,9 +85,9 @@ The route mapping keeps `readiness_claim=unchanged`. Duplicate write sets return
 
 ## Cocos Pressure Test
 
-`commercial_cocos_game` includes a graph-backed `cocos_graph_pressure_test` stage before asset factory and Cocos project generation.
+`commercial_game_production` replaces the old fixed-template `commercial_cocos_game` delivery path.
 
-The stage records graph evidence path, graph state path, persistent checkpoint, repair decision, and `commercial_claim=pressure_test_only_not_commercial_ready`.
+The old `commercial_cocos_game` entry now blocks with `legacy_cocos_template_removed`. Low-level `cocos_graph_pressure_test`, scaffold, and E2E utilities remain diagnostic evidence only; they cannot deliver or prove a commercial game.
 
 Readiness remains layered:
 

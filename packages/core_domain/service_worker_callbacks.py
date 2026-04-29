@@ -69,14 +69,14 @@ class WorkerCallbackServiceMixin:
             state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
             if state_ref is None:
                 raise EntityNotFoundError("runtime_state_ref", runtime_task_id)
+            registry = self._worker_callback_registry(state_ref)
+            if callback_id in registry["heartbeat"]:
+                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
             committed_lease = self._validate_callback_scheduler_context(
                 runtime_task_id=runtime_task_id,
                 execution_target=execution_target,
                 connection=connection,
             )
-            registry = self._worker_callback_registry(state_ref)
-            if callback_id in registry["heartbeat"]:
-                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
             lease = self.worker_lease_repo.touch(
                 lease_id,
                 heartbeat_at=heartbeat_at,
@@ -160,14 +160,14 @@ class WorkerCallbackServiceMixin:
             state_ref = self.runtime_state_repo.get_by_task(runtime_task_id, connection=connection)
             if state_ref is None:
                 raise EntityNotFoundError("runtime_state_ref", runtime_task_id)
+            registry = self._worker_callback_registry(state_ref)
+            if callback_id in registry["completion"]:
+                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
             committed_lease = self._validate_callback_scheduler_context(
                 runtime_task_id=runtime_task_id,
                 execution_target=execution_target,
                 connection=connection,
             )
-            registry = self._worker_callback_registry(state_ref)
-            if callback_id in registry["completion"]:
-                return {"accepted": True, "duplicate": True, "callback_id": callback_id}
             payload_updates: dict[str, Any] = {
                 "execution_target": {
                     **execution_target,

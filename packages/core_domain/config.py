@@ -413,7 +413,7 @@ def build_effective_config(
                 env_key="WORKFLOW_ADAPTIVE_COMPLEX_MODEL",
                 config=raw_config,
                 config_key="adaptive_llm_routing.complex_model",
-                default="minimax/MiniMax-M2.7",
+                default="gpt-5.4",
                 coerce=str,
             ),
             "coding_adapter": _resolve_value(
@@ -421,7 +421,7 @@ def build_effective_config(
                 env_key="WORKFLOW_ADAPTIVE_CODING_ADAPTER",
                 config=raw_config,
                 config_key="adaptive_llm_routing.coding_adapter",
-                default="opencode",
+                default="codex",
                 coerce=lambda item: str(item).strip().lower(),
             ),
         },

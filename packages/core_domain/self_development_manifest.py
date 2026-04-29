@@ -7,7 +7,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from packages.core_domain.task_card_store import TaskCardStore, task_card_quality_issues
+
 DEFAULT_SELF_DEVELOPMENT_MILESTONES = ["M67", "M68", "M69", "M70", "M71", "M72"]
+FLAT_TASK_CARD_NAMES = {"task_cards.md", "task_card.md"}
+FLAT_OPERATOR_PACKET_NAMES = {"operator_packet.json", "operator_packet.md"}
+FLAT_EVIDENCE_NAMES = {
+    "active_truth_check.json",
+    "closeout_summary.json",
+    "goal_packet.json",
+    "plan_graph.json",
+    "policy_preview.json",
+    "prepared_run.json",
+    "shim_deprecation_scan.txt",
+}
 
 
 def _execution_report_candidates(workspace_root: Path, milestone: str) -> list[Path]:
@@ -32,11 +45,24 @@ def _files_under(path: Path) -> list[Path]:
     return sorted(item for item in path.rglob("*") if item.is_file())
 
 
+def _flat_named_files(state_dir: Path, names: set[str]) -> list[Path]:
+    return sorted(item for item in state_dir.iterdir() if item.is_file() and item.name in names)
+
+
 def _state_dirs_for_milestone(state_root: Path, milestone: str) -> list[Path]:
     prefix = milestone.lower()
     if not state_root.exists():
         return []
     return sorted(item for item in state_root.iterdir() if item.is_dir() and item.name.lower().startswith(prefix))
+
+
+def _db_task_cards_for_milestone(db_path: str | Path | None, milestone: str) -> tuple[list[Any], str | None]:
+    if db_path is None or not Path(db_path).exists():
+        return [], None
+    try:
+        return TaskCardStore(db_path).list_for_milestone(milestone), None
+    except Exception as exc:
+        return [], f"{type(exc).__name__}: {exc}"
 
 
 def _contains_single_card_exception(paths: list[Path]) -> bool:
@@ -47,6 +73,20 @@ def _contains_single_card_exception(paths: list[Path]) -> bool:
         except OSError:
             continue
     return False
+
+
+def _task_card_unit_count(paths: list[Path]) -> int:
+    count = 0
+    for path in paths:
+        if path.name in FLAT_TASK_CARD_NAMES:
+            try:
+                headings = sum(1 for line in _read_metadata_text(path).splitlines() if line.startswith("## "))
+            except (OSError, UnicodeError):
+                headings = 0
+            count += max(1, headings)
+        else:
+            count += 1
+    return count
 
 
 def _evidence_category(path: Path) -> str:
@@ -204,19 +244,41 @@ def _milestone_manifest(
     state_root: Path,
     milestone: str,
     min_task_cards_per_phase: int,
+    db_path: str | Path | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     report_path = _resolve_execution_report(workspace_root, milestone)
     state_dirs = _state_dirs_for_milestone(state_root, milestone)
+    db_task_cards, db_task_card_error = _db_task_cards_for_milestone(db_path, milestone)
     task_cards: list[Path] = []
     evidence_files: list[Path] = []
     operator_packets: list[Path] = []
     for state_dir in state_dirs:
         task_cards.extend(_files_under(state_dir / "task_cards"))
+        task_cards.extend(_flat_named_files(state_dir, FLAT_TASK_CARD_NAMES))
         evidence_files.extend(_files_under(state_dir / "evidence"))
+        evidence_files.extend(_flat_named_files(state_dir, FLAT_EVIDENCE_NAMES))
         operator_packets.extend(_files_under(state_dir / "operator_packets"))
+        operator_packets.extend(_flat_named_files(state_dir, FLAT_OPERATOR_PACKET_NAMES))
+
+    closeout_reports = [path for path in evidence_files if path.name == "closeout_summary.json"]
+    report_kind = "execution_report"
+    if not report_path.exists() and closeout_reports:
+        report_path = closeout_reports[0]
+        report_kind = "closeout_summary"
 
     single_card_exception = _contains_single_card_exception(task_cards)
-    task_card_policy_passed = len(task_cards) >= min_task_cards_per_phase or single_card_exception
+    file_task_card_count = _task_card_unit_count(task_cards)
+    task_card_count = len(db_task_cards) if db_task_cards else file_task_card_count
+    task_card_source = "database" if db_task_cards else "markdown"
+    db_quality_issues = [
+        {
+            "task_card_id": card.task_card_id,
+            "issues": task_card_quality_issues(card),
+        }
+        for card in db_task_cards
+        if task_card_quality_issues(card)
+    ]
+    task_card_policy_passed = task_card_count >= min_task_cards_per_phase or single_card_exception
     issues: list[dict[str, Any]] = []
     if not report_path.exists():
         issues.append(
@@ -233,7 +295,7 @@ def _milestone_manifest(
             {
                 "milestone": milestone,
                 "code": "task_card_policy_failed",
-                "task_card_count": len(task_cards),
+                "task_card_count": task_card_count,
                 "required": min_task_cards_per_phase,
             }
         )
@@ -241,13 +303,21 @@ def _milestone_manifest(
         issues.append({"milestone": milestone, "code": "missing_evidence_files"})
     if not operator_packets:
         issues.append({"milestone": milestone, "code": "missing_operator_packet"})
+    if db_quality_issues:
+        issues.append(
+            {
+                "milestone": milestone,
+                "code": "db_task_card_quality_failed",
+                "task_cards": db_quality_issues,
+            }
+        )
 
     missing_links = []
     if not report_path.exists():
         missing_links.append("execution_report")
     if not state_dirs:
         missing_links.append("state_directories")
-    if not task_cards:
+    if not task_cards and not db_task_cards:
         missing_links.append("task_cards")
     if not evidence_files:
         missing_links.append("evidence")
@@ -259,13 +329,19 @@ def _milestone_manifest(
         "milestone": milestone,
         "execution_report": {
             "present": report_path.exists(),
+            "kind": report_kind,
             "path": _display_path(report_path, workspace_root),
             "lookup_paths": [
                 _display_path(path, workspace_root) for path in _execution_report_candidates(workspace_root, milestone)
             ],
         },
         "state_directories": [_display_path(path, workspace_root) for path in state_dirs],
-        "task_card_count": len(task_cards),
+        "task_card_count": task_card_count,
+        "task_card_source": task_card_source,
+        "db_task_card_count": len(db_task_cards),
+        "db_task_card_error": db_task_card_error,
+        "task_card_file_count": len(task_cards),
+        "task_card_file_unit_count": file_task_card_count,
         "evidence_file_count": len(evidence_files),
         "operator_packet_count": len(operator_packets),
         "task_card_policy": {
@@ -282,6 +358,8 @@ def _milestone_manifest(
             "execution_report_path": _display_path(report_path, workspace_root),
             "state_directory_paths": [_display_path(path, workspace_root) for path in state_dirs],
             "task_card_paths": [_display_path(path, workspace_root) for path in task_cards],
+            "db_task_card_ids": [card.task_card_id for card in db_task_cards],
+            "db_task_card_quality_issues": db_quality_issues,
             "evidence_paths": [_display_path(path, workspace_root) for path in evidence_files],
             "operator_packet_paths": [_display_path(path, workspace_root) for path in operator_packets],
             "evidence_category_counts": _evidence_category_counts(evidence_files),
@@ -302,6 +380,7 @@ def build_self_development_manifest(
     *,
     milestones: list[str] | None = None,
     state_root: str | Path = "state",
+    db_path: str | Path | None = None,
     output_path: str | Path | None = None,
     min_task_cards_per_phase: int = 3,
 ) -> dict[str, Any]:
@@ -319,6 +398,7 @@ def build_self_development_manifest(
             state_root=resolved_state_root,
             milestone=milestone,
             min_task_cards_per_phase=min_task_cards_per_phase,
+            db_path=db_path,
         )
         milestone_payloads.append(payload)
         blocking_issues.extend(issues)
@@ -328,6 +408,7 @@ def build_self_development_manifest(
         "generated_at": datetime.now(UTC).isoformat(),
         "workspace_root": root.as_posix(),
         "state_root": resolved_state_root.as_posix(),
+        "db_path": Path(db_path).as_posix() if db_path is not None else None,
         "milestones": milestone_payloads,
         "task_card_mechanism": {
             "min_task_cards_per_phase": min_task_cards_per_phase,

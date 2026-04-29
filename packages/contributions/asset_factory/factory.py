@@ -11,6 +11,7 @@ from packages.contributions.asset_factory.asset_generation import (
     AssetGenerationRequest,
     AssetGenerationResult,
     generate_gcp_tts,
+    generate_procedural_sfx,
     generate_minimax_image,
     generate_minimax_music,
     generate_minimax_speech,
@@ -18,11 +19,13 @@ from packages.contributions.asset_factory.asset_generation import (
 )
 
 AssetGenerator = Callable[[AssetGenerationRequest], AssetGenerationResult]
+MAX_PROVIDER_PROMPT_CHARS = 1400
 
 
 @dataclass(frozen=True, slots=True)
 class AssetFactoryGenerators:
     image: AssetGenerator = generate_minimax_image
+    sfx: AssetGenerator = generate_procedural_sfx
     speech: AssetGenerator = generate_minimax_speech
     music: AssetGenerator = generate_minimax_music
     tts: AssetGenerator = generate_gcp_tts
@@ -114,6 +117,33 @@ def qa_asset_factory_manifest(
         and str(item.get("modality")) == "image"
         and item.get("artifact_paths")
     ]
+    sfx_results = [
+        item
+        for item in manifest.get("results", [])
+        if item.get("status") == "completed"
+        and str(item.get("modality")) == "sfx"
+        and item.get("artifact_paths")
+    ]
+    sfx_blockers: list[str] = []
+    sfx_reviews: list[dict[str, Any]] = []
+    for item in sfx_results:
+        meta = item.get("metadata") or {}
+        checks = {
+            "mime_wav": item.get("mime_type") == "audio/wav",
+            "sha256": bool(meta.get("sha256")),
+            "duration": (meta.get("duration_seconds") or 0) > 0,
+            "rms": (meta.get("rms") or 0) > 0,
+            "peak": (meta.get("peak") or 0) > 0,
+            "non_silent": meta.get("non_silent") is True,
+            "not_clipped": meta.get("clipping") is not True,
+            "provenance": bool(item.get("provenance")),
+            "qa_gate": meta.get("qa_gate_passed") is True,
+        }
+        failed = [k for k, v in checks.items() if not v]
+        passed = all(checks.values())
+        sfx_reviews.append({"asset_name": item["asset_name"], "qa_passed": passed, "failed_checks": failed, "checks": checks})
+        if not passed:
+            sfx_blockers.append(f"sfx_qa_{item['asset_name']}_{failed[0]}")
     reviews: list[dict[str, Any]] = []
     for item in image_results:
         review = visual_review_generator(
@@ -136,7 +166,14 @@ def qa_asset_factory_manifest(
         "visual_review_count": len(reviews),
         "visual_reviews": reviews,
         "go_no_go": "GO" if not missing_required and all(item.get("status") == "completed" for item in reviews) else "NO-GO",
+        "sfx_review_count": len(sfx_reviews),
+        "sfx_reviews": sfx_reviews,
+        "sfx_blockers": sfx_blockers,
     }
+    if sfx_blockers:
+        report["go_no_go"] = "NO-GO"
+    elif report["go_no_go"] == "GO" and missing_required:
+        report["go_no_go"] = "NO-GO"
     report_path = evidence_root / "asset_factory_qa_report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     report["report_path"] = report_path.as_posix()
@@ -256,8 +293,30 @@ def _read_hash_index(path: Path) -> dict[str, Any]:
 def _prompt_for_spec(spec: dict[str, Any], style_text: str) -> str:
     prompt = str(spec.get("prompt") or "")
     if "{style_guide}" in prompt:
-        return prompt.replace("{style_guide}", style_text)
-    return f"{style_text}; {prompt}" if style_text else prompt
+        suffix = prompt.replace("{style_guide}", "").lstrip("; ").strip()
+        return _fit_prompt_with_suffix(style_text, suffix)
+    return _fit_prompt_with_suffix(style_text, prompt) if style_text else _truncate_prompt(prompt)
+
+
+def _fit_prompt_with_suffix(style_text: str, suffix: str) -> str:
+    style = style_text.strip()
+    tail = suffix.strip()
+    if not style:
+        return _truncate_prompt(tail)
+    if not tail:
+        return _truncate_prompt(style)
+    separator = "; "
+    composed = f"{style}{separator}{tail}"
+    if len(composed) <= MAX_PROVIDER_PROMPT_CHARS:
+        return composed
+    style_budget = MAX_PROVIDER_PROMPT_CHARS - len(separator) - len(tail)
+    if style_budget > 80:
+        return f"{style[:style_budget].rstrip()}{separator}{tail}"
+    return _truncate_prompt(composed)
+
+
+def _truncate_prompt(prompt: str) -> str:
+    return prompt.strip()[:MAX_PROVIDER_PROMPT_CHARS].rstrip()
 
 
 def _generator_for(
@@ -268,6 +327,10 @@ def _generator_for(
 ) -> AssetGenerator:
     if modality == "music":
         return generators.music
+    if provider == "procedural_sfx_local":
+        return generators.sfx
+    if modality == "sfx":
+        return generators.sfx
     if modality == "vision_review":
         return generators.visual_review
     if provider == "gcp_tts_api":
@@ -280,6 +343,8 @@ def _generator_for(
 def _default_provider_for_modality(modality: str) -> str:
     if modality in {"audio", "voice"}:
         return "mmx_generation_api"
+    if modality == "sfx":
+        return "procedural_sfx_local"
     if modality == "music":
         return "mmx_generation_api"
     if modality == "vision_review":
@@ -290,6 +355,8 @@ def _default_provider_for_modality(modality: str) -> str:
 def _folder_for_modality(modality: str) -> str:
     if modality in {"audio", "music", "voice"}:
         return "audio"
+    if modality == "sfx":
+        return "audio"
     if modality == "vision_review":
         return "reviews"
     return "images"
@@ -299,6 +366,8 @@ def _default_suffix_for_modality(modality: str) -> str:
     if modality in {"audio", "music", "voice"}:
         return ".mp3"
     if modality == "vision_review":
+        return ".json"
+    if modality == "sfx":
         return ".json"
     return ".png"
 

@@ -23,6 +23,7 @@ from packages.contributions.games.cocos.playtest import playtest_cocos_build
 
 
 EXCLUDED_DESKTOP_PROJECT = Path(r"C:\Users\74755\Desktop\游戏平台demo")
+DEFAULT_CREATOR_EXE = Path(r"C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe")
 DEFAULT_TEMPLATE = Path(r"C:\ProgramData\cocos\editors\Creator\3.8.8\resources\templates\empty-2d")
 COCOS_BUILD_SUCCESS_EXIT_CODES = {0, 36}
 COCOS_FATAL_BUILD_MARKERS = (
@@ -81,6 +82,59 @@ GAMEPLAY_INTERACTION_EVENTS = [
     "revive_reward",
 ]
 COCOS_RUNTIME_CONFIG_SCHEMA = "m105_cocos_runtime_config_v1"
+AUDIO_MODALITIES = {"audio", "music", "sfx", "voice"}
+TEXT_SOURCE_EXTENSIONS = {".md", ".markdown", ".txt", ".text", ".json", ".yaml", ".yml"}
+
+
+def _version_key(path: Path) -> tuple[int, ...]:
+    parts: list[int] = []
+    for chunk in path.parent.name.replace("-", ".").split("."):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def discover_cocos_creator_exe(
+    explicit_path: str | Path | None = None,
+    *,
+    search_roots: list[str | Path] | None = None,
+) -> Path | None:
+    """Resolve the installed Cocos Creator executable for CLI and pipeline runs."""
+    if explicit_path is not None:
+        explicit = Path(explicit_path).expanduser()
+        return explicit.resolve() if explicit.exists() else None
+    for env_name in ("WORKFLOW_COCOS_CREATOR_EXE", "COCOS_CREATOR_EXE", "COCOS_CREATOR_PATH"):
+        raw_value = os.getenv(env_name)
+        if raw_value:
+            candidate = Path(raw_value).expanduser()
+            if candidate.exists():
+                return candidate.resolve()
+    if DEFAULT_CREATOR_EXE.exists():
+        return DEFAULT_CREATOR_EXE.resolve()
+    roots = search_roots or [
+        r"C:\ProgramData\cocos\editors\Creator",
+        Path(os.getenv("LOCALAPPDATA", "")) / "CocosDashboard" if os.getenv("LOCALAPPDATA") else None,
+        Path(os.getenv("APPDATA", "")) / "CocosCreator" if os.getenv("APPDATA") else None,
+        r"C:\Program Files\Cocos",
+        r"D:\Cocos",
+        r"D:\CocosCreator",
+        r"D:\CocosDashboard",
+    ]
+    candidates: list[Path] = []
+    for root in roots:
+        if root is None:
+            continue
+        root_path = Path(root).expanduser()
+        if not root_path.exists():
+            continue
+        for filename in ("CocosCreator.exe", "Creator.exe"):
+            candidates.extend(root_path.rglob(filename))
+    existing = [candidate.resolve() for candidate in candidates if candidate.exists()]
+    if not existing:
+        return None
+    return sorted(existing, key=_version_key, reverse=True)[0]
 
 
 def _utc_now() -> str:
@@ -130,15 +184,15 @@ def build_cocos_runtime_config(
     require_playtest: bool = True,
     require_commercial: bool = False,
 ) -> dict[str, Any]:
-    resolved_pdf = Path(pdf_path).resolve()
+    resolved_source = Path(pdf_path).resolve()
     resolved_output = Path(output_dir).resolve()
     resolved_creator = Path(creator_exe).resolve()
     excluded = EXCLUDED_DESKTOP_PROJECT.resolve()
     output_excluded = resolved_output == excluded or excluded in resolved_output.parents
     build_command = [resolved_creator.as_posix(), "--project", resolved_output.as_posix(), "--build", "platform=web-mobile;debug=false"]
     issues = []
-    if not resolved_pdf.exists():
-        issues.append("pdf_path_missing")
+    if not resolved_source.exists():
+        issues.extend(["source_path_missing", "pdf_path_missing"])
     if not resolved_creator.exists():
         issues.append("creator_exe_missing")
     if not DEFAULT_TEMPLATE.exists():
@@ -148,8 +202,11 @@ def build_cocos_runtime_config(
     return {
         "schema_version": COCOS_RUNTIME_CONFIG_SCHEMA,
         "created_at": _utc_now(),
-        "pdf_path": resolved_pdf.as_posix(),
-        "pdf_exists": resolved_pdf.exists(),
+        "source_path": resolved_source.as_posix(),
+        "source_exists": resolved_source.exists(),
+        "source_kind": _source_kind(resolved_source),
+        "pdf_path": resolved_source.as_posix(),
+        "pdf_exists": resolved_source.exists(),
         "creator_exe": resolved_creator.as_posix(),
         "creator_exists": resolved_creator.exists(),
         "template_path": DEFAULT_TEMPLATE.resolve().as_posix(),
@@ -223,9 +280,29 @@ def _read_pdf_text(pdf_path: Path, *, max_chars: int = 12000) -> str:
     return "\n".join(chunks)[:max_chars]
 
 
+def _source_kind(source_path: Path) -> str:
+    if source_path.suffix.lower() == ".pdf":
+        return "pdf"
+    if source_path.suffix.lower() in TEXT_SOURCE_EXTENSIONS:
+        return "text"
+    return "binary"
+
+
+def _read_source_text(source_path: Path, *, max_chars: int = 12000) -> str:
+    if _source_kind(source_path) == "pdf":
+        return _read_pdf_text(source_path, max_chars=max_chars)
+    if _source_kind(source_path) == "text":
+        try:
+            return source_path.read_text(encoding="utf-8", errors="replace")[:max_chars]
+        except OSError:
+            return ""
+    return ""
+
+
 def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | None = None) -> str:
     escaped_excerpt = json.dumps(design_excerpt[:1800], ensure_ascii=True)
     escaped_commercial_payload = json.dumps(commercial_payload or {}, ensure_ascii=True)
+    escaped_audio_modalities = json.dumps(sorted(AUDIO_MODALITIES), ensure_ascii=True)
     return textwrap.dedent(
         f"""
         import {{ _decorator, Color, Component, Label, Node, tween, UITransform, Vec3 }} from 'cc';
@@ -253,6 +330,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
           private animationFrame = 0;
           private audioElements: Record<string, HTMLAudioElement> = {{}};
           private imageElements: Record<string, HTMLImageElement> = {{}};
+          private readonly audioModalities = new Set<string>({escaped_audio_modalities});
           private readonly size = {{ w: 390, h: 844 }};
           private readonly boardOrigin = {{ x: 25, y: 184 }};
           private readonly cell = 34;
@@ -329,7 +407,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
               const scoreNode = new Node('ScoreLabel');
               scoreNode.parent = root;
               const scoreLabel = scoreNode.addComponent(Label);
-              scoreLabel.string = 'Score 0';
+              scoreLabel.string = '得分 0';
               scoreLabel.fontSize = 24;
               scoreLabel.color = new Color(255, 255, 255, 255);
               const levelNode = new Node('LevelSwitcher');
@@ -352,7 +430,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             state.editorStructureManifestPath = this.commercialPayload.editorStructureManifestPath || null;
             state.componentManifestPath = this.commercialPayload.componentManifestPath || null;
             for (const asset of assets) {{
-              if (asset.modality === 'audio' || asset.modality === 'music') {{
+              if (this.audioModalities.has(asset.modality)) {{
                 try {{
                   const audio = new Audio(asset.relativePath || asset.path || '');
                   audio.preload = 'auto';
@@ -371,7 +449,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
               }}
             }}
             if (assets.some((asset: any) => asset.modality === 'image')) this.publishE2E('generated_art_assets_loaded');
-            if (assets.some((asset: any) => asset.modality === 'audio' || asset.modality === 'music')) this.publishE2E('generated_audio_assets_loaded');
+            if (assets.some((asset: any) => this.audioModalities.has(asset.modality))) this.publishE2E('generated_audio_assets_loaded');
             if (assets.some((asset: any) => asset.bindingType === 'SpriteFrame' || asset.bindingType === 'AudioClip')) this.publishE2E('cocos_asset_bindings_loaded');
           }}
 
@@ -524,6 +602,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             }}
             if (this.score >= this.level * 180 && this.level < 7) {{
               this.level += 1;
+              this.playSound('voice_reward');
               this.publishE2E('level_switching_ui_opened');
               this.publishE2E('campaign_level_advanced');
             }}
@@ -656,6 +735,28 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             ctx.restore();
           }}
 
+          private skinLabel(): string {{
+            if (this.skin === 'candy') return '糖果';
+            if (this.skin === 'neon') return '霓虹';
+            return this.skin;
+          }}
+
+          private backgroundLabel(): string {{
+            if (this.background === 'midnight') return '午夜';
+            return this.background;
+          }}
+
+          private panelLabel(panel: string): string {{
+            const labels: Record<string, string> = {{
+              reward_ad_placeholder: '激励复活',
+              skin_shop: '皮肤商店',
+              puzzle_collection: '图鉴收藏',
+              level_switcher: '关卡选择',
+              pause: '暂停',
+            }};
+            return labels[panel] || panel;
+          }}
+
           private drawCommercialHud() {{
             const ctx = this.ctx;
             const assets = Array.isArray(this.commercialPayload.assets) ? this.commercialPayload.assets : [];
@@ -663,11 +764,11 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             this.fillRoundedPanel(20, 118, 350, 54, 14, 'rgba(10, 19, 35, 0.72)', 'rgba(124, 247, 212, 0.34)');
             ctx.fillStyle = '#d7fff4';
             ctx.font = '800 13px Arial';
-            ctx.fillText(`ASSETS ${{assets.length}}`, 34, 140);
+            ctx.fillText(`资源 ${{assets.length}}`, 34, 140);
             ctx.fillStyle = 'rgba(255,255,255,0.88)';
             ctx.font = '700 12px Arial';
-            ctx.fillText(`Skin: ${{this.skin}}`, 126, 140);
-            ctx.fillText(`Bg: ${{this.background}}`, 216, 140);
+            ctx.fillText(`皮肤：${{this.skinLabel()}}`, 126, 140);
+            ctx.fillText(`背景：${{this.backgroundLabel()}}`, 216, 140);
             ctx.fillStyle = 'rgba(124,247,212,0.18)';
             this.roundedRect(34, 150, 250, 8, 4);
             ctx.fill();
@@ -703,12 +804,12 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             ctx.shadowColor = 'rgba(124,247,212,0.32)';
             ctx.shadowBlur = 10;
             ctx.font = '700 26px Arial';
-            ctx.fillText('1010 Block Puzzle', 24, 48);
+            ctx.fillText('1010 方块消除', 24, 48);
             ctx.shadowBlur = 0;
             ctx.font = '600 14px Arial';
-            ctx.fillText(`Score ${{this.score}}   Lv ${{this.level}}   Combo ${{this.combo}}`, 24, 76);
+            ctx.fillText(`得分 ${{this.score}}   第 ${{this.level}} 关   连击 ${{this.combo}}`, 24, 76);
             ctx.fillStyle = '#b9fff0';
-            ctx.fillText('Classic + Campaign 1-7', 24, 100);
+            ctx.fillText('经典模式 + 7 关挑战', 24, 100);
             this.drawCommercialHud();
             this.drawBoard();
             this.drawCandidates();
@@ -802,7 +903,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             this.fillRoundedPanel(22, 492, 346, 72, 16, 'rgba(9, 18, 34, 0.84)', 'rgba(247,211,107,0.38)');
             ctx.fillStyle = '#fff4c7';
             ctx.font = '800 13px Arial';
-            ctx.fillText('Live commercial panels', 36, 516);
+            ctx.fillText('商业化功能面板', 36, 516);
             ctx.font = '700 11px Arial';
             panels.forEach((panel: string, index: number) => {{
               const x = 36 + index * 78;
@@ -810,7 +911,7 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
               ctx.fillStyle = ['#7cf7d4', '#f7d36b', '#ff8ba7', '#9ab7ff'][index % 4];
               ctx.fill();
               ctx.fillStyle = '#101727';
-              ctx.fillText(panel.replace('_', ' ').slice(0, 10), x + 7, 544);
+              ctx.fillText(this.panelLabel(panel), x + 7, 544);
             }});
           }}
 
@@ -819,8 +920,8 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
             this.fillRoundedPanel(22, 798, 346, 38, 12, 'rgba(9, 18, 34, 0.56)', 'rgba(255,255,255,0.10)');
             ctx.fillStyle = 'rgba(255,255,255,0.86)';
             ctx.font = '12px Arial';
-            ctx.fillText('Ad slots: revive reward + interstitial after level clear', 24, 816);
-            ctx.fillText('Collections: skins, backgrounds, puzzle gallery', 24, 834);
+            ctx.fillText('广告位：激励复活 + 过关插屏', 24, 816);
+            ctx.fillText('收藏：皮肤、背景、拼图图鉴', 24, 834);
           }}
 
           private cellColor(value: number): string {{
@@ -834,15 +935,15 @@ def _script_source(design_excerpt: str, commercial_payload: dict[str, Any] | Non
 
           private buttonRects() {{
             return [
-              {{ id: 'refresh', label: 'Refresh', x: 24, y: 650, w: 78, h: 38 }},
-              {{ id: 'hammer', label: 'Hammer', x: 114, y: 650, w: 78, h: 38 }},
-              {{ id: 'shuffle', label: 'Shuffle', x: 204, y: 650, w: 78, h: 38 }},
-              {{ id: 'bomb', label: 'Bomb', x: 294, y: 650, w: 72, h: 38 }},
-              {{ id: 'revive', label: 'Revive Ad', x: 24, y: 706, w: 102, h: 40 }},
-              {{ id: 'skin', label: 'Skins', x: 144, y: 706, w: 78, h: 40 }},
-              {{ id: 'collection', label: 'Gallery', x: 240, y: 706, w: 94, h: 40 }},
-              {{ id: 'level', label: 'Levels', x: 24, y: 758, w: 86, h: 36 }},
-              {{ id: 'pause', label: 'Pause', x: 292, y: 38, w: 72, h: 32 }},
+              {{ id: 'refresh', label: '刷新', x: 24, y: 650, w: 78, h: 38 }},
+              {{ id: 'hammer', label: '锤子', x: 114, y: 650, w: 78, h: 38 }},
+              {{ id: 'shuffle', label: '洗牌', x: 204, y: 650, w: 78, h: 38 }},
+              {{ id: 'bomb', label: '炸弹', x: 294, y: 650, w: 72, h: 38 }},
+              {{ id: 'revive', label: '复活', x: 24, y: 706, w: 102, h: 40 }},
+              {{ id: 'skin', label: '皮肤', x: 144, y: 706, w: 78, h: 40 }},
+              {{ id: 'collection', label: '图鉴', x: 240, y: 706, w: 94, h: 40 }},
+              {{ id: 'level', label: '关卡', x: 24, y: 758, w: 86, h: 36 }},
+              {{ id: 'pause', label: '暂停', x: 292, y: 38, w: 72, h: 32 }},
             ];
           }}
 
@@ -1282,7 +1383,13 @@ def _copy_commercial_assets_to_cocos_resources(
         target = target_dir / source.name
         if source != target:
             shutil.copy2(source, target)
-        binding_type = "SpriteFrame" if modality == "image" else "AudioClip" if modality in {"audio", "music"} else "Artifact"
+        binding_type = (
+            "SpriteFrame"
+            if modality == "image"
+            else "AudioClip"
+            if modality in AUDIO_MODALITIES
+            else "Artifact"
+        )
         bindings.append(
             {
                 "asset_name": item.get("asset_name"),
@@ -1451,7 +1558,7 @@ def integrate_commercial_game_body(
             "production_prefabs": True,
             "gameplay_interaction_contract": True,
             "generated_asset_integration": bool(payload["assets"]),
-            "audio_runtime_hooks": any(item.get("modality") in {"audio", "music"} for item in payload["assets"]),
+            "audio_runtime_hooks": any(item.get("modality") in AUDIO_MODALITIES for item in payload["assets"]),
             "visual_asset_runtime_hooks": any(item.get("modality") == "image" for item in payload["assets"]),
             **production_inspection["feature_coverage"],
         },
@@ -1527,19 +1634,19 @@ def inspect_cocos_commercial_project(project_path: str | Path) -> dict[str, Any]
 
 
 def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creator_exe: str | Path) -> dict[str, Any]:
-    resolved_pdf = Path(pdf_path).resolve()
+    resolved_source = Path(pdf_path).resolve()
     resolved_output = Path(output_dir).resolve()
     resolved_creator = Path(creator_exe).resolve()
     _assert_not_excluded(resolved_output)
-    if not resolved_pdf.exists():
-        raise FileNotFoundError(resolved_pdf)
+    if not resolved_source.exists():
+        raise FileNotFoundError(resolved_source)
     if not resolved_creator.exists():
         raise FileNotFoundError(resolved_creator)
     _safe_rmtree(resolved_output)
     shutil.copytree(DEFAULT_TEMPLATE, resolved_output)
     package_json = resolved_output / "package.json"
     package_json.write_text(json.dumps({"name": "1010-block-puzzle-cocos"}, indent=2), encoding="utf-8")
-    design_text = _read_pdf_text(resolved_pdf)
+    design_text = _read_source_text(resolved_source)
     _write_production_scene(resolved_output)
     _write_production_component_scripts(resolved_output)
     _write_production_prefabs(resolved_output)
@@ -1548,7 +1655,9 @@ def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creato
     assets_scripts.mkdir(parents=True, exist_ok=True)
     (assets_scripts / "BlockPuzzleGame.ts").write_text(_script_source(design_text), encoding="utf-8")
     design_mapping = {
-        "pdf_path": resolved_pdf.as_posix(),
+        "source_path": resolved_source.as_posix(),
+        "source_kind": _source_kind(resolved_source),
+        "pdf_path": resolved_source.as_posix(),
         "mapped_features": [
             "10x10 board",
             "3 candidate blocks",
@@ -1571,6 +1680,7 @@ def create_cocos_project(*, pdf_path: str | Path, output_dir: str | Path, creato
     mapping_path.write_text(json.dumps(design_mapping, ensure_ascii=False, indent=2), encoding="utf-8")
     return {
         "project_path": resolved_output.as_posix(),
+        "source_text_chars": len(design_text),
         "pdf_text_chars": len(design_text),
         "design_mapping_path": mapping_path.as_posix(),
         "creator_exe": resolved_creator.as_posix(),
@@ -1610,17 +1720,58 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         and (build_output / "assets").exists()
         and not fatal_marker_detected
     )
+    runtime_asset_copy = (
+        _copy_commercial_runtime_assets_to_build(project=project, build_output=build_output)
+        if artifact_success
+        else {
+            "copied": False,
+            "asset_count": 0,
+            "size_bytes": 0,
+            "reason": "build_artifact_not_ready",
+        }
+    )
     return {
         "creator_exit_code": proc.returncode,
         "artifact_success": artifact_success,
         "fatal_marker_detected": fatal_marker_detected,
         "build_output_path": build_output.as_posix() if build_output.exists() else None,
         "index_html": index_html.as_posix() if index_html.exists() else None,
+        "runtime_asset_copy": runtime_asset_copy,
         "elapsed_ms": elapsed_ms,
         "stdout_path": stdout_path.as_posix(),
         "stderr_path": stderr_path.as_posix(),
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
+    }
+
+
+def _copy_commercial_runtime_assets_to_build(*, project: Path, build_output: Path) -> dict[str, Any]:
+    source_root = project / "assets" / "resources" / "commercial_assets"
+    if not source_root.exists():
+        return {
+            "copied": False,
+            "asset_count": 0,
+            "size_bytes": 0,
+            "reason": "commercial_assets_source_missing",
+        }
+    destination_root = build_output / "assets" / "resources" / "commercial_assets"
+    destination_root.mkdir(parents=True, exist_ok=True)
+    copied_count = 0
+    copied_bytes = 0
+    for source in source_root.rglob("*"):
+        if not source.is_file() or source.name.endswith(".meta"):
+            continue
+        target = destination_root / source.relative_to(source_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        copied_count += 1
+        copied_bytes += target.stat().st_size
+    return {
+        "copied": copied_count > 0,
+        "asset_count": copied_count,
+        "size_bytes": copied_bytes,
+        "source_root": source_root.as_posix(),
+        "destination_root": destination_root.as_posix(),
     }
 
 
@@ -1743,6 +1894,9 @@ def run_cocos_game_e2e(
         blockers=blockers,
         metadata={
             "created_at": _utc_now(),
+            "source_path": Path(pdf_path).resolve().as_posix(),
+            "source_kind": _source_kind(Path(pdf_path).resolve()),
+            "source_text_chars": project["source_text_chars"],
             "pdf_text_chars": project["pdf_text_chars"],
             "design_mapping_path": project["design_mapping_path"],
             "runtime_config_path": runtime_config_path.as_posix(),

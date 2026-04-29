@@ -1,11 +1,43 @@
 # Universal Agentic Workflow OS
 
+## M109 Status Update (2026-04-27)
+
+- Accepted baseline: `M109`.
+- Completed: unified project brief, single-agent role pipeline, design/planning outputs, multimodal route truth table, DB-backed task-card gate, bounded Cocos technical-smoke trial, and cluster-upgrade review.
+- Cocos trial result: `technical_smoke_go=true`, `production_scaffold_go=true`, `commercial_playable_go=false`.
+- Current claim: pipeline technical trial completed; commercial playable game is still not proven.
+- Cluster decision: keep single-agent roles for now; no automatic M110 task cards.
+
+## Real Game Pipeline Correction (2026-04-28)
+
+- The legacy `commercial_cocos_game` fixed-template pipeline is removed as an executable delivery path.
+- Running that legacy template now returns a blocked deprecation guard instead of generating a template-based Cocos project.
+- Real commercial game work must enter `commercial_game_production`: unified brief, role outputs, DB task cards, real asset generation, task-card implementation, player QA, supervisor decision, and final commercial readiness gate.
+- Low-level Cocos E2E/scaffold commands may still exist for diagnostics, but they are not allowed to prove or deliver a commercial game by themselves.
+- A Cocos engine empty project may be used only as technical bootstrapping; final content cannot be the old fixed game template.
+
+## Commercial Pipeline Evaluation (2026-04-28)
+
+- Bug-first repair completed for the known route/evidence blockers: default `from-task-card` patch apply is Codex CLI, not OpenCode; missing or scope-mismatched receipts fail fast; Codex/OpenCode watchdog evidence now preserves timeout type, `failure_class`, stdout/stderr summaries, mutation result, last-output context, and recovery guidance.
+- Long unattended runs now have heartbeat evidence at both local-worker and pipeline-run layers. Pipeline heartbeat JSONL is written beside run evidence.
+- Scheduler lease terminal release, stale lease repair, parent receipt propagation into orchestration children, and duplicate remote callback idempotency are covered by workflow regression tests.
+- Asset modality repair split `voice` / `music` / `sfx`: `sfx_place` and `sfx_clear` use `procedural_sfx_local` WAV assets with sha256, duration, RMS/peak, non-silent, clipping, provenance, and QA gate metadata; `voice_reward` remains voice/TTS.
+- Cocos commercial asset manifests and runtime bindings now preserve SFX/voice/music modalities through resource binding and audio runtime hooks.
+- `commercial_game_production` was evaluated through real pipeline runs. The pipeline now records role, asset, worker, supervisor, and final-gate evidence honestly, including provider quota failures and operator-input blockers.
+- The final real game attempt was `pipeline_061e3703e442` in `state/long_runs/commercial_game_attempt_20260428_054050`; it is `NO-GO`. A later correction verified Cocos Creator is installed at `C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe`; the failure exposed a pipeline autodiscovery bug when `--creator-exe` was omitted, and that bug is now fixed.
+- Superseding no-degradation review: earlier run `pipeline_a41e231c69a4` is preserved as automated scaffold/build/playtest evidence, but it no longer proves final commercial readiness under gate v2. Strict rerun `zero_degradation_rerun_20260428_evidencefix` failed honestly with `commercial_game_no_degradation_failed`: live role provider proof passed, but Cocos ecosystem bridge, same-project worker patch proof, 8 distinct level goals, visible shop/skin ownership flow, audio runtime verification, build-exit strictness, and human player review are still blockers.
+- 2026-04-29 zero-degradation repair checkpoint: Cocos ecosystem evidence now installs a project-local Editor bridge package, records a license/cost manifest, rejects filesystem-only bridge reports, and persists its own evidence path. Later the unattended bridge runner was added and verified against local Cocos Creator 3.8.8 with true Editor/AssetDB/Scene/Prefab/Build API report evidence at `state/long_runs/cocos_bridge_smoke_20260429_145028/cocos_ecosystem/cocos_ecosystem_bridge_evidence.json`. The commercial task-card worker no longer routes DB task cards into the deterministic Cocos E2E generator; it bootstraps one empty Cocos project shell, executes same-project task cards through `workflowctl run from-task-card --execute` with receipt-bound Codex patch apply, and writes `same_project_patch_ledger.json`. Strict rerun `zero_degradation_cocos_worker_rerun4_20260429` still failed correctly with `commercial_game_no_degradation_failed`: real assets and live role provider proof passed, but the first same-project task-card patch hit `provider_idle_timeout`, product-depth gates and human review were not present.
+- Current evaluation report: [docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md](docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md).
+- Commercial production v2 design blueprint: [COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md](COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md). It describes the stage-internal phase graph, asset graph, Cocos bridge workers, supervisor repair loops, and final gate contract; it is not an active task-card export.
+
 ## 当前状态：M108 Cocos 小目标样机闭环完成
 
 - 包版本：`0.66.0`。
 - 当前接受实现基线：M108 已完成 Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout。
 - 当前质量结论：Cocos 生产线已能生成可检查的本地样机工程和诚实 closeout 报告；但在缺少真实 build/playtest 玩家证据时，`commercial_playable_go` 仍为 NO-GO，不能宣称商业化可玩成品。
-- 当前工作重点：M108 后必须先 review，再决定是否进入外部评估、人工试玩修复或 M109+；不得自动延续“继续做游戏”。
+- 当前工作重点：M108.5 review 决策点先修复证据闸口和商业化 gap 归因；不得自动延续“继续做游戏”。
+- task card 规则：数据库是权威来源，Markdown 只是自动导出的人工快照；每张卡必须包含目标、读写范围、测试、证据、阻塞条件和模型执行提示。
+- M108.5 决策记录：[docs/evaluations/m108_5_review_decision.md](docs/evaluations/m108_5_review_decision.md)。
 - 活跃开发方案见：[CURRENT_DEVELOPMENT_WORKFLOW.md](CURRENT_DEVELOPMENT_WORKFLOW.md)。
 - 历史收敛方案已压缩进里程碑历史和架构笔记，不再在根目录保留散装计划书。
 - 治理真相源：[docs/governance/tech_debt_registry.json](docs/governance/tech_debt_registry.json)。
@@ -59,12 +91,13 @@ Universal Agentic Workflow 是一个本地优先的 agentic workflow runtime。�
 2. **E2E scaffold**：有 Cocos 工程、资产绑定、自动试玩和 feature coverage。
 3. **商业化可玩成品**：有完整 UI、美术统筹、可用面板、真实关卡流程、音频设计、动效反馈、可玩性和移动端体验。
 
-当前代码已经具备前两层和小目标样机 closeout 能力，并加入了结构化玩家视角 gate；但没有真实 build/playtest 玩家证据时，第三层仍为 NO-GO：
+当前代码已经具备前两层和小目标样机 closeout 能力，并加入了结构化玩家视角 gate。按 2026-04-28 no-degradation gate v2，第三层仍为 NO-GO，直到所有硬证据都齐全：
 
 - UI 仍像调试面板，缺少成品级界面设计。
 - 关卡切换、皮肤、画廊、复活等功能更多是事件标记或浅交互。
 - 自动化测试过度依赖状态变量，未严格验证玩家视角的可用性和美观度。
-- 音频和配音缺少产品设计、触发策略和混音控制。
+- 音频和配音缺少已验证的 runtime 播放、触发策略和混音/音量控制。
+- Cocos ecosystem collector now has a project-local Editor extension, unattended bridge runner, license/cost manifest, and trusted report validation. Local smoke `cocos_bridge_smoke_20260429_145028` proved Editor version/project open, AssetDB import/query, Scene open/execute/save, node/component binding, Prefab instantiate, and Build hook evidence. This satisfies `ecosystem_integration_go` for the local Editor bridge only; it does not make the commercial game body playable.
 - Web Mobile 构建需要 HTTP 服务运行，不能保证解压后双击 `index.html` 即可游玩。
 
 因此，后续不得把 `commercial_go_no_go=GO`、feature flag、canvas 非空、事件覆盖、APK/HTML 打包成功写成“完整商业化游戏已生成”。商业化 pipeline 需要继续优化，而不是删除。
@@ -101,6 +134,9 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability health --verified-only
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" capability routes stats --days 30
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" governance active-truth-check --strict --output-path state/governance/active_truth_check.json
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline truth-report --template commercial_game_production
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline preview --goal "完整中文版商业化小游戏"
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" intake package --input docs --output-dir state/intake/example_bundle
 ```
 
 通用资产工厂：
@@ -110,11 +146,11 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" asset factory qa --asset-manifest state/asset_factory/run/asset_factory_manifest.json --evidence-dir state/asset_factory/qa
 ```
 
-Cocos 生产线入口仍保留，但当前不能代表最终商业化成品：
+Cocos fixed-template delivery entry is removed. Use the real production pipeline:
 
 ```powershell
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline preview --template commercial_cocos_game
-workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --template commercial_cocos_game --execute-capabilities --pdf-path "C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf" --creator-exe "C:\ProgramData\cocos\editors\Creator\3.8.8\CocosCreator.exe" --require-build --require-commercial
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline preview --template commercial_game_production
+workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic workflow" pipeline run --template commercial_game_production --execute-agent-roles --live-agent-roles --execute-capabilities --repair-loop --require-real-assets --require-build --require-playtest --require-commercial --require-cocos-ecosystem --require-human-player-review --source-path "C:\Users\74755\Desktop\游戏策划.md"
 ```
 
 ## Workflow Dogfood 规则
@@ -124,6 +160,8 @@ workflowctl --db-path state/workflow.db --workspace-root "D:\Universal Agentic w
 - 开发计划文档只写到 milestone 和 phase，不提前生成 task card。
 - 只有 active phase 才生成 task card。
 - 一个 phase 默认应包含多张 task card；单卡 phase 必须标记 `single_card_exception`。
+- task card 权威记录写入数据库，Markdown 只做快照导出。
+- task card 必须足够详细，不能只是任务清单。
 - phase 前运行并保存 `plan-graph`、`policy-preview`、`goal-packet`。
 - 简单低风险任务优先交给 workflow + OpenCode/MiniMax。
 - 中等 review/validation 可走 DeepSeek V4 Flash，失败直接 fallback Codex。

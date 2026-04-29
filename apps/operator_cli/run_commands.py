@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,165 @@ from packages.core_domain.governance import (
 from packages.core_domain.repositories import PresetRepository
 
 run_app = typer.Typer(help="Run lifecycle commands.")
+
+
+def _normal_task_card_path(task_card_path: str | Path | None) -> str | None:
+    if task_card_path is None:
+        return None
+    return Path(task_card_path).resolve().as_posix()
+
+
+def _resume_scope(run_id: str) -> dict[str, object]:
+    return {"run_id": run_id}
+
+
+def _batch_resume_scope(run_ids: list[str], *, max_workers: int | None = None) -> dict[str, object]:
+    return {"run_ids": run_ids, "max_workers": max_workers}
+
+
+def _launch_execute_scope(
+    *,
+    goal: str,
+    preset_id: str,
+    adapter_name: str | None = None,
+    task_kind: str | None = None,
+    task_card_ref: str | None = None,
+    task_card_path: str | Path | None = None,
+    write_set: list[str] | None = None,
+    read_set: list[str] | None = None,
+    test_commands: list[str] | None = None,
+    max_fix_iterations: int = 0,
+    mutation_mode: str | None = None,
+    memory_item_ids: list[str] | None = None,
+) -> dict[str, object]:
+    scope: dict[str, object] = {
+        "goal": goal,
+        "preset_id": preset_id,
+        "execute": True,
+        "max_fix_iterations": max_fix_iterations,
+    }
+    optional_values: dict[str, object | None] = {
+        "adapter_name": adapter_name,
+        "task_kind": task_kind,
+        "task_card_ref": task_card_ref,
+        "task_card_path": _normal_task_card_path(task_card_path),
+        "write_set": list(write_set or []),
+        "requested_write_set": list(write_set or []),
+        "read_set": list(read_set or []),
+        "test_commands": list(test_commands or []),
+        "mutation_mode": mutation_mode,
+        "memory_item_ids": list(memory_item_ids or []),
+    }
+    for key, value in optional_values.items():
+        if value not in (None, [], ""):
+            scope[key] = value
+    return scope
+
+
+def _consume_cli_receipt(
+    ctx: typer.Context,
+    *,
+    action_type: str,
+    receipt_id: str | None,
+    scope_payload: dict[str, object],
+) -> None:
+    service = _service(ctx)
+    _run_workflow_action(
+        lambda: service.consume_operator_action_receipt(
+            receipt_id=receipt_id,
+            action_type=action_type,
+            scope_payload=scope_payload,
+        )
+    )
+
+
+def _prepared_run_requires_repo_mutation_receipt(ctx: typer.Context, run_id: str) -> bool:
+    detail = _run_workflow_action(lambda: _service(ctx).get_status_detail(run_id))
+    mutation_contract = detail.get("mutation_contract")
+    if not isinstance(mutation_contract, dict):
+        return False
+    return str(mutation_contract.get("mutation_mode") or "") == "patch_apply"
+
+
+def _create_execute_requires_launch_receipt(
+    *,
+    mutation_mode: str | None,
+    write_set: list[str] | None,
+    task_card_path: str | None,
+    task_card_ref: str | None,
+) -> bool:
+    return mutation_mode == "patch_apply" or bool(write_set) or bool(task_card_path) or bool(task_card_ref)
+
+
+@run_app.command("issue-receipt")
+def run_issue_receipt(
+    ctx: typer.Context,
+    action_type: str = typer.Option(..., "--action-type", help="High-risk action type to authorize."),
+    risk_level: str = typer.Option("high", "--risk-level"),
+    operator_id: str = typer.Option("local_operator", "--operator-id"),
+    run_id: Optional[list[str]] = typer.Option(None, "--run-id", help="Run id for resume or batch resume scopes."),
+    max_workers: Optional[int] = typer.Option(None, "--max-workers", min=1),
+    goal: Optional[str] = typer.Option(None, "--goal"),
+    preset: str = typer.Option("feature_delivery", "--preset"),
+    adapter: Optional[str] = typer.Option(None, "--adapter"),
+    task_kind: Optional[str] = typer.Option(None, "--task-kind"),
+    task_card_ref: Optional[str] = typer.Option(None, "--task-card-ref"),
+    task_card_path: Optional[str] = typer.Option(None, "--task-card-path"),
+    write_set: Optional[list[str]] = typer.Option(None, "--write-set"),
+    read_set: Optional[list[str]] = typer.Option(None, "--read-set"),
+    test_command: Optional[list[str]] = typer.Option(None, "--test-command"),
+    max_fix_iterations: int = typer.Option(0, "--max-fix-iterations", min=0),
+    mutation_mode: Optional[str] = typer.Option(None, "--mutation-mode"),
+    memory_item_id: Optional[list[str]] = typer.Option(None, "--memory-item-id"),
+    scope_json: Optional[str] = typer.Option(None, "--scope-json", help="Raw JSON scope payload override."),
+    ttl_seconds: Optional[int] = typer.Option(None, "--ttl-seconds", min=1),
+) -> None:
+    if scope_json:
+        try:
+            scope_payload = json.loads(scope_json)
+        except json.JSONDecodeError as exc:
+            raise typer.BadParameter(f"invalid --scope-json: {exc}") from exc
+        if not isinstance(scope_payload, dict):
+            raise typer.BadParameter("--scope-json must decode to a JSON object")
+    elif action_type == "resume_run":
+        if not run_id or len(run_id) != 1:
+            raise typer.BadParameter("--run-id must be provided exactly once for resume_run")
+        scope_payload = _resume_scope(run_id[0])
+    elif action_type == "batch_resume_runs":
+        if not run_id:
+            raise typer.BadParameter("--run-id must be provided at least once for batch_resume_runs")
+        scope_payload = _batch_resume_scope(run_id, max_workers=max_workers)
+    elif action_type == "launch_execute":
+        if not goal:
+            raise typer.BadParameter("--goal is required for launch_execute when --scope-json is not provided")
+        scope_payload = _launch_execute_scope(
+            goal=goal,
+            preset_id=preset,
+            adapter_name=adapter,
+            task_kind=task_kind,
+            task_card_ref=task_card_ref,
+            task_card_path=task_card_path,
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_command,
+            max_fix_iterations=max_fix_iterations,
+            mutation_mode=mutation_mode,
+            memory_item_ids=memory_item_id,
+        )
+    else:
+        scope_payload = {}
+
+    receipt = _run_workflow_action(
+        lambda: _service(ctx).issue_operator_action_receipt(
+            action_type=action_type,
+            risk_level=risk_level,
+            operator_id=operator_id,
+            requested_write_set=write_set if action_type == "launch_execute" else None,
+            scope_payload=scope_payload,
+            ttl_seconds=ttl_seconds,
+        )
+    )
+    _emit_json(receipt.model_dump(mode="json"))
 
 @run_app.command("create")
 def run_create(
@@ -96,6 +256,31 @@ def run_create(
             prepared.memory_preview.model_dump(mode="json") if prepared.memory_preview is not None else None
         )
     if execute:
+        if _create_execute_requires_launch_receipt(
+            mutation_mode=mutation_mode,
+            write_set=write_set,
+            task_card_path=task_card_path,
+            task_card_ref=task_card_ref,
+        ):
+            _consume_cli_receipt(
+                ctx,
+                action_type="launch_execute",
+                receipt_id=operator_receipt_id,
+                scope_payload=_launch_execute_scope(
+                    goal=goal,
+                    preset_id=preset,
+                    adapter_name=adapter,
+                    task_kind=task_kind,
+                    task_card_ref=task_card_ref,
+                    task_card_path=task_card_path,
+                    write_set=write_set,
+                    read_set=read_set,
+                    test_commands=test_command,
+                    max_fix_iterations=max_fix_iterations,
+                    mutation_mode=mutation_mode,
+                    memory_item_ids=memory_item_id,
+                ),
+            )
         executed = _run_workflow_action(lambda: service.resume_run(run.run_id, operator_receipt_id=operator_receipt_id))
         current_run = executed.run
         payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
@@ -109,7 +294,11 @@ def run_from_task_card(
     ctx: typer.Context,
     task_card_path: str = typer.Argument(..., help="Local markdown task card path."),
     preset: str = typer.Option("feature_delivery", "--preset"),
-    adapter: Optional[str] = typer.Option("opencode", "--adapter", help="Patch-capable adapter to use."),
+    adapter: Optional[str] = typer.Option(
+        None,
+        "--adapter",
+        help="Patch-capable adapter override. Defaults to the workflow patch-apply route.",
+    ),
     task_card_ref: Optional[str] = typer.Option(None, "--task-card-ref", help="Stable task card reference."),
     write_set: Optional[list[str]] = typer.Option(None, "--write-set", help="Explicit writable paths."),
     read_set: Optional[list[str]] = typer.Option(None, "--read-set", help="Explicit read-only context paths."),
@@ -164,6 +353,8 @@ def run_from_task_card(
     payload: dict[str, object] = {
         "run": prepared.run.model_dump(mode="json"),
         "runtime_task_id": prepared.task_packet.runtime_task_id,
+        "capability_adapter": prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
+        "resolved_execution": prepared.resolved_execution.model_dump(mode="json"),
         "mutation_contract": (
             prepared.task_packet.mutation_contract.model_dump(mode="json")
             if prepared.task_packet.mutation_contract is not None
@@ -171,6 +362,23 @@ def run_from_task_card(
         ),
     }
     if execute:
+        _consume_cli_receipt(
+            ctx,
+            action_type="launch_execute",
+            receipt_id=operator_receipt_id,
+            scope_payload=_launch_execute_scope(
+                goal=_goal_from_task_card(path),
+                preset_id=preset,
+                adapter_name=adapter,
+                task_card_ref=ref,
+                task_card_path=path,
+                write_set=write_set,
+                read_set=read_set,
+                test_commands=test_command,
+                max_fix_iterations=max_fix_iterations,
+                mutation_mode="patch_apply",
+            ),
+        )
         executed = _run_workflow_action(lambda: service.resume_run(run.run_id, operator_receipt_id=operator_receipt_id))
         payload["run"] = executed.run.model_dump(mode="json")
         payload["evidence_id"] = executed.evidence.evidence_id
@@ -435,6 +643,13 @@ def run_resume(
         help="Receipt id attached to a capability-enforced mutation invocation.",
     ),
 ) -> None:
+    if operator_receipt_id or _prepared_run_requires_repo_mutation_receipt(ctx, run_id):
+        _consume_cli_receipt(
+            ctx,
+            action_type="resume_run",
+            receipt_id=operator_receipt_id,
+            scope_payload=_resume_scope(run_id),
+        )
     executed = _run_workflow_action(lambda: _service(ctx).resume_run(run_id, operator_receipt_id=operator_receipt_id))
     _emit_json(
         {
@@ -456,6 +671,13 @@ def run_batch_resume(
         help="Receipt id attached to capability-enforced mutation invocations.",
     ),
 ) -> None:
+    if operator_receipt_id or any(_prepared_run_requires_repo_mutation_receipt(ctx, item) for item in run_id):
+        _consume_cli_receipt(
+            ctx,
+            action_type="batch_resume_runs",
+            receipt_id=operator_receipt_id,
+            scope_payload=_batch_resume_scope(run_id, max_workers=max_workers),
+        )
     _emit_json(
         _run_workflow_action(
             lambda: _service(ctx).resume_runs_parallel(

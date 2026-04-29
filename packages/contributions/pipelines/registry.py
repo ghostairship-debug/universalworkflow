@@ -7,12 +7,27 @@ from typing import Any
 from packages.contracts import GraphCheckpointRecord, PipelineStage, PipelineStageKind, TaskKind, WorkflowPipeline
 from packages.contracts.models import new_id
 from packages.contributions.games.cocos.capabilities import judge_commercial_readiness_layers
+from packages.contributions.games.cocos.e2e import discover_cocos_creator_exe
+from packages.contributions.games.cocos.no_degradation import evaluate_no_degradation_contract
+from packages.contributions.pipelines.m109_single_agent import (
+    REAL_COMMERCIAL_GAME_PIPELINE_ID,
+    commercial_game_production_stages,
+    m109_single_agent_cocos_stages,
+)
+from packages.contributions.pipelines.commercial_game_production import (
+    build_supervisor_repair_packets,
+    execute_commercial_game_asset_generation,
+    execute_commercial_game_task_card_worker,
+)
+from packages.core_domain.role_agent_executor import execute_single_agent_role_stage
 from packages.runtime_integrations.cocos import generate_cocos_commercial_asset_manifest, run_cocos_game_e2e
 from packages.runtime_langgraph.checkpoint_store import build_graph_repair_decision
 from packages.runtime_langgraph.execution_kernel import run_artifact_only_graph
 
 
-COMMERCIAL_COCOS_GAME_TEMPLATE = "commercial_cocos_game"
+LEGACY_COMMERCIAL_COCOS_GAME_TEMPLATE = "commercial_cocos_game"
+M109_SINGLE_AGENT_COCOS_TEMPLATE = "m109_single_agent_cocos"
+COMMERCIAL_GAME_PRODUCTION_PIPELINE = REAL_COMMERCIAL_GAME_PIPELINE_ID
 
 
 def preview_contribution_pipeline(
@@ -22,12 +37,18 @@ def preview_contribution_pipeline(
     template: str | None = None,
 ) -> WorkflowPipeline | None:
     template_id = _normalized_template(template)
-    if template_id == COMMERCIAL_COCOS_GAME_TEMPLATE:
-        stages = _commercial_cocos_game_stages(template_id)
-        name = "commercial_cocos_game_pipeline"
+    if template_id == LEGACY_COMMERCIAL_COCOS_GAME_TEMPLATE:
+        stages = _deprecated_commercial_cocos_template_stages(template_id)
+        name = "deprecated_commercial_cocos_game_pipeline"
+    elif template_id == COMMERCIAL_GAME_PRODUCTION_PIPELINE:
+        stages = commercial_game_production_stages(template_id)
+        name = "commercial_game_production_pipeline"
+    elif template_id == M109_SINGLE_AGENT_COCOS_TEMPLATE:
+        stages = m109_single_agent_cocos_stages(template_id)
+        name = "commercial_game_production_pipeline"
     elif _is_h5_game_goal(goal):
-        stages = _h5_game_stages()
-        name = "h5_game_commercialization_pipeline"
+        stages = commercial_game_production_stages(COMMERCIAL_GAME_PRODUCTION_PIPELINE)
+        name = "commercial_game_production_pipeline"
     else:
         return None
     return WorkflowPipeline(
@@ -40,10 +61,12 @@ def preview_contribution_pipeline(
             "previewed_at": datetime.now(UTC).isoformat(),
             "stage_count": len(stages),
             "pipeline_semantics": "plan_of_plans",
-            "planning_modes": ["manual", "template", "hybrid"],
+            "planning_modes": ["source_preserving_intake", "single_agent_role", "task_card_driven", "graph_backed_repair"],
             "direct_mutation_allowed": False,
             "template_id": template_id,
+            "pipeline_recipe_id": template_id or (COMMERCIAL_GAME_PRODUCTION_PIPELINE if _is_h5_game_goal(goal) else None),
             "template_registry": "packages.contributions.pipelines",
+            "fixed_template_delivery_allowed": False,
         },
     )
 
@@ -61,7 +84,88 @@ def execute_contribution_capability(
     require_build: bool = False,
     require_playtest: bool = True,
     require_commercial: bool = True,
+    require_real_assets: bool = False,
+    require_cocos_ecosystem: bool = False,
+    cocos_bridge_mode: str = "auto",
+    cocos_bridge_timeout_seconds: int = 180,
+    cocos_bridge_report_path: str | Path | None = None,
+    allow_existing_cocos_process: bool = False,
+    max_repair_attempts: int = 3,
+    **_kwargs: Any,
 ) -> dict[str, Any]:
+    resolved_creator_exe = discover_cocos_creator_exe(creator_exe) if (creator_exe is not None or require_build) else creator_exe
+    if capability == "deprecated_cocos_template_removed":
+        return {
+            "handled": True,
+            "result": {
+                "status": "blocked",
+                "failure_class": "legacy_cocos_template_removed",
+                "execution_backend": "deprecation_guard",
+                "output": {
+                    "legacy_template": LEGACY_COMMERCIAL_COCOS_GAME_TEMPLATE,
+                    "replacement_pipeline": COMMERCIAL_GAME_PRODUCTION_PIPELINE,
+                    "reason": "The fixed Cocos template delivery path was removed because it can only prove technical smoke, not real commercial game production.",
+                    "next_command": "workflowctl pipeline preview --goal \"完整中文版商业化小游戏\"",
+                },
+            },
+            "pipeline_status": "blocked",
+            "stop_reason": "legacy_cocos_template_removed",
+        }
+    if capability == "commercial_game_asset_generation":
+        payload = execute_commercial_game_asset_generation(
+            root=root,
+            target_dir=target_dir,
+            shared_outputs=shared_outputs,
+            pipeline_id=str(_kwargs.get("pipeline_id") or stage.metadata.get("pipeline_recipe") or COMMERCIAL_GAME_PRODUCTION_PIPELINE),
+            require_real_assets=require_real_assets,
+            source_path=source_path,
+            creator_exe=resolved_creator_exe,
+            require_build=require_build,
+        )
+        return {
+            "handled": True,
+            "shared_outputs": payload.get("shared_outputs") or {},
+            "result": {
+                "status": payload["status"],
+                "failure_class": payload["failure_class"],
+                "execution_backend": payload["execution_backend"],
+                "output": payload["output"],
+            },
+            "pipeline_status": "completed",
+            "stop_reason": None,
+        }
+    if capability == "commercial_game_task_card_worker":
+        payload = execute_commercial_game_task_card_worker(
+            root=root,
+            target_dir=target_dir,
+            shared_outputs=shared_outputs,
+            pipeline_id=str(_kwargs.get("pipeline_id") or stage.metadata.get("pipeline_recipe") or COMMERCIAL_GAME_PRODUCTION_PIPELINE),
+            db_path=_kwargs.get("db_path"),
+            source_path=source_path,
+            creator_exe=resolved_creator_exe,
+            output_dir=output_dir,
+            require_build=require_build,
+            require_playtest=require_playtest,
+            require_commercial=require_commercial,
+            require_cocos_ecosystem=require_cocos_ecosystem,
+            cocos_bridge_mode=cocos_bridge_mode,
+            cocos_bridge_timeout_seconds=cocos_bridge_timeout_seconds,
+            cocos_bridge_report_path=cocos_bridge_report_path,
+            allow_existing_cocos_process=allow_existing_cocos_process,
+            max_repair_attempts=max_repair_attempts,
+        )
+        return {
+            "handled": True,
+            "shared_outputs": payload.get("shared_outputs") or {},
+            "result": {
+                "status": payload["status"],
+                "failure_class": payload["failure_class"],
+                "execution_backend": payload["execution_backend"],
+                "output": payload["output"],
+            },
+            "pipeline_status": "completed" if payload["status"] == "completed" else payload["status"],
+            "stop_reason": None if payload["status"] == "completed" else payload["failure_class"],
+        }
     if capability == "cocos_asset_factory":
         commercial_assets = generate_cocos_commercial_asset_manifest(output_dir=target_dir / "commercial_asset_factory")
         go_no_go = commercial_assets.get("go_no_go")
@@ -118,7 +222,24 @@ def execute_contribution_capability(
             "stop_reason": None if graph_completed else "cocos_graph_pressure_failed",
         }
     if capability == "cocos_creator_cli":
-        if source_path is None or creator_exe is None:
+        if not bool(stage.metadata.get("diagnostic_scaffold_allowed")):
+            return {
+                "handled": True,
+                "result": {
+                    "status": "blocked",
+                    "failure_class": "cocos_scaffold_not_allowed_for_production_pipeline",
+                    "execution_backend": "deprecation_guard",
+                    "output": {
+                        "capability": "cocos_creator_cli",
+                        "reason": "The fixed Cocos scaffold generator is diagnostic-only in pipeline execution and cannot be used as a commercial game production worker.",
+                        "replacement_pipeline": COMMERCIAL_GAME_PRODUCTION_PIPELINE,
+                        "required_worker": "commercial_game_task_card_worker",
+                    },
+                },
+                "pipeline_status": "blocked",
+                "stop_reason": "cocos_scaffold_not_allowed_for_production_pipeline",
+            }
+        if source_path is None or resolved_creator_exe is None:
             return {
                 "handled": True,
                 "result": {
@@ -134,7 +255,7 @@ def execute_contribution_capability(
         payload = run_cocos_game_e2e(
             pdf_path=source_path,
             output_dir=project_output_dir,
-            creator_exe=creator_exe,
+            creator_exe=resolved_creator_exe,
             require_build=require_build,
             require_playtest=require_playtest,
             require_commercial=require_commercial,
@@ -161,12 +282,129 @@ def execute_contribution_capability(
     return {"handled": False}
 
 
+def execute_contribution_agent_role(
+    *,
+    stage: PipelineStage,
+    root: Path,
+    target_dir: Path,
+    shared_outputs: dict[str, Any],
+    source_path: str | Path | None = None,
+    unified_brief_dir: str | Path | None = None,
+    db_path: str | Path | None = None,
+    pipeline_id: str | None = None,
+    pipeline_goal: str | None = None,
+    pipeline_template: str | None = None,
+    pipeline_name: str | None = None,
+    live_agent_roles: bool = False,
+    repair_loop: bool = False,
+    max_repair_attempts: int = 3,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    if str(stage.metadata.get("role_executor") or "") != "single_agent_role_v1":
+        return {"handled": False}
+    payload = execute_single_agent_role_stage(
+        stage,
+        root=root,
+        target_dir=target_dir,
+        shared_outputs=shared_outputs,
+        source_path=source_path,
+        unified_brief_dir=unified_brief_dir,
+        db_path=db_path,
+        pipeline_id=pipeline_id,
+        pipeline_goal=pipeline_goal,
+        pipeline_template=pipeline_template,
+        pipeline_name=pipeline_name,
+        live_agent_roles=live_agent_roles,
+    )
+    if (
+        payload.get("handled")
+        and repair_loop
+        and str(stage.metadata.get("role_id") or "") == "supervisor"
+        and payload.get("result", {}).get("status") == "completed"
+    ):
+        output = dict(payload["result"].get("output") or {})
+        structured = dict(output.get("structured_output") or {})
+        repair_packets = build_supervisor_repair_packets(
+            structured_output=structured,
+            shared_outputs=shared_outputs,
+            max_repair_attempts=max_repair_attempts,
+        )
+        structured["repair_packets"] = repair_packets
+        structured["repair_loop_enabled"] = True
+        output["structured_output"] = structured
+        payload["result"]["output"] = output
+        payload.setdefault("shared_outputs", {})["supervisor_repair_packets"] = repair_packets
+    return payload
+
+
 def execute_contribution_validation(
     validation: str,
     *,
     shared_outputs: dict[str, Any],
     require_commercial: bool = True,
+    require_cocos_ecosystem: bool = False,
+    require_live_agent_roles: bool = False,
+    require_human_player_review: bool = False,
 ) -> dict[str, Any]:
+    if validation == "commercial_game_production_go_no_go":
+        production = shared_outputs.get("commercial_game_production")
+        production_payload = production if isinstance(production, dict) else None
+        no_degradation = evaluate_no_degradation_contract(
+            shared_outputs=shared_outputs,
+            production=production_payload,
+            require_commercial=require_commercial,
+            require_cocos_ecosystem=require_cocos_ecosystem,
+            require_live_agent_roles=require_live_agent_roles,
+            require_human_player_review=require_human_player_review,
+        )
+        gate_go = (
+            isinstance(production, dict)
+            and bool(production.get("commercial_playable_go"))
+            and no_degradation["go_no_go"] == "GO"
+        )
+        blockers = []
+        if not isinstance(production, dict):
+            blockers.append("missing_real_game_production_evidence")
+        elif not production.get("commercial_playable_go"):
+            blockers.extend(production.get("commercial_playable_blockers") or ["commercial_playable_no_go"])
+        blockers.extend(no_degradation["blockers"])
+        blockers = list(dict.fromkeys(blockers))
+        awaiting_human = blockers == ["awaiting_human_player_review"]
+        return {
+            "handled": True,
+            "result": {
+                "status": "completed" if gate_go else "blocked" if awaiting_human else "failed",
+                "failure_class": None
+                if gate_go
+                else "awaiting_human_player_review"
+                if awaiting_human
+                else "commercial_game_no_degradation_failed",
+                "output": {
+                    "go_no_go": "GO" if gate_go else "NO-GO",
+                    "required_gate": "real_commercial_playable_go",
+                    "blockers": blockers,
+                    "forbids_fixed_template": True,
+                    "ecosystem_integration_go": no_degradation["ecosystem_integration_go"],
+                    "live_role_provider_proof_go": no_degradation["live_role_provider_proof_go"],
+                    "same_project_worker_patch_go": no_degradation["same_project_worker_patch_go"],
+                    "human_player_review_go": no_degradation["human_player_review_go"],
+                    "degradation_findings": no_degradation["degradation_findings"],
+                    "no_degradation_contract": no_degradation,
+                    "accepted_evidence": [
+                        "real implemented feature flows",
+                        "player-visible screenshots/playtest",
+                        "working shop/levels/audio/animation/UI",
+                        "incremental repair history on the same project",
+                    ],
+                },
+            },
+            "pipeline_status": "completed" if gate_go else "blocked" if awaiting_human else "failed",
+            "stop_reason": None
+            if gate_go
+            else "awaiting_human_player_review"
+            if awaiting_human
+            else "commercial_game_no_degradation_failed",
+        }
     if validation != "cocos_manifest_go_no_go":
         return {"handled": False}
     payload = shared_outputs.get("cocos_e2e")
@@ -232,128 +470,37 @@ def _normalized_template(template: str | None) -> str | None:
     value = (template or "").strip().lower().replace("-", "_")
     if not value:
         return None
-    if value in {COMMERCIAL_COCOS_GAME_TEMPLATE, "commercial_cocos", "cocos_commercial_game"}:
-        return COMMERCIAL_COCOS_GAME_TEMPLATE
+    if value in {LEGACY_COMMERCIAL_COCOS_GAME_TEMPLATE, "commercial_cocos", "cocos_commercial_game"}:
+        return LEGACY_COMMERCIAL_COCOS_GAME_TEMPLATE
+    if value in {COMMERCIAL_GAME_PRODUCTION_PIPELINE, "real_commercial_game", "cocos_production_pipeline"}:
+        return COMMERCIAL_GAME_PRODUCTION_PIPELINE
+    if value in {M109_SINGLE_AGENT_COCOS_TEMPLATE, "m109_cocos", "single_agent_cocos"}:
+        return M109_SINGLE_AGENT_COCOS_TEMPLATE
     return value
 
 
-def _commercial_cocos_game_stages(template_id: str) -> list[PipelineStage]:
-    intake = _stage(
-        name="PDF/brief requirement mapping",
-        kind=PipelineStageKind.agent_role,
-        order_index=0,
-        goal="Map the source PDF or brief into game requirements, commercial checks, and acceptance criteria.",
-        preset_id="research_spike",
-        task_kind=TaskKind.shell_exec,
-        metadata={"planning_mode": "template", "direct_mutation_allowed": False, "template": template_id},
-    )
-    graph_pressure = _stage(
-        name="Cocos graph pressure preflight",
-        kind=PipelineStageKind.capability,
-        order_index=1,
-        goal="Run a small Cocos improvement planning artifact through the graph checkpoint and repair path.",
-        preset_id="advisory_delivery",
-        task_kind=TaskKind.shell_exec,
-        write_set=["state/pipeline_runs"],
-        metadata={
-            "planning_mode": "graph_backed",
-            "capability": "cocos_graph_pressure_test",
-            "template": template_id,
-            "graph_backed": True,
-            "side_effect_level": "artifact_only",
-        },
-    )
-    asset_factory = _stage(
-        name="Commercial asset factory",
-        kind=PipelineStageKind.capability,
-        order_index=2,
-        goal="Generate required commercial image, audio, music, voice, provenance, and QA assets.",
-        preset_id="feature_delivery",
-        task_kind=TaskKind.shell_exec,
-        depends_on=[graph_pressure.stage_id],
-        write_set=["state/pipeline_runs"],
-        metadata={
-            "planning_mode": "template",
-            "capability": "cocos_asset_factory",
-            "template": template_id,
-            "required_for_go": True,
-        },
-    )
-    production = _stage(
-        name="Cocos production generation",
-        kind=PipelineStageKind.capability,
-        order_index=3,
-        goal="Generate, build, and optionally browser-playtest the Cocos Creator Web Mobile project.",
-        preset_id="feature_delivery",
-        task_kind=TaskKind.shell_exec,
-        depends_on=[asset_factory.stage_id],
-        write_set=["state/pipeline_runs"],
-        metadata={
-            "planning_mode": "manual",
-            "capability": "cocos_creator_cli",
-            "template": template_id,
-            "requires_asset_factory_manifest": True,
-        },
-    )
-    readiness_gate = _stage(
-        name="Commercial readiness gate",
-        kind=PipelineStageKind.validation_gate,
-        order_index=4,
-        goal="Validate technical build, commercial UI/assets, browser playtest, and final GO/NO-GO.",
-        depends_on=[production.stage_id],
-        validation_commands=["workflowctl game cocos-e2e --require-commercial"],
-        metadata={
-            "planning_mode": "template",
-            "direct_mutation_allowed": False,
-            "validation": "cocos_manifest_go_no_go",
-            "template": template_id,
-        },
-    )
-    return [intake, graph_pressure, asset_factory, production, readiness_gate]
+def _deprecated_commercial_cocos_template_stages(template_id: str) -> list[PipelineStage]:
+    return [
+        _stage(
+            name="Legacy Cocos template removed",
+            kind=PipelineStageKind.capability,
+            order_index=0,
+            goal="Block the removed fixed-template Cocos pipeline and direct callers to the real task-card-driven production pipeline.",
+            preset_id="advisory_delivery",
+            task_kind=TaskKind.shell_exec,
+            metadata={
+                "planning_mode": "removed_legacy_template",
+                "capability": "deprecated_cocos_template_removed",
+                "template": template_id,
+                "replacement_pipeline": COMMERCIAL_GAME_PRODUCTION_PIPELINE,
+                "fixed_template_delivery_allowed": False,
+            },
+        )
+    ]
 
 
 def _h5_game_stages() -> list[PipelineStage]:
-    return [
-        _stage(
-            name="PDF/game intake",
-            kind=PipelineStageKind.agent_role,
-            order_index=0,
-            goal="Extract product requirements and acceptance criteria from the source PDF.",
-            preset_id="research_spike",
-            task_kind=TaskKind.shell_exec,
-            metadata={"planning_mode": "template", "direct_mutation_allowed": False},
-        ),
-        _stage(
-            name="Commercial game design",
-            kind=PipelineStageKind.cluster,
-            order_index=1,
-            goal="Produce gameplay, monetization, mobile UX, and retention design from the intake.",
-            preset_id="advisory_delivery",
-            metadata={"planning_mode": "hybrid", "direct_mutation_allowed": False},
-        ),
-        _stage(
-            name="Cocos implementation",
-            kind=PipelineStageKind.capability,
-            order_index=2,
-            goal="Generate and build the Cocos Creator Web Mobile project.",
-            preset_id="feature_delivery",
-            task_kind=TaskKind.shell_exec,
-            write_set=["state/m73_m76_autopilot/cocos_e2e"],
-            metadata={"planning_mode": "manual", "capability": "cocos_creator_cli"},
-        ),
-        _stage(
-            name="Browser playtest gate",
-            kind=PipelineStageKind.validation_gate,
-            order_index=3,
-            goal="Run mobile browser playtest with canvas, drag, score, and UI checks.",
-            validation_commands=["workflowctl game cocos-e2e --require-build"],
-            metadata={
-                "planning_mode": "template",
-                "direct_mutation_allowed": False,
-                "validation": "cocos_manifest_go_no_go",
-            },
-        ),
-    ]
+    return commercial_game_production_stages(COMMERCIAL_GAME_PRODUCTION_PIPELINE)
 
 
 def _cocos_readiness(cocos_payload: dict[str, Any] | None) -> dict[str, Any]:

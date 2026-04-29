@@ -342,6 +342,38 @@ class RepairServiceMixin:
             )
         return repaired_runtime_task_ids
 
+    def _apply_scheduler_lease_release_repair(
+        self,
+        run_id: str,
+        action: str,
+        problem: str,
+    ) -> list[str]:
+        with unit_of_work(self.db_path) as connection:
+            context = self._load_run_context(run_id, connection=connection)
+            repaired_runtime_task_ids: list[str] = []
+            for state_ref in context.runtime_state_refs:
+                lease_id = self._scheduler_lease_id_from_state(state_ref)
+                if lease_id is None:
+                    continue
+                repaired_state = self._release_scheduler_lease_for_state(
+                    state_ref,
+                    lease_id=lease_id,
+                    release_reason=f"reconciled_{problem}",
+                    connection=connection,
+                )
+                self.runtime_state_repo.upsert(repaired_state, connection=connection)
+                repaired_runtime_task_ids.append(state_ref.runtime_task_id)
+            if not repaired_runtime_task_ids:
+                raise RepairActionNotAvailableError(run_id, action, [action])
+            self._append_repair_event(
+                run_id,
+                action,
+                problem,
+                repaired_runtime_task_ids,
+                connection=connection,
+            )
+        return repaired_runtime_task_ids
+
     def _apply_close_current_attempt_terminal(
         self,
         run: Run,
@@ -505,6 +537,12 @@ class RepairServiceMixin:
                 str(selected_problem["problem"]),
                 status=WorkerLeaseStatus.expired,
                 reason="reconciled_expired_worker_lease",
+            )
+        elif selected_action == "release_scheduler_lease":
+            repaired_runtime_task_ids = self._apply_scheduler_lease_release_repair(
+                run_id,
+                selected_action,
+                str(selected_problem["problem"]),
             )
         else:
             raise UnsupportedRepairActionError(selected_action, list(self.SUPPORTED_REPAIR_ACTIONS))

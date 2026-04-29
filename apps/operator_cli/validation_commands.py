@@ -50,8 +50,8 @@ def validation_run(
             "overall_passed": False,
             "error": str(exc),
         }
-    write_report(payload, resolved_report_path)
     payload["report_path"] = resolved_report_path.as_posix()
+    write_report(payload, resolved_report_path)
     _emit_json(payload)
     if not payload.get("overall_passed"):
         raise typer.Exit(code=1)

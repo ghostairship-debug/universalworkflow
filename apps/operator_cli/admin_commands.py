@@ -41,6 +41,36 @@ def task_evidence(ctx: typer.Context, runtime_task_id: str) -> None:
     _emit_json(evidence.model_dump(mode="json"))
 
 
+@task_app.command("cards")
+def task_cards(ctx: typer.Context, run_id: str = typer.Option(..., "--run-id")) -> None:
+    from packages.core_domain.task_card_store import TaskCardStore
+
+    migrate(_db_path_from_context(ctx))
+    cards = TaskCardStore(_db_path_from_context(ctx)).list_for_run(run_id)
+    _emit_json([card.model_dump(mode="json") for card in cards])
+
+
+@task_app.command("card-quality")
+def task_card_quality(ctx: typer.Context, run_id: str = typer.Option(..., "--run-id")) -> None:
+    from packages.core_domain.task_card_store import TaskCardStore
+
+    migrate(_db_path_from_context(ctx))
+    _emit_json(TaskCardStore(_db_path_from_context(ctx)).quality_report_for_run(run_id))
+
+
+@task_app.command("export-cards")
+def task_export_cards(
+    ctx: typer.Context,
+    run_id: str = typer.Option(..., "--run-id"),
+    output_path: Optional[str] = typer.Option(None, "--output-path", help="Markdown snapshot output path."),
+) -> None:
+    from packages.core_domain.task_card_store import TaskCardStore
+
+    migrate(_db_path_from_context(ctx))
+    output = output_path or f"state/task_cards/{run_id}/task_cards.md"
+    _emit_json(TaskCardStore(_db_path_from_context(ctx)).export_run_markdown(run_id, output))
+
+
 @db_app.command("reset")
 def db_reset(
     ctx: typer.Context,
@@ -186,11 +216,13 @@ def governance_self_development_manifest(
     output_path: Optional[str] = typer.Option(None, "--output-path", help="Optional JSON output path."),
     min_task_cards: int = typer.Option(3, "--min-task-cards", min=1),
 ) -> None:
+    migrate(_db_path_from_context(ctx))
     _emit_json(
         build_self_development_manifest(
             _workspace_root_from_context(ctx),
             milestones=list(milestone or DEFAULT_SELF_DEVELOPMENT_MILESTONES),
             state_root=state_root,
+            db_path=_db_path_from_context(ctx),
             output_path=output_path,
             min_task_cards_per_phase=min_task_cards,
         )

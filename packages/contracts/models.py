@@ -909,6 +909,24 @@ class TaskCard(PersistedContractModel):
     title: str
     description: str
     acceptance_criteria: list[str] = Field(default_factory=list)
+    milestone: str | None = None
+    phase_name: str | None = None
+    goal: str | None = None
+    write_set: list[str] = Field(default_factory=list)
+    read_set: list[str] = Field(default_factory=list)
+    test_commands: list[str] = Field(default_factory=list)
+    expected_artifacts: list[str] = Field(default_factory=list)
+    evidence_requirements: list[str] = Field(default_factory=list)
+    blocking_conditions: list[str] = Field(default_factory=list)
+    model_guidance: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    risk_level: str = "medium"
+    provider_lane: str | None = None
+    execution_mode: str | None = None
+    status: str = "draft"
+    exported_markdown_path: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime | None = None
 
 
 class RuntimeTask(PersistedContractModel):

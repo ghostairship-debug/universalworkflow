@@ -177,6 +177,29 @@ def test_generate_coding_proposal_normalizes_router_style_deepseek_model() -> No
     assert client.chat.completions.calls[0]["model"] == "deepseek-v4-flash"
 
 
+def test_generate_coding_proposal_includes_bounded_read_set_file_context(tmp_path: Path, monkeypatch) -> None:
+    target = tmp_path / "packages" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("VALUE = 'current implementation'\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    client = _CapturingClient()
+
+    result = generate_coding_proposal(
+        CodingProposalRequest(
+            provider="deepseek",
+            goal="Update exact file",
+            read_set=["packages/example.py"],
+            write_set=["packages/example.py"],
+        ),
+        client=client,
+    )
+
+    prompt = client.chat.completions.calls[0]["messages"][1]["content"]
+    assert result.status == "completed"
+    assert "READ_SET_FILE: packages/example.py" in prompt
+    assert "VALUE = 'current implementation'" in prompt
+
+
 def test_extract_unified_diff_from_fenced_proposal() -> None:
     diff = extract_unified_diff_from_proposal(
         "text\n```diff\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n```\n"

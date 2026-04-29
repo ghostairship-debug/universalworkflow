@@ -16,7 +16,7 @@ def _effective(**env: str) -> dict[str, object]:
     return build_effective_config(env=env)
 
 
-def test_m44_adaptive_routes_complex_coder_to_opencode_minimax() -> None:
+def test_m44_adaptive_routes_complex_coder_to_codex() -> None:
     resolved = resolve_execution_profile(
         effective_config=_effective(WORKFLOW_ADAPTIVE_LLM_ROUTING_ENABLED="1"),
         cluster_member_profile=ExecutionProfileDefinition(adapter_name="agent"),
@@ -28,8 +28,8 @@ def test_m44_adaptive_routes_complex_coder_to_opencode_minimax() -> None:
         ),
     )
 
-    assert resolved.adapter_name == "opencode"
-    assert resolved.selected_model == "minimax/MiniMax-M2.7"
+    assert resolved.adapter_name == "codex"
+    assert resolved.selected_model == "gpt-5.4"
     assert resolved.model_selection_source == "adaptive_llm_router"
     assert resolved.adaptive_route_tier == "complex"
     assert resolved.source_map["adapter_name"]["original_value"] == "agent"
@@ -109,7 +109,8 @@ def test_m44_doctor_projects_adaptive_routing(tmp_path: Path, monkeypatch) -> No
     assert adaptive["status"] == "enabled"
     assert adaptive["simple_model"] == "minimax/MiniMax-M2.7"
     assert adaptive["medium_model"] == "deepseek/deepseek-v4-flash"
-    assert adaptive["coding_adapter"] == "opencode"
+    assert adaptive["complex_model"] == "gpt-5.4"
+    assert adaptive["coding_adapter"] == "codex"
 
 
 def test_m46_doctor_projects_dynamic_cluster_routing(tmp_path: Path, monkeypatch) -> None:

@@ -223,14 +223,19 @@ def _adaptive_route_for_scope(
         str(scope_context.agent_profile_id or ""),
     ]
     role_key = " ".join(role_parts).lower()
-    coding_adapter = str(adaptive_config.get("coding_adapter") or "opencode").strip().lower()
+    coding_adapter = str(adaptive_config.get("coding_adapter") or "codex").strip().lower()
     if any(marker in role_key for marker in ADAPTIVE_COMPLEX_MARKERS):
-        adapter = coding_adapter if coding_adapter in {"opencode", "agent"} else "opencode"
-        model_field = "opencode_model" if adapter == "opencode" else "agent_model"
+        adapter = coding_adapter if coding_adapter in {"codex", "opencode", "agent"} else "codex"
+        if adapter == "codex":
+            model_field = "codex_model"
+        elif adapter == "opencode":
+            model_field = "opencode_model"
+        else:
+            model_field = "agent_model"
         return (
             adapter,
             model_field,
-            str(adaptive_config.get("complex_model") or "minimax/MiniMax-M2.7"),
+            str(adaptive_config.get("complex_model") or "gpt-5.4"),
             "complex",
         )
     if any(marker in role_key for marker in ADAPTIVE_MEDIUM_MARKERS):
@@ -418,7 +423,7 @@ def resolve_execution_profile(
         adaptive_llm_routing_enabled=bool(adaptive_config.get("enabled")),
         adaptive_route_tier=adaptive_route[3] if adaptive_route is not None else None,
         adaptive_route_reason=(
-            "M44 adaptive routing mapped this role to a MiniMax/DeepSeek/OpenCode free-model lane"
+            "M44 adaptive routing mapped this role to the configured simple, medium, or complex lane"
             if adaptive_route is not None
             else None
         ),

@@ -151,6 +151,15 @@ def _fake_patch_runner(command, cwd, env, capture_output, text, check, timeout):
     )
 
 
+def _patch_apply_receipt_id(service: OrchestratorService, run_id: str, write_set: list[str]) -> str:
+    receipt = service.issue_operator_action_receipt(
+        action_type="resume_run",
+        requested_write_set=write_set,
+        scope_payload={"run_id": run_id},
+    )
+    return receipt.receipt_id
+
+
 def _fake_timeout_runner(command, cwd, env, capture_output, text, check, timeout):
     raise subprocess.TimeoutExpired(command, timeout, output="partial stdout", stderr="partial stderr")
 
@@ -687,6 +696,52 @@ def test_auto_review_fails_for_non_zero_return_code(tmp_path: Path) -> None:
     assert result.return_code == 2
     assert evidence.result_envelope is not None
     assert evidence.result_envelope.verification.return_code == 2
+    assert verdict.decision == "fail"
+
+
+def test_auto_review_allows_stderr_warning_when_mutation_tests_pass() -> None:
+    finished_at = utc_now()
+    started_at = finished_at - timedelta(milliseconds=25)
+    result = ExecutionResult(
+        runtime_task_id="task_warn",
+        return_code=0,
+        stdout="patch applied",
+        stderr="provider exploratory warning",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=25,
+        artifact_paths=[],
+        adapter_name="codex",
+        metadata={"mutation_result": {"changed_files": [], "final_test_status": "passed"}},
+    )
+
+    evidence = EvidenceBuilder().build("run_warn", "task_warn", result)
+    verdict = AutoReviewV0().review(evidence)
+
+    assert evidence.checks[1].name == "stderr_empty"
+    assert evidence.checks[1].status == "warn"
+    assert verdict.decision == "pass"
+
+
+def test_auto_review_fails_when_mutation_tests_fail_despite_zero_return() -> None:
+    finished_at = utc_now()
+    started_at = finished_at - timedelta(milliseconds=25)
+    result = ExecutionResult(
+        runtime_task_id="task_failed_tests",
+        return_code=0,
+        stdout="patch applied",
+        stderr="",
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=25,
+        artifact_paths=[],
+        adapter_name="codex",
+        metadata={"mutation_result": {"changed_files": [], "final_test_status": "failed"}},
+    )
+
+    evidence = EvidenceBuilder().build("run_failed_tests", "task_failed_tests", result)
+    verdict = AutoReviewV0().review(evidence)
+
     assert verdict.decision == "fail"
 
 
@@ -1859,7 +1914,10 @@ def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Pa
     assert detail["mutation_contract"]["task_card_ref"] == "M16-1A"
     assert detail["execution_lane"] == "repo_change_controlled"
 
-    bundle = service.resume_run(run.run_id)
+    bundle = service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["mutated.txt"]),
+    )
     mutation_report = service.get_run_mutation_report(run.run_id)
     detail_after = service.get_status_detail(run.run_id)
 
@@ -1869,6 +1927,130 @@ def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Pa
     assert mutation_report["mutation_result"]["changed_files"] == ["mutated.txt"]
     assert detail_after["mutation_result"]["fix_iteration_count"] == 0
     assert detail_after["mutation_result"]["test_attempts"][0]["passed"] is True
+
+
+def test_compile_run_defaults_patch_apply_to_codex_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            CodexAdapter(runner=_fake_codex_patch_runner),
+            OpenCodeAdapter(runner=_fake_patch_runner),
+            NoopAdapter(),
+        ]
+    )
+    service = OrchestratorService(db_path, worker_router=router)
+
+    run = service.create_run("Default patch route", "feature_delivery")
+    prepared = service.compile_run(
+        run.run_id,
+        write_set=["mutated.txt"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    assert prepared.resolved_execution.adapter_name == "codex"
+    assert prepared.capability_route is not None
+    assert prepared.capability_route.adapter_name == "codex"
+    assert prepared.resolved_execution.source_map["adapter_name"]["source"] == "patch_apply_enforcement"
+
+
+def test_local_worker_execution_records_heartbeat_renewals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS", "0.05")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path, worker_router=WorkerRouter([ShellAdapter(), NoopAdapter()]))
+
+    run = service.create_run("Long enough local shell task", "feature_delivery")
+    prepared = service.compile_run(run.run_id, adapter_name="shell")
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
+            (
+                json.dumps([sys.executable, "-c", "import time; time.sleep(0.2); print('ok')"]),
+                prepared.task_packet.runtime_task_id,
+            ),
+        )
+
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert detail["lease_renewals"]
+    assert detail["lease_renewals"][0]["source"] == "local_worker_heartbeat"
+    assert detail["worker_lease_projection"]["latest_status"] == "released"
+
+
+def test_local_worker_heartbeat_is_visible_during_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS", "0.05")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path, worker_router=WorkerRouter([ShellAdapter(), NoopAdapter()]))
+
+    run = service.create_run("Heartbeat visible while shell task is still running", "research_spike")
+    prepared = service.compile_run(run.run_id, adapter_name="shell")
+    poll_code = (
+        "import json, sqlite3, sys, time\n"
+        f"db_path = {str(db_path)!r}\n"
+        f"runtime_task_id = {prepared.task_packet.runtime_task_id!r}\n"
+        "deadline = time.time() + 2\n"
+        "while time.time() < deadline:\n"
+        "    with sqlite3.connect(db_path) as connection:\n"
+        "        row = connection.execute(\n"
+        "            'SELECT state_payload_json FROM runtime_state_refs WHERE runtime_task_id = ?',\n"
+        "            (runtime_task_id,),\n"
+        "        ).fetchone()\n"
+        "        worker = connection.execute(\n"
+        "            \"SELECT lease_expires_at FROM worker_leases WHERE runtime_task_id = ? AND status = 'active'\",\n"
+        "            (runtime_task_id,),\n"
+        "        ).fetchone()\n"
+        "        claim = connection.execute(\n"
+        "            \"SELECT lease_expires_at FROM runtime_claims WHERE runtime_task_id = ? AND status = 'active'\",\n"
+        "            (runtime_task_id,),\n"
+        "        ).fetchone()\n"
+        "        scheduler = connection.execute(\n"
+        "            \"SELECT lease_expires_at FROM scheduler_lease_decisions WHERE runtime_task_id = ? AND decision = 'granted' ORDER BY created_at DESC LIMIT 1\",\n"
+        "            (runtime_task_id,),\n"
+        "        ).fetchone()\n"
+        "    if row is not None:\n"
+        "        payload = json.loads(row[0])\n"
+        "        projected_scheduler = payload.get('scheduler_authority', {}).get('active_decision', {}).get('lease_expires_at')\n"
+        "        leases_extended = bool(worker and claim and scheduler and projected_scheduler and claim[0] >= worker[0] and scheduler[0] >= worker[0] and projected_scheduler >= worker[0])\n"
+        "        if payload.get('lease_renewals') and leases_extended:\n"
+        "            print('heartbeat-visible')\n"
+        "            sys.exit(0)\n"
+        "    time.sleep(0.05)\n"
+        "print('heartbeat-not-visible')\n"
+        "sys.exit(2)\n"
+    )
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
+            (
+                json.dumps([sys.executable, "-c", poll_code]),
+                prepared.task_packet.runtime_task_id,
+            ),
+        )
+
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.execution_result.return_code == 0
+    assert "heartbeat-visible" in bundle.execution_result.stdout
+    assert detail["lease_renewals"]
+    assert detail["lease_renewals"][0]["source"] == "local_worker_heartbeat"
 
 
 def test_pr_ready_summary_projects_successful_bounded_patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1903,7 +2085,10 @@ def test_pr_ready_summary_projects_successful_bounded_patch(tmp_path: Path, monk
         test_commands=[f"{sys.executable} {verifier.name}"],
         mutation_mode=MutationMode.patch_apply,
     )
-    service.resume_run(run.run_id)
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["mutated.txt"]),
+    )
 
     payload = service.get_run_pr_ready_summary(run.run_id)
 
@@ -1990,7 +2175,10 @@ def test_compile_run_accepts_codex_repo_mutation_contract_and_projects_it(tmp_pa
     assert prepared.execution_lane == "repo_change_controlled"
     assert prepared.resolved_execution.adapter_name == "codex"
 
-    bundle = service.resume_run(run.run_id)
+    bundle = service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["codex_mutated.txt"]),
+    )
     mutation_report = service.get_run_mutation_report(run.run_id)
 
     assert bundle.run.status == "completed"
@@ -2147,7 +2335,10 @@ def test_repo_mutation_rejects_out_of_scope_patch(tmp_path: Path, monkeypatch: p
     )
 
     with pytest.raises(RepoMutationScopeError):
-        service.resume_run(run.run_id)
+        service.resume_run(
+            run.run_id,
+            operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["allowed.txt"]),
+        )
 
     assert target_file.read_text(encoding="utf-8") == "before\n"
     assert not (tmp_path / "rogue.txt").exists()
@@ -2202,7 +2393,10 @@ def test_repo_mutation_retries_with_bounded_fix_iterations(tmp_path: Path, monke
         max_fix_iterations=1,
         mutation_mode=MutationMode.patch_apply,
     )
-    service.resume_run(run.run_id)
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["iterated.txt"]),
+    )
     mutation_report = service.get_run_mutation_report(run.run_id)
 
     assert target_file.read_text(encoding="utf-8") == "after\n"
@@ -2253,7 +2447,10 @@ def test_project_delivery_coder_uses_repo_mutation_when_parent_contract_is_prese
         test_commands=[test_command],
         mutation_mode=MutationMode.patch_apply,
     )
-    service.resume_run(run.run_id)
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["project_slice.txt"]),
+    )
     detail = service.get_status_detail(run.run_id)
 
     assert detail["orchestration"]["role_progress"]["coder"]["mutation_report"]["mutation_result"]["final_test_status"] == "passed"
@@ -2842,6 +3039,83 @@ def test_resume_run_releases_worker_lease_after_auto_terminal(tmp_path: Path) ->
     assert "worker_lease_released" in timeline_types
 
 
+def test_resume_run_releases_scheduler_lease_after_auto_terminal(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Auto scheduler lease lifecycle", "feature_delivery")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    scheduler_authority = detail["scheduler_authority"]
+    inspection = service.inspect_run_state(run.run_id)
+
+    assert bundle.run.status == "completed"
+    assert scheduler_authority["active_decision"] is None
+    assert scheduler_authority["latest_decision"]["released_at"] is not None
+    assert scheduler_authority["latest_decision"]["release_reason"] == "run_terminal"
+    assert scheduler_authority["active_committed_lease"]["status"] == "released"
+    assert scheduler_authority["active_committed_lease"]["release_reason"] == "run_terminal"
+    assert inspection["passed"] is True
+
+
+def test_resume_run_releases_scheduler_lease_before_human_review_wait(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Review scheduler lease lifecycle", "research_spike")
+    service.compile_run(run.run_id)
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    scheduler_authority = detail["scheduler_authority"]
+    inspection = service.inspect_run_state(run.run_id)
+
+    assert bundle.run.status == "awaiting_review"
+    assert scheduler_authority["active_decision"] is None
+    assert scheduler_authority["latest_decision"]["released_at"] is not None
+    assert scheduler_authority["latest_decision"]["release_reason"] == "awaiting_human_review"
+    assert scheduler_authority["active_committed_lease"]["status"] == "released"
+    assert scheduler_authority["active_committed_lease"]["release_reason"] == "awaiting_human_review"
+    assert inspection["passed"] is True
+
+
+def test_local_worker_heartbeat_scheduler_projection_survives_terminal_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS", "0.05")
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path, worker_router=WorkerRouter([ShellAdapter(), NoopAdapter()]))
+
+    run = service.create_run("Heartbeat scheduler projection terminal", "feature_delivery")
+    prepared = service.compile_run(run.run_id, adapter_name="shell")
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE task_packets SET command_json = ? WHERE runtime_task_id = ?",
+            (
+                json.dumps([sys.executable, "-c", "import time; time.sleep(0.2); print('ok')"]),
+                prepared.task_packet.runtime_task_id,
+            ),
+        )
+
+    bundle = service.resume_run(run.run_id)
+    detail = service.get_status_detail(run.run_id)
+    scheduler_authority = detail["last_runtime_state"]["state_payload"]["scheduler_authority"]
+
+    assert bundle.run.status == "completed"
+    assert len(detail["lease_renewals"]) >= 2
+    assert scheduler_authority["active_decision"] is None
+    assert scheduler_authority["latest_decision"]["release_reason"] == "run_terminal"
+    assert scheduler_authority["active_committed_lease"]["status"] == "released"
+    assert service.inspect_run_state(run.run_id)["passed"] is True
+
+
 def test_resume_runs_parallel_records_batch_barrier_and_starts_runs_together(tmp_path: Path) -> None:
     db_path = tmp_path / "workflow.db"
     migrate(db_path)
@@ -3005,6 +3279,62 @@ def test_inspection_can_release_non_running_active_claim(tmp_path: Path) -> None
     assert repair["action"] == "release_runtime_claim"
     assert claims[0].status == "released"
     assert claims[0].release_reason == "reconciled_non_running_active_claim"
+    assert service.inspect_run_state(run.run_id)["passed"] is True
+
+
+def test_inspection_can_release_expired_scheduler_authority_lease(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Prepared expired scheduler lease repair", "feature_delivery")
+    prepared = service.compile_run(run.run_id)
+    service.submit_scheduler_proposal(
+        control_plane_id=service.control_plane_identity.control_plane_id,
+        run_id=run.run_id,
+        runtime_task_id=prepared.task_packet.runtime_task_id,
+        domain_key=prepared.task_packet.runtime_task_id,
+    )
+    state_ref = service.runtime_state_repo.get_by_task(prepared.task_packet.runtime_task_id)
+    assert state_ref is not None
+    stale_at = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    scheduler_authority = dict(state_ref.state_payload["scheduler_authority"])
+    for key in ("latest_decision", "active_decision", "active_committed_lease"):
+        payload = dict(scheduler_authority[key])
+        payload["lease_expires_at"] = stale_at
+        scheduler_authority[key] = payload
+    service.runtime_state_repo.upsert(
+        RuntimeStateRef(
+            state_ref_id=state_ref.state_ref_id,
+            run_id=state_ref.run_id,
+            runtime_task_id=state_ref.runtime_task_id,
+            graph_step=state_ref.graph_step,
+            state_payload={**state_ref.state_payload, "scheduler_authority": scheduler_authority},
+            is_terminal=state_ref.is_terminal,
+            created_at=state_ref.created_at,
+        )
+    )
+    with unit_of_work(db_path) as connection:
+        connection.execute(
+            "UPDATE scheduler_lease_decisions SET lease_expires_at = ? WHERE run_id = ?",
+            (stale_at, run.run_id),
+        )
+        connection.execute(
+            "UPDATE scheduler_committed_leases SET lease_expires_at = ? WHERE run_id = ?",
+            (stale_at, run.run_id),
+        )
+
+    inspection = service.inspect_run_state(run.run_id)
+    repair = service.apply_run_repair(run.run_id, action="release_scheduler_lease")
+    detail = service.get_status_detail(run.run_id)
+
+    assert inspection["passed"] is False
+    assert inspection["problems"][0]["problem"] == "scheduler_authority_lease_expired"
+    assert inspection["problems"][0]["repair_action"] == "release_scheduler_lease"
+    assert repair["action"] == "release_scheduler_lease"
+    assert detail["scheduler_authority"]["active_decision"] is None
+    assert detail["scheduler_authority"]["latest_decision"]["release_reason"] == "reconciled_scheduler_authority_lease_expired"
     assert service.inspect_run_state(run.run_id)["passed"] is True
 
 

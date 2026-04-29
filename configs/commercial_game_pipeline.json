@@ -1,0 +1,64 @@
+{
+  "schema_version": "commercial_game_pipeline_config_v1",
+  "pipeline_id": "commercial_game_production",
+  "locale": "zh-CN",
+  "target_engine": "cocos",
+  "quality_mode": "commercial_playable",
+  "live_agent_roles_default": false,
+  "live_agent_roles_required_when_flagged": true,
+  "real_asset_provider_required_for_commercial_go": true,
+  "persistent_project_per_run": true,
+  "max_repair_attempts_per_finding": 3,
+  "max_full_repair_cycles": 2,
+  "final_full_gate_required": true,
+  "forbid_fixed_template_delivery": true,
+  "role_routes": {
+    "intake_packaging_agent": {
+      "preferred_provider": "minimax",
+      "preferred_model": "MiniMax-M2.7",
+      "fallback_provider": "deepseek",
+      "fallback_model": "deepseek-v4-flash"
+    },
+    "product_gameplay_agent": {
+      "preferred_provider": "minimax",
+      "preferred_model": "MiniMax-M2.7",
+      "fallback_provider": "deepseek",
+      "fallback_model": "deepseek-v4-flash"
+    },
+    "ui_experience_agent": {
+      "preferred_provider": "minimax",
+      "preferred_model": "MiniMax-M2.7",
+      "fallback_provider": "codex_cli",
+      "fallback_model": "gpt-5.5"
+    },
+    "technical_plan_agent": {
+      "preferred_provider": "codex_cli",
+      "preferred_model": "gpt-5.5",
+      "fallback_provider": "deepseek",
+      "fallback_model": "deepseek-v4-flash"
+    },
+    "multimodal_generation_agent": {
+      "preferred_provider": "minimax",
+      "preferred_model": "MiniMax-M2.7",
+      "generation_provider": "mmx_generation_api"
+    },
+    "task_card_generation_agent": {
+      "preferred_provider": "codex_cli",
+      "preferred_model": "gpt-5.5",
+      "fallback_provider": "deepseek",
+      "fallback_model": "deepseek-v4-flash"
+    },
+    "qa_player_perspective_agent": {
+      "preferred_provider": "deepseek",
+      "preferred_model": "deepseek-v4-flash",
+      "fallback_provider": "minimax",
+      "fallback_model": "MiniMax-M2.7"
+    },
+    "supervisor": {
+      "preferred_provider": "codex_cli",
+      "preferred_model": "gpt-5.5",
+      "fallback_provider": "deepseek",
+      "fallback_model": "deepseek-v4-flash"
+    }
+  }
+}

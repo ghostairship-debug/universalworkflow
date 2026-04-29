@@ -6,6 +6,9 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from apps.operator_cli.main import app
+from packages.contracts import Run, TaskCard
+from packages.core_domain.db import migrate
+from packages.core_domain.repositories import RunRepository, TaskRepository
 from packages.core_domain.self_development_manifest import build_self_development_manifest
 
 
@@ -59,6 +62,158 @@ def test_self_development_manifest_accepts_archived_execution_report(tmp_path: P
     assert manifest["milestones"][0]["execution_report"]["path"] == "docs/archive/evaluations/M70_EXECUTION_REPORT.md"
     assert "M70_EXECUTION_REPORT.md" in manifest["milestones"][0]["execution_report"]["lookup_paths"][0]
     assert manifest["milestones"][0]["provenance"]["execution_report_path"] == "docs/archive/evaluations/M70_EXECUTION_REPORT.md"
+
+
+def test_self_development_manifest_accepts_flat_milestone_closeout_artifacts(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state" / "m105_demo"
+    state_dir.mkdir(parents=True)
+    (state_dir / "task_cards.md").write_text("# M105 task cards\n", encoding="utf-8")
+    (state_dir / "plan_graph.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "policy_preview.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "goal_packet.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "closeout_summary.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "operator_packet.json").write_text('{"status":"completed"}', encoding="utf-8")
+
+    manifest = build_self_development_manifest(
+        tmp_path,
+        milestones=["M105"],
+        min_task_cards_per_phase=1,
+    )
+
+    milestone = manifest["milestones"][0]
+    assert manifest["go_no_go"] == "GO"
+    assert manifest["blocking_issue_count"] == 0
+    assert milestone["execution_report"]["kind"] == "closeout_summary"
+    assert milestone["task_card_count"] == 1
+    assert milestone["task_card_file_count"] == 1
+    assert milestone["operator_packet_count"] == 1
+    assert milestone["provenance"]["evidence_category_counts"]["plan_graph"] == 1
+    assert milestone["provenance"]["traceability_status"] == "complete"
+
+
+def test_self_development_manifest_counts_cards_inside_flat_task_card_markdown(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state" / "m106_demo"
+    state_dir.mkdir(parents=True)
+    (state_dir / "task_cards.md").write_text(
+        "\n".join(
+            [
+                "# M106 task cards",
+                "",
+                "## M106.1 UI",
+                "",
+                "## M106.2 Scene",
+                "",
+                "## M106.3 Assets",
+                "",
+                "## M106.4 Gameplay",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "plan_graph.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "policy_preview.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "goal_packet.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "closeout_summary.json").write_text('{"status":"completed"}', encoding="utf-8")
+    (state_dir / "operator_packet.json").write_text('{"status":"completed"}', encoding="utf-8")
+
+    manifest = build_self_development_manifest(tmp_path, milestones=["M106"])
+
+    milestone = manifest["milestones"][0]
+    assert manifest["go_no_go"] == "GO"
+    assert milestone["task_card_count"] == 4
+    assert milestone["task_card_file_count"] == 1
+
+
+def test_self_development_manifest_uses_database_task_cards_as_authority(tmp_path: Path) -> None:
+    _write_milestone_fixture(tmp_path, "M109", task_cards=0)
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    run = RunRepository(db_path).create(Run(goal="M109 active phase", preset_id="feature_delivery"))
+    task_repo = TaskRepository(db_path)
+    for index in range(3):
+        task_repo.create_task_card(
+            TaskCard(
+                run_id=run.run_id,
+                title=f"M109.{index} rich task",
+                description="A detailed DB task card that is safe for model execution.",
+                acceptance_criteria=["implementation is complete", "tests pass"],
+                milestone="M109",
+                phase_name="M109.1",
+                goal="Use the database task card as the source of truth for active phase execution.",
+                write_set=[f"packages/example_{index}.py"],
+                test_commands=["python -m pytest tests/test_self_development_manifest.py -q"],
+                evidence_requirements=["test output", "closeout summary"],
+                blocking_conditions=["write_set conflict"],
+                model_guidance=["Use structured fields before editing."],
+            )
+        )
+
+    manifest = build_self_development_manifest(tmp_path, milestones=["M109"], db_path=db_path)
+
+    milestone = manifest["milestones"][0]
+    assert manifest["go_no_go"] == "GO"
+    assert milestone["task_card_source"] == "database"
+    assert milestone["db_task_card_count"] == 3
+    assert milestone["task_card_file_unit_count"] == 0
+    assert milestone["provenance"]["db_task_card_quality_issues"] == []
+
+
+def test_cli_task_card_quality_and_export_use_database_source(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    run = RunRepository(db_path).create(Run(goal="Task card CLI", preset_id="feature_delivery"))
+    TaskRepository(db_path).create_task_card(
+        TaskCard(
+            run_id=run.run_id,
+            title="Export rich task card",
+            description="A detailed task card stored in SQLite and exported as a markdown snapshot.",
+            acceptance_criteria=["quality is GO", "markdown export exists"],
+            milestone="M109",
+            phase_name="M109.1",
+            goal="Use the task card database as source of truth and export a readable snapshot.",
+            write_set=["packages/core_domain/task_card_store.py"],
+            test_commands=["python -m pytest tests/test_self_development_manifest.py -q"],
+            evidence_requirements=["quality payload", "markdown snapshot"],
+            blocking_conditions=["database is unavailable"],
+            model_guidance=["Read structured task fields before changing files."],
+        )
+    )
+
+    quality = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(db_path),
+            "--workspace-root",
+            str(tmp_path),
+            "task",
+            "card-quality",
+            "--run-id",
+            run.run_id,
+        ],
+    )
+    assert quality.exit_code == 0
+    assert json.loads(quality.stdout)["go_no_go"] == "GO"
+
+    output_path = tmp_path / "task_cards.md"
+    export = CliRunner().invoke(
+        app,
+        [
+            "--db-path",
+            str(db_path),
+            "--workspace-root",
+            str(tmp_path),
+            "task",
+            "export-cards",
+            "--run-id",
+            run.run_id,
+            "--output-path",
+            str(output_path),
+        ],
+    )
+    assert export.exit_code == 0
+    assert output_path.exists()
+    assert "Generated from the workflow task card database" in output_path.read_text(encoding="utf-8")
 
 
 def test_self_development_manifest_blocks_single_card_phase_without_exception(tmp_path: Path) -> None:

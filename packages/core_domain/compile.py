@@ -190,20 +190,6 @@ def compile_run(
         if domain_pack is not None
         else ""
     )
-    task_card = TaskCard(
-        run_id=run_id,
-        title=f"{preset.name} task",
-        description=f"Execute the bootstrap task for preset `{preset.preset_id}` with `{resolved_task_kind}`{domain_pack_note}.",
-        acceptance_criteria=["runtime task exists", "artifact path is known", "task kind is fixed"],
-    )
-    runtime_task = RuntimeTask(
-        run_id=run_id,
-        phase_id=execution_phase.phase_id,
-        task_card_id=task_card.task_card_id,
-        task_kind=resolved_task_kind,
-        summary=f"Execute `{preset.preset_id}` for run `{run_id}` with `{resolved_task_kind}`{domain_pack_note}.",
-    )
-
     artifact_path = (
         _mutation_artifact_path_for(run_id, preset.preset_id)
         if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply
@@ -214,6 +200,70 @@ def compile_run(
         if resolved_task_kind == TaskKind.shell_exec and mutation_contract is None
         else []
     )
+    mutation_write_set = list(mutation_contract.write_set) if mutation_contract is not None else []
+    mutation_test_commands = list(mutation_contract.test_commands) if mutation_contract is not None else []
+    mutation_ref = mutation_contract.task_card_ref if mutation_contract is not None else None
+    mutation_path = mutation_contract.task_card_path if mutation_contract is not None else None
+    milestone = mutation_ref.split("-", 1)[0] if mutation_ref and mutation_ref.upper().startswith("M") else None
+    task_card = TaskCard(
+        schema_version="m108_task_card_v2",
+        run_id=run_id,
+        title=f"{preset.name}: {goal[:96]}",
+        description=(
+            f"Execute preset `{preset.preset_id}` with `{resolved_task_kind}`{domain_pack_note}. "
+            f"Goal: {effective_goal}"
+        ),
+        acceptance_criteria=[
+            "runtime task exists",
+            "artifact path is known",
+            "task kind is fixed",
+            "write_set is respected or a blocker is recorded",
+            "listed tests pass or exact failure evidence is recorded",
+        ],
+        milestone=milestone,
+        phase_name="execution",
+        goal=effective_goal,
+        write_set=mutation_write_set,
+        read_set=list(mutation_contract.read_set) if mutation_contract is not None else [],
+        test_commands=mutation_test_commands,
+        expected_artifacts=[artifact_path.as_posix(), *[path.as_posix() for path, _content in local_artifacts]],
+        evidence_requirements=[
+            "changed files summary",
+            "test command results",
+            "known gaps or blockers",
+            "operator packet or run evidence link",
+        ],
+        blocking_conditions=[
+            "write_set is missing for a repo mutation",
+            "required context is unavailable",
+            "safe command runner or receipt policy blocks execution",
+            "tests fail after the allowed repair budget",
+        ],
+        model_guidance=[
+            "Read the goal, write_set, read_set, and acceptance criteria before editing.",
+            "Only mutate files in write_set unless a new blocker explains the scope change.",
+            "Prefer small, test-backed patches and preserve unrelated user changes.",
+            "Record evidence for tests, skipped checks, and remaining gaps.",
+        ],
+        risk_level="high" if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply else "medium",
+        provider_lane=resolved_execution.adapter_name if resolved_execution is not None else None,
+        execution_mode=str(mutation_contract.mutation_mode) if mutation_contract is not None else str(MutationMode.artifact_only),
+        status="ready",
+        metadata={
+            "preset_id": preset.preset_id,
+            "task_kind": str(resolved_task_kind),
+            "task_card_ref": mutation_ref,
+            "task_card_path": mutation_path,
+        },
+    )
+    runtime_task = RuntimeTask(
+        run_id=run_id,
+        phase_id=execution_phase.phase_id,
+        task_card_id=task_card.task_card_id,
+        task_kind=resolved_task_kind,
+        summary=f"Execute `{preset.preset_id}` for run `{run_id}` with `{resolved_task_kind}`{domain_pack_note}.",
+    )
+
     command = (
         []
         if resolved_task_kind == TaskKind.noop or (

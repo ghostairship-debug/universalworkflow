@@ -46,6 +46,19 @@ def _scene_node_names(scene_path: Path) -> list[str]:
     return [str(item.get("_name")) for item in data if isinstance(item, dict) and item.get("__type__") == "cc.Node"]
 
 
+def _player_visible_check_passed(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    evidence_hash = value.get("evidence_hash") or value.get("hash")
+    return bool(
+        value.get("status") == "pass"
+        and value.get("method")
+        and value.get("evidence_path")
+        and evidence_hash
+        and value.get("validator_version")
+    )
+
+
 def inspect_cocos_project_v2(
     project_path: str | Path,
     *,
@@ -138,6 +151,16 @@ def inspect_cocos_project_v2(
     scaffold_blockers = [key for key in scaffold_keys if not facts[key]]
     player_visible_checks = dict(metadata.get("player_visible_checks") or {})
     missing_player_checks = [key for key in REQUIRED_PLAYER_VISIBLE_CHECKS if key not in player_visible_checks]
+    failing_player_checks = [
+        key
+        for key in REQUIRED_PLAYER_VISIBLE_CHECKS
+        if key in player_visible_checks and not _player_visible_check_passed(player_visible_checks[key])
+    ]
+    player_visible_gate_passed = bool(
+        metadata.get("commercial_playable_go")
+        and not missing_player_checks
+        and not failing_player_checks
+    )
     payload = {
         "schema_version": COCOS_PROJECT_INSPECTOR_V2_SCHEMA,
         "created_at": _utc_now(),
@@ -168,7 +191,9 @@ def inspect_cocos_project_v2(
         "technical_blockers": technical_blockers,
         "production_scaffold_blockers": scaffold_blockers,
         "missing_player_visible_checks": missing_player_checks,
-        "go_no_go": "GO" if not technical_blockers and not scaffold_blockers and not missing_player_checks else "NO-GO",
+        "failing_player_visible_checks": failing_player_checks,
+        "player_visible_gate_passed": player_visible_gate_passed,
+        "go_no_go": "GO" if not technical_blockers and not scaffold_blockers and player_visible_gate_passed else "NO-GO",
     }
     if evidence_dir is not None:
         evidence = Path(evidence_dir).resolve()

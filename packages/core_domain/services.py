@@ -149,6 +149,7 @@ class OrchestratorService(
         "expire_worker_lease",
         "recompile_prepared_run",
         "release_runtime_claim",
+        "release_scheduler_lease",
         "release_worker_lease",
     )
 
@@ -366,6 +367,9 @@ class OrchestratorService(
     ) -> str | None:
         if execution_result.return_code == 0:
             return None
+        adapter_failure_class = execution_result.metadata.get("failure_class")
+        if isinstance(adapter_failure_class, str) and adapter_failure_class.strip():
+            return adapter_failure_class
         mapping = {
             "mcp_profile": "call_timeout",
             "worker_pool": "dispatch_failed",
@@ -373,6 +377,9 @@ class OrchestratorService(
             "adapter_route": "execution_failed",
         }
         return mapping.get(descriptor.provider_kind, "execution_failed")
+
+    def _adapter_stream_preview(self, value: str, *, limit: int = 4000) -> str:
+        return value if len(value) <= limit else value[-limit:]
 
     def _capability_execution_receipt_for_result(
         self,
@@ -392,6 +399,22 @@ class OrchestratorService(
             latest_probe_results=self.capability_probe_result_repo.latest_by_provider(),
             require_live=envelope.live_probe_required,
         )
+        receipt_metadata = {
+            "tool_projection_id": envelope.tool_projection_id,
+            "worker_pool_id": envelope.worker_pool_id,
+            "capability_policy_decision": policy_decision,
+        }
+        if execution_result.return_code != 0:
+            receipt_metadata.update(
+                {
+                    "adapter_failure_class": self._capability_failure_class_for_result(envelope.descriptor, execution_result),
+                    "adapter_stdout_preview": self._adapter_stream_preview(execution_result.stdout or ""),
+                    "adapter_stderr_preview": self._adapter_stream_preview(execution_result.stderr or ""),
+                }
+            )
+            mutation_result = execution_result.metadata.get("mutation_result")
+            if isinstance(mutation_result, dict):
+                receipt_metadata["mutation_result"] = mutation_result
         return CapabilityExecutionReceipt(
             envelope=envelope,
             status="completed" if execution_result.return_code == 0 else "failed",
@@ -407,11 +430,7 @@ class OrchestratorService(
             operator_receipt_id=envelope.operator_receipt_id,
             live_probe_status=str(policy_decision.get("live_proof", {}).get("status") or "not_probed"),
             policy_decision=policy_decision,
-            metadata={
-                "tool_projection_id": envelope.tool_projection_id,
-                "worker_pool_id": envelope.worker_pool_id,
-                "capability_policy_decision": policy_decision,
-            },
+            metadata=receipt_metadata,
         )
 
     def _orchestration_from_context(self, context: RunDiagnosticContext) -> dict[str, Any] | None:

@@ -1,5 +1,19 @@
 # AGENTS.md
 
+## M109 Update (2026-04-27)
+
+- Accepted baseline is now `M109`.
+- M109 completed the unified project brief, single-agent role pipeline, design/planning role outputs, multimodal route truth table, DB-backed task-card quality gate, bounded Cocos technical-smoke trial, and cluster-upgrade review.
+- Cocos result is `technical_smoke_go=true` and `production_scaffold_go=true`, but `commercial_playable_go=false`; do not claim commercial playable completion without build/playtest/player-visible evidence.
+- Cluster decision: keep roles as single agents for now. Upgrade only a specific role later if repeated evidence shows the single-agent role is failing.
+- Do not auto-create M110 task cards. Future work must open a new active phase first.
+
+## 2026-04-28 Correction
+
+- `commercial_cocos_game` fixed-template delivery is removed as an executable path; it must block with `legacy_cocos_template_removed`.
+- Real commercial game work must use `commercial_game_production`, driven by unified brief, role outputs, DB task cards, real assets, task-card worker implementation, player QA, supervisor, and final gate.
+- Low-level Cocos scaffold/E2E commands remain diagnostics only and cannot prove or deliver a commercial game.
+
 ## 当前基线
 
 当前接受实现基线是 `M108`：Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout 已落地。
@@ -21,6 +35,8 @@
 - plan / milestone / phase / task card 必须保持四层语义：一个 plan 包含多个 milestone；一个 milestone 包含多个 phase；一个 phase 默认包含多个 task card；task card 是最小可执行单元。
 - 开发计划文档只写到 milestone 和 phase，不提前生成 task card；只有 active phase 才生成 task card。
 - 不要把“一 phase = 一 task card”当作默认模式。若某 phase 只有一张 task card，必须写明 `single_card_exception`。
+- task card 的权威来源是数据库 `task_cards` 表；Markdown 只是自动导出的人工审阅快照，不再作为长期真相源。
+- active phase 的 task card 不能只是任务清单，必须至少包含：目标、write_set、read_set、测试命令、验收标准、证据要求、阻塞条件、风险等级、模型执行提示和预期产物。
 - phase 级 operator packet 必须汇总该 phase 内所有 task card 的 write_set、test commands、evidence 和阻塞项。
 - 简单低风险任务优先通过 `workflowctl run from-task-card ... --adapter opencode --execute` 走 workflow；复杂安全协议和架构切片可以使用 Codex 或本地补丁兜底。
 - bug-first：workflow、receipt、probe、evidence、route、repo mutation、test matrix 任一路径出 bug，先修 workflow bug 并补测试，再继续原 phase。
@@ -69,3 +85,4 @@
 - write_set conflict、dirty write_set、SQLite lock 或 repo mutation 异常时必须降级串行。
 - 复杂能力开发仍要保留 workflow route/evidence/operator-packet，即使实现由 Codex 或本地补丁完成。
 - LangGraph 可以承接状态推进、checkpoint、人审暂停、multi-agent/subgraph 和 repair loop，但不得绕过 receipt、lease、write_set、provider live proof 或 evidence/operator packet。
+- 每个 active phase 最多导出一份 `state/<milestone_phase>/task_cards.md` 或 `state/task_cards/<run_id>/task_cards.md` 快照；不要为每张 task card 生成散装长期 Markdown。

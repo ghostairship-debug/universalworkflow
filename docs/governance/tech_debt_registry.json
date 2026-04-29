@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "updated_at": "2026-04-27",
-  "summary": "M108 is the accepted implementation baseline: Cocos command/config truth, project inspector v2, local stable assets, Prefab/Panel/interaction contracts, player-visible gate, graph evidence bridge, and small-goal sample closeout are integrated. Commercial playable readiness still requires real player-view build/playtest evidence before any product claim.",
+  "updated_at": "2026-04-29",
+  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-04-28 the commercial_game_production repair window repaid workflow route/evidence/watchdog/receipt/scheduler/heartbeat blockers, split short SFX from voice/music with local procedural QA, fixed Cocos Creator autodiscovery, added no-degradation gate v2, fixed markdown source intake, and fixed persisted pipeline evidence_path. On 2026-04-29 the zero-degradation Cocos/worker repair added a project-local Cocos Editor bridge package, trusted bridge-report contract, license/cost manifest, filesystem-only bridge rejection, same-project task-card worker ledger, and progress-aware child workflow watchdog for task-card execution. Later on 2026-04-29 the Cocos ecosystem bridge runner passed local Cocos Creator 3.8.8 smoke with true Editor/AssetDB/Scene/Prefab/Build API evidence. pipeline_a41e231c69a4 is preserved as gate v1 automated scaffold/build/playtest evidence only. Strict rerun zero_degradation_cocos_worker_rerun4_20260429 failed with commercial_game_no_degradation_failed, so final commercial playable readiness remains blocked. Same-project patch success, product-depth features, audio runtime proof, build/playtest success, and human player review remain open.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -9,6 +9,34 @@
       "introduced_in": "M31",
       "repaid_in": "M62/M63",
       "result": "Facade ratchets, interaction split, chat runtime package, CLI command families, and Web UI split landed."
+    },
+    {
+      "debt_id": "M109-PIPELINE-COMPLETION-INFRA-001",
+      "description": "Commercial pipeline completion exposed workflow route and evidence blockers: OpenCode was used for a patch-capable route, Codex adapter timeouts ended without structured evidence, receipts were not propagated into orchestration child runs, stale scheduler leases could survive terminal states, and unattended long runs lacked enough heartbeat proof.",
+      "introduced_in": "2026-04-28 commercial_game_production completion attempt",
+      "repaid_in": "2026-04-28 bug-first repair window",
+      "result": "from-task-card patch apply now defaults to Codex CLI enforcement instead of OpenCode, missing or mismatched receipts fail fast, parent receipts propagate into child runs, Codex/OpenCode and task-card child workflow failures preserve timeout type, failure_class and stream previews, scheduler leases release/repair correctly, duplicate remote callbacks are idempotent, local worker lease renewals are recorded, and pipeline runs write heartbeat JSONL evidence."
+    },
+    {
+      "debt_id": "M109-SFX-MODALITY-001",
+      "description": "Commercial mini-game SFX assets were routed through generic audio or speech/TTS paths, consuming the wrong provider class and lacking short-effect QA metadata.",
+      "introduced_in": "2026-04-28 commercial_game_production evaluation",
+      "repaid_in": "2026-04-28 workflow task-card repair window",
+      "result": "voice, music, and sfx modalities are split; sfx_place and sfx_clear use procedural_sfx_local WAV generation with mime, sha256, duration, RMS/peak, non-silent, clipping, provenance, and qa_gate metadata; voice_reward remains voice/TTS; Cocos runtime bindings preserve sfx, voice, and music modalities."
+    },
+    {
+      "debt_id": "M109-COMMERCIAL-GAME-EXTERNAL-001",
+      "description": "The 2026-04-28 real commercial_game_production attempt initially failed before build/playtest because of Cocos Creator autodiscovery and short-SFX routing/provider issues.",
+      "introduced_in": "2026-04-28 commercial game pipeline evaluation",
+      "repaid_in": "2026-04-28 repair window",
+      "result": "Cocos Creator autodiscovery, SFX routing, markdown source intake, and persisted pipeline evidence_path were repaired. pipeline_a41e231c69a4 is now gate v1 historical evidence only; final commercial GO is tracked by open no-degradation debt."
+    },
+    {
+      "debt_id": "M109-COCOS-ECOSYSTEM-001",
+      "description": "Current Cocos capability needed a trusted local Editor bridge rather than CLI/filesystem/playtest-only evidence.",
+      "introduced_in": "2026-04-28 commercial game workflow repair planning",
+      "repaid_in": "2026-04-29 local Cocos bridge smoke",
+      "result": "Project-local Editor extension plus unattended runner passed local Cocos Creator 3.8.8 smoke with Editor version/project open, AssetDB import/query, Scene open/execute/save, node/component binding, Prefab instantiate, Build hook report, and license/cost manifest evidence. Cocos Store or paid ecosystem assets remain opt-in and out of scope."
     },
     {
       "debt_id": "TD-STRUCT-003",
@@ -99,7 +127,7 @@
       "description": "Pipeline run needed proof that stages truly execute, short-circuit on failure, and write evidence.",
       "introduced_in": "M75-M76",
       "repaid_in": "M83",
-      "result": "commercial_cocos_game template executes asset factory, Cocos generation/build/playtest, readiness gate, and writes stage evidence."
+      "result": "commercial_cocos_game historically executed asset factory, Cocos generation/build/playtest, readiness gate, and stage evidence; as of 2026-04-28 the fixed-template delivery entry is blocked by a deprecation guard and real game work must use commercial_game_production."
     },
     {
       "debt_id": "M82-ACTIVE-TRUTH-001",
@@ -140,19 +168,35 @@
   "open_items": [
     {
       "debt_id": "M77-COCOS-001",
-      "description": "Cocos game pipeline can generate a real local project with command/config truth, inspector evidence, local stable assets, Prefab/Panel/interaction contracts, graph bridge, and sample closeout, but the generated result is not yet proven commercial-playable without real build/playtest player evidence.",
+      "description": "Cocos game pipeline can generate a real local project with command/config truth, inspector evidence, local stable assets, Prefab/Panel/interaction contracts, graph bridge, sample closeout, CLI build/playtest evidence, and a gate v1 automated run. No-degradation gate v2 has not passed.",
       "introduced_in": "M76-M84 commercial game evaluation",
-      "planned_repayment_phase": "Review after M108; external evaluation or M109+ only if approved",
+      "planned_repayment_phase": "Broader repeated commercial-game validation and external/player-device review when approved with a capped budget",
       "current_status": "partially_repaid",
-      "blocking_impact": "Blocks claiming final commercial game readiness; does not block preserving the sample pipeline or running external evaluation."
+      "blocking_impact": "Blocks claiming commercial_playable_go=true; does not block technical smoke, scaffold, or automated playtest evidence claims."
     },
     {
       "debt_id": "M84-GAME-QA-001",
-      "description": "Commercial readiness now has a structured player-visible gate, but actual commercial GO still depends on real build/playtest screenshots, mobile UI, controls, audio, console, and level-flow evidence.",
+      "description": "Commercial readiness now has a structured player-visible gate, but gate v1 was too broad. No-degradation gate v2 now blocks event-only feature coverage, shallow levels, label-only skin/shop flows, audio binding-only evidence, nonzero build exits, and missing human review.",
       "introduced_in": "M84 real generated game review",
-      "planned_repayment_phase": "External evaluation or real player playtest pass",
+      "planned_repayment_phase": "No-degradation commercial product QA and human/player-device review phase",
       "current_status": "partially_repaid",
-      "blocking_impact": "Blocks commercial_playable_go until real player-visible evidence is present; the gate itself now distinguishes technical smoke, production scaffold, and commercial playable."
+      "blocking_impact": "Blocks commercial GO until real product-depth and human/player review evidence exists."
+    },
+    {
+      "debt_id": "M109-NO-DEGRADATION-COMMERCIAL-001",
+      "description": "Strict rerun zero_degradation_cocos_worker_rerun4_20260429 exposed provider_idle_timeout on the first same-project task-card patch, missing 8 distinct level goals, visible shop/skin ownership, audio runtime verification, strict build/playtest acceptance, and human player review. The local Cocos Editor bridge/API report blocker was repaid later by cocos_bridge_smoke_20260429_145028.",
+      "introduced_in": "2026-04-29 no-degradation Cocos/worker rerun",
+      "planned_repayment_phase": "Active no-degradation commercial-game production phase",
+      "current_status": "open",
+      "blocking_impact": "Directly blocks commercial_playable_go=true."
+    },
+    {
+      "debt_id": "M109-COCOS-BRIDGE-SPLIT-001",
+      "description": "The zero-degradation Cocos bridge repair intentionally expanded ecosystem_bridge.py with runner and extension-template logic under a temporary ratchet exception.",
+      "introduced_in": "2026-04-29 Cocos ecosystem bridge runner repair",
+      "planned_repayment_phase": "M110 structure split after bridge smoke stabilizes",
+      "current_status": "carry_forward",
+      "blocking_impact": "Non-blocking maintainability debt; tracked by business file-size and production LOC ratchets."
     },
     {
       "debt_id": "M77-LANGCHAIN-001",

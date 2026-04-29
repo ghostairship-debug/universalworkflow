@@ -240,6 +240,148 @@ def _response_error_metadata(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _provider_response_failure_class(metadata: dict[str, Any]) -> str:
+    base_resp = metadata.get("base_resp")
+    status_code = None
+    status_msg = ""
+    if isinstance(base_resp, dict):
+        status_code = base_resp.get("status_code")
+        status_msg = str(base_resp.get("status_msg") or "")
+    normalized_msg = status_msg.lower()
+    if str(status_code) == "2056" or "usage limit" in normalized_msg:
+        return "provider_usage_limit_exceeded"
+    if "balance" in normalized_msg or "quota" in normalized_msg:
+        return "provider_quota_or_balance_exceeded"
+    return "provider_response_error"
+
+
+def _response_shape_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"response_keys": sorted(str(key) for key in payload.keys())}
+    if isinstance(payload.get("base_resp"), dict):
+        metadata["base_resp"] = payload["base_resp"]
+    if isinstance(payload.get("metadata"), dict):
+        metadata["provider_metadata"] = payload["metadata"]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        metadata["data_keys"] = sorted(str(key) for key in data.keys())
+    return metadata
+
+
+def generate_procedural_sfx(
+    request: AssetGenerationRequest,
+    *,
+    sample_rate: int = 22050,
+    duration_seconds: float = 1.0,
+) -> AssetGenerationResult:
+    """
+    Deterministic procedural SFX generator using only Python stdlib.
+    Writes a mono WAV file synthesised from the prompt.
+    """
+    import math
+    import struct
+    import wave
+
+    # Gate: validate duration
+    if duration_seconds <= 0:
+        return _blocked_result(
+            request,
+            "invalid_duration",
+            {
+                "duration_seconds": duration_seconds,
+                "reason": "duration must be positive",
+                "qa_gate": False,
+                "qa_gate_passed": False,
+            },
+        )
+
+    # Deterministic frequency / amplitude seeded from prompt hash
+    prompt_bytes = request.prompt.encode()
+    seed = hashlib.sha256(prompt_bytes).digest()
+    frequency = 200.0 + (seed[0] / 255.0) * 800.0          # 200–1000 Hz
+    amplitude = 0.5 + (seed[1] / 255.0) * 0.4              # 0.5–0.9
+
+    num_samples = max(1, int(round(sample_rate * duration_seconds)))
+
+    # Synthesise PCM frames (mono, 16-bit signed, little-endian)
+    frames = bytearray()
+    for i in range(num_samples):
+        t = i / sample_rate
+        # Smooth envelope: linear attack 0→1 then release 1→0
+        attack_release = min(1.0, min(t, duration_seconds - t) * 4.0)
+        sample = amplitude * attack_release * math.sin(2.0 * math.pi * frequency * t)
+        frames.extend(struct.pack("<h", int(sample * 32767.0)))
+
+    frames_bytes = bytes(frames)
+
+    # Write WAV file
+    output_path = Path(request.output_dir) / request.filename
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(output_path), "wb") as wav:
+        wav.setnchannels(1)          # mono
+        wav.setsampwidth(2)         # 16-bit
+        wav.setframerate(sample_rate)
+        wav.writeframes(frames_bytes)
+
+    # Compute audio-quality metrics from the PCM frames
+    sample_values = struct.unpack(f"<{num_samples}h", frames_bytes)
+
+    rms = math.sqrt(sum(s * s for s in sample_values) / num_samples) / 32768.0
+    peak = max(abs(s) for s in sample_values) / 32768.0
+    clipping = peak >= 0.999          # within 1 sample of full scale
+    non_silent = rms > 0.003          # > 0.3 % of full scale
+
+    actual_duration_seconds = num_samples / sample_rate
+    output_bytes = output_path.read_bytes()
+    asset_meta = {
+        "sha256": hashlib.sha256(output_bytes).hexdigest(),
+        "size_bytes": len(output_bytes),
+    }
+
+    qa_gate_passed = non_silent and not clipping
+
+    provenance = "procedural_sfx_local"
+
+    qa_metadata = {
+        **asset_meta,
+        "duration_seconds": actual_duration_seconds,
+        "rms": rms,
+        "peak": peak,
+        "non_silent": non_silent,
+        "clipping": clipping,
+        "provenance": provenance,
+        "qa_gate": qa_gate_passed,
+        "qa_gate_passed": qa_gate_passed,
+    }
+
+    # Gate: silent output
+    if not non_silent:
+        output_path.unlink(missing_ok=True)
+        return _blocked_result(
+            request,
+            "silent_output",
+            qa_metadata,
+        )
+
+    # Gate: clipped output
+    if clipping:
+        output_path.unlink(missing_ok=True)
+        return _blocked_result(
+            request,
+            "clipped_output",
+            qa_metadata,
+        )
+
+    return AssetGenerationResult(
+        provider="procedural_sfx_local",
+        modality="sfx",
+        status="completed",
+        artifact_paths=[output_path.as_posix()],
+        mime_type="audio/wav",
+        model=request.model,
+        metadata=qa_metadata,
+    )
+
+
 def generate_minimax_image(
     request: AssetGenerationRequest,
     *,
@@ -265,6 +407,9 @@ def generate_minimax_image(
             },
             timeout_seconds,
         )
+        response_error = _response_error_metadata(payload)
+        if response_error:
+            return _blocked_result(request, _provider_response_failure_class(response_error), {"model": model, **response_error})
         output = Path(request.output_dir) / request.filename
         base64_values = _extract_base64_strings(payload, {"image_base64", "base64", "b64_json"})
         if base64_values:
@@ -272,7 +417,11 @@ def generate_minimax_image(
         else:
             urls = _extract_urls(payload)
             if not urls:
-                raise ValueError("MiniMax image response did not include base64 image or URL")
+                return _blocked_result(
+                    request,
+                    "provider_output_missing",
+                    {"error": "MiniMax image response did not include base64 image or URL", "model": model, **_response_shape_metadata(payload)},
+                )
             asset_meta = _write_bytes(output, get(urls[0], timeout_seconds))
         return AssetGenerationResult(
             provider="mmx_generation_api",
@@ -327,7 +476,7 @@ def generate_minimax_speech(
         )
         response_error = _response_error_metadata(payload)
         if response_error:
-            raise ValueError(f"MiniMax speech response error: {response_error['base_resp']}")
+            return _blocked_result(request, _provider_response_failure_class(response_error), {"model": model, **response_error})
         output = Path(request.output_dir) / request.filename
         encoded_values = _extract_strings(payload, {"audio_file", "audio_base64", "audio"})
         if encoded_values:
@@ -335,7 +484,11 @@ def generate_minimax_speech(
         else:
             urls = _extract_urls(payload)
             if not urls:
-                raise ValueError("MiniMax speech response did not include hex/base64 audio or URL")
+                return _blocked_result(
+                    request,
+                    "provider_output_missing",
+                    {"error": "MiniMax speech response did not include hex/base64 audio or URL", "model": model, **_response_shape_metadata(payload)},
+                )
             asset_meta = _write_bytes(output, get(urls[0], timeout_seconds))
         return AssetGenerationResult(
             provider="mmx_generation_api",
@@ -384,7 +537,7 @@ def generate_minimax_music(
         )
         response_error = _response_error_metadata(payload)
         if response_error:
-            raise ValueError(f"MiniMax music response error: {response_error['base_resp']}")
+            return _blocked_result(request, _provider_response_failure_class(response_error), {"model": model, **response_error})
         output = Path(request.output_dir) / request.filename
         encoded_values = _extract_strings(payload, {"audio_file", "audio_base64", "music_base64", "audio"})
         if encoded_values:
@@ -392,7 +545,11 @@ def generate_minimax_music(
         else:
             urls = _extract_urls(payload)
             if not urls:
-                raise ValueError("MiniMax music response did not include hex/base64 audio or URL")
+                return _blocked_result(
+                    request,
+                    "provider_output_missing",
+                    {"error": "MiniMax music response did not include hex/base64 audio or URL", "model": model, **_response_shape_metadata(payload)},
+                )
             asset_meta = _write_bytes(output, get(urls[0], timeout_seconds))
         return AssetGenerationResult(
             provider="mmx_generation_api",

@@ -5,12 +5,23 @@ from pathlib import Path
 
 PRODUCTION_ROOTS = (Path("packages"), Path("apps"), Path("infra"))
 PRODUCTION_SUFFIXES = {".css", ".js", ".json", ".ps1", ".py", ".sql"}
-# M99-M105 added the local LangGraph runtime, Studio config, Cocos graph
+# M99-M108.5 added the local LangGraph runtime, Studio config, Cocos graph
 # pressure-test surface, contribution pipeline boundary, Cocos foundation
 # inspectors, local native-content scaffolds, player-visible validation, and
-# sample closeout reporting. Keep this tight enough to catch accidental growth
-# while allowing the accepted runtime split.
-PRODUCTION_LOC_LIMIT = 53_150
+# sample closeout reporting. M108.5 also repaired manifest evidence counting,
+# strict player-visible inspector gates, and database-backed task cards with
+# markdown snapshot export. M109 adds pipeline truth reporting, unified project
+# brief intake, opt-in single-agent role evidence, DB task-card handoff, and a
+# machine-readable multimodal route truth table. M109 no-degradation repair adds
+# strict commercial gate contracts, Cocos ecosystem bridge evidence collection,
+# source-path intake, persisted evidence-path fixes, receipt-bound same-project
+# task-card worker execution, and progress-aware child workflow watchdog
+# evidence. The 2026-04-29 validation bug-first pass also added structured
+# HTTP timeout/failure-class trace evidence for API validation. The 2026-04-29
+# Cocos ecosystem repair added the unattended Editor runner plus project-local
+# extension code for AssetDB/Scene/Prefab/Build API evidence; keep this tight
+# enough to catch accidental growth while allowing that accepted bridge surface.
+PRODUCTION_LOC_LIMIT = 60_050
 
 
 def _is_production_source(path: Path) -> bool:

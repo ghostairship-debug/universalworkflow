@@ -170,6 +170,37 @@ def test_capability_enforcement_pilot_blocks_real_patch_path_without_receipt_or_
     assert target.read_text(encoding="utf-8") == "before\n"
 
 
+def test_patch_apply_blocks_without_receipt_even_when_pilot_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WORKFLOW_CAPABILITY_ENFORCEMENT_PILOT_ENABLED", raising=False)
+    target = tmp_path / "target.txt"
+    target.write_text("before\n", encoding="utf-8")
+    migrate(tmp_path / "workflow.db")
+    service = OrchestratorService(
+        tmp_path / "workflow.db",
+        workspace_root=tmp_path,
+        worker_router=WorkerRouter([OpenCodeAdapter(runner=_fake_patch_runner)]),
+    )
+    service.capability_probe_result_repo.create(_verified_probe("opencode"))
+    run = service.create_run(goal="receipt required patch", preset_id="feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        mutation_mode="patch_apply",
+        write_set=["target.txt"],
+        task_card_ref="receipt-required-card",
+    )
+
+    with pytest.raises(CapabilityPolicyEnforcementError) as excinfo:
+        service.resume_run(run.run_id)
+
+    assert excinfo.value.details["decision"] == "needs_receipt"
+    assert "operator_receipt_not_attached_to_invocation" in excinfo.value.details["reasons"]
+    assert target.read_text(encoding="utf-8") == "before\n"
+
+
 def test_capability_enforcement_pilot_allows_real_patch_path_with_receipt_and_live_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

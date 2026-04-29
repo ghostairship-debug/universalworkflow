@@ -1,0 +1,18 @@
+ALTER TABLE task_cards ADD COLUMN milestone TEXT;
+ALTER TABLE task_cards ADD COLUMN phase_name TEXT;
+ALTER TABLE task_cards ADD COLUMN goal TEXT;
+ALTER TABLE task_cards ADD COLUMN write_set_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN read_set_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN test_commands_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN expected_artifacts_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN evidence_requirements_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN blocking_conditions_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN model_guidance_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN dependencies_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE task_cards ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'medium';
+ALTER TABLE task_cards ADD COLUMN provider_lane TEXT;
+ALTER TABLE task_cards ADD COLUMN execution_mode TEXT;
+ALTER TABLE task_cards ADD COLUMN status TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE task_cards ADD COLUMN exported_markdown_path TEXT;
+ALTER TABLE task_cards ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE task_cards ADD COLUMN updated_at TEXT;

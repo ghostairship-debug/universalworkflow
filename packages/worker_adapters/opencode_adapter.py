@@ -14,7 +14,9 @@ from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.cli_base import CliAdapterBase, CompletedProcessRunner
 from packages.worker_adapters.base import ExecutionResult, utc_now
 from packages.worker_adapters.subprocess_support import (
+    TIMEOUT_EXIT_CODE,
     build_subprocess_env,
+    completed_process_watchdog_metadata,
     completed_process_from_timeout,
     decode_subprocess_stream,
     run_subprocess_with_tree_timeout,
@@ -105,6 +107,17 @@ class OpenCodeAdapter(CliAdapterBase):
 
     def _variant_for_packet(self, packet: TaskPacket) -> str | None:
         return packet.env.get("WORKFLOW_OPENCODE_VARIANT") or self.variant
+
+    def _idle_timeout_seconds_for_packet(self, packet: TaskPacket) -> int:
+        raw_value = packet.env.get("WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS") or packet.env.get(
+            "WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS"
+        )
+        if raw_value:
+            try:
+                return max(1, int(raw_value))
+            except ValueError:
+                pass
+        return min(self.timeout_seconds, 120)
 
     def _prompt_for(self, packet: TaskPacket) -> str:
         mutation_mode = self._mutation_mode_for(packet)
@@ -217,16 +230,22 @@ class OpenCodeAdapter(CliAdapterBase):
         started_at = utc_now()
         command = self.build_command(packet)
         env = build_subprocess_env(packet.env)
+        idle_timeout_seconds = self._idle_timeout_seconds_for_packet(packet)
         try:
             runner = self._runner if self._uses_custom_runner else run_subprocess_with_tree_timeout
+            run_kwargs = {
+                "cwd": packet.working_directory,
+                "env": env,
+                "capture_output": True,
+                "text": True,
+                "check": False,
+                "timeout": self.timeout_seconds,
+            }
+            if not self._uses_custom_runner:
+                run_kwargs["idle_timeout"] = idle_timeout_seconds
             completed = runner(
                 command,
-                cwd=packet.working_directory,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=self.timeout_seconds,
+                **run_kwargs,
             )
         except subprocess.TimeoutExpired as exc:
             completed = completed_process_from_timeout(exc, command=command, timeout_seconds=self.timeout_seconds)
@@ -253,7 +272,12 @@ class OpenCodeAdapter(CliAdapterBase):
             "mutation_mode": str(mutation_mode),
             "opencode_model": self._model_for_packet(packet),
             "opencode_variant": self._variant_for_packet(packet),
+            "timeout_seconds": self.timeout_seconds,
+            "idle_timeout_seconds": idle_timeout_seconds,
+            **completed_process_watchdog_metadata(completed),
         }
+        if return_code == TIMEOUT_EXIT_CODE:
+            failure_class = "provider_timeout"
         if failure_class is not None:
             metadata["failure_class"] = failure_class
         return ExecutionResult(

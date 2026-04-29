@@ -1037,7 +1037,25 @@ def test_cli_compile_and_mutation_report_support_repo_mutation_contract(
     assert compile_result.exit_code == 0
     compile_payload = json.loads(compile_result.stdout)
     assert compile_payload["mutation_contract"]["mutation_mode"] == "patch_apply"
-    resume_result = _invoke(tmp_path, "run", "resume", run_id)
+    receipt_result = _invoke(
+        tmp_path,
+        "run",
+        "issue-receipt",
+        "--action-type",
+        "resume_run",
+        "--run-id",
+        run_id,
+    )
+    assert receipt_result.exit_code == 0
+    receipt_id = json.loads(receipt_result.stdout)["receipt_id"]
+    resume_result = _invoke(
+        tmp_path,
+        "run",
+        "resume",
+        run_id,
+        "--operator-receipt-id",
+        receipt_id,
+    )
     assert resume_result.exit_code == 0
     mutation_report_result = _invoke(tmp_path, "run", "mutation-report", run_id)
     mutation_payload = json.loads(mutation_report_result.stdout)
@@ -1072,6 +1090,62 @@ def test_cli_from_task_card_executes_bounded_patch_and_returns_pr_ready_summary(
     )
 
     _invoke(tmp_path, "db", "reset")
+    receipt_result = _invoke(
+        tmp_path,
+        "run",
+        "issue-receipt",
+        "--action-type",
+        "launch_execute",
+        "--goal",
+        "Local task card from CLI",
+        "--preset",
+        "feature_delivery",
+        "--adapter",
+        "opencode",
+        "--task-card-ref",
+        "local_task_card",
+        "--task-card-path",
+        task_card.as_posix(),
+        "--write-set",
+        "cli_target.txt",
+        "--test-command",
+        f"{sys.executable} {verifier.name}",
+        "--mutation-mode",
+        "patch_apply",
+    )
+    assert receipt_result.exit_code == 0
+    receipt_id = json.loads(receipt_result.stdout)["receipt_id"]
+    result = _invoke(
+        tmp_path,
+        "run",
+        "from-task-card",
+        task_card.as_posix(),
+        "--adapter",
+        "opencode",
+        "--write-set",
+        "cli_target.txt",
+        "--test-command",
+        f"{sys.executable} {verifier.name}",
+        "--execute",
+        "--operator-receipt-id",
+        receipt_id,
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["run"]["goal"] == "Local task card from CLI"
+    assert payload["capability_adapter"] == "opencode"
+    assert payload["mutation_contract"]["task_card_ref"] == "local_task_card"
+    assert payload["pr_ready_summary"]["readiness"] == "ready"
+    assert payload["pr_ready_summary"]["tests"]["status"] == "passed"
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+
+
+def test_cli_from_task_card_defaults_patch_apply_to_codex(tmp_path: Path) -> None:
+    task_card = tmp_path / "local_task_card.md"
+    task_card.write_text("# Local task card from CLI\n\nImplement one bounded patch.\n", encoding="utf-8")
+
+    _invoke(tmp_path, "db", "reset")
     result = _invoke(
         tmp_path,
         "run",
@@ -1079,18 +1153,74 @@ def test_cli_from_task_card_executes_bounded_patch_and_returns_pr_ready_summary(
         task_card.as_posix(),
         "--write-set",
         "cli_target.txt",
-        "--test-command",
-        f"{sys.executable} {verifier.name}",
-        "--execute",
     )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["run"]["goal"] == "Local task card from CLI"
-    assert payload["mutation_contract"]["task_card_ref"] == "local_task_card"
-    assert payload["pr_ready_summary"]["readiness"] == "ready"
-    assert payload["pr_ready_summary"]["tests"]["status"] == "passed"
-    assert target_file.read_text(encoding="utf-8") == "after\n"
+    assert payload["capability_adapter"] == "codex"
+    assert payload["resolved_execution"]["source_map"]["adapter_name"]["source"] == "patch_apply_enforcement"
+
+
+def test_cli_resume_rejects_unissued_patch_receipt_before_adapter_launch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    launched = False
+
+    def _unexpected_launch(self, packet):  # type: ignore[no-untyped-def]
+        nonlocal launched
+        launched = True
+        return _fake_cli_patch_launch(self, packet)
+
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    monkeypatch.setattr(OpenCodeAdapter, "launch", _unexpected_launch)
+    target_file = tmp_path / "cli_target.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+
+    _invoke(tmp_path, "db", "reset")
+    run_id = json.loads(
+        _invoke(
+            tmp_path,
+            "run",
+            "create",
+            "--goal",
+            "CLI repo mutation with fake receipt",
+            "--preset",
+            "feature_delivery",
+        ).stdout
+    )["run"]["run_id"]
+    compile_result = _invoke(
+        tmp_path,
+        "run",
+        "compile",
+        run_id,
+        "--adapter",
+        "opencode",
+        "--task-card-ref",
+        "M16-CLI",
+        "--write-set",
+        "cli_target.txt",
+        "--mutation-mode",
+        "patch_apply",
+    )
+    assert compile_result.exit_code == 0
+
+    resume_result = _invoke(
+        tmp_path,
+        "run",
+        "resume",
+        run_id,
+        "--operator-receipt-id",
+        "not_a_real_receipt",
+    )
+
+    assert resume_result.exit_code == 1
+    payload = json.loads(resume_result.stdout)
+    assert payload["error"]["code"] == "entity_not_found"
+    assert launched is False
+    assert target_file.read_text(encoding="utf-8") == "before\n"
 
 
 def test_cli_recommended_review_escalates_after_auto_fail(tmp_path: Path) -> None:

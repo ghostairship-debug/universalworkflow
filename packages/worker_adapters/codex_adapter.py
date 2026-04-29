@@ -13,7 +13,9 @@ from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.base import ExecutionResult, utc_now
 from packages.worker_adapters.cli_base import CliAdapterBase, CompletedProcessRunner
 from packages.worker_adapters.subprocess_support import (
+    TIMEOUT_EXIT_CODE,
     build_subprocess_env,
+    completed_process_watchdog_metadata,
     completed_process_from_timeout,
     run_subprocess_with_tree_timeout,
 )
@@ -24,6 +26,7 @@ DEFAULT_CODEX_REASONING_EFFORT = "xhigh"
 DOGFOOD_ARTIFACT_RUNTIME_BRIEF_LIMIT = 1200
 DOGFOOD_ARTIFACT_HANDOFF_LIMIT = 1400
 DOGFOOD_ARTIFACT_RESPONSIBILITY_LIMIT = 6
+STREAM_PREVIEW_LIMIT = 4000
 
 
 def _coerce_codex_timeout_seconds(raw_value: str | None, default: int) -> int:
@@ -37,6 +40,17 @@ def _coerce_codex_timeout_seconds(raw_value: str | None, default: int) -> int:
 
 def _resolve_codex_timeout_seconds(default: int) -> int:
     return _coerce_codex_timeout_seconds(os.getenv("WORKFLOW_CODEX_TIMEOUT_SECONDS"), default)
+
+
+def _resolve_codex_idle_timeout_seconds(timeout_seconds: int) -> int:
+    raw_value = os.getenv("WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS") or os.getenv("WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS")
+    return _coerce_codex_timeout_seconds(raw_value, min(timeout_seconds, 120))
+
+
+def _stream_preview(value: str, *, limit: int = STREAM_PREVIEW_LIMIT) -> str:
+    if len(value) <= limit:
+        return value
+    return value[-limit:]
 
 
 class CodexAdapter(CliAdapterBase):
@@ -167,6 +181,17 @@ class CodexAdapter(CliAdapterBase):
             self.timeout_seconds,
         )
 
+    def _idle_timeout_seconds_for_packet(self, packet: TaskPacket, timeout_seconds: int) -> int:
+        raw_value = (
+            packet.env.get("WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS")
+            or packet.env.get("WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS")
+            or os.getenv("WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS")
+            or os.getenv("WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS")
+        )
+        if raw_value is None or not raw_value.strip():
+            return _resolve_codex_idle_timeout_seconds(timeout_seconds)
+        return _coerce_codex_timeout_seconds(raw_value, min(timeout_seconds, 120))
+
     def _prompt_for(self, packet: TaskPacket) -> str:
         mutation_mode = self._mutation_mode_for(packet)
         if mutation_mode == MutationMode.patch_apply:
@@ -199,6 +224,8 @@ class CodexAdapter(CliAdapterBase):
                 f"{failure_block}"
                 "Return only one valid unified diff patch that modifies files inside write_set.\n"
                 "Do not wrap the patch in code fences. Do not add commentary before or after the diff.\n"
+                "Windows sandbox note: do not set [Console]::OutputEncoding from PowerShell; "
+                "use rg or Get-Content -Encoding UTF8 directly when inspecting files.\n"
             )
         if self._is_dogfood_artifact_agent(packet):
             return self._dogfood_artifact_prompt_for(packet)
@@ -246,6 +273,7 @@ class CodexAdapter(CliAdapterBase):
         command = self.build_command(packet, prompt_via_stdin=use_stdin_prompt)
         env = build_subprocess_env(packet.env)
         timeout_seconds = self._timeout_seconds_for_packet(packet)
+        idle_timeout_seconds = self._idle_timeout_seconds_for_packet(packet, timeout_seconds)
         run_kwargs = {
             "cwd": packet.working_directory,
             "env": env,
@@ -260,12 +288,17 @@ class CodexAdapter(CliAdapterBase):
             run_kwargs["errors"] = "replace"
         try:
             if use_stdin_prompt:
-                completed = run_subprocess_with_tree_timeout(command, **run_kwargs)
+                completed = run_subprocess_with_tree_timeout(command, **run_kwargs, idle_timeout=idle_timeout_seconds)
             else:
                 completed = self._runner(command, **run_kwargs)
         except subprocess.TimeoutExpired as exc:
             completed = completed_process_from_timeout(exc, command=command, timeout_seconds=timeout_seconds)
         finished_at = utc_now()
+        failure_class = None
+        if completed.returncode == TIMEOUT_EXIT_CODE:
+            failure_class = "provider_timeout"
+        elif completed.returncode != 0:
+            failure_class = "execution_failed"
         metadata = {
             "mutation_mode": str(self._mutation_mode_for(packet)),
             "codex_model": self._model_for_packet(packet),
@@ -273,7 +306,17 @@ class CodexAdapter(CliAdapterBase):
             "sandbox_mode": self.sandbox_mode,
             "ephemeral": self.ephemeral,
             "timeout_seconds": timeout_seconds,
+            "idle_timeout_seconds": idle_timeout_seconds,
+            **completed_process_watchdog_metadata(completed),
         }
+        if failure_class is not None:
+            metadata.update(
+                {
+                    "failure_class": failure_class,
+                    "stdout_preview": _stream_preview(str(completed.stdout or "")),
+                    "stderr_preview": _stream_preview(str(completed.stderr or "")),
+                }
+            )
         if self._is_dogfood_artifact_agent(packet):
             metadata.update(
                 {

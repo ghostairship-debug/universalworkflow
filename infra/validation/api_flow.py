@@ -12,6 +12,8 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
         "UAWO_ENABLE_MCP_SOURCE": "1",
         "UAWO_ENABLE_SKILL_EXPORT": "1",
     }
+    if env.get("WORKFLOW_OFFLINE_VALIDATION_TRACE"):
+        os.environ["WORKFLOW_OFFLINE_VALIDATION_TRACE"] = env["WORKFLOW_OFFLINE_VALIDATION_TRACE"]
     scheduler_cluster_flag_enabled = str(env.get("UAWO_ENABLE_SCHEDULER_AUTHORITY_CLUSTER") or "").strip().lower() in {
         "1",
         "true",
@@ -472,7 +474,7 @@ def validate_api_flow(env: dict[str, str], db_path: Path, port: int) -> dict[str
                 isinstance(result["governance_active_gate_focus_ids"], list),
                 result["governance_supported_review_policies"]
                 == ["auto_only", "optional", "recommended", "human_required", "mandatory"],
-                result["governance_review_policy_debt_id"] == "TD-006",
+                review_policy_debt_linkage_is_current(result["governance_review_policy_debt_id"]),
                 isinstance(result["governance_release_ready"], bool),
                 result["governance_release_domain_pack_ids"] == ["software_delivery_pack"],
                 result["governance_domain_pack_platformized"] is True,

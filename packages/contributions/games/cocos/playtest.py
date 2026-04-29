@@ -50,7 +50,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.started === true", timeout=60000)
             before = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
             before_hash = page.evaluate(
-                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png').slice(0, 2000)"
+                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png')"
             )
             canvas_hashes.append(_sha256_text(before_hash))
             shot = evidence / "cocos_playtest_initial.png"
@@ -93,7 +93,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             )
             after = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
             after_hash = page.evaluate(
-                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png').slice(0, 2000)"
+                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png')"
             )
             canvas_hashes.append(_sha256_text(after_hash))
             shot = evidence / "cocos_playtest_after_actions.png"

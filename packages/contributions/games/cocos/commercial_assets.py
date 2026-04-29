@@ -12,6 +12,7 @@ from packages.contributions.asset_factory.asset_generation import (
     generate_gcp_tts,
     generate_minimax_image,
     generate_minimax_music,
+    generate_procedural_sfx,
     generate_minimax_speech,
     generate_vertex_gemini_visual_review,
     write_asset_manifest,
@@ -65,7 +66,17 @@ def _blocked_required_assets(results: list[dict[str, Any]]) -> list[str]:
         for item in results
         if item.get("status") == "completed" and item.get("artifact_paths")
     }
-    blockers = [f"required_asset_{name}_not_completed" for name in sorted(REQUIRED_COMMERCIAL_ASSET_NAMES - completed_names)]
+    results_by_name = {
+        str(item.get("asset_name") or ""): item
+        for item in results
+        if str(item.get("asset_name") or "") in REQUIRED_COMMERCIAL_ASSET_NAMES
+    }
+    blockers: list[str] = []
+    for name in sorted(REQUIRED_COMMERCIAL_ASSET_NAMES - completed_names):
+        item = results_by_name.get(name)
+        if item is not None and item.get("failure_class"):
+            continue
+        blockers.append(f"required_asset_{name}_not_completed")
     for item in results:
         name = str(item.get("asset_name") or "")
         if name in REQUIRED_COMMERCIAL_ASSET_NAMES and item.get("status") != "completed":
@@ -103,6 +114,7 @@ def generate_cocos_commercial_asset_manifest(
     style_prompt: str = "premium neon 1010 block puzzle mobile game, polished casual commercial art",
     include_vertex_review: bool = True,
     image_generator: AssetGenerator = generate_minimax_image,
+    sfx_generator: AssetGenerator = generate_procedural_sfx,
     speech_generator: AssetGenerator = generate_minimax_speech,
     music_generator: AssetGenerator = generate_minimax_music,
     tts_generator: AssetGenerator = generate_gcp_tts,
@@ -121,6 +133,7 @@ def generate_cocos_commercial_asset_manifest(
         output_dir=root / "commercial_asset_factory",
         generators=AssetFactoryGenerators(
             image=image_generator,
+            sfx=sfx_generator,
             speech=speech_generator,
             music=music_generator,
             tts=tts_generator,
@@ -180,10 +193,10 @@ def generate_cocos_local_stable_asset_manifest(*, output_dir: str | Path) -> dic
         ("background", "image", image_dir / "background.png", "image/png"),
         ("block_skin_neon", "image", image_dir / "block_skin_neon.png", "image/png"),
         ("particle_clear", "image", image_dir / "particle_clear.png", "image/png"),
-        ("sfx_place", "audio", audio_dir / "sfx_place.wav", "audio/wav"),
-        ("sfx_clear", "audio", audio_dir / "sfx_clear.wav", "audio/wav"),
+        ("sfx_place", "sfx", audio_dir / "sfx_place.wav", "audio/wav"),
+        ("sfx_clear", "sfx", audio_dir / "sfx_clear.wav", "audio/wav"),
         ("bgm_loop", "music", audio_dir / "bgm_loop.wav", "audio/wav"),
-        ("voice_reward", "audio", audio_dir / "voice_reward.wav", "audio/wav"),
+        ("voice_reward", "voice", audio_dir / "voice_reward.wav", "audio/wav"),
     ]
     results: list[dict[str, Any]] = []
     for name, modality, path, mime_type in asset_specs:
@@ -257,17 +270,19 @@ def _cocos_asset_factory_prompt_manifest() -> dict[str, Any]:
             },
             {
                 "name": "sfx_place",
-                "modality": "audio",
-                "provider": "mmx_generation_api",
-                "filename": "sfx_place.mp3",
+                "modality": "sfx",
+                "provider": "procedural_sfx_local",
+                "filename": "sfx_place.wav",
+                "mime_type": "audio/wav",
                 "required": True,
                 "prompt": "short polished mobile puzzle block placement sound",
             },
             {
                 "name": "sfx_clear",
-                "modality": "audio",
-                "provider": "mmx_generation_api",
-                "filename": "sfx_clear.mp3",
+                "modality": "sfx",
+                "provider": "procedural_sfx_local",
+                "filename": "sfx_clear.wav",
+                "mime_type": "audio/wav",
                 "required": True,
                 "prompt": "short bright line clear reward sound for casual mobile puzzle game",
             },
@@ -281,9 +296,10 @@ def _cocos_asset_factory_prompt_manifest() -> dict[str, Any]:
             },
             {
                 "name": "voice_reward",
-                "modality": "audio",
+                "modality": "voice",
                 "provider": "gcp_tts_api",
                 "filename": "voice_reward.mp3",
+                "mime_type": "audio/mpeg",
                 "required": True,
                 "prompt": "Great clear. Keep going.",
             },

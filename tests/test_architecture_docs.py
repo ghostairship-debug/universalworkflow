@@ -49,7 +49,7 @@ def test_m85_langgraph_fit_matrix_and_boundary_contract_exist() -> None:
         "Capability plane",
         "Repo mutation",
         "Test matrix",
-        "`commercial_cocos_game`",
+        "`commercial_game_production`",
     ):
         assert token in matrix_source
 
@@ -89,8 +89,8 @@ def test_m85_langgraph_fit_matrix_and_boundary_contract_exist() -> None:
 
     cocos_source = matrix_source
     for token in (
-        "cocos_graph_pressure_test",
-        "commercial_claim=pressure_test_only_not_commercial_ready",
+        "legacy_cocos_template_removed",
+        "diagnostic evidence only",
         "technical_smoke_go",
         "production_scaffold_go",
         "commercial_playable_go=false",

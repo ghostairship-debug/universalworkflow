@@ -1141,6 +1141,23 @@ class AutomationWatchdogRepository(RepositoryBase):
 
 
 class TaskRepository(RepositoryBase):
+    def _row_to_task_card(self, row: Any) -> TaskCard:
+        data = dict(row)
+        data["acceptance_criteria"] = _json_load(data.pop("acceptance_criteria_json"))
+        for field in (
+            "write_set",
+            "read_set",
+            "test_commands",
+            "expected_artifacts",
+            "evidence_requirements",
+            "blocking_conditions",
+            "model_guidance",
+            "dependencies",
+        ):
+            data[field] = _json_load(data.pop(f"{field}_json", "[]"))
+        data["metadata"] = _json_load(data.pop("metadata_json", "{}"))
+        return TaskCard.model_validate(data)
+
     def create_phase(self, phase: Phase, connection: sqlite3.Connection | None = None) -> Phase:
         with self._connection(connection, commit=True) as conn:
             conn.execute(
@@ -1172,8 +1189,13 @@ class TaskRepository(RepositoryBase):
         with self._connection(connection, commit=True) as conn:
             conn.execute(
                 """
-                INSERT INTO task_cards (task_card_id, run_id, title, description, acceptance_criteria_json, schema_version, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO task_cards (
+                  task_card_id, run_id, title, description, acceptance_criteria_json,
+                  milestone, phase_name, goal, write_set_json, read_set_json, test_commands_json,
+                  expected_artifacts_json, evidence_requirements_json, blocking_conditions_json,
+                  model_guidance_json, dependencies_json, risk_level, provider_lane, execution_mode,
+                  status, exported_markdown_path, metadata_json, schema_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_card.task_card_id,
@@ -1181,11 +1203,34 @@ class TaskRepository(RepositoryBase):
                     task_card.title,
                     task_card.description,
                     _json_dump(task_card.acceptance_criteria),
+                    task_card.milestone,
+                    task_card.phase_name,
+                    task_card.goal,
+                    _json_dump(task_card.write_set),
+                    _json_dump(task_card.read_set),
+                    _json_dump(task_card.test_commands),
+                    _json_dump(task_card.expected_artifacts),
+                    _json_dump(task_card.evidence_requirements),
+                    _json_dump(task_card.blocking_conditions),
+                    _json_dump(task_card.model_guidance),
+                    _json_dump(task_card.dependencies),
+                    task_card.risk_level,
+                    task_card.provider_lane,
+                    task_card.execution_mode,
+                    task_card.status,
+                    task_card.exported_markdown_path,
+                    _json_dump(task_card.metadata),
                     task_card.schema_version,
                     task_card.created_at.isoformat(),
+                    task_card.updated_at.isoformat() if task_card.updated_at is not None else task_card.created_at.isoformat(),
                 ),
             )
         return task_card
+
+    def get_task_card(self, task_card_id: str, connection: sqlite3.Connection | None = None) -> TaskCard | None:
+        with self._connection(connection) as conn:
+            row = conn.execute("SELECT * FROM task_cards WHERE task_card_id = ?", (task_card_id,)).fetchone()
+        return self._row_to_task_card(row) if row else None
 
     def list_task_cards_for_run(self, run_id: str, connection: sqlite3.Connection | None = None) -> list[TaskCard]:
         with self._connection(connection) as conn:
@@ -1193,12 +1238,19 @@ class TaskRepository(RepositoryBase):
                 "SELECT * FROM task_cards WHERE run_id = ? ORDER BY created_at, task_card_id",
                 (run_id,),
             ).fetchall()
-        task_cards: list[TaskCard] = []
-        for row in rows:
-            data = dict(row)
-            data["acceptance_criteria"] = _json_load(data.pop("acceptance_criteria_json"))
-            task_cards.append(TaskCard.model_validate(data))
-        return task_cards
+        return [self._row_to_task_card(row) for row in rows]
+
+    def list_task_cards_for_milestone(
+        self,
+        milestone: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[TaskCard]:
+        with self._connection(connection) as conn:
+            rows = conn.execute(
+                "SELECT * FROM task_cards WHERE milestone = ? ORDER BY phase_name, created_at, task_card_id",
+                (milestone,),
+            ).fetchall()
+        return [self._row_to_task_card(row) for row in rows]
 
     def create_runtime_task(self, runtime_task: RuntimeTask, connection: sqlite3.Connection | None = None) -> RuntimeTask:
         with self._connection(connection, commit=True) as conn:

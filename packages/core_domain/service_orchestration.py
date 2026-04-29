@@ -379,6 +379,7 @@ class OrchestrationExecutionService:
 
         parent_goal = packet.env.get("WORKFLOW_RUN_GOAL", "")
         parent_mutation_contract = packet.mutation_contract
+        operator_receipt_id = packet.env.get("WORKFLOW_OPERATOR_RECEIPT_ID") or None
         child_runs: list[dict[str, Any]] = []
         role_progress: dict[str, dict[str, Any]] = {}
         prior_run_ids: list[str] = []
@@ -433,9 +434,13 @@ class OrchestrationExecutionService:
                 )
 
             if len(resumed_run_ids) > 1:
-                parallel_result = self._facade.resume_runs_parallel(resumed_run_ids, max_workers=len(resumed_run_ids))
+                parallel_result = self._facade.resume_runs_parallel(
+                    resumed_run_ids,
+                    max_workers=len(resumed_run_ids),
+                    operator_receipt_id=operator_receipt_id,
+                )
             elif resumed_run_ids:
-                self._facade.resume_run(resumed_run_ids[0])
+                self._facade.resume_run(resumed_run_ids[0], operator_receipt_id=operator_receipt_id)
                 parallel_result = {"results": []}
             else:
                 parallel_result = {"results": []}
@@ -477,7 +482,7 @@ class OrchestrationExecutionService:
                         public_role=str(step.role),
                         role_label=step.role_label,
                     )
-                    self._facade.resume_run(recovered_run.run_id)
+                    self._facade.resume_run(recovered_run.run_id, operator_receipt_id=operator_receipt_id)
                     finalized = self.finalize_child_run_if_waiting(recovered_run.run_id)
                     step.run_id = recovered_run.run_id
                     for child in child_runs:
