@@ -460,11 +460,6 @@ def build_supervisor_repair_packets(
     max_repair_attempts: int = 3,
 ) -> list[dict[str, Any]]:
     findings: list[Any] = []
-    qa = shared_outputs.get("role_output:qa_player_perspective_agent")
-    if isinstance(qa, dict):
-        qa_structured = qa.get("structured_output")
-        if isinstance(qa_structured, dict):
-            findings.extend(qa_structured.get("repair_findings") or [])
     production = shared_outputs.get("commercial_game_production")
     if isinstance(production, dict):
         findings.extend(production.get("commercial_playable_blockers") or [])
@@ -473,6 +468,11 @@ def build_supervisor_repair_packets(
         findings.extend(assets_stage.get("commercial_asset_blockers") or [])
         if assets_stage.get("placeholder_only"):
             findings.append("placeholder_assets_only")
+    qa = shared_outputs.get("role_output:qa_player_perspective_agent")
+    if isinstance(qa, dict):
+        qa_structured = qa.get("structured_output")
+        if isinstance(qa_structured, dict):
+            findings.extend(qa_structured.get("repair_findings") or [])
     findings.extend(structured_output.get("repair_findings") or [])
 
     packets: list[dict[str, Any]] = []
@@ -484,6 +484,10 @@ def build_supervisor_repair_packets(
             continue
         seen_findings.add(finding_text)
         unique_findings.append(finding_text)
+    unique_findings = [
+        *[item for item in unique_findings if _external_input_blocker(item) is not None],
+        *[item for item in unique_findings if _external_input_blocker(item) is None],
+    ]
 
     for index, finding_text in enumerate(unique_findings, start=1):
         external_input = _external_input_blocker(finding_text)

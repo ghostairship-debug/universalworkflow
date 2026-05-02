@@ -54,6 +54,7 @@ FAIL_FAST_PRECONDITION_FAILURE_CLASSES = {
     "db_path_required_for_task_card_worker",
     "fallback_provider_unavailable",
     "fresh_cli_execution_missing",
+    "human_visible_cli_metadata_missing",
     "operator_receipt_scope_mismatch",
     "provider_live_proof_missing",
     "receipt_scope_invalid",
@@ -191,6 +192,7 @@ def execute_same_project_task_cards(
             entries.append(prior_entry)
             continue
         materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=pipeline_id)
+        execution_visibility_mode = _task_card_visibility_mode(card)
         card_path = card_root / f"{_safe_id(card.task_card_id)}.md"
         card_path.write_text(_task_card_markdown(card, materialized), encoding="utf-8")
         reference_evidence = _already_satisfied_task_card_entry(
@@ -212,6 +214,7 @@ def execute_same_project_task_cards(
             test_commands=materialized["test_commands"],
             max_fix_iterations=max_repair_attempts,
             max_runtime_attempts=TASK_CARD_RUNTIME_MAX_ATTEMPTS,
+            execution_visibility_mode=execution_visibility_mode,
         )
         normalized_entry = _normalize_patch_ledger_entry(
             card,
@@ -222,6 +225,7 @@ def execute_same_project_task_cards(
             project_dir=project_dir,
             card_path=card_path,
             max_repair_attempts=max_repair_attempts,
+            execution_visibility_mode=execution_visibility_mode,
         )
         if reference_evidence is not None:
             normalized_entry["reference_evidence"] = reference_evidence
@@ -346,6 +350,7 @@ def _run_task_card_with_retry_policy(
     test_commands: list[str],
     max_fix_iterations: int,
     max_runtime_attempts: int,
+    execution_visibility_mode: str | None,
 ) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
     last_entry: dict[str, Any] = {}
@@ -371,6 +376,7 @@ def _run_task_card_with_retry_policy(
             read_set=read_set,
             test_commands=test_commands,
             max_fix_iterations=max_fix_iterations,
+            execution_visibility_mode=execution_visibility_mode,
         )
         last_entry = dict(raw_entry)
         last_entry["attempt_index"] = attempt_index
@@ -393,6 +399,19 @@ def _run_task_card_with_retry_policy(
                 "final_failure_class": "fresh_cli_execution_missing",
                 "recoverable_suggestion": "rerun_task_card_with_fresh_workflowctl_receipt_child_run_and_passing_tests",
             }
+        if (
+            str(last_entry.get("status") or "") == "completed"
+            and execution_visibility_mode == "human_visible_cli_enforced"
+            and not _visible_cli_session_valid(last_entry)
+        ):
+            last_entry = {
+                **last_entry,
+                "status": "failed",
+                "failure_class": "human_visible_cli_metadata_missing",
+                "final_failure_class": "human_visible_cli_metadata_missing",
+                "recoverable_suggestion": "rerun_task_card_in_human_visible_cli_enforced_mode_with_mirrored_logs",
+            }
+        last_entry["execution_visibility_mode"] = execution_visibility_mode
         attempts.append(
             _patch_attempt_record(
                 entry=last_entry,
@@ -461,6 +480,9 @@ def _patch_attempt_record(
         "child_run_id": entry.get("child_run_id"),
         "child_attempt_id": entry.get("child_attempt_id"),
         "worker_adapter": entry.get("worker_adapter"),
+        "execution_visibility_mode": entry.get("execution_visibility_mode"),
+        "visible_cli_session": entry.get("visible_cli_session"),
+        "visible_cli_log_paths": entry.get("visible_cli_log_paths") or _visible_cli_log_paths(entry),
         "watchdog_source": entry.get("watchdog_source"),
         "watchdog": watchdog,
         "stdout_preview": entry.get("stdout_preview"),
@@ -494,6 +516,8 @@ def _completed_patch_entry_has_fresh_execution(entry: dict[str, Any]) -> bool:
         return False
     if satisfaction_mode in {"existing_same_project_evidence", "reused_reference_only"}:
         return False
+    if entry.get("execution_visibility_mode") == "human_visible_cli_enforced" and not _visible_cli_session_valid(entry):
+        return False
     mutation_result = entry.get("mutation_result") if isinstance(entry.get("mutation_result"), dict) else {}
     changed_files = mutation_result.get("changed_files") or entry.get("changed_files") or []
     final_test_status = str(mutation_result.get("final_test_status") or entry.get("final_test_status") or "").strip().lower()
@@ -504,6 +528,40 @@ def _completed_patch_entry_has_fresh_execution(entry: dict[str, Any]) -> bool:
         and changed_files
         and final_test_status == "passed"
     )
+
+
+def _task_card_visibility_mode(card: TaskCard) -> str | None:
+    metadata = card.metadata if isinstance(card.metadata, dict) else {}
+    mode = str(metadata.get("execution_visibility_mode") or "").strip()
+    if mode:
+        return mode
+    if metadata.get("human_visible_cli_required") is True:
+        return "human_visible_cli_enforced"
+    return None
+
+
+def _visible_cli_session_valid(entry: dict[str, Any]) -> bool:
+    session = entry.get("visible_cli_session")
+    if not isinstance(session, dict):
+        return False
+    required = ["pid", "argv", "cwd", "stdout_log_path", "stderr_log_path", "stream_log_path", "started_at"]
+    if any(not session.get(key) for key in required):
+        return False
+    if session.get("status") in {"unavailable", "blocked"}:
+        return False
+    return True
+
+
+def _visible_cli_log_paths(entry: dict[str, Any]) -> dict[str, Any]:
+    session = entry.get("visible_cli_session")
+    if not isinstance(session, dict):
+        return {}
+    return {
+        "stdout_log_path": session.get("stdout_log_path"),
+        "stderr_log_path": session.get("stderr_log_path"),
+        "stream_log_path": session.get("stream_log_path"),
+        "session_path": session.get("session_path"),
+    }
 
 
 def collect_project_runtime_evidence(
@@ -885,6 +943,7 @@ def _normalize_patch_ledger_entry(
     project_dir: Path,
     card_path: Path,
     max_repair_attempts: int,
+    execution_visibility_mode: str | None,
 ) -> dict[str, Any]:
     mutation_result = entry.get("mutation_result") if isinstance(entry.get("mutation_result"), dict) else {}
     status = str(entry.get("status") or "failed")
@@ -920,6 +979,9 @@ def _normalize_patch_ledger_entry(
         "child_run_id": entry.get("child_run_id"),
         "child_attempt_id": entry.get("child_attempt_id"),
         "worker_adapter": entry.get("worker_adapter"),
+        "execution_visibility_mode": execution_visibility_mode,
+        "visible_cli_session": entry.get("visible_cli_session"),
+        "visible_cli_log_paths": entry.get("visible_cli_log_paths") or _visible_cli_log_paths(entry),
         "watchdog_source": entry.get("watchdog_source"),
         "evidence_id": entry.get("evidence_id"),
         "review_decision": entry.get("review_decision"),
@@ -1295,6 +1357,8 @@ def _patch_ledger_blockers(entries: list[dict[str, Any]], *, expected_count: int
         blockers.extend(str(item) for item in entry.get("blockers") or [] if str(item))
         if entry.get("implementation_gate_satisfied") is False:
             blockers.append("fresh_cli_execution_missing")
+        if entry.get("execution_visibility_mode") == "human_visible_cli_enforced" and not _visible_cli_session_valid(entry):
+            blockers.append("human_visible_cli_metadata_missing")
         if entry.get("status") == "completed" and not _completed_patch_entry_has_fresh_execution(entry):
             blockers.append("fresh_cli_execution_missing")
     if len(entries) < expected_count:

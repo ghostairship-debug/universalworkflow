@@ -119,7 +119,7 @@ def build_unified_project_brief(
     input_paths: list[str | Path],
     output_dir: str | Path,
     title: str = "Unified Project Brief",
-    preserve_raw: bool = False,
+    preserve_raw: bool = True,
 ) -> dict[str, Any]:
     root = Path(output_dir).resolve()
     normalized_root = root / "normalized"
@@ -136,11 +136,15 @@ def build_unified_project_brief(
     media_items: list[MediaItem] = []
     source_index: list[dict[str, Any]] = []
     unsupported: list[dict[str, str]] = []
+    source_receipts: list[dict[str, Any]] = []
 
     for file_index, path in enumerate(files, start=1):
         source_id = f"source_{file_index:03d}"
+        receipt = _source_receipt(path)
+        raw_input_path = None
         if preserve_raw:
-            _copy_raw_input(path, raw_root, source_id)
+            raw_input_path = _copy_raw_input(path, raw_root, source_id)
+            receipt["raw_input_path"] = raw_input_path.as_posix()
         try:
             extracted = _extract_file(path, source_id=source_id, media_root=media_root)
         except Exception as exc:
@@ -152,8 +156,18 @@ def build_unified_project_brief(
                 }
             )
             continue
+        if extracted["kind"] == "unsupported":
+            unsupported.append(
+                {
+                    "path": path.as_posix(),
+                    "failure_class": "unsupported_input_type",
+                    "error": f"unsupported file type: {path.suffix.lower()}",
+                }
+            )
+            continue
         chunks.extend(extracted["chunks"])
         media_items.extend(extracted["media_items"])
+        source_receipts.append(receipt)
         source_index.append(
             {
                 "source_id": source_id,
@@ -162,9 +176,19 @@ def build_unified_project_brief(
                 "chunk_count": len(extracted["chunks"]),
                 "media_count": len(extracted["media_items"]),
                 "extraction_status": "completed",
+                "sha256": receipt["sha256"],
+                "size_bytes": receipt["size_bytes"],
+                "raw_input_path": raw_input_path.as_posix() if raw_input_path is not None else None,
             }
         )
 
+    _validate_intake_counts(
+        input_count=len(files),
+        source_index=source_index,
+        unsupported=unsupported,
+        chunks=chunks,
+        media_items=media_items,
+    )
     requirements = compile_source_requirements(chunks)
     requirement_matrix = {
         "schema_version": REQUIREMENT_MATRIX_SCHEMA_VERSION,
@@ -217,6 +241,17 @@ def build_unified_project_brief(
         "requirement_count": len(requirements),
         "unsupported_count": len(unsupported),
         "loss_policy": "no_summary_replacement_full_text_preserved_when_extracted",
+        "source_material_policy": "no_delete_no_merge_no_rename_only_augment",
+        "raw_input_preserved": preserve_raw,
+        "source_receipts": source_receipts,
+        "source_integrity_go": True,
+        "source_count_consistency": {
+            "input_count": len(files),
+            "completed_source_count": len(source_index),
+            "unsupported_count": len(unsupported),
+            "chunk_count": len(chunks),
+            "media_count": len(media_items),
+        },
         "project_brief_path": full_brief_path.as_posix(),
         "media_manifest_path": media_manifest_path.as_posix(),
         "source_index_path": source_index_path.as_posix(),
@@ -277,9 +312,45 @@ def _expand_input_paths(input_paths: list[str | Path]) -> list[Path]:
     return files
 
 
-def _copy_raw_input(path: Path, raw_root: Path, source_id: str) -> None:
+def _copy_raw_input(path: Path, raw_root: Path, source_id: str) -> Path:
     target = raw_root / f"{source_id}{path.suffix.lower()}"
     shutil.copy2(path, target)
+    return target
+
+
+def _source_receipt(path: Path) -> dict[str, Any]:
+    data = path.read_bytes()
+    return {
+        "original_path": path.as_posix(),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "size_bytes": len(data),
+    }
+
+
+def _validate_intake_counts(
+    *,
+    input_count: int,
+    source_index: list[dict[str, Any]],
+    unsupported: list[dict[str, str]],
+    chunks: list[ContextChunk],
+    media_items: list[MediaItem],
+) -> None:
+    completed_count = len(source_index)
+    if completed_count + len(unsupported) != input_count:
+        raise ValueError(
+            "intake source count mismatch: completed sources plus unsupported inputs must equal input count"
+        )
+    if sum(int(item.get("chunk_count") or 0) for item in source_index) != len(chunks):
+        raise ValueError("intake chunk count mismatch between source_index and extracted chunks")
+    if sum(int(item.get("media_count") or 0) for item in source_index) != len(media_items):
+        raise ValueError("intake media count mismatch between source_index and media manifest")
+    empty_sources = [
+        str(item.get("source_id"))
+        for item in source_index
+        if int(item.get("chunk_count") or 0) == 0 and int(item.get("media_count") or 0) == 0
+    ]
+    if empty_sources:
+        raise ValueError(f"intake source produced no chunks or media: {', '.join(empty_sources)}")
 
 
 def _extract_file(path: Path, *, source_id: str, media_root: Path) -> dict[str, Any]:

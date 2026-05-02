@@ -13,6 +13,9 @@ from packages.core_domain.task_card_store import export_task_cards_markdown, tas
 from packages.core_domain.unified_project_brief import build_unified_project_brief
 
 
+SOURCE_MATERIAL_POLICY = "no_delete_no_merge_no_rename_only_augment"
+
+
 ROLE_MODEL_PROFILES: dict[str, dict[str, str]] = {
     "intake_packaging_agent": {
         "model_tier": "medium_strong",
@@ -173,6 +176,7 @@ def _call_live_role_llm(
         }
     prompt = (
         "你是 workflow 的单角色 agent。请基于已有结构化草案，给出简短审阅和补充，不要写代码。\n"
+        "硬约束：你只能补充 derived_review_notes；不得删除、合并、改名、改写任何 preserved source requirement。\n"
         f"role_id: {role_id}\n"
         f"stage: {stage.name}\n"
         f"goal: {stage.goal}\n"
@@ -204,8 +208,15 @@ def _call_live_role_llm(
         "output_updates": {
             "llm_call_status": "called",
             "generation_mode": "live_llm_augmented_role_builder",
+            "live_llm_contract": "derived_review_notes_only",
             "llm_provider_evidence": description,
-            "llm_response_preview": "".join(chunks)[:4000],
+            "derived_review_notes": [
+                {
+                    "source": "live_llm",
+                    "role_id": role_id,
+                    "text": "".join(chunks)[:4000],
+                }
+            ],
         },
     }
 
@@ -264,6 +275,23 @@ def _build_role_output(
         pipeline_goal=pipeline_goal,
         pipeline_template=pipeline_template,
     )
+    preservation_contract = _build_requirement_preservation_contract(
+        role_id=role_id,
+        structured_output=structured_output,
+        brief_manifest=brief_manifest,
+    )
+    structured_output.update(
+        {
+            "source_material_policy": SOURCE_MATERIAL_POLICY,
+            "input_requirement_ids": preservation_contract["input_requirement_ids"],
+            "preserved_requirement_ids": preservation_contract["preserved_requirement_ids"],
+            "preserved_requirements": preservation_contract["preserved_requirements"],
+            "derived_requirements": preservation_contract["derived_requirements"],
+            "omitted_requirement_ids": preservation_contract["omitted_requirement_ids"],
+            "preservation_go": preservation_contract["preservation_go"],
+            "preservation_blockers": preservation_contract["blockers"],
+        }
+    )
     task_card_persistence: dict[str, Any] | None = None
     if role_id == "task_card_generation_agent" and db_path is not None:
         task_card_persistence = _persist_task_card_candidates(
@@ -277,7 +305,7 @@ def _build_role_output(
         )
         structured_output["task_card_persistence"] = task_card_persistence
     return {
-        "schema_version": "m109_single_agent_role_output_v1",
+        "schema_version": "post_m109_single_agent_role_output_v2",
         "created_at": datetime.now(UTC).isoformat(),
         "stage_id": stage.stage_id,
         "stage_name": stage.name,
@@ -291,6 +319,13 @@ def _build_role_output(
         "shared_output_keys": sorted(shared_outputs.keys()),
         "agent_packet_path": packet_path,
         "packet_preview": packet_preview,
+        "source_material_policy": SOURCE_MATERIAL_POLICY,
+        "input_requirement_ids": preservation_contract["input_requirement_ids"],
+        "preserved_requirement_ids": preservation_contract["preserved_requirement_ids"],
+        "derived_requirements": preservation_contract["derived_requirements"],
+        "omitted_requirement_ids": preservation_contract["omitted_requirement_ids"],
+        "preservation_go": preservation_contract["preservation_go"],
+        "preservation_contract": preservation_contract,
         "structured_output": structured_output,
         "deliverables": _deliverables_for_role(role_id),
         "evidence_requirements": [
@@ -298,11 +333,13 @@ def _build_role_output(
             "role_output_markdown",
             "input_brief_manifest",
             "agent_packet_path",
+            "source_requirement_preservation_contract",
         ],
         "blocking_conditions": [
             "missing_unified_brief",
             "agent_packet_unreadable",
             "provider_policy_disallows_live_llm_when_required",
+            "source_requirement_omitted",
         ],
         "next_handoff": _next_handoff_for_role(role_id),
         "artifact_root": role_dir.as_posix(),
@@ -494,17 +531,33 @@ def _structured_output_for_role(
                 {"check": "audio_not_jarring", "status": "pending_until_audio_evidence"},
                 {"check": "commercial_claim_supported", "status": "blocked_without_build_and_playtest"},
             ],
-            "repair_findings": [],
+            "red_team_policy": "default_to_disproof_until_player_visible_runtime_evidence_passes",
+            "blocking_findings": [
+                {"finding": "build_and_playtest_evidence_missing", "status": "blocked"},
+                {"finding": "runtime_semantic_trace_not_reviewed", "status": "blocked"},
+                {"finding": "component_binding_evidence_not_reviewed", "status": "blocked"},
+            ],
+            "repair_findings": [
+                {"finding": "build_and_playtest_evidence_missing", "status": "blocked"},
+            ],
             "go_no_go_recommendation": "NO-GO until Cocos build/playtest evidence exists",
         }
     if role_id == "supervisor":
         return {
             "context": context,
-            "decision": "continue_to_next_honest_handoff_if_current_gate_passes",
+            "decision": "force_no_go_until_red_team_and_machine_contracts_pass",
             "repair_or_stop_rules": [
                 "Repair workflow/runtime bugs before business feature expansion.",
                 "Stop commercial-ready claims when evidence is prototype-only.",
                 "Upgrade a role to cluster only after repeated single-agent failure evidence.",
+            ],
+            "force_no_go_rules": [
+                "source requirement omission",
+                "missing human_visible_cli_enforced metadata for high-risk commercial cards",
+                "baseline-only product body",
+                "runtime hook, canvas-only, event-only, or feature-flag-only product evidence",
+                "missing fresh receipt, child run, child attempt, changed files, or passing tests",
+                "missing explicit human acceptance",
             ],
             "cluster_upgrade_recommendation": {
                 "default": "keep_single_agent",
@@ -547,12 +600,17 @@ def _qa_output_from_cocos_e2e(*, shared_outputs: dict[str, Any], context: dict[s
         blockers = readiness.get("commercial_playable_blockers") if isinstance(readiness.get("commercial_playable_blockers"), list) else []
     for blocker in blockers:
         repair_findings.append({"finding": str(blocker), "status": "blocked"})
+    red_team_findings = list(repair_findings)
     playtest = payload.get("playtest") if isinstance(payload.get("playtest"), dict) else {}
     commercial_playable_go = bool(payload.get("commercial_playable_go") or readiness.get("commercial_playable_go"))
+    if not commercial_playable_go:
+        red_team_findings.append({"finding": "commercial_playable_go_not_supported", "status": "blocked"})
     return {
         "context": context,
         "evidence_source": "shared_outputs.cocos_e2e",
+        "red_team_policy": "default_to_disproof",
         "player_visible_checks": normalized_checks,
+        "blocking_findings": red_team_findings,
         "repair_findings": repair_findings,
         "go_no_go_recommendation": "GO" if commercial_playable_go and not repair_findings else "NO-GO",
         "commercial_playable_go": commercial_playable_go,
@@ -617,10 +675,60 @@ def _requirement_ids(requirements: list[dict[str, Any]]) -> list[str]:
 
 
 def _role_requirement_ids(role_id: str, requirements: list[dict[str, Any]]) -> list[str]:
+    if role_id in {"intake_packaging_agent", "task_card_generation_agent", "supervisor"}:
+        return _requirement_ids(requirements)
     selected = [item for item in requirements if item.get("downstream_owner") == role_id]
-    if not selected and role_id == "task_card_generation_agent":
-        selected = requirements
     return _requirement_ids(selected)
+
+
+def _build_requirement_preservation_contract(
+    *,
+    role_id: str,
+    structured_output: dict[str, Any],
+    brief_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    requirements = _load_requirement_entries(brief_manifest)
+    input_ids = _role_requirement_ids(role_id, requirements)
+    declared_ids = _strings_from(structured_output.get("source_requirement_ids"))
+    preserved_ids = declared_ids or input_ids
+    if role_id in {"intake_packaging_agent", "task_card_generation_agent", "supervisor"}:
+        preserved_ids = input_ids
+    preserved_ids = _dedupe_strings([req_id for req_id in preserved_ids if req_id in set(input_ids)])
+    omitted_ids = [req_id for req_id in input_ids if req_id not in set(preserved_ids)]
+    requirement_by_id = {str(item.get("req_id")): item for item in requirements if item.get("req_id")}
+    derived = structured_output.get("derived_requirements")
+    if not isinstance(derived, list):
+        derived = []
+    blockers = ["source_requirement_omitted"] if omitted_ids else []
+    return {
+        "schema_version": "post_m109_source_requirement_preservation_v1",
+        "source_material_policy": SOURCE_MATERIAL_POLICY,
+        "role_id": role_id,
+        "input_requirement_ids": input_ids,
+        "preserved_requirement_ids": preserved_ids,
+        "preserved_requirements": [requirement_by_id[req_id] for req_id in preserved_ids if req_id in requirement_by_id],
+        "derived_requirements": derived,
+        "omitted_requirement_ids": omitted_ids,
+        "preservation_go": not omitted_ids,
+        "blockers": blockers,
+    }
+
+
+def _strings_from(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _task_card_candidate_payloads(
@@ -633,6 +741,8 @@ def _task_card_candidate_payloads(
     base = _safe_id(pipeline_id)
     if _is_product_body_runtime_phase(pipeline_goal):
         return _product_body_runtime_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
+    if _is_commercial_core_content_phase(pipeline_goal):
+        return _commercial_core_content_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     candidates = [
         {
             "task_card_id": f"{base}_m109_role_brief_contract",
@@ -985,6 +1095,90 @@ def _product_body_runtime_task_card_candidates(
     return _attach_requirement_coverage(candidates, brief_manifest)
 
 
+def _commercial_core_content_task_card_candidates(
+    *,
+    base: str,
+    pipeline_goal: str,
+    brief_manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    active_phase_name = "Commercial Game Core Content Implementation"
+    phase = "commercial_game_core_content"
+    common_write_set = [
+        "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+        "state/pipeline_runs/<run>/cocos_project/assets/resources",
+        "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence",
+    ]
+    candidates = [
+        {
+            "task_card_id": f"{base}_core_loop_levels",
+            "title": "Implement commercial core loop and level content",
+            "description": "Implement player-facing 10x10 block-puzzle levels, goals, scoring, failure, revive, and progression on top of the real runtime model.",
+            "goal": f"Turn {pipeline_goal} into playable core-loop and level content without claiming final commercial completion.",
+            "write_set": common_write_set,
+            "read_set": ["requirement_matrix.json", "workflow_runtime_evidence/gameplay_semantic_evidence.json", "role_output:product_gameplay_agent"],
+            "acceptance_criteria": [
+                "Core loop uses BoardModel, RuleEngine, and CandidateTray state transitions.",
+                "Level goals, scoring, revive/failure, and progression are player-visible.",
+                "Semantic evidence remains model-sourced and commercial_playable_go stays false.",
+            ],
+            "test_commands": ["python -m pytest tests/test_cocos_product_body_baseline.py tests/test_commercial_game_evidence_contracts.py -q"],
+            "expected_artifacts": ["assets/scripts/*Level*.ts", "workflow_runtime_evidence/gameplay_semantic_evidence.json"],
+            "evidence_requirements": ["core_loop_runtime_evidence", "level_goal_evidence", "human_visible_cli_session"],
+            "blocking_conditions": ["event_only_gameplay_evidence", "baseline_only", "commercial_playable_go_claimed"],
+            "model_guidance": ["Patch the persistent Cocos project only.", "Use human_visible_cli_enforced.", "Do not set commercial_playable_go."],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {"active_phase_name": active_phase_name, "stage_phase": phase, "phase_order": 1},
+        },
+        {
+            "task_card_id": f"{base}_shop_skin_gallery",
+            "title": "Implement commercial shop skin and gallery content",
+            "description": "Implement shop ownership, skin equip visual state, gallery collection, and player-readable unlock paths.",
+            "goal": "Make monetization-adjacent content real and player-visible without using feature flags as evidence.",
+            "write_set": common_write_set,
+            "read_set": ["requirement_matrix.json", "role_output:ui_experience_agent", "workflow_runtime_evidence/product_body_evidence.json"],
+            "acceptance_criteria": [
+                "Shop and skin ownership states are stored and visible.",
+                "Equipped skin changes the board or piece presentation.",
+                "Gallery or collection state is inspectable in evidence.",
+            ],
+            "test_commands": ["python -m pytest tests/test_commercial_game_evidence_contracts.py tests/test_pipeline_and_automation_cli.py -q"],
+            "expected_artifacts": ["assets/scripts/*Shop*.ts", "assets/scripts/*Skin*.ts", "assets/scripts/*Gallery*.ts"],
+            "evidence_requirements": ["shop_ownership_state", "skin_equipped_visual_change", "gallery_collection_state", "human_visible_cli_session"],
+            "blocking_conditions": ["feature_flag_only_evidence", "scene_product_body_missing", "commercial_playable_go_claimed"],
+            "model_guidance": ["Bind UI state to Cocos components.", "Use human_visible_cli_enforced.", "Record player-visible evidence paths."],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {"active_phase_name": active_phase_name, "stage_phase": phase, "phase_order": 1},
+        },
+        {
+            "task_card_id": f"{base}_audio_feedback_polish",
+            "title": "Implement commercial audio feedback and polish content",
+            "description": "Implement SFX/BGM/volume controls, placement/clear/failure feedback, animation hooks, and polished HUD signals.",
+            "goal": "Make audio, feedback, and polish evidence runtime-bound and player-visible.",
+            "write_set": common_write_set,
+            "read_set": ["requirement_matrix.json", "role_output:multimodal_generation_agent", "role_output:qa_player_perspective_agent"],
+            "acceptance_criteria": [
+                "Placement, line-clear, failure, and success feedback are bound to runtime events.",
+                "BGM/SFX and volume controls produce auditable evidence.",
+                "Polish evidence is not represented by flags alone.",
+            ],
+            "test_commands": ["python -m pytest tests/test_commercial_game_evidence_contracts.py tests/test_cocos_product_body_baseline.py -q"],
+            "expected_artifacts": ["assets/scripts/*Audio*.ts", "assets/scripts/*Feedback*.ts", "workflow_runtime_evidence/product_depth_evidence.json"],
+            "evidence_requirements": ["audio_runtime_evidence", "feedback_animation_evidence", "human_visible_cli_session"],
+            "blocking_conditions": ["audio_runtime_not_verified", "animation_feedback_missing", "commercial_playable_go_claimed"],
+            "model_guidance": ["Bind feedback to runtime model events.", "Use human_visible_cli_enforced.", "Keep final human review pending."],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {"active_phase_name": active_phase_name, "stage_phase": phase, "phase_order": 1},
+        },
+    ]
+    return _attach_requirement_coverage(candidates, brief_manifest)
+
+
 def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") -> dict[str, Any]:
     base = _safe_id(pipeline_id)
     if _is_product_body_runtime_phase(pipeline_goal):
@@ -1002,6 +1196,25 @@ def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") ->
                         f"{base}_runtime_models",
                         f"{base}_semantic_core_loop_traces",
                         f"{base}_scene_prefab_component_evidence",
+                    ],
+                }
+            ],
+        }
+    if _is_commercial_core_content_phase(pipeline_goal):
+        return {
+            "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+            "pipeline_id": pipeline_id,
+            "active_materialization_policy": "only_open_active_phase_task_cards",
+            "future_phase_task_cards_materialized": False,
+            "phases": [
+                {
+                    "phase_id": f"{base}_commercial_game_core_content",
+                    "order": 1,
+                    "title": "Commercial Game Core Content Implementation",
+                    "task_card_ids": [
+                        f"{base}_core_loop_levels",
+                        f"{base}_shop_skin_gallery",
+                        f"{base}_audio_feedback_polish",
                     ],
                 }
             ],
@@ -1046,30 +1259,43 @@ def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") ->
 def _attach_requirement_coverage(candidates: list[dict[str, Any]], brief_manifest: dict[str, Any]) -> list[dict[str, Any]]:
     requirements = _load_requirement_entries(brief_manifest)
     requirement_matrix_path = brief_manifest.get("requirement_matrix_path")
-    if not requirements:
-        return candidates
     for candidate in candidates:
-        covered_ids = _candidate_requirement_ids(candidate, requirements)
         metadata = dict(candidate.get("metadata") or {})
-        metadata.update(
-            {
-                "requirement_matrix_path": requirement_matrix_path,
-                "covered_requirement_ids": covered_ids,
-                "source_requirement_count": len(requirements),
-            }
-        )
+        covered_ids: list[str] = []
+        metadata["source_material_policy"] = SOURCE_MATERIAL_POLICY
+        metadata["omitted_requirement_ids"] = []
+        metadata["source_requirement_count"] = len(requirements)
+        if requirements:
+            covered_ids = _candidate_requirement_ids(candidate, requirements)
+            metadata.update(
+                {
+                    "requirement_matrix_path": requirement_matrix_path,
+                    "covered_requirement_ids": covered_ids,
+                }
+            )
         if str(candidate.get("execution_mode") or "") == "same_project_patch":
-            metadata["requirement_coverage_required"] = True
-            metadata["required_requirement_ids"] = covered_ids
-            candidate["read_set"] = _append_unique(candidate.get("read_set", []), str(requirement_matrix_path))
+            metadata["human_visible_cli_required"] = True
+            metadata["execution_visibility_mode"] = "human_visible_cli_enforced"
             candidate["evidence_requirements"] = _append_unique(
                 candidate.get("evidence_requirements", []),
-                "requirement_coverage_trace",
+                "human_visible_cli_session",
             )
             candidate["model_guidance"] = _append_unique(
                 candidate.get("model_guidance", []),
-                "Cite covered_requirement_ids in implementation evidence.",
+                "Run through human_visible_cli_enforced for high-risk commercial implementation.",
             )
+            if requirements:
+                metadata["requirement_coverage_required"] = True
+                metadata["required_requirement_ids"] = covered_ids
+                candidate["read_set"] = _append_unique(candidate.get("read_set", []), str(requirement_matrix_path))
+                candidate["evidence_requirements"] = _append_unique(
+                    candidate.get("evidence_requirements", []),
+                    "requirement_coverage_trace",
+                )
+                candidate["model_guidance"] = _append_unique(
+                    candidate.get("model_guidance", []),
+                    "Cite covered_requirement_ids in implementation evidence.",
+                )
         candidate["metadata"] = metadata
     return candidates
 
@@ -1224,6 +1450,11 @@ def _safe_id(value: str) -> str:
 def _is_product_body_runtime_phase(value: str) -> bool:
     normalized = str(value or "").lower()
     return "product body runtime" in normalized and "semantic trace" in normalized
+
+
+def _is_commercial_core_content_phase(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return "commercial game core content" in normalized and "implementation" in normalized
 
 
 def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str | None:

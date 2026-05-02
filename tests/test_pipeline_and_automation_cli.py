@@ -2201,8 +2201,100 @@ def test_task_card_worker_cli_invokes_from_task_card_with_codex_patch_adapter(
     assert calls[1]["kwargs"]["adaptive_wall_timeout_max_extensions"] == 1
     assert calls[1]["kwargs"]["adaptive_wall_timeout_absolute_max_seconds"] == 1800
     assert calls[1]["kwargs"]["adaptive_wall_timeout_progress_window_seconds"] == 720
+    assert calls[1]["kwargs"]["execution_visibility_mode"] is None
     assert "shell" not in run_command
     assert "noop" not in run_command
+
+
+def test_task_card_worker_cli_passes_human_visible_cli_mode_and_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_run_json_command(command, **kwargs):
+        calls.append({"command": command, "kwargs": kwargs})
+        if "issue-receipt" in command:
+            return {"status": "completed", "payload": {"receipt_id": "receipt_visible"}}
+        return {
+            "status": "completed",
+            "payload": {
+                "run": {"run_id": "run_visible"},
+                "review_decision": "pass",
+                "pr_ready_summary": {
+                    "readiness": "ready",
+                    "bounded_patch": {"changed_files": ["state/project/assets/scripts/Game.ts"]},
+                    "tests": {"status": "passed"},
+                    "review": {"latest_review_decision": "pass"},
+                },
+            },
+            "watchdog_source": "human_visible_cli_mirrored_logs",
+            "visible_cli_session": {
+                "pid": 1234,
+                "argv": ["python", "-m", "apps.operator_cli.main"],
+                "cwd": tmp_path.as_posix(),
+                "stdout_log_path": (tmp_path / "stdout.log").as_posix(),
+                "stderr_log_path": (tmp_path / "stderr.log").as_posix(),
+                "stream_log_path": (tmp_path / "stream.jsonl").as_posix(),
+                "started_at": "2026-05-03T00:00:00+00:00",
+                "status": "completed",
+            },
+            "visible_cli_log_paths": {
+                "stdout_log_path": (tmp_path / "stdout.log").as_posix(),
+                "stderr_log_path": (tmp_path / "stderr.log").as_posix(),
+                "stream_log_path": (tmp_path / "stream.jsonl").as_posix(),
+            },
+        }
+
+    monkeypatch.setattr(worker_cli, "_run_json_command", _fake_run_json_command)
+    task_card_path = tmp_path / "tc_visible.md"
+    task_card_path.write_text("# Visible CLI\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_visible",
+        task_card_id="tc_visible",
+        title="Visible CLI card",
+        description="Run high-risk commercial implementation in a visible terminal.",
+        goal="Run high-risk commercial implementation in a visible terminal.",
+        write_set=["state/project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["visible session recorded"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        blocking_conditions=["headless_success_claimed"],
+        model_guidance=["Use human_visible_cli_enforced."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced"},
+    )
+
+    result = worker_cli.run_task_card_patch_via_workflowctl(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=tmp_path / "project",
+        pipeline_id="pipeline_visible",
+        task_card=card,
+        task_card_path=task_card_path,
+        write_set=card.write_set,
+        read_set=card.read_set,
+        test_commands=card.test_commands,
+        max_fix_iterations=1,
+        execution_visibility_mode="human_visible_cli_enforced",
+    )
+
+    run_kwargs = calls[1]["kwargs"]
+    assert result["status"] == "completed"
+    assert result["execution_visibility_mode"] == "human_visible_cli_enforced"
+    assert result["visible_cli_session"]["pid"] == 1234
+    assert result["visible_cli_log_paths"]["stream_log_path"].endswith("stream.jsonl")
+    assert run_kwargs["execution_visibility_mode"] == "human_visible_cli_enforced"
+    assert run_kwargs["visible_session_dir"].as_posix().endswith("visible_cli_sessions/tc_visible")
+    assert run_kwargs["visible_session_metadata"]["receipt_id"] == "receipt_visible"
+    assert run_kwargs["visible_session_metadata"]["task_card_id"] == "tc_visible"
+    assert worker_cli._powershell_quote_arg("D:\\Universal Agentic workflow\\python.exe") == "'D:\\Universal Agentic workflow\\python.exe'"
 
 
 def test_task_card_worker_cli_normalizes_patch_adapter_aliases() -> None:
@@ -2401,6 +2493,137 @@ def test_same_project_patch_ledger_rejects_no_changed_files_as_implementation(tm
 
     assert ledger["same_project_worker_patch_go"] is False
     assert "same_project_patch_no_changed_files" in ledger["blockers"]
+
+
+def test_same_project_patch_ledger_blocks_visible_cli_required_without_session(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_visible_required",
+        task_card_id="tc_visible",
+        title="Visible commercial patch",
+        description="High-risk commercial task card must not complete headlessly.",
+        goal="High-risk commercial task card must not complete headlessly.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["visible session metadata exists", "tests passed"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        blocking_conditions=["headless_success_claimed"],
+        model_guidance=["Use human_visible_cli_enforced."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={
+            "human_visible_cli_required": True,
+            "execution_visibility_mode": "human_visible_cli_enforced",
+        },
+    )
+    runner_modes: list[str | None] = []
+
+    def _headless_runner(**kwargs):
+        runner_modes.append(kwargs.get("execution_visibility_mode"))
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_visible",
+            "child_run_id": "run_visible",
+            "child_attempt_id": "attempt_visible",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/Game.ts"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_visible_required",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_headless_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert runner_modes == ["human_visible_cli_enforced"]
+    assert ledger["same_project_worker_patch_go"] is False
+    assert "human_visible_cli_metadata_missing" in ledger["blockers"]
+    assert entry["status"] == "failed"
+    assert entry["failure_class"] == "human_visible_cli_metadata_missing"
+    assert entry["preflight_blocker"] is True
+
+
+def test_same_project_patch_ledger_accepts_visible_cli_session_metadata(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_visible_ok",
+        task_card_id="tc_visible_ok",
+        title="Visible commercial patch",
+        description="High-risk commercial task card records visible terminal metadata.",
+        goal="High-risk commercial task card records visible terminal metadata.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["visible session metadata exists", "tests passed"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        blocking_conditions=["headless_success_claimed"],
+        model_guidance=["Use human_visible_cli_enforced."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={
+            "human_visible_cli_required": True,
+            "execution_visibility_mode": "human_visible_cli_enforced",
+        },
+    )
+
+    def _visible_runner(**_kwargs):
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_visible_ok",
+            "child_run_id": "run_visible_ok",
+            "child_attempt_id": "attempt_visible_ok",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/Game.ts"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3},
+            "visible_cli_session": {
+                "pid": 4321,
+                "argv": ["python", "-m", "apps.operator_cli.main"],
+                "cwd": tmp_path.as_posix(),
+                "stdout_log_path": (tmp_path / "stdout.log").as_posix(),
+                "stderr_log_path": (tmp_path / "stderr.log").as_posix(),
+                "stream_log_path": (tmp_path / "stream.jsonl").as_posix(),
+                "started_at": "2026-05-03T00:00:00+00:00",
+                "status": "completed",
+            },
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_visible_ok",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_visible_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert ledger["blockers"] == []
+    assert entry["execution_visibility_mode"] == "human_visible_cli_enforced"
+    assert entry["visible_cli_session"]["pid"] == 4321
+    assert entry["visible_cli_log_paths"]["stdout_log_path"].endswith("stdout.log")
 
 
 def test_commercial_worker_blocks_when_no_same_project_business_cards(tmp_path: Path) -> None:

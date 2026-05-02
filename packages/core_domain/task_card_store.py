@@ -40,6 +40,8 @@ def task_card_quality_issues(task_card: TaskCard) -> list[dict[str, Any]]:
     if task_card.risk_level not in RISK_LEVELS:
         issues.append({"code": "invalid_risk_level", "field": "risk_level", "value": task_card.risk_level})
     issues.extend(task_card_requirement_coverage_issues(task_card))
+    issues.extend(task_card_source_preservation_issues(task_card))
+    issues.extend(task_card_visibility_issues(task_card))
     return issues
 
 
@@ -78,6 +80,42 @@ def task_card_requirement_coverage_status(task_card: TaskCard) -> str:
     if not coverage_required:
         return "not_required"
     return "passed" if not task_card_requirement_coverage_issues(task_card) else "blocked"
+
+
+def task_card_source_preservation_issues(task_card: TaskCard) -> list[dict[str, Any]]:
+    metadata = task_card.metadata if isinstance(task_card.metadata, dict) else {}
+    omitted = _metadata_string_list(metadata.get("omitted_requirement_ids"))
+    if not omitted:
+        return []
+    return [
+        {
+            "code": "source_requirement_omitted",
+            "field": "metadata.omitted_requirement_ids",
+            "omitted_requirement_ids": omitted,
+        }
+    ]
+
+
+def task_card_visibility_issues(task_card: TaskCard) -> list[dict[str, Any]]:
+    metadata = task_card.metadata if isinstance(task_card.metadata, dict) else {}
+    visibility_required = (
+        _truthy(metadata.get("human_visible_cli_required"))
+        or _truthy(metadata.get("execution_visibility_required"))
+        or "human_visible_cli_session" in {str(item) for item in task_card.evidence_requirements}
+    )
+    if not visibility_required:
+        return []
+    mode = str(metadata.get("execution_visibility_mode") or "").strip()
+    if mode == "human_visible_cli_enforced":
+        return []
+    return [
+        {
+            "code": "human_visible_cli_required",
+            "field": "metadata.execution_visibility_mode",
+            "required": "human_visible_cli_enforced",
+            "value": mode or None,
+        }
+    ]
 
 
 def task_card_quality_status(task_card: TaskCard) -> str:

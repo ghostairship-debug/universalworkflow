@@ -3680,6 +3680,59 @@ def test_recompile_supersedes_previous_current_attempt(tmp_path: Path) -> None:
     assert len(detail["runtime_attempt_projection"]["superseded_attempt_ids"]) == 1
 
 
+def test_commercial_recompile_preserves_active_task_generation_cards(tmp_path: Path) -> None:
+    from packages.contracts import PresetDefinition, TaskCard
+    from packages.core_domain.repositories import TaskRepository
+
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    preset_repo = PresetRepository(db_path)
+    preset_repo.seed_defaults()
+    project_preset = preset_repo.get("project_delivery")
+    assert project_preset is not None
+    preset_repo.upsert(
+        PresetDefinition.model_validate(
+            {
+                **project_preset.model_dump(mode="json"),
+                "preset_id": "commercial_game_production",
+                "name": "Commercial Game Production",
+                "description": "Test-local commercial game production preset for recompile guard coverage.",
+            }
+        )
+    )
+    service = OrchestratorService(db_path)
+
+    run = service.create_run("Commercial active cards cannot be replaced by generic recompile", "commercial_game_production")
+    service.compile_run(run.run_id)
+    TaskRepository(db_path).create_task_card(
+        TaskCard(
+            run_id=run.run_id,
+            task_card_id="tc_commercial_runtime",
+            title="Commercial runtime implementation",
+            description="Active commercial task-card generation output must remain the DB truth source.",
+            goal="Prevent compile/recompile from replacing active commercial DB task cards with a generic ready card.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["requirement_matrix.json"],
+            test_commands=["python -m pytest tests/test_task_card_store.py -q"],
+            acceptance_criteria=["active card is preserved"],
+            evidence_requirements=["task_card_generation_agent_output", "human_visible_cli_session"],
+            blocking_conditions=["generic_ready_card_overwrites_active_commercial_cards"],
+            model_guidance=["Generate replacement cards only through the active phase task-card generation agent."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+            status="active",
+            metadata={"generated_by": "task_card_generation_agent"},
+        )
+    )
+
+    with pytest.raises(WorkflowError) as exc_info:
+        service.recompile_run(run.run_id)
+
+    assert "active DB task cards are authoritative" in str(exc_info.value)
+    assert exc_info.value.details["active_task_card_ids"] == ["tc_commercial_runtime"]
+    assert TaskRepository(db_path).get_task_card("tc_commercial_runtime") is not None
+
+
 def test_inspection_can_create_repair_runtime_attempt(tmp_path: Path) -> None:
     db_path = tmp_path / "workflow.db"
     migrate(db_path)

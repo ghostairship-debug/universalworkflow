@@ -124,6 +124,35 @@ def test_same_project_contract_rejects_existing_same_project_evidence_entries() 
     assert "same_project_patch_attempts_missing" in contract["blockers"]
 
 
+def test_same_project_contract_rejects_visible_cli_required_without_session() -> None:
+    contract = build_same_project_patch_ledger_contract(
+        {
+            "same_project_worker_patch_go": True,
+            "task_card_count": 1,
+            "completed_count": 1,
+            "entries": [
+                {
+                    "status": "completed",
+                    "worker_adapter": "codex",
+                    "receipt_id": "receipt_visible",
+                    "child_run_id": "run_visible",
+                    "child_attempt_id": "attempt_visible",
+                    "execution_visibility_mode": "human_visible_cli_enforced",
+                    "changed_files": ["state/project/assets/scripts/Game.ts"],
+                    "mutation_result": {
+                        "changed_files": ["state/project/assets/scripts/Game.ts"],
+                        "final_test_status": "passed",
+                    },
+                    "attempts": [{"attempt_index": 1, "receipt_id": "receipt_visible"}],
+                }
+            ],
+        }
+    )
+
+    assert contract["go"] is False
+    assert "human_visible_cli_metadata_missing" in contract["blockers"]
+
+
 def test_final_gate_reports_upstream_short_circuit_without_product_noise() -> None:
     complete = {"go": True, "blockers": [], "status": "completed", "schema_version": "test", "source": {}}
     patch = {
@@ -378,6 +407,29 @@ def test_gameplay_semantic_contract_rejects_feature_flags_and_events_only() -> N
     assert "semantic_placement_trace_missing" in evidence["blockers"]
 
 
+def test_gameplay_semantic_contract_rejects_runtime_hook_and_missing_model_transitions() -> None:
+    evidence = build_gameplay_semantic_evidence(
+        {
+            "runtime_phase": True,
+            "trace_source": "runtime_hook",
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+        }
+    )
+
+    assert evidence["go"] is False
+    assert "model_transition_trace_missing" in evidence["blockers"]
+    assert "runtime_hook_not_semantic_model" in evidence["blockers"]
+
+
 def test_product_body_contract_rejects_canvas_runtime_hook_without_components() -> None:
     semantic = build_gameplay_semantic_evidence(
         {
@@ -403,6 +455,39 @@ def test_product_body_contract_rejects_canvas_runtime_hook_without_components() 
     assert "runtime_hook_not_product_body" in evidence["blockers"]
     assert "canvas_only_product_body" in evidence["blockers"]
     assert "cocos_component_binding_missing" in evidence["blockers"]
+
+
+def test_product_body_contract_rejects_empty_component_shell_for_runtime_body() -> None:
+    semantic = build_gameplay_semantic_evidence(
+        {
+            "runtime_phase": True,
+            "trace_source": "model_transition",
+            "model_transition_traces": [{"transition": "placement", "before": {}, "after": {}}],
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+        }
+    )
+    evidence = build_product_body_evidence(
+        {
+            "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+            "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
+            "empty_component_only": True,
+            "baseline_only": False,
+        },
+        gameplay_semantic_evidence=semantic,
+    )
+
+    assert semantic["go"] is True
+    assert evidence["go"] is False
+    assert "empty_component_shell_not_runtime_product_body" in evidence["blockers"]
 
 
 def test_product_depth_contract_accepts_machine_visible_depth() -> None:

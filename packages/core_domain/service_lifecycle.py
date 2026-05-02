@@ -67,6 +67,29 @@ class LifecycleServiceMixin:
             and (contract.task_card_ref or contract.task_card_path)
         )
 
+    def _guard_commercial_recompile_task_cards(self, run_id: str, preset_id: str, connection: sqlite3.Connection) -> None:
+        if preset_id != "commercial_game_production":
+            return
+        cards = self.task_repo.list_task_cards_for_run(run_id, connection=connection)
+        active_cards = [
+            card
+            for card in cards
+            if str(card.status or "").lower() in {"active", "approved"}
+            and isinstance(card.metadata, dict)
+            and card.metadata.get("generated_by") == "task_card_generation_agent"
+        ]
+        if not active_cards:
+            return
+        raise WorkflowError(
+            "commercial_game_production active DB task cards are authoritative and cannot be replaced by generic recompile",
+            {
+                "run_id": run_id,
+                "preset_id": preset_id,
+                "active_task_card_ids": [card.task_card_id for card in active_cards],
+                "required_action": "preserve active phase task cards or generate a new current-phase task-card set through task_card_generation_agent",
+            },
+        )
+
     def _local_worker_heartbeat_interval_seconds(self, packet: TaskPacket) -> float:
         raw_value = (
             packet.env.get("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS")
@@ -1021,6 +1044,7 @@ class LifecycleServiceMixin:
             remaining_retries = self._remaining_retries(ledger)
             if not ignore_budget and remaining_retries is not None and remaining_retries <= 0:
                 raise BudgetExhaustedError(run.run_id, remaining_retries, ledger.max_retries)
+            self._guard_commercial_recompile_task_cards(run.run_id, preset.preset_id, connection)
             next_compile_count = ledger.compile_count + 1
             next_recompile_count = ledger.recompile_count if ignore_budget else ledger.recompile_count + 1
             ledger = self.budget_repo.update(

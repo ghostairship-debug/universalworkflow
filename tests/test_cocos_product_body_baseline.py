@@ -6,6 +6,7 @@ from pathlib import Path
 from packages.contributions.games.cocos.product_body_baseline import (
     COCOS_PRODUCT_BODY_BASELINE_SCHEMA,
     REQUIRED_COMPONENT_BINDINGS,
+    build_model_transition_traces,
     write_cocos_product_body_baseline,
 )
 from packages.contributions.pipelines.commercial_game_evidence_contracts import (
@@ -28,6 +29,21 @@ def test_cocos_product_body_baseline_writes_component_and_semantic_evidence(tmp_
     assert (project_dir / "assets/scripts/BoardModel.ts").exists()
     assert (project_dir / "assets/scripts/SemanticTestBridge.ts").exists()
     assert (project_dir / "assets/scene/product_body_scene_manifest.json").exists()
+    board_model_source = (project_dir / "assets/scripts/BoardModel.ts").read_text(encoding="utf-8")
+    rule_engine_source = (project_dir / "assets/scripts/RuleEngine.ts").read_text(encoding="utf-8")
+    tray_source = (project_dir / "assets/scripts/CandidateTray.ts").read_text(encoding="utf-8")
+    bridge_source = (project_dir / "assets/scripts/SemanticTestBridge.ts").read_text(encoding="utf-8")
+    assert "canPlace" in board_model_source
+    assert "clearCompletedLines" in board_model_source
+    assert "isGameOver" in rule_engine_source
+    assert "ensureAntiStall" in rule_engine_source
+    assert "consumeAndRefresh" in tray_source
+    assert "source: 'model_transition'" in bridge_source
+    assert manifest["product_body_evidence"]["empty_component_only"] is False
+    assert manifest["product_body_evidence"]["component_runtime_bindings"]["BoardModel"].endswith("BoardModel.ts")
+    assert manifest["gameplay_semantic_evidence"]["trace_source"] == "model_transition"
+    assert manifest["gameplay_semantic_evidence"]["model_transition_traces"]["placement"]["before_board"]
+    assert manifest["gameplay_semantic_evidence"]["model_transition_traces"]["placement"]["after_board"]
 
     semantic_contract = build_gameplay_semantic_evidence(manifest["gameplay_semantic_evidence"])
     product_body_contract = build_product_body_evidence(
@@ -39,6 +55,18 @@ def test_cocos_product_body_baseline_writes_component_and_semantic_evidence(tmp_
     assert semantic_contract["source"]["candidate_count"] == 3
     assert product_body_contract["go"] is True
     assert product_body_contract["source"]["component_binding_count"] == len(REQUIRED_COMPONENT_BINDINGS)
+
+
+def test_model_transition_traces_cover_required_runtime_state_changes() -> None:
+    traces = build_model_transition_traces()
+
+    assert set(traces) == {"placement", "line_clear", "candidate_refresh", "game_over", "anti_stall"}
+    assert traces["placement"]["before_board"] != traces["placement"]["after_board"]
+    assert traces["placement"]["piece"]["cells"]
+    assert traces["line_clear"]["line_clear_result"]["rows_cleared"] == [0]
+    assert traces["candidate_refresh"]["candidate_refresh_trigger"] == "all_three_candidates_consumed"
+    assert traces["game_over"]["game_over_result"] is True
+    assert traces["anti_stall"]["anti_stall_fallback"] == "inject_single_cell_candidate_when_no_legal_move_exists"
 
 
 def test_bootstrap_cocos_shell_includes_non_commercial_product_body_baseline(tmp_path: Path) -> None:

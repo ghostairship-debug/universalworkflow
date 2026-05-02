@@ -42,6 +42,7 @@ def run_task_card_patch_via_workflowctl(
     test_commands: list[str],
     max_fix_iterations: int,
     adapter_name: str | None = None,
+    execution_visibility_mode: str | None = None,
 ) -> dict[str, Any]:
     resolved_adapter = _resolve_task_card_adapter(task_card, adapter_name)
     if db_path is None:
@@ -140,6 +141,15 @@ def run_task_card_patch_via_workflowctl(
         db_path=db_path,
         task_goal=_task_card_goal(task_card_path),
         receipt_id=str(receipt_id),
+        execution_visibility_mode=execution_visibility_mode,
+        visible_session_dir=task_card_path.parent / "visible_cli_sessions" / _safe_name(task_card.task_card_id),
+        visible_session_metadata={
+            "receipt_id": str(receipt_id),
+            "task_card_id": task_card.task_card_id,
+            "pipeline_id": pipeline_id,
+            "project_dir": project_dir.as_posix(),
+            "window_title": f"workflowctl {task_card.task_card_id}",
+        },
         env_overrides={
             "WORKFLOW_CODEX_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
             "WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
@@ -184,6 +194,9 @@ def run_task_card_patch_via_workflowctl(
         "stdout_preview": executed.get("stdout_preview"),
         "stderr_preview": executed.get("stderr_preview"),
         "watchdog": executed.get("watchdog"),
+        "execution_visibility_mode": execution_visibility_mode,
+        "visible_cli_session": executed.get("visible_cli_session"),
+        "visible_cli_log_paths": executed.get("visible_cli_log_paths"),
         "timeout_seconds": executed.get("timeout_seconds"),
         "idle_timeout_seconds": executed.get("idle_timeout_seconds"),
         "recoverable_suggestion": executed.get("recoverable_suggestion"),
@@ -219,8 +232,26 @@ def _run_json_command(
     db_path: Path | None = None,
     task_goal: str | None = None,
     receipt_id: str | None = None,
+    execution_visibility_mode: str | None = None,
+    visible_session_dir: Path | None = None,
+    visible_session_metadata: dict[str, Any] | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    if execution_visibility_mode == "human_visible_cli_enforced":
+        return _run_visible_json_command(
+            command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
+            material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+            db_path=db_path,
+            task_goal=task_goal,
+            receipt_id=receipt_id,
+            visible_session_dir=visible_session_dir,
+            visible_session_metadata=visible_session_metadata,
+            env_overrides=env_overrides,
+        )
     run_kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "capture_output": True,
@@ -336,6 +367,286 @@ def _run_json_command(
         "child_run_id": payload.get("run", {}).get("run_id") if isinstance(payload, dict) else None,
         "watchdog_source": "workflowctl_payload",
     }
+
+
+def _run_visible_json_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    idle_timeout_seconds: int,
+    provider_output_idle_timeout_seconds: int | None,
+    material_progress_idle_timeout_seconds: int | None,
+    db_path: Path | None,
+    task_goal: str | None,
+    receipt_id: str | None,
+    visible_session_dir: Path | None,
+    visible_session_metadata: dict[str, Any] | None,
+    env_overrides: dict[str, str] | None,
+) -> dict[str, Any]:
+    session_dir = visible_session_dir or cwd / "state" / "visible_cli_sessions" / f"session_{uuid4().hex[:12]}"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = session_dir / "stdout.log"
+    stderr_path = session_dir / "stderr.log"
+    stream_path = session_dir / "stream.jsonl"
+    session_path = session_dir / "visible_cli_session.json"
+    now = datetime.now(UTC).isoformat()
+    metadata = dict(visible_session_metadata or {})
+    session: dict[str, Any] = {
+        "schema_version": "human_visible_cli_session_v1",
+        "mode": "human_visible_cli_enforced",
+        "status": "starting",
+        "pid": None,
+        "window_title": metadata.get("window_title") or "workflowctl visible task-card run",
+        "argv": command,
+        "cwd": cwd.as_posix(),
+        "receipt_id": receipt_id,
+        "task_card_id": metadata.get("task_card_id"),
+        "pipeline_id": metadata.get("pipeline_id"),
+        "stdout_log_path": stdout_path.as_posix(),
+        "stderr_log_path": stderr_path.as_posix(),
+        "stream_log_path": stream_path.as_posix(),
+        "session_path": session_path.as_posix(),
+        "started_at": now,
+        "ended_at": None,
+    }
+    _write_json(session_path, session)
+    _append_stream_event(stream_path, {"event": "visible_cli_starting", "created_at": now, "argv": command})
+    if not hasattr(subprocess, "CREATE_NEW_CONSOLE"):
+        session.update({"status": "unavailable", "ended_at": datetime.now(UTC).isoformat()})
+        _write_json(session_path, session)
+        return _visible_command_result(
+            status="failed",
+            failure_class="human_visible_cli_unavailable",
+            return_code=None,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stream_path=stream_path,
+            session=session,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
+            material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+            payload=None,
+            child_state={},
+        )
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    stdout_ps = str(stdout_path).replace("'", "''")
+    inner_command = "& " + " ".join(_powershell_quote_arg(item) for item in command)
+    powershell_command = (
+        f"& {{ {inner_command} 2>&1 | "
+        f"Tee-Object -FilePath '{stdout_ps}'; exit $LASTEXITCODE }}"
+    )
+    launch_cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        powershell_command,
+    ]
+    env = {**os.environ, **{str(key): str(value) for key, value in (env_overrides or {}).items()}}
+    try:
+        proc = subprocess.Popen(
+            launch_cmd,
+            cwd=str(cwd),
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            env=env,
+        )
+    except OSError as exc:
+        session.update({"status": "blocked", "ended_at": datetime.now(UTC).isoformat(), "launch_error": str(exc)})
+        _write_json(session_path, session)
+        return _visible_command_result(
+            status="failed",
+            failure_class="human_visible_cli_launch_failed",
+            return_code=None,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stream_path=stream_path,
+            session=session,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
+            material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+            payload=None,
+            child_state={},
+        )
+    session.update({"status": "running", "pid": proc.pid})
+    _write_json(session_path, session)
+    _append_stream_event(stream_path, {"event": "visible_cli_started", "created_at": datetime.now(UTC).isoformat(), "pid": proc.pid})
+    started = time.monotonic()
+    last_activity = started
+    last_stdout_size = 0
+    last_stderr_size = 0
+    timeout_type: str | None = None
+    probe = (
+        _child_provider_activity_probe(db_path=db_path, task_goal=task_goal, receipt_id=receipt_id)
+        if db_path is not None and task_goal
+        else None
+    )
+    last_probe_counts = {"provider_output_event_count": 0, "material_progress_event_count": 0}
+    while proc.poll() is None:
+        now_mono = time.monotonic()
+        stdout_size = stdout_path.stat().st_size if stdout_path.exists() else 0
+        stderr_size = stderr_path.stat().st_size if stderr_path.exists() else 0
+        if stdout_size != last_stdout_size or stderr_size != last_stderr_size:
+            last_stdout_size = stdout_size
+            last_stderr_size = stderr_size
+            last_activity = now_mono
+        if probe is not None:
+            probe_payload = probe()
+            if (
+                probe_payload.get("provider_output_event_count") != last_probe_counts.get("provider_output_event_count")
+                or probe_payload.get("material_progress_event_count") != last_probe_counts.get("material_progress_event_count")
+            ):
+                last_probe_counts = dict(probe_payload)
+                last_activity = now_mono
+        if now_mono - started > timeout_seconds:
+            timeout_type = "wall_timeout"
+            break
+        if now_mono - last_activity > idle_timeout_seconds:
+            timeout_type = "idle_timeout"
+            break
+        time.sleep(1.0)
+    if timeout_type:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return_code = proc.wait()
+    ended = datetime.now(UTC).isoformat()
+    stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+    stderr = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
+    payload = _parse_json_from_stdout(stdout)
+    child_state = (
+        _inspect_child_workflow_state(db_path=db_path, task_goal=task_goal, receipt_id=receipt_id)
+        if db_path is not None and task_goal
+        else {}
+    )
+    session.update(
+        {
+            "status": "timeout" if timeout_type else "completed",
+            "return_code": return_code,
+            "ended_at": ended,
+            "timeout_type": timeout_type,
+        }
+    )
+    _write_json(session_path, session)
+    _append_stream_event(
+        stream_path,
+        {
+            "event": "visible_cli_completed",
+            "created_at": ended,
+            "return_code": return_code,
+            "timeout_type": timeout_type,
+        },
+    )
+    watchdog = {
+        "source": "human_visible_cli_mirrored_logs",
+        "timeout_type": timeout_type,
+        "stdout_log_path": stdout_path.as_posix(),
+        "stderr_log_path": stderr_path.as_posix(),
+        "stream_log_path": stream_path.as_posix(),
+        **last_probe_counts,
+    }
+    status = "completed" if return_code == 0 and isinstance(payload, dict) else "failed"
+    failure_class = None
+    if status != "completed":
+        failure_class = (
+            "workflowctl_child_json_parse_failed"
+            if return_code == 0
+            else _classify_child_failure(
+                payload=payload,
+                proc=type("VisibleProcess", (), {"returncode": return_code})(),
+                watchdog=watchdog,
+                child_state=child_state,
+                idle_timeout_seconds=idle_timeout_seconds,
+            )
+        )
+    result = _visible_command_result(
+        status=status,
+        failure_class=failure_class,
+        return_code=return_code,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        stream_path=stream_path,
+        session=session,
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
+        material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+        payload=payload,
+        child_state=child_state,
+        watchdog=watchdog,
+    )
+    if isinstance(payload, dict):
+        result["child_run_id"] = payload.get("run", {}).get("run_id")
+    return result
+
+
+def _visible_command_result(
+    *,
+    status: str,
+    failure_class: str | None,
+    return_code: int | None,
+    stdout_path: Path,
+    stderr_path: Path,
+    stream_path: Path,
+    session: dict[str, Any],
+    timeout_seconds: int,
+    idle_timeout_seconds: int,
+    provider_output_idle_timeout_seconds: int | None,
+    material_progress_idle_timeout_seconds: int | None,
+    payload: Any,
+    child_state: dict[str, Any],
+    watchdog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+    stderr = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
+    return {
+        "return_code": return_code,
+        "stdout_preview": stdout[-PREVIEW_LIMIT:],
+        "stderr_preview": stderr[-PREVIEW_LIMIT:],
+        "watchdog": watchdog or {"source": "human_visible_cli_mirrored_logs"},
+        "timeout_seconds": timeout_seconds,
+        "idle_timeout_seconds": idle_timeout_seconds,
+        "provider_output_idle_timeout_seconds": provider_output_idle_timeout_seconds,
+        "material_progress_idle_timeout_seconds": material_progress_idle_timeout_seconds,
+        "status": status,
+        "failure_class": failure_class,
+        "payload": payload,
+        "child_workflow_state": child_state,
+        "child_run_id": child_state.get("run_id"),
+        "child_attempt_id": child_state.get("attempt_id"),
+        "watchdog_source": "human_visible_cli_mirrored_logs",
+        "visible_cli_session": session,
+        "visible_cli_log_paths": {
+            "stdout_log_path": stdout_path.as_posix(),
+            "stderr_log_path": stderr_path.as_posix(),
+            "stream_log_path": stream_path.as_posix(),
+            "session_path": session.get("session_path"),
+        },
+        "recoverable_suggestion": None if status == "completed" else "Inspect mirrored visible CLI logs and rerun with a fresh receipt.",
+    }
+
+
+def _append_stream_event(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _safe_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value)).strip("_") or "task_card"
+
+
+def _powershell_quote_arg(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _task_card_goal(task_card_path: Path) -> str:

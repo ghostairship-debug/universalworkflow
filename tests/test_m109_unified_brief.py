@@ -57,6 +57,14 @@ def test_unified_project_brief_preserves_long_text_and_writes_agent_packets(tmp_
     assert requirement_matrix["requirements"][0]["normalized_requirement"]
     media_manifest = json.loads(Path(payload["media_manifest_path"]).read_text(encoding="utf-8"))
     assert media_manifest["media"][0]["sha256"]
+    source_index = json.loads(Path(payload["source_index_path"]).read_text(encoding="utf-8"))
+    assert payload["raw_input_preserved"] is True
+    assert payload["source_material_policy"] == "no_delete_no_merge_no_rename_only_augment"
+    assert payload["source_integrity_go"] is True
+    assert payload["source_count_consistency"]["input_count"] == 2
+    assert len(payload["source_receipts"]) == 2
+    assert all(len(item["sha256"]) == 64 for item in payload["source_receipts"])
+    assert all(Path(item["raw_input_path"]).exists() for item in source_index)
 
 
 def test_cli_intake_package_outputs_unified_brief(tmp_path: Path) -> None:
@@ -186,6 +194,11 @@ def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: 
     assert [stage["status"] for stage in payload["stage_results"][:6]] == ["completed"] * 6
     assert payload["stage_results"][6]["status"] == "blocked"
     task_card_output = payload["stage_results"][5]["output"]
+    assert task_card_output["schema_version"] == "post_m109_single_agent_role_output_v2"
+    assert task_card_output["source_material_policy"] == "no_delete_no_merge_no_rename_only_augment"
+    assert task_card_output["preservation_go"] is True
+    assert task_card_output["omitted_requirement_ids"] == []
+    assert task_card_output["preserved_requirement_ids"] == task_card_output["input_requirement_ids"]
     assert task_card_output["role_id"] == "task_card_generation_agent"
     assert task_card_output["structured_output"]["quality_gate"]["authority_source"] == "sqlite_task_cards_table"
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
@@ -212,6 +225,8 @@ def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: 
         for card in same_project_cards
         for command in card.test_commands
     )
+    assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in same_project_cards)
+    assert all("human_visible_cli_session" in card.evidence_requirements for card in same_project_cards)
 
 
 def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp_path: Path) -> None:
@@ -249,6 +264,52 @@ def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp
     assert {card.phase_name for card in cards} == {"Product Body Runtime And Semantic Trace Implementation"}
     assert all(card.execution_mode == "same_project_patch" for card in cards)
     assert all(card.metadata.get("requirement_coverage_required") is True for card in cards)
+    assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
+    assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
+
+
+def test_commercial_core_content_goal_materializes_exact_three_visible_cli_cards(tmp_path: Path) -> None:
+    source = tmp_path / "brief.md"
+    source.write_text(
+        "# Commercial Core Content\n\ncore loop, levels, shop skin gallery, audio feedback polish all need implementation.\n",
+        encoding="utf-8",
+    )
+    result = _invoke(
+        tmp_path,
+        "pipeline",
+        "run",
+        "--template",
+        "commercial_game_production",
+        "--goal",
+        "Commercial Game Core Content Implementation",
+        "--pipeline-id",
+        "commercial_core_content_phase",
+        "--pdf-path",
+        source.as_posix(),
+        "--execute-agent-roles",
+        "--evidence-dir",
+        (tmp_path / "pipeline_evidence").as_posix(),
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    task_card_output = payload["stage_results"][5]["output"]
+    phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
+    assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert [phase["title"] for phase in phase_graph["phases"]] == ["Commercial Game Core Content Implementation"]
+
+    cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("commercial_core_content_phase")
+    assert len(cards) == 3
+    assert {card.task_card_id for card in cards} == {
+        "commercial_core_content_phase_core_loop_levels",
+        "commercial_core_content_phase_shop_skin_gallery",
+        "commercial_core_content_phase_audio_feedback_polish",
+    }
+    assert all(card.execution_mode == "same_project_patch" for card in cards)
+    assert all(card.metadata.get("generated_by") == "task_card_generation_agent" for card in cards)
+    assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
+    assert all(card.metadata.get("omitted_requirement_ids") == [] for card in cards)
+    assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
 
 
 def test_m109_role_outputs_are_role_specific(tmp_path: Path) -> None:
@@ -275,6 +336,12 @@ def test_m109_role_outputs_are_role_specific(tmp_path: Path) -> None:
     ui = payload["stage_results"][2]["output"]["structured_output"]
     tech = payload["stage_results"][3]["output"]["structured_output"]
     multimodal = payload["stage_results"][4]["output"]["structured_output"]
+    product_output = payload["stage_results"][1]["output"]
+    assert product_output["schema_version"] == "post_m109_single_agent_role_output_v2"
+    assert product_output["source_material_policy"] == "no_delete_no_merge_no_rename_only_augment"
+    assert product_output["preservation_go"] is True
+    assert product_output["omitted_requirement_ids"] == []
+    assert product["preserved_requirement_ids"] == product_output["preserved_requirement_ids"]
     assert product["core_loop"]
     assert ui["screen_flow"]
     assert tech["implementation_plan"]

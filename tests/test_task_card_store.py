@@ -96,3 +96,34 @@ def test_requirement_coverage_complete_card_is_execution_eligible() -> None:
 
     assert task_card_requirement_coverage_status(card) == "passed"
     assert task_card_execution_eligibility(card)["execution_eligible"] is True
+
+
+def test_source_requirement_omission_blocks_quality() -> None:
+    card = _rich_task_card(status="active", metadata={"omitted_requirement_ids": ["REQ-2"]})
+    report = task_card_quality_report([card])
+
+    assert report["go_no_go"] == "NO-GO"
+    assert report["task_cards"][0]["quality_issues"][0]["code"] == "source_requirement_omitted"
+
+
+def test_human_visible_cli_required_card_without_mode_is_quality_blocked() -> None:
+    card = _rich_task_card(
+        status="active",
+        metadata={"human_visible_cli_required": True},
+    )
+    report = task_card_quality_report([card])
+
+    assert report["go_no_go"] == "NO-GO"
+    assert report["task_cards"][0]["quality_issues"][0]["code"] == "human_visible_cli_required"
+
+
+def test_human_visible_cli_mode_satisfies_quality_requirement() -> None:
+    card = _rich_task_card(
+        status="active",
+        metadata={
+            "human_visible_cli_required": True,
+            "execution_visibility_mode": "human_visible_cli_enforced",
+        },
+    )
+
+    assert task_card_execution_eligibility(card)["execution_eligible"] is True

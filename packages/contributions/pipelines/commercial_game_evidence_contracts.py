@@ -120,6 +120,8 @@ def build_same_project_patch_ledger_contract(patch_ledger: dict[str, Any] | None
             blockers.append("fresh_cli_execution_missing")
         if entry.get("implementation_gate_satisfied") is False:
             blockers.append("fresh_cli_execution_missing")
+        if str(entry.get("execution_visibility_mode") or "") == "human_visible_cli_enforced" and not _visible_cli_session_valid(entry):
+            blockers.append("human_visible_cli_metadata_missing")
         if entry.get("fallback_only"):
             blockers.append("fallback_provider_unavailable")
         if entry.get("fallback_provider") and not entry.get("fallback_provider_live_proof"):
@@ -270,6 +272,10 @@ def build_gameplay_semantic_evidence(
         blockers.append("feature_flag_only_evidence")
     if payload.get("events") and not traces:
         blockers.append("event_only_gameplay_evidence")
+    if payload.get("runtime_phase") and not payload.get("model_transition_traces"):
+        blockers.append("model_transition_trace_missing")
+    if payload.get("trace_source") in {"dom", "canvas", "browser_event", "runtime_hook"}:
+        blockers.append("runtime_hook_not_semantic_model")
     if not _board_is_10x10(payload):
         blockers.append("semantic_board_state_missing")
     if not _has_piece_model(payload):
@@ -323,6 +329,8 @@ def build_product_body_evidence(
         blockers.append("event_only_gameplay_evidence")
     if payload.get("feature_coverage") and not _has_component_binding(payload):
         blockers.append("feature_flag_only_evidence")
+    if payload.get("empty_component_only"):
+        blockers.append("empty_component_shell_not_runtime_product_body")
     if not _has_component_binding(payload):
         blockers.append("cocos_component_binding_missing")
     if not _has_scene_body(payload):
@@ -711,6 +719,14 @@ def _component_binding_count(payload: dict[str, Any]) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _visible_cli_session_valid(entry: dict[str, Any]) -> bool:
+    session = _dict_from(entry.get("visible_cli_session"))
+    required = ["pid", "argv", "cwd", "stdout_log_path", "stderr_log_path", "stream_log_path", "started_at"]
+    if any(not session.get(key) for key in required):
+        return False
+    return str(session.get("status") or "") not in {"blocked", "unavailable"}
 
 
 def _has_scene_body(payload: dict[str, Any]) -> bool:
