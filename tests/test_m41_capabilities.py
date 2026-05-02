@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 import sys
 import json
+import sqlite3
+import time
 from pathlib import Path
 import re
 from types import SimpleNamespace
@@ -28,6 +30,7 @@ from packages.worker_adapters.opencode_adapter import OpenCodeAdapter
 from packages.worker_adapters.router import WorkerRouter
 from packages.worker_adapters.shell_adapter import ShellAdapter
 from packages.worker_adapters.subprocess_support import build_subprocess_env
+from packages.worker_adapters.subprocess_support import completed_process_watchdog_metadata
 from packages.worker_adapters.subprocess_support import run_subprocess_with_tree_timeout
 
 
@@ -460,11 +463,169 @@ def test_codex_dogfood_artifact_prompt_contains_role_handoff_and_keeps_patch_pro
             ).model_dump(mode="json"),
         }
     )
+    patch_command = adapter.build_command(patch_packet)
+    patch_prompt = patch_command[-1]
+
+    assert "Provider command policy: patch_only_no_shell" in patch_prompt
+    assert "Patch-only mode: do not run shell, PowerShell, cmd, Python" in patch_prompt
+    assert "Embedded read-set context JSON" in patch_prompt
+    assert "Return exactly one valid unified diff patch" in patch_prompt
+    assert "artifact-only workflow agent" not in patch_prompt
+    assert "--ignore-user-config" in patch_command
+    assert "--ignore-rules" in patch_command
+    patch_cd = Path(patch_command[patch_command.index("--cd") + 1])
+    artifact_cd = Path(artifact_command[artifact_command.index("--cd") + 1])
+    assert artifact_cd == tmp_path.resolve()
+    assert patch_cd != tmp_path.resolve()
+    assert "workflow_codex_patch_apply" in patch_cd.as_posix()
+    for feature in [
+        "apps",
+        "plugins",
+        "memories",
+        "tool_search",
+        "browser_use",
+        "computer_use",
+        "image_generation",
+        "workspace_dependencies",
+    ]:
+        assert ["--disable", feature] == patch_command[
+            patch_command.index(feature) - 1 : patch_command.index(feature) + 1
+        ]
+    assert "--ignore-user-config" not in artifact_command
+    assert "--ignore-rules" not in artifact_command
+
+
+def test_codex_patch_apply_launch_uses_prompt_only_workspace(tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+
+    def _recording_runner(command, cwd, env, capture_output, text, check, timeout):
+        observed["command"] = command
+        observed["cwd"] = cwd
+        artifact = Path(command[command.index("--output-last-message") + 1])
+        artifact.write_text("--- a/target.txt\n+++ b/target.txt\n@@ -1 +1 @@\n-before\n+after\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="patch\n", stderr="")
+
+    packet = _packet(
+        tmp_path,
+        env={"WORKFLOW_CODEX_PATCH_APPLY_PROMPT_WORKSPACE": (tmp_path / "broker").as_posix()},
+        artifact="patch.diff",
+    )
+    patch_packet = TaskPacket.model_validate(
+        {
+            **packet.model_dump(mode="json"),
+            "mutation_contract": MutationContract(
+                write_set=["target.txt"],
+                mutation_mode=MutationMode.patch_apply,
+            ).model_dump(mode="json"),
+        }
+    )
+    adapter = CodexAdapter(runner=_recording_runner, executable=sys.executable)
+
+    result = adapter.launch(patch_packet)
+
+    broker_root = tmp_path / "broker"
+    assert Path(str(observed["cwd"])).is_relative_to(broker_root)
+    command = observed["command"]
+    assert command[command.index("--cd") + 1] == observed["cwd"]
+    assert "--ignore-rules" in command
+    assert result.metadata["prompt_transport"] == "argv"
+    assert Path(result.metadata["prompt_workspace"]).is_relative_to(broker_root)
+    assert result.metadata["project_working_directory"] == tmp_path.resolve().as_posix()
+    assert result.metadata["project_rules_ignored"] is True
+
+
+def test_opencode_patch_apply_prompt_uses_patch_only_command_policy(tmp_path: Path) -> None:
+    packet = _packet(
+        tmp_path,
+        env={
+            "WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY": "patch_only_no_shell",
+            "WORKFLOW_MUTATION_READ_SET_CONTEXT": '[{"path":"target.txt","kind":"file"}]',
+        },
+        artifact="opencode_artifact.md",
+    )
+    patch_packet = TaskPacket.model_validate(
+        {
+            **packet.model_dump(mode="json"),
+            "mutation_contract": MutationContract(
+                write_set=["target.txt"],
+                mutation_mode=MutationMode.patch_apply,
+            ).model_dump(mode="json"),
+        }
+    )
+    adapter = OpenCodeAdapter(runner=_fake_success_runner, executable=sys.executable)
+
     patch_prompt = adapter.build_command(patch_packet)[-1]
 
-    assert "Return only one valid unified diff patch" in patch_prompt
-    assert "do not set [Console]::OutputEncoding" in patch_prompt
-    assert "artifact-only workflow agent" not in patch_prompt
+    assert "Provider command policy: patch_only_no_shell" in patch_prompt
+    assert "Patch-only mode: do not run shell, PowerShell, cmd, Python" in patch_prompt
+    assert "Embedded read-set context JSON" in patch_prompt
+    assert "Return exactly one valid unified diff patch" in patch_prompt
+    assert "<<<WORKFLOW_FILE>>>" not in patch_prompt
+
+
+def test_opencode_patch_apply_spills_large_prompt_to_file_attachment(tmp_path: Path) -> None:
+    context_file = tmp_path / "read_context.json"
+    context_file.write_text(json.dumps([{"path": "target.txt", "content_preview": "x" * 15000}]), encoding="utf-8")
+    packet = _packet(
+        tmp_path,
+        env={
+            "WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY": "patch_only_no_shell",
+            "WORKFLOW_MUTATION_READ_SET_CONTEXT": "",
+            "WORKFLOW_MUTATION_READ_SET_CONTEXT_FILE": context_file.as_posix(),
+        },
+        artifact="opencode_artifact.md",
+    )
+    patch_packet = TaskPacket.model_validate(
+        {
+            **packet.model_dump(mode="json"),
+            "mutation_contract": MutationContract(
+                write_set=["target.txt"],
+                mutation_mode=MutationMode.patch_apply,
+            ).model_dump(mode="json"),
+        }
+    )
+    adapter = OpenCodeAdapter(runner=_fake_success_runner, executable=sys.executable)
+
+    command = adapter.build_command(patch_packet)
+
+    assert "--file" in command
+    prompt_path = Path(command[command.index("--file") + 1])
+    assert prompt_path.exists()
+    prompt_content = prompt_path.read_text(encoding="utf-8")
+    assert "Embedded read-set context JSON" in prompt_content
+    assert "x" * 100 in prompt_content
+    assert command[command.index("--file") - 1] == (
+        "Execute the workflow mutation instructions in the attached prompt file. Return only the requested unified diff."
+    )
+
+
+def test_opencode_adapter_timeout_can_be_overridden_for_task_card_runs(monkeypatch) -> None:
+    monkeypatch.setenv("WORKFLOW_OPENCODE_TIMEOUT_SECONDS", "45")
+
+    adapter = OpenCodeAdapter(runner=_fake_success_runner, executable=sys.executable)
+
+    assert adapter.timeout_seconds == 45
+
+
+def test_opencode_adapter_timeout_can_be_overridden_per_packet(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, int] = {}
+
+    def _recording_runner(command, cwd, env, capture_output, text, check, timeout):
+        observed["timeout"] = timeout
+        return subprocess.CompletedProcess(command, 0, stdout="artifact\n", stderr="")
+
+    monkeypatch.delenv("WORKFLOW_OPENCODE_TIMEOUT_SECONDS", raising=False)
+    adapter = OpenCodeAdapter(runner=_recording_runner, executable=sys.executable)
+    packet = _packet(
+        tmp_path,
+        env={"WORKFLOW_OPENCODE_TIMEOUT_SECONDS": "12"},
+        artifact="opencode_timeout.md",
+    )
+
+    result = adapter.launch(packet)
+
+    assert observed["timeout"] == 12
+    assert result.metadata["timeout_seconds"] == 12
 
 
 def test_codex_adapter_timeout_can_be_overridden_for_local_dogfood(monkeypatch) -> None:
@@ -510,6 +671,33 @@ def test_codex_adapter_timeout_records_failure_class_and_stream_previews(tmp_pat
     assert result.metadata["stdout_preview"] == "partial stdout"
     assert "partial stderr" in result.metadata["stderr_preview"]
     assert "timed out after" in result.metadata["stderr_preview"]
+
+
+def test_codex_adapter_records_provider_stream_event_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    packet = _packet(
+        tmp_path,
+        env={"WORKFLOW_DB_PATH": db_path.as_posix()},
+        artifact="codex_stream.md",
+    )
+    adapter = CodexAdapter(executable=sys.executable)
+
+    result = adapter.launch(packet)
+
+    assert result.return_code != 0
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT event_type, payload_json FROM run_events WHERE event_type = 'provider_stream_observed'"
+        ).fetchone()
+    assert row is not None
+    payload = json.loads(row[1])
+    assert payload["run_id"] == "run_m41"
+    assert payload["runtime_task_id"] == "task_m41"
+    assert payload["adapter_name"] == "codex"
+    assert payload["classification"] == "provider_output"
+    assert payload["line_sha256"]
+    assert "text" not in payload
 
 
 def test_subprocess_tree_timeout_returns_124_for_hung_cli(tmp_path: Path) -> None:
@@ -575,6 +763,206 @@ def test_subprocess_progress_watchdog_keeps_output_alive_until_wall_timeout(tmp_
     assert "tick" in completed.stdout
     assert completed.stdout_event_count > 1
     assert completed.stream_event_count > 1
+
+
+def test_subprocess_watchdog_does_not_count_workflow_progress_as_provider_output(tmp_path: Path) -> None:
+    script = (
+        "import sys, time\n"
+        "for index in range(20):\n"
+        "    print(f'workflow_progress {index}', file=sys.stderr, flush=True)\n"
+        "    time.sleep(0.1)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+        idle_timeout=2,
+        provider_output_idle_timeout=0.5,
+    )
+
+    assert completed.returncode == 124
+    assert completed.timeout_type == "provider_output_idle_timeout"
+    assert completed.control_output_event_count > 0
+    assert completed.provider_output_event_count == 0
+    assert completed.stream_event_count > 0
+
+
+def test_subprocess_provider_activity_probe_prevents_outer_provider_idle(tmp_path: Path) -> None:
+    started = time.monotonic()
+
+    def _probe() -> dict[str, object]:
+        elapsed = time.monotonic() - started
+        if elapsed > 0.1:
+            return {
+                "provider_output_event_count": int(elapsed * 20),
+                "last_provider_output_at": "2026-04-30T00:00:00+00:00",
+            }
+        return {"provider_output_event_count": 0}
+
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", "import time; time.sleep(0.35)"],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=2,
+        provider_output_idle_timeout=0.2,
+        activity_probe=_probe,
+        activity_probe_interval=0.05,
+    )
+
+    assert completed.returncode == 0
+    assert completed.provider_output_event_count >= 1
+    assert completed.timeout_type is None
+
+
+def test_subprocess_watchdog_detects_no_material_progress_with_provider_output(tmp_path: Path) -> None:
+    script = (
+        "import time\n"
+        "for index in range(20):\n"
+        "    print(f'thinking {index}', flush=True)\n"
+        "    time.sleep(0.1)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+        idle_timeout=2,
+        provider_output_idle_timeout=2,
+        material_progress_idle_timeout=0.5,
+    )
+
+    assert completed.returncode == 124
+    assert completed.timeout_type == "provider_no_material_progress_timeout"
+    assert completed.provider_output_event_count > 0
+    assert completed.material_progress_event_count == 0
+
+
+def test_subprocess_watchdog_records_material_progress_markers(tmp_path: Path) -> None:
+    script = (
+        "import time\n"
+        "for index in range(3):\n"
+        "    print(f'changed_files marker_{index}', flush=True)\n"
+        "    time.sleep(0.1)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+        idle_timeout=2,
+        provider_output_idle_timeout=2,
+        material_progress_idle_timeout=1,
+    )
+
+    assert completed.returncode == 0
+    assert completed.timeout_type is None
+    assert completed.provider_output_event_count == 3
+    assert completed.material_progress_event_count == 3
+
+
+def test_subprocess_adaptive_wall_timeout_extends_with_recent_material_progress(tmp_path: Path) -> None:
+    script = (
+        "import time\n"
+        "print('changed_files initial_patch', flush=True)\n"
+        "time.sleep(1.2)\n"
+        "print('done', flush=True)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=1,
+        idle_timeout=3,
+        provider_output_idle_timeout=3,
+        material_progress_idle_timeout=3,
+        adaptive_wall_timeout_extension=1,
+        adaptive_wall_timeout_max_extensions=1,
+        adaptive_wall_timeout_absolute_max=2,
+        adaptive_wall_timeout_progress_window=3,
+    )
+
+    assert completed.returncode == 0
+    assert completed.timeout_type is None
+    assert completed.adaptive_wall_timeout_extension_count == 1
+    assert completed.adaptive_wall_timeout_effective_seconds == 2
+    assert completed.material_progress_event_count >= 1
+
+
+def test_subprocess_adaptive_wall_timeout_requires_material_progress(tmp_path: Path) -> None:
+    script = (
+        "import time\n"
+        "print('provider output only', flush=True)\n"
+        "time.sleep(1.2)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=1,
+        idle_timeout=3,
+        provider_output_idle_timeout=3,
+        material_progress_idle_timeout=3,
+        adaptive_wall_timeout_extension=1,
+        adaptive_wall_timeout_max_extensions=1,
+        adaptive_wall_timeout_absolute_max=2,
+        adaptive_wall_timeout_progress_window=3,
+    )
+
+    assert completed.returncode == 124
+    assert completed.timeout_type == "wall_timeout"
+    assert completed.adaptive_wall_timeout_extension_count == 0
+    assert completed.provider_output_event_count >= 1
+    assert completed.material_progress_event_count == 0
+
+
+def test_subprocess_adaptive_wall_timeout_exhaustion_reports_split_signal(tmp_path: Path) -> None:
+    script = (
+        "import time\n"
+        "print('changed_files initial_patch', flush=True)\n"
+        "time.sleep(2.2)\n"
+    )
+    completed = run_subprocess_with_tree_timeout(
+        [sys.executable, "-c", script],
+        cwd=tmp_path.as_posix(),
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=1,
+        idle_timeout=4,
+        provider_output_idle_timeout=4,
+        material_progress_idle_timeout=4,
+        adaptive_wall_timeout_extension=1,
+        adaptive_wall_timeout_max_extensions=1,
+        adaptive_wall_timeout_absolute_max=2,
+        adaptive_wall_timeout_progress_window=4,
+    )
+    metadata = completed_process_watchdog_metadata(completed)
+
+    assert completed.returncode == 124
+    assert completed.timeout_type == "adaptive_wall_timeout_exhausted"
+    assert metadata["timeout_failure_class"] == "task_scope_too_large_after_adaptive_wall_timeout"
+    assert metadata["adaptive_wall_timeout_extension_count"] == 1
+    assert metadata["adaptive_wall_timeout_exhausted"] is True
 
 
 def test_subprocess_tree_timeout_decodes_utf8_stdout_when_text_requested(tmp_path: Path) -> None:

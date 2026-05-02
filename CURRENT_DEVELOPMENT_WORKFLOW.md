@@ -1,5 +1,195 @@
 # 当前开发工作流
 
+## 2026-05-02 Human Review NO-GO: Trusted Cocos Build Browser Audio Runtime Evidence
+
+`Trusted Cocos Build Browser Audio Runtime Evidence` 原先按 machine-evidence closeout 收口；真实人工评审后已被复判为 `NO-GO`。本阶段仍未进入 M110，未生成未来 phase task cards，未自动 commit/push/PR，未声明商业可玩 GO。
+
+- DB task-card run id: `trusted_cocos_build_browser_audio_runtime_20260502`
+- Task-card snapshot: `state/trusted_cocos_build_browser_audio_runtime_20260502/task_cards.md`
+- Phase evidence: `state/trusted_cocos_build_browser_audio_runtime_20260502/`
+- Phase preflight previews: `state/trusted_cocos_build_browser_audio_runtime_20260502/plan_graph.json`, `state/trusted_cocos_build_browser_audio_runtime_20260502/policy_preview.json`, `state/trusted_cocos_build_browser_audio_runtime_20260502/goal_packet.json`
+- 被人工复判否定的机器判断：真实 Cocos Creator 3.8.8 Web Mobile build ledger、HTTP/browser playtest ledger、screenshots、console/page error capture、BGM/SFX/volume runtime proof、drag/place/button panel events 和 feature coverage 曾被机器 gate 接受，但这些证据不足以证明商业游戏本体完成。
+- 核对结论：拉起的 URL 指向当前 pipeline 的 `build/web-mobile`，不是路径错误；问题是该 build 本身不是合格游戏本体，而是 runtime hook / canvas / event coverage 被机器 gate 误收。
+- 人审结论：`human_review_result.json` 记录真实人工评审 `NO-GO`，原因是 `product_body_not_valid`、`machine_gate_false_positive`、`event_and_canvas_runtime_hook_not_sufficient_for_game_body`。
+- 最终严格管线：`pipeline_ecf26665254e`，evidence 位于 `state/trusted_cocos_build_browser_audio_runtime_20260502/final_pipeline_run_validation_after_overlay_mobile_top_repair/`。
+- Phase closeout: `state/trusted_cocos_build_browser_audio_runtime_20260502/phase_closeout.json`
+- Operator packet: `state/trusted_cocos_build_browser_audio_runtime_20260502/operator_packet.json`
+- Runtime gate: `state/trusted_cocos_build_browser_audio_runtime_20260502/runtime_gate.json`
+- 当前终态：`machine_evidence_go=false`，`commercial_final_gate_evidence.go_no_go=NO-GO`，`human_player_review_go=false`，`commercial_playable_go=false`。
+- 当前 blocker：`human_player_review_failed`、`product_body_not_valid`、`machine_gate_false_positive`。下一步必须新开 active phase 同时修复商业游戏本体与 final gate，不能继续用 event-only/canvas runtime hook 证明产品完成。
+
+## 2026-05-02 Closeout: Audio Animation Runtime Hooks Same-Project Repair
+
+`Audio Animation Runtime Hooks Same-Project Repair` 已按 active-phase-only 原则收口。本阶段原始 5 张 DB-backed task cards 之外，因 workflow bug-first 修复补充了 4 张当前 phase 修复/确认卡；未进入 M110，未生成未来 phase task cards，未推进 Cocos build/browser playtest/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `audio_animation_runtime_hooks_same_project_repair_20260502`
+- Task-card snapshot: `state/audio_animation_runtime_hooks_same_project_repair_20260502/task_cards.md`
+- Phase evidence: `state/audio_animation_runtime_hooks_same_project_repair_20260502/`
+- 已完成：`audio_runtime_hooks_micro_patch` 通过 OpenCode same-project task-card execution 写入 `AudioRuntimeState.ts` 与 `audio_manifest.json`；`animation_feedback_hooks_micro_patch` 写入 `FeedbackAnimationState.ts` 与 `feedback_animation_manifest.json`。
+- 已修复 workflow bug：`/dev/null` new-file patch 覆盖已有文件会污染内容的问题已在 repo mutation 层拒绝；unsafe `python -c` task-card test 改为 `infra.scripts.validate_animation_artifact_integrity`；OpenCode adapter 内层 180s timeout 已对齐到 task-card adaptive timeout env。
+- 已完成确认：`animation_feedback_hooks_integrity_confirmation_after_timeout_repair` 使用 fresh OpenCode receipt `opreceipt_d66da1444cfa` / child run `run_cd54cbc8a9e1` 完成，写入 `workflow_animation_artifact_integrity_evidence.json`，safe validator 通过。
+- 保持未声明：`audioPlaybackVerified`、`bgmStarted`、`sfxPlaybackVerified`、`volumeToggleUsable`、`animationFeedbackVerified`、browser playtest、human review 和 `commercial_playable_go` 仍未声明。
+- Operator packet: `state/audio_animation_runtime_hooks_same_project_repair_20260502/operator_packet.json`
+- Normalized repair packet: `state/audio_animation_runtime_hooks_same_project_repair_20260502/normalized_repair_packet.json`
+- Phase gate: `state/audio_animation_runtime_hooks_same_project_repair_20260502/audio_animation_hooks_gate.json`
+- Phase closeout: `state/audio_animation_runtime_hooks_same_project_repair_20260502/phase_closeout.json`
+- 下一步 opening phase：`Trusted Cocos Build Browser Audio Runtime Evidence`。只为该阶段生成当前 phase task cards，先 build，再在 build GO 后 playtest/runtime gate；不得提前声明 commercial GO。
+
+## 2026-05-02 Closeout: Revive Feedback Feature Coverage Completion
+
+`Revive Feedback Feature Coverage Completion` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 4 张 DB-backed task cards；未进入 M110，未生成未来 phase task cards，未推进 audio/build/playtest/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `revive_feedback_feature_coverage_completion_20260502`
+- Task-card snapshot: `state/revive_feedback_feature_coverage_completion_20260502/task_cards.md`
+- Phase evidence: `state/revive_feedback_feature_coverage_completion_20260502/`
+- Automation lease: `autolease_revive_feedback_coverage_20260502`
+- 已完成：`failure_revive_feedback_coverage_micro_patch` 先按 Codex 执行 3 次 fresh receipt，child runs `run_c172afc9ad59`、`run_679dff055f5e`、`run_17730df81964` 均已闭合并最终 `blocked_after_three_attempts`；随后使用当前 phase OpenCode live proof 作为真实 fallback，在 `run_abb467c626b5` 完成同一 DB task card。
+- 产品结果：`workflow_commercial_feature_evidence.json` 已写入 `commercial_feature_coverage.failureReviveFeedback=true` 与 `player_visible_checks.failureReviveFeedback=true`，`current_task_card_id=failure_revive_feedback_coverage_completion`，`covered_task_cards` 已包含该卡。
+- 保持未声明：`audioPlaybackVerified`、`bgmStarted`、`sfxPlaybackVerified`、`volumeToggleUsable`、`animationFeedbackVerified`、human review 和 `commercial_playable_go` 仍未声明。
+- Operator packet: `state/revive_feedback_feature_coverage_completion_20260502/operator_packet.json`
+- Normalized repair packet: `state/revive_feedback_feature_coverage_completion_20260502/normalized_repair_packet.json`
+- Phase closeout: `state/revive_feedback_feature_coverage_completion_20260502/phase_closeout.json`
+- 下一步 opening phase：`Audio Animation Runtime Hooks Same-Project Repair`。只为该阶段生成当前 phase task cards，先完成 audio/animation hooks 后才允许考虑 build/playtest/runtime evidence phase。
+
+## 2026-05-02 Closeout: Patch Generation No-Patch Diagnostic Repair
+
+`Patch Generation No-Patch Diagnostic Repair` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 5 张 DB-backed task cards；未进入 M110，未生成未来 phase task cards，未推进 audio/build/playtest/product-depth/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `patch_generation_no_patch_diagnostic_repair_20260502`
+- Task-card snapshot: `state/patch_generation_no_patch_diagnostic_repair_20260502/task_cards.md`
+- Phase evidence: `state/patch_generation_no_patch_diagnostic_repair_20260502/`
+- Automation lease: `autolease_patch_generation_no_patch_diagnostic_20260502`
+- 已完成 workflow bug-first 修复：同项目 task-card wrapper 的内层 `WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS` / `WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS` 已对齐到 provider-output idle budget 480 秒，避免内层 Codex 在外层 provider-output watchdog 生效前切断 patch_apply turn。
+- 已完成 provider live proof：OpenCode live probe 为 `verified_ready` 且 `live_probe=true`，auth source 为 `MINIMAX_API_KEY`；该证据只允许作为真实 fallback 资格，不代表 shell/noop/dry-run 可满足实现 gate。
+- 产品恢复结果：`feature_evidence_resume_gate_after_budget_fix` 使用 Codex fresh receipt 在 `run_f41c5b586681` 完成，`workflow_commercial_feature_evidence.json` 已写入 `revive_prompt_evidence`，测试 2/2 通过。
+- 剩余 blocker：`failureReviveFeedback` 尚未显式写入 `commercial_feature_coverage` / `player_visible_checks`，所以 product-depth 仍不能通过，audio/build/playtest/human-review 继续 blocked/skipped。
+- Operator packet: `state/patch_generation_no_patch_diagnostic_repair_20260502/operator_packet.json`
+- Normalized repair packet: `state/patch_generation_no_patch_diagnostic_repair_20260502/normalized_repair_packet.json`
+- Phase closeout: `state/patch_generation_no_patch_diagnostic_repair_20260502/phase_closeout.json`
+- 下一步 opening phase：`Revive Feedback Feature Coverage Completion`。只为该阶段生成当前 phase task cards，补齐 `failureReviveFeedback` coverage 后才允许考虑 audio/animation hook phase。
+
+## 2026-05-02 Closeout: Revive Prompt Layout Evidence Ultra-Split Repair
+
+`Revive Prompt Layout Evidence Ultra-Split Repair` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 5 张 DB-backed task cards；未进入 M110，未生成未来 phase task cards，未推进 audio/build/playtest/product-depth/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `revive_prompt_layout_evidence_ultra_split_20260502`
+- Task-card snapshot: `state/revive_prompt_layout_evidence_ultra_split_20260502/task_cards.md`
+- Phase evidence: `state/revive_prompt_layout_evidence_ultra_split_20260502/`
+- Automation lease: `autolease_revive_layout_evidence_ultra_split_20260502`
+- 本阶段有效进展：`revive_prompt_layout_only_micro_patch` 通过 workflow task-card execution 完成，写入 `failure_overlay_layout.json` 的复活提示布局证据。
+- 已完成前置：上一阶段 `FailureOverlayState.ts` 已通过 workflow task-card execution 写入 `watch_reward_revive`、复活奖励提示、每局 1 次限制和 snapshot 输出。
+- 本阶段阻塞：`revive_prompt_feature_evidence_only_micro_patch` 三次 fresh receipt 后仍无 accepted patch，child runs 为 `run_c7f0c7428018`、`run_1a1c91b09a70`、`run_112296b408d0`，最终 `blocked_after_three_attempts`，`final_failure_class=provider_execution_failed`。
+- 当前根因：三次 raw evidence 都显示 Codex patch_apply 只到 `thread.started` / `turn.started`，未产出 unified diff；内层 `WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS=240` 早于外层 provider-output idle 480 秒切断 provider turn。下一步必须先修 patch generation idle budget，不得第四次直接重跑 feature-evidence 卡。
+- 上游短路继续生效：当前 `same_project_worker_patch_go=false`，所以 `audio_animation_runtime_hooks`、Cocos build/browser playtest/audio runtime/product-depth/human-review 仍只能保持 blocked/skipped，不得下推执行。
+- Operator packet: `state/revive_prompt_layout_evidence_ultra_split_20260502/operator_packet.json`
+- Normalized repair packet: `state/revive_prompt_layout_evidence_ultra_split_20260502/normalized_repair_packet.json`
+- Phase closeout: `state/revive_prompt_layout_evidence_ultra_split_20260502/phase_closeout.json`
+- 下一步 opening phase：`Patch Generation No-Patch Diagnostic Repair`。只为该阶段生成当前 phase task cards，先修控制面 idle budget，再由 gate 决定是否 fresh receipt 恢复 feature-evidence 卡；不得进入 build/playtest/audio/human-review。
+
+## 2026-05-02 Closeout: Revive Prompt Micro-Split Exact Context Repair
+
+`Revive Prompt Micro-Split Exact Context Repair` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 5 张 DB-backed task cards；未进入 M110，未生成未来 phase task cards，未推进 audio/build/playtest/product-depth/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `revive_prompt_micro_split_exact_context_20260502`
+- Task-card snapshot: `state/revive_prompt_micro_split_exact_context_20260502/task_cards.md`
+- Phase evidence: `state/revive_prompt_micro_split_exact_context_20260502/`
+- Automation lease: `autolease_revive_prompt_micro_split_20260502`
+- 本阶段有效进展：`revive_prompt_state_script_micro_patch` 通过 workflow task-card execution 在第二个 fresh receipt 完成，`FailureOverlayState.ts` 已写入复活奖励提示状态、中文文案、每局 1 次限制、按钮节点和 snapshot 输出。
+- 本阶段阻塞：`revive_prompt_layout_evidence_micro_patch` 三次 fresh receipt 后仍无 accepted patch，最终 `blocked_after_three_attempts`，`final_failure_class=provider_execution_failed`。
+- 当前根因：script-only 微卡可行，合并的 layout/evidence JSON 卡仍过宽或 evidence JSON 上下文过大。下一步不能第四次重跑该合并卡，必须拆成 layout-only 和 feature-evidence-only 两张更小卡。
+- 上游短路继续生效：当前 `same_project_worker_patch_go=false`，所以 `audio_animation_runtime_hooks`、Cocos build/browser playtest/audio runtime/product-depth/human-review 仍只能保持 blocked/skipped，不得下推执行。
+- Operator packet: `state/revive_prompt_micro_split_exact_context_20260502/operator_packet.json`
+- Normalized repair packet: `state/revive_prompt_micro_split_exact_context_20260502/normalized_repair_packet.json`
+- Phase closeout: `state/revive_prompt_micro_split_exact_context_20260502/phase_closeout.json`
+- 下一步建议 opening phase：`Revive Prompt Layout Evidence Ultra-Split Repair`。只为该阶段生成当前 phase task cards，先 layout-only，再 feature-evidence-only；不得进入 build/playtest/audio/human-review。
+
+## 2026-05-02 Closeout: Patch Worker Strategy Repair For Codex Turn-Start Stalls
+
+`Patch Worker Strategy Repair For Codex Turn-Start Stalls` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 5 张 DB-backed task cards；未进入 M110，未生成未来 phase task cards，未推进 audio/build/playtest/product-depth/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `patch_worker_strategy_turn_stall_repair_20260502`
+- Task-card snapshot: `state/patch_worker_strategy_turn_stall_repair_20260502/task_cards.md`
+- Phase evidence: `state/patch_worker_strategy_turn_stall_repair_20260502/`
+- 已完成 workflow bug-first 修复：Codex patch_apply 的 diff 生成现在进入 prompt-only broker workspace，不再把真实 repo/Cocos project 作为 `--cd`；同时加上 `--ignore-rules`，并在 metadata 中记录 `prompt_transport`、`prompt_workspace`、`project_working_directory` 和 `project_rules_ignored`。
+- 诊断证据：最小 stdin diff 诊断可以在 broker workspace 中快速产出可解析 unified diff；repo 内 prompt-argument 诊断会触发 Codex 工具/PowerShell 读取和策略拒绝，证明原先的 repo/project-rule 上下文会污染 patch proposal。
+- 产品恢复结果：`revive_prompt_resume_after_worker_strategy_repair` 在修复后执行 3 次 fresh receipt，child runs 为 `run_0b75311d15cc`、`run_3da7ca8bb0d8`、`run_70357dea69e5`，均已闭合；同项目未变，但仍无 changed files / accepted patch / passing tests，最终 `blocked_after_three_attempts`。
+- 当前根因：worker prompt transport 已修，但 `revive_prompt` 产品卡仍过宽或上下文不够“直接可出 diff”；下一步不能第四次重跑同一张卡，必须拆成更小的 exact-context micro-card。
+- 上游短路：当前 `same_project_worker_patch_go=false`，所以 `audio_animation_runtime_hooks`、Cocos build/browser playtest/audio runtime/product-depth/human-review 仍只能保持 blocked/skipped，不得下推执行。
+- Operator packet: `state/patch_worker_strategy_turn_stall_repair_20260502/operator_packet.json`
+- Normalized repair packet: `state/patch_worker_strategy_turn_stall_repair_20260502/normalized_repair_packet.json`
+- Phase closeout: `state/patch_worker_strategy_turn_stall_repair_20260502/phase_closeout.json`
+- 下一步建议 opening phase：`Revive Prompt Micro-Split Exact Context Repair`。只为该阶段生成当前 phase task cards，把 revive prompt 拆成 script/evidence exact-context 小卡后再 workflow-first 续跑。
+
+## 2026-05-02 Closeout: Provider Command Policy And Patch Generation Prompt Repair
+
+`Provider Command Policy And Patch Generation Prompt Repair` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 DB-backed task cards；未进入 M110，未生成未来 phase task cards，未推进 audio/build/playtest/product-depth/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `provider_command_policy_patch_generation_repair_20260502`
+- Task-card snapshot: `state/provider_command_policy_patch_generation_repair_20260502/task_cards.md`
+- Phase evidence: `state/provider_command_policy_patch_generation_repair_20260502/`
+- 已完成 workflow bug-first 修复：`patch_only_prompt_and_command_policy_guard` 让 Codex/OpenCode patch_apply 提示明确禁止 provider 侧 shell/PowerShell/cmd/Python/Node/npm/package-manager/file-inspection/tool 命令，只返回单个 bounded unified diff；`service_repo_mutation` 注入 `WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY=patch_only_no_shell` 和 bounded read-set context。
+- 已完成 transport 修复：`codex_patch_apply_transport_isolation_guard` 让 Codex patch_apply 只在 mutation 模式使用 `--ignore-user-config` 并禁用 apps/plugins/memories/tool-search/browser/computer/image/workspace features。隔离 smoke 输出 `ok`，说明认证仍可用；stderr 中的 analytics/Cloudflare 噪声未阻止该 smoke 完成。
+- 产品恢复结果：`revive_prompt_resume_after_provider_policy_repair` 三次 fresh receipt 后仍失败，暴露 user config/MCP/apps transport 噪声；完成 transport isolation 后，`revive_prompt_resume_after_codex_transport_isolation` 再次三次 fresh receipt，同项目未变、child runs `run_6b6a3475d876`、`run_f91c4e136f05`、`run_9fbd6add32ae` 均闭合，但仍无 changed files / passing tests / accepted patch，最终 `blocked_after_three_attempts`。
+- 当前根因：旧的 provider 命令策略和 Codex user-config transport 噪声已偿还；剩余 blocker 是 isolated Codex patch_apply 到达 `turn.started`/provider stream 后没有在 idle 窗口内返回可接受 unified diff，归一为 `codex_patch_apply_turn_started_no_diff_idle_timeout_after_transport_isolation`。
+- 上游短路：当前 `same_project_worker_patch_go=false`，所以 `audio_animation_runtime_hooks`、Cocos build/browser playtest/audio runtime/product-depth/human-review 仍只能保持 blocked/skipped，不得下推执行。
+- Operator packet: `state/provider_command_policy_patch_generation_repair_20260502/operator_packet.json`
+- Normalized repair packet: `state/provider_command_policy_patch_generation_repair_20260502/normalized_repair_packet.json`
+- Phase closeout: `state/provider_command_policy_patch_generation_repair_20260502/phase_closeout.json`
+- 下一步建议 opening phase：`Patch Worker Strategy Repair For Codex Turn-Start Stalls`。先修 patch worker strategy，再恢复 `revive_prompt_resume_after_codex_transport_isolation`；不得用 shell/noop/dry-run/fallback-only 满足 implementation gate。
+
+## 2026-05-01 Closeout: Split Chinese UI Panels And Failure Feedback Same-Project Resume
+
+`Split Chinese UI Panels And Failure Feedback Same-Project Resume` 已按 active-phase-only 原则收口。本阶段只生成当前 phase 的 DB-backed task cards，业务实现继续走 workflow task-card execution；Codex 只用于 workflow bug-first 修复、closeout 和验证，未推进 audio/build/playtest/product-depth/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `split_chinese_ui_feedback_resume_20260501`
+- Task-card snapshot: `state/split_chinese_ui_feedback_resume_20260501/task_cards.md`
+- Phase evidence: `state/split_chinese_ui_feedback_resume_20260501/`
+- 已完成：`chinese_ui_core_panels_visible` 写入中文核心 UI panel 状态与布局；`repair_feature_evidence_json_syntax` 修复同项目 feature evidence JSON；`failure_overlay_copy_layout_only` 写入失败弹窗中文文案和布局引用。
+- Bug-first 兜底：`retry_review_failure_classification_repair` 修正了 task-card worker 的失败分类，`patch_generation_failed` 不再误归为评审失败，而归一为 `provider_execution_failed`；`same_project_patch_review_failed` 也进入三次 fresh receipt retry 策略。对应测试已补在 `tests/test_pipeline_and_automation_cli.py`。
+- 最终阻塞：`revive_prompt_reward_state_only` 在修复后执行 3 次 fresh receipt 续跑，child runs 为 `run_cd39231e182f`、`run_9dc1cefd8aa7`、`run_751d4f92c3bb`，均有 provider stream/material progress，但都以 `return_code=124`、`mutation_final_test_status=patch_generation_failed` 收口；ledger 标记 `blocked_after_three_attempts`，root failure class 为 `provider_execution_failed`。
+- 根因证据：三次失败 stderr 均出现 provider 侧工具策略拒绝、PowerShell profile / ConstrainedLanguage 报错和 240 秒 idle timeout；这不是继续扩大硬时限能解决的产品实现问题，而是 provider 命令策略/补丁生成提示需要先修。
+- 上游短路：当前 `same_project_worker_patch_go=false`，因此 `audio_animation_runtime_hooks`、Cocos build/browser playtest/audio runtime/product-depth/human-review 仍只能保持 blocked/skipped，不得下推执行。
+- Operator packet: `state/split_chinese_ui_feedback_resume_20260501/operator_packet.json`
+- Normalized repair packet: `state/split_chinese_ui_feedback_resume_20260501/normalized_repair_packet.json`
+- Phase closeout: `state/split_chinese_ui_feedback_resume_20260501/phase_closeout.json`
+- 下一步建议 opening phase：`Provider Command Policy And Patch Generation Prompt Repair`。修 provider 命令策略和 patch-only 提示后，再恢复 `revive_prompt_reward_state_only`，或把它继续拆成 script-only / layout-only / evidence-only 三张当前 phase 卡。
+
+## 2026-05-01 Closeout: Adaptive Wall Timeout For Active Provider Progress Repair
+
+`Adaptive Wall Timeout For Active Provider Progress Repair` 已完成 workflow bug-first 修复。本阶段只修 task-card worker 的硬时限策略，未继续 Cocos 产品实现卡，未推进 audio/build/playtest/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `adaptive_wall_timeout_repair_20260501`
+- Task-card snapshot: `state/adaptive_wall_timeout_repair_20260501/task_cards.md`
+- 当前 phase 只生成 4 张 DB-backed task cards：governance/policy contract、subprocess adaptive wall timeout、task-card worker timeout budget wiring、closeout/resume gate。
+- 修复结果：`run_subprocess_with_tree_timeout` 支持 bounded adaptive wall timeout。初始 wall timeout 仍为 900 秒；若 child run 仍有 provider output 且最近有 material progress，可延长 900 秒；默认最多延长 1 次，绝对上限 1800 秒。延长证据写入 watchdog metadata：`adaptive_wall_timeout_extension_count`、`adaptive_wall_timeout_effective_seconds`、`adaptive_wall_timeout_absolute_max_seconds`、`adaptive_wall_timeout_exhausted`。
+- 任务卡 worker 已把同项目 task-card 执行的外层 watchdog 和内层 Codex timeout 同步到 adaptive 预算：`WORKFLOW_CODEX_TIMEOUT_SECONDS=1800`，同时保留 provider output idle 480 秒和 material progress idle 720 秒。
+- 新分类：若已获得 adaptive 延长但仍触发硬墙，failure class 变为 `task_scope_too_large_after_adaptive_wall_timeout`，repair suggestion 是拆分或收窄 task card，而不是继续无界延长。
+- 产品恢复边界：后续最多允许用 adaptive timeout 对更小或收窄后的 `chinese_ui_panels_and_feedback` 子卡做验证。若 broad card 再次耗尽 adaptive wall timeout，不得继续第 4 次无脑续跑，必须拆卡。
+
+## 2026-04-30 Closeout: Task Card Direct Execution And Provider Stream Observability Repair
+
+`Task Card Direct Execution And Provider Stream Observability Repair` 是 `chinese_ui_panels_and_feedback` 三次失败后的 workflow bug-first 修复阶段。本阶段只修执行控制面和诊断证据，未继续 Cocos 产品实现卡，未推进 audio/build/playtest/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `task_card_direct_execution_provider_stream_repair_20260430`
+- Task-card snapshot: `state/task_card_direct_execution_provider_stream_repair_20260430/task_cards.md`
+- 当前 phase 只生成 4 张 DB-backed task cards：historical forensics、direct task-card execution guard、adapter provider stream observability bridge、watchdog closure integrity/closeout。
+- 根因校准：旧 `commercial_game_task_worker_cli` 用 `--preset project_delivery` 调用 `from-task-card`，导致单张产品卡被展开为 planner / coder / research orchestration；外层 watchdog 只能看到 `workflow_progress` control heartbeat，真实 adapter 输出没有桥接为 DB provider stream evidence。因此旧 `provider_output_event_count=0` 只能说明外层未观测到 provider stream，不能单独证明 provider 自身 8 分钟完全无动作。
+- 修复结果：task-card patch apply 改为 `feature_delivery` + Codex direct path；lifecycle 层对 task-card patch packet 增加 direct guard；Codex adapter 写入 `provider_stream_observed` metadata，且不记录 raw text 或 chain-of-thought；`from-task-card` runtime state 暴露 provider/material progress 计数；外层 watchdog 可通过 DB activity probe 区分 control heartbeat、provider output idle 和 material progress idle；watchdog closure 会闭合 run、runtime task、attempt、worker lease、claims 和 scheduler leases。
+- 产品恢复边界：本阶段完成后只允许从现有 `chinese_ui_panels_and_feedback` 同项目 task card 以 fresh receipt 恢复；不得直接进入 `audio_animation_runtime_hooks`、build/playtest/audio runtime proof 或 human-review。若恢复后仍失败，必须用新的 adapter stream evidence 归因，不能再用旧外层观测盲点作为结论。
+- 2026-04-30 post-repair 产品卡恢复结果：`chinese_ui_panels_and_feedback` 已按新 direct/stream/closure 路径执行 3 次 fresh receipt 续跑，全部失败并已闭合现场。新证据证明不再是“无 provider 输出”：三次分别观测到 909、172、1007 条 `provider_stream_observed`，但没有形成可接受的 changed files / tests / evidence；最终状态是 `blocked_after_three_post_repair_attempts`，证据见 `state/task_card_direct_execution_provider_stream_repair_20260430/post_repair_product_resume_ledger.json`。下一步不得继续无脑第 4 次续跑；必须先拆分或收窄中文 UI/失败复活反馈卡，或修 provider 执行预算/任务粒度，再生成新的 active phase/task card。
+
+## 2026-04-30 Closeout: Task Card Three-Attempt Retry And Output Idle Restart Repair
+
+`Task Card Three-Attempt Retry And Output Idle Restart Repair` 已完成 workflow bug-first 修复。本阶段修复同项目 task-card worker 的异常处理，未继续 Cocos build/playtest/audio/human-review，未声明商业可玩 GO。
+
+- DB task-card run id: `task_card_three_attempt_retry_output_idle_20260430`
+- Task-card snapshot: `state/task_card_three_attempt_retry_output_idle_20260430/task_cards.md`
+- 当前 phase 只生成 4 张 DB-backed task cards：governance alignment、provider output/material watchdog、same-project three-attempt ledger、repair packet/closeout。
+- 三次重试规则：硬前置缺失直接 fail-fast；运行中异常必须先关闭 child run / attempt / worker lease，记录 failure class、attempt、receipt、child run、stdout/stderr tail 和 watchdog state，再用 fresh receipt 续跑同一 task card。连续 3 次运行中失败后才标记 `blocked_after_three_attempts`。
+- 输出 idle 规则：`workflow_progress` 只算 control heartbeat，不算 provider output；`last_provider_output_at` 超阈值触发 `provider_output_idle_timeout`；provider 有输出但无 changed files / evidence / tests / artifact 进展超阈值触发 `provider_no_material_progress_timeout`。
+- 上游短路规则继续有效：`same_project_worker_patch_go=false` 时，下游 build/playtest/audio/product-depth/human-review 只能写 `blocked_by_same_project_worker` 或 `skipped_due_to_upstream_failure`。
+- 本 phase 完成后已回到 `chinese_ui_panels_and_feedback` 同项目产品卡续跑；三次 fresh receipt 尝试均因 `provider_output_idle_timeout` 失败，最终标记 `blocked_after_three_attempts`。后续 direct/stream 修复完成后又进行了三次 post-repair fresh receipt 续跑，最终标记 `blocked_after_three_post_repair_attempts`。继续尝试前必须先做 operator/provider repair、提高/验证执行预算或重新拆卡，不能无脑第四次续跑。
+
 ## 2026-04-28 新窗口交接
 
 当前商业小游戏 pipeline 补全任务必须从交接文档继续：
@@ -7,6 +197,7 @@
 - [Commercial Game Pipeline Handoff](docs/development/commercial_game_pipeline_handoff_2026_04_28.md)
 - [Commercial Game Workflow Next Development](docs/development/commercial_game_workflow_next_development_2026_04_28.md)
 - [Commercial Game Pipeline Evaluation 2026-04-28](docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md)
+- [Commercial Game Production Next Development Sequence 2026-04-29](docs/development/commercial_game_production_next_sequence_2026_04_29.md)
 
 2026-04-28 closeout notes:
 
@@ -19,6 +210,7 @@
 - Superseding no-degradation gate v2 review reclassified `pipeline_a41e231c69a4` as historical automated scaffold/build/playtest evidence, not final commercial readiness proof.
 - Strict rerun `zero_degradation_rerun_20260428_evidencefix` wrote evidence at `state/long_runs/zero_degradation_rerun_20260428_evidencefix/zero_degradation_rerun_20260428_evidencefix.json` and failed honestly with `commercial_game_no_degradation_failed`. Live LLM role proof passed; missing Cocos ecosystem bridge, same-project worker patch proof, 8 real level goals, visible shop/skin state, audio runtime verification, strict build-exit acceptance, and human player review remain blockers.
 - 2026-04-29 zero-degradation Cocos/worker repair: `collect_cocos_ecosystem_bridge_evidence` now produces a project-local Cocos Editor bridge package, trusted bridge-report contract, license/cost manifest, and filesystem-only rejection evidence. Follow-up Cocos ecosystem repair added an unattended bridge runner and verified local Cocos Creator 3.8.8 Editor/AssetDB/Scene/Prefab/Build API evidence in `cocos_bridge_smoke_20260429_145028`; `ecosystem_integration_go` can now pass for the local Editor bridge. `commercial_game_production` task-card worker now uses one persistent Cocos project shell and calls `workflowctl run from-task-card --execute` with receipt-bound Codex patch apply, writing `same_project_patch_ledger.json`; it no longer hands DB task cards to the deterministic Cocos E2E generator. Strict rerun `zero_degradation_cocos_worker_rerun4_20260429` remained `NO-GO`: real assets and live role proof passed, first same-project patch failed with `provider_idle_timeout`, product-depth gates and human player review were absent.
+- 2026-04-29 follow-up diagnosis: the latest same-project worker timeout exposed a control-plane repair phase, not a product-content phase. `Provider Watchdog And Upstream Short-Circuit Repair` completed the DB-heartbeat-aware watchdog, child run closure/fresh receipt continuation, fallback-only rejection, and upstream-failure downstream short-circuit. The product resume phase `Same-Project Commercial Gameplay Implementation Resume` is paused again until the 2026-04-30 three-attempt retry control-plane repair is closed.
 
 核心规则：workflow 自己出 bug 时，Codex 可以先做 bug-first 兜底修复；业务 pipeline 补全必须回到 `workflowctl run from-task-card ...` 执行，Codex 只做审阅、兜底和验收。
 
@@ -34,7 +226,9 @@
 - 当前工作状态：`M109` 已作为 pipeline / technical-smoke baseline 接受；2026-04-28 的后续工作是 `commercial_game_production` 与 workflow-wide bug-first 修复，不自动进入 M110 或生成 M110 task card。
 - 接受实现基线：M109 已完成统一资料包、单 agent 角色管线、设计/方案输出、多模态路由真相表、DB task-card quality gate、有限 Cocos technical-smoke trial 和 cluster-upgrade review。
 - 当前纠偏：Cocos 生产线可生成可检查的本地样机工程，但 `commercial_playable_go` 仍必须依赖真实玩家视角证据；缺少 build/playtest 证据时只能标为样机，不能宣称商业化成品。后续商业小游戏必须走 `commercial_game_production`，并继续保留 workflow receipt、lease、write_set、provider live proof、evidence 和 operator packet 边界。
-- 2026-04-29 no-degradation 纠偏结果：`pipeline_a41e231c69a4` 只保留为 gate v1 历史证据；最新严格 run `zero_degradation_cocos_worker_rerun4_20260429` 为 `NO-GO`，不得声明 `commercial_playable_go=true`。后续 `cocos_bridge_smoke_20260429_145028` 已补齐真实本地 Editor bridge/API 证据，但商业本体的同项目 task-card patch、产品深度、构建/试玩和人工验收仍未完成。
+- 2026-04-29 no-degradation 纠偏结果：`pipeline_a41e231c69a4` 只保留为 gate v1 历史证据；最新严格 run `zero_degradation_cocos_worker_rerun4_20260429` 为 `NO-GO`，不得声明 `commercial_playable_go` 为 true。后续 `cocos_bridge_smoke_20260429_145028` 已补齐真实本地 Editor bridge/API 证据，但商业本体的同项目 task-card patch、产品深度、构建/试玩和人工验收仍未完成。
+- 前一产品 active phase：`Same-Project Commercial Gameplay Implementation Resume`。它已完成关卡目标与商店/皮肤两张卡，随后在 `chinese_ui_panels_and_feedback` 上三次 fresh receipt 续跑均因 `provider_output_idle_timeout` 失败；不得提前推进 Cocos build/playtest/human-review phase，也不得声明商业可玩 GO。
+- 2026-04-30 本阶段执行进展：`commercial_gameplay_levels` 和 `shop_skin_ownership_visuals` 已通过 DB-backed workflow task-card runs 完成，同项目写入 8 个 distinct level goals、商店/皮肤拥有状态和装备后视觉变化 evidence；`chinese_ui_panels_and_feedback` 在 direct/stream 修复前是 `blocked_after_three_attempts`，修复后三次续跑确认 provider 有大量输出但未产出可接受的补丁/测试/evidence，最终更新为 `blocked_after_three_post_repair_attempts`。按上游短路规则，`audio_animation_runtime_hooks` 和 `feature_evidence_writer_and_phase_closeout` 继续保持 `blocked/skipped_due_to_upstream_failure`，不得继续推进 build/playtest/human-review。
 - 商业化生产线 v2 细化设计见根目录 [COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md](COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md)：它定义 stage 内部 phase graph、资产图、Cocos bridge worker、supervisor repair loop 和 final gate contract；它不是 active task-card 导出，也不自动开启 M110。
 - 活跃真相集：`README.md`、`AGENTS.md`、本文件、`docs/milestone_history.md`、`docs/tech-debt-registry.md`、`docs/governance/tech_debt_registry.json`。
 - 历史评估、旧路线图、旧计划和生成态 evidence 不保留为活跃工作树文档。需要逐字审计时使用 Git 历史。
@@ -194,6 +388,7 @@ python -m pytest -q
 - 当前入口：M109 从“统一资料包 + 单 agent 角色管线试运行”开始；真实生产管线为 `commercial_game_production`，旧 `m109_single_agent_cocos` 只保留为兼容别名；active phase 开始后才生成 task card，不提前生成未来 phase 的 task card。
 - 暂不纳入：Gemini CLI、视频生成、GitHub 自动化、Hugging Face Jobs、远程 worker 扩展、托管 SaaS、广告 SDK 和 IAP。
 - active phase 开始后才生成 task card；phase closeout 必须包含 workflow 实际执行范围、Codex 兜底范围和 evidence。
+- 前一产品 phase 只包含同项目玩法实现恢复、商店/皮肤可视状态、中文 UI/失败复活反馈、音频/动效 runtime hook、产品深度 evidence writer 和本 phase closeout；当前三次重试修复 phase 关闭前，不得提前生成 Cocos build/playtest 或 human-review phase 的 task cards。
 
 ### Acceptable Detours
 

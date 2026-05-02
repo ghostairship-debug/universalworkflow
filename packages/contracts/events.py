@@ -41,6 +41,7 @@ class RunEventType(StrEnum):
     memory_item_materialized = "memory_item_materialized"
     simulation_recorded = "simulation_recorded"
     repair_applied = "repair_applied"
+    provider_stream_observed = "provider_stream_observed"
 
 
 class EventPayloadModel(ContractModel):
@@ -107,6 +108,22 @@ class RuntimeTaskCompletedPayload(EventPayloadModel):
     runtime_task_id: str
     return_code: int
     duration_ms: int
+
+
+class ProviderStreamObservedPayload(EventPayloadModel):
+    run_id: str
+    runtime_task_id: str
+    adapter_name: str
+    stream: str
+    classification: str
+    observed_at: str
+    byte_count: int
+    line_index: int
+    line_sha256: str
+    provider_event_type: str | None = None
+    parsed_keys: list[str] = Field(default_factory=list)
+    is_material_progress: bool = False
+    task_card_ref: str | None = None
 
 
 class EvidenceSubmittedPayload(EventPayloadModel):
@@ -311,6 +328,7 @@ EVENT_PAYLOAD_MODELS = {
     RunEventType.memory_item_materialized: MemoryItemMaterializedPayload,
     RunEventType.simulation_recorded: SimulationRecordedPayload,
     RunEventType.repair_applied: RepairAppliedPayload,
+    RunEventType.provider_stream_observed: ProviderStreamObservedPayload,
 }
 
 

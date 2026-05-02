@@ -24,6 +24,23 @@ from packages.worker_adapters.subprocess_support import (
 
 
 DEFAULT_OPENCODE_MODEL = "minimax/MiniMax-M2.7"
+OPENCODE_INLINE_PROMPT_LIMIT = 12000
+
+
+def _coerce_opencode_timeout_seconds(raw_value: str | None, default: int) -> int:
+    if raw_value:
+        try:
+            return max(1, int(raw_value))
+        except ValueError:
+            pass
+    return default
+
+
+def _resolve_opencode_timeout_seconds(default: int) -> int:
+    return _coerce_opencode_timeout_seconds(
+        os.getenv("WORKFLOW_OPENCODE_TIMEOUT_SECONDS") or os.getenv("WORKFLOW_PROVIDER_TIMEOUT_SECONDS"),
+        default,
+    )
 
 
 class OpenCodeAdapter(CliAdapterBase):
@@ -49,6 +66,7 @@ class OpenCodeAdapter(CliAdapterBase):
         self.pure = pure
         self.auto_approve = auto_approve
         self.executable = executable or self.executable_name
+        self.timeout_seconds = _resolve_opencode_timeout_seconds(self.timeout_seconds)
 
     def get_capabilities(self) -> list[str]:
         return [str(TaskKind.shell_exec)]
@@ -108,7 +126,16 @@ class OpenCodeAdapter(CliAdapterBase):
     def _variant_for_packet(self, packet: TaskPacket) -> str | None:
         return packet.env.get("WORKFLOW_OPENCODE_VARIANT") or self.variant
 
-    def _idle_timeout_seconds_for_packet(self, packet: TaskPacket) -> int:
+    def _timeout_seconds_for_packet(self, packet: TaskPacket) -> int:
+        return _coerce_opencode_timeout_seconds(
+            packet.env.get("WORKFLOW_OPENCODE_TIMEOUT_SECONDS")
+            or packet.env.get("WORKFLOW_PROVIDER_TIMEOUT_SECONDS")
+            or os.getenv("WORKFLOW_OPENCODE_TIMEOUT_SECONDS")
+            or os.getenv("WORKFLOW_PROVIDER_TIMEOUT_SECONDS"),
+            self.timeout_seconds,
+        )
+
+    def _idle_timeout_seconds_for_packet(self, packet: TaskPacket, timeout_seconds: int) -> int:
         raw_value = packet.env.get("WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS") or packet.env.get(
             "WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS"
         )
@@ -117,7 +144,19 @@ class OpenCodeAdapter(CliAdapterBase):
                 return max(1, int(raw_value))
             except ValueError:
                 pass
-        return min(self.timeout_seconds, 120)
+        return min(timeout_seconds, 120)
+
+    def _env_value_or_file(self, packet: TaskPacket, key: str, default: str = "") -> str:
+        value = packet.env.get(key)
+        if value:
+            return str(value)
+        file_path = packet.env.get(f"{key}_FILE")
+        if not file_path:
+            return default
+        try:
+            return Path(file_path).read_text(encoding="utf-8")
+        except OSError:
+            return default
 
     def _prompt_for(self, packet: TaskPacket) -> str:
         mutation_mode = self._mutation_mode_for(packet)
@@ -127,8 +166,10 @@ class OpenCodeAdapter(CliAdapterBase):
             test_commands = packet.env.get("WORKFLOW_MUTATION_TEST_COMMANDS", "[]")
             attempt_index = packet.env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0")
             failure_feedback = packet.env.get("WORKFLOW_MUTATION_FAILURE_FEEDBACK", "").strip()
+            provider_command_policy = packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY", "patch_only_no_shell")
+            read_set_context = self._env_value_or_file(packet, "WORKFLOW_MUTATION_READ_SET_CONTEXT", "[]")
             task_card_ref = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_REF", "").strip()
-            task_card_content = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
+            task_card_content = self._env_value_or_file(packet, "WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
             failure_block = (
                 "Previous attempt failed. Use the feedback below to produce a corrected patch.\n"
                 f"{failure_feedback}\n"
@@ -146,11 +187,17 @@ class OpenCodeAdapter(CliAdapterBase):
                 f"Attempt index: {attempt_index}\n"
                 f"Allowed write_set JSON: {write_set}\n"
                 f"Read-only context paths JSON: {read_set}\n"
+                f"Embedded read-set context JSON: {read_set_context}\n"
                 f"Explicit test commands JSON: {test_commands}\n"
+                f"Provider command policy: {provider_command_policy}.\n"
+                "Patch-only mode: do not run shell, PowerShell, cmd, Python, Node, npm, package-manager, "
+                "file-inspection, or other tool commands. Do not ask for command output. Use only the "
+                "embedded task-card content, read-set context, failure feedback, and paths already provided here.\n"
                 f"{task_card_block}"
                 f"{failure_block}"
-                "Return only one valid unified diff patch that modifies files inside write_set.\n"
+                "Return exactly one valid unified diff patch that modifies files inside write_set.\n"
                 "Do not wrap the patch in code fences. Do not add commentary before or after the diff.\n"
+                "Do not include shell transcripts, markdown, explanations, or non-diff text.\n"
             )
         content = self._artifact_content_for(packet)
         return (
@@ -204,7 +251,19 @@ class OpenCodeAdapter(CliAdapterBase):
                 return expected
         return None
 
+    def _prompt_file_for(self, packet: TaskPacket, prompt: str) -> str:
+        artifact_path = Path(self._artifact_path_for(packet))
+        prompt_path = artifact_path.with_name(f"{artifact_path.stem}_prompt.txt")
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prompt, encoding="utf-8", newline="\n")
+        return prompt_path.resolve().as_posix()
+
+    def _prompt_transport_for(self, packet: TaskPacket) -> str:
+        prompt = self._prompt_for(packet)
+        return "file_attachment" if len(prompt.encode("utf-8")) > OPENCODE_INLINE_PROMPT_LIMIT else "argv"
+
     def build_command(self, packet: TaskPacket) -> list[str]:
+        prompt = self._prompt_for(packet)
         command = [
             *self._resolved_command_prefix(),
             "run",
@@ -223,14 +282,19 @@ class OpenCodeAdapter(CliAdapterBase):
             command.extend(["--variant", variant])
         if self.auto_approve:
             command.append("--dangerously-skip-permissions")
-        command.append(self._prompt_for(packet))
+        if len(prompt.encode("utf-8")) > OPENCODE_INLINE_PROMPT_LIMIT:
+            command.append("Execute the workflow mutation instructions in the attached prompt file. Return only the requested unified diff.")
+            command.extend(["--file", self._prompt_file_for(packet, prompt)])
+        else:
+            command.append(prompt)
         return command
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
         command = self.build_command(packet)
         env = build_subprocess_env(packet.env)
-        idle_timeout_seconds = self._idle_timeout_seconds_for_packet(packet)
+        timeout_seconds = self._timeout_seconds_for_packet(packet)
+        idle_timeout_seconds = self._idle_timeout_seconds_for_packet(packet, timeout_seconds)
         try:
             runner = self._runner if self._uses_custom_runner else run_subprocess_with_tree_timeout
             run_kwargs = {
@@ -239,7 +303,7 @@ class OpenCodeAdapter(CliAdapterBase):
                 "capture_output": True,
                 "text": True,
                 "check": False,
-                "timeout": self.timeout_seconds,
+                "timeout": timeout_seconds,
             }
             if not self._uses_custom_runner:
                 run_kwargs["idle_timeout"] = idle_timeout_seconds
@@ -248,7 +312,7 @@ class OpenCodeAdapter(CliAdapterBase):
                 **run_kwargs,
             )
         except subprocess.TimeoutExpired as exc:
-            completed = completed_process_from_timeout(exc, command=command, timeout_seconds=self.timeout_seconds)
+            completed = completed_process_from_timeout(exc, command=command, timeout_seconds=timeout_seconds)
         stdout = decode_subprocess_stream(completed.stdout)
         stderr = decode_subprocess_stream(completed.stderr)
         output_text = self._extract_output_text(stdout)
@@ -272,8 +336,10 @@ class OpenCodeAdapter(CliAdapterBase):
             "mutation_mode": str(mutation_mode),
             "opencode_model": self._model_for_packet(packet),
             "opencode_variant": self._variant_for_packet(packet),
-            "timeout_seconds": self.timeout_seconds,
+            "timeout_seconds": timeout_seconds,
             "idle_timeout_seconds": idle_timeout_seconds,
+            "provider_command_policy": packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY"),
+            "prompt_transport": self._prompt_transport_for(packet),
             **completed_process_watchdog_metadata(completed),
         }
         if return_code == TIMEOUT_EXIT_CODE:

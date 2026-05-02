@@ -26,6 +26,8 @@ jobs:
         run: make test-core
       - name: Test matrix smoke
         run: workflowctl --db-path state/workflow.db --workspace-root "$GITHUB_WORKSPACE" test matrix --suite core --dry-run
+      - name: Commercial game matrix smoke
+        run: workflowctl --db-path state/workflow.db --workspace-root "$GITHUB_WORKSPACE" test matrix --suite commercial_fast --dry-run
       - name: Capability probe parser tests
         run: python -m pytest tests/test_capability_probe.py -q
       - name: Scoped receipt smoke

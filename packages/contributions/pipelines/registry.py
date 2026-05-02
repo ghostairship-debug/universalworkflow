@@ -380,7 +380,7 @@ def execute_contribution_validation(
                 if awaiting_human
                 else "commercial_game_no_degradation_failed",
                 "output": {
-                    "go_no_go": "GO" if gate_go else "NO-GO",
+                    "go_no_go": "GO" if gate_go else "AWAITING_HUMAN_REVIEW" if awaiting_human else "NO-GO",
                     "required_gate": "real_commercial_playable_go",
                     "blockers": blockers,
                     "forbids_fixed_template": True,
@@ -388,8 +388,12 @@ def execute_contribution_validation(
                     "live_role_provider_proof_go": no_degradation["live_role_provider_proof_go"],
                     "same_project_worker_patch_go": no_degradation["same_project_worker_patch_go"],
                     "human_player_review_go": no_degradation["human_player_review_go"],
+                    "machine_evidence_go": no_degradation.get("machine_evidence_go", False),
+                    "build_ledger_go": no_degradation.get("build_ledger_go", False),
+                    "browser_playtest_ledger_go": no_degradation.get("browser_playtest_ledger_go", False),
                     "degradation_findings": no_degradation["degradation_findings"],
                     "no_degradation_contract": no_degradation,
+                    "commercial_final_gate_evidence": no_degradation.get("commercial_final_gate_evidence"),
                     "accepted_evidence": [
                         "real implemented feature flows",
                         "player-visible screenshots/playtest",

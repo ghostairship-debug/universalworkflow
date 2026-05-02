@@ -32,6 +32,22 @@ def test_core_domain_test_matrix_import_remains_compatible() -> None:
     assert select_matrix_compat("unit").targets == select_matrix("unit").targets
 
 
+def test_commercial_game_matrix_layers_are_named_and_separated() -> None:
+    fast = select_matrix("commercial_fast")
+    integration = select_matrix("commercial_integration")
+    cocos_browser = select_matrix("commercial_cocos_browser")
+    provider_contract = select_matrix("commercial_provider_contract")
+
+    assert fast.run_slow is False
+    assert "tests/test_commercial_game_evidence_contracts.py" in fast.targets
+    assert "tests/test_pipeline_and_automation_cli.py" in integration.targets
+    assert cocos_browser.run_slow is True
+    assert cocos_browser.targets == ["tests/test_cocos_e2e.py"]
+    assert "tests/test_capability_probe.py" in provider_contract.targets
+    assert set(fast.targets).isdisjoint(cocos_browser.targets)
+    assert set(provider_contract.targets).isdisjoint(cocos_browser.targets)
+
+
 def test_cli_test_matrix_dry_run_uses_workspace_root(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,

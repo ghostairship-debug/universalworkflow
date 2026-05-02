@@ -151,6 +151,25 @@ def _fake_patch_runner(command, cwd, env, capture_output, text, check, timeout):
     )
 
 
+def _fake_patch_apply_failure_runner(command, cwd, env, capture_output, text, check, timeout):
+    write_set = json.loads(env.get("WORKFLOW_MUTATION_WRITE_SET", "[]"))
+    assert write_set
+    target = write_set[0].replace("\\", "/")
+    patch_text = (
+        f"--- {target}\n"
+        f"+++ {target}\n"
+        "@@ -1 +1 @@\n"
+        "-not-the-current-content\n"
+        "+after\n"
+    )
+    return subprocess.CompletedProcess(
+        command,
+        0,
+        stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+        stderr="",
+    )
+
+
 def _patch_apply_receipt_id(service: OrchestratorService, run_id: str, write_set: list[str]) -> str:
     receipt = service.issue_operator_action_receipt(
         action_type="resume_run",
@@ -1929,6 +1948,51 @@ def test_compile_run_accepts_repo_mutation_contract_and_projects_it(tmp_path: Pa
     assert detail_after["mutation_result"]["test_attempts"][0]["passed"] is True
 
 
+def test_repo_mutation_patch_apply_failure_projects_mutation_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_patch_apply_failure_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "mutated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "task_card.md"
+    task_card.write_text("# Bad context\n", encoding="utf-8")
+
+    run = service.create_run("Bounded repo mutation with bad context", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        task_card_ref="bad-context",
+        task_card_path=task_card.as_posix(),
+        write_set=["mutated.txt"],
+        read_set=["task_card.md"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    bundle = service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["mutated.txt"]),
+    )
+    detail_after = service.get_status_detail(run.run_id)
+    payload = service.get_run_pr_ready_summary(run.run_id)
+
+    assert bundle.run.status == "failed"
+    assert target_file.read_text(encoding="utf-8") == "before\n"
+    assert detail_after["mutation_result"]["final_test_status"] == "patch_apply_failed"
+    assert "remove mismatch" in detail_after["mutation_result"]["failure_reason"]
+    assert payload["tests"]["status"] == "patch_apply_failed"
+    assert payload["bounded_patch"]["changed_files"] == []
+    assert payload["readiness"] == "blocked"
+
+
 def test_compile_run_defaults_patch_apply_to_codex_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(tmp_path)
@@ -2344,6 +2408,119 @@ def test_repo_mutation_rejects_out_of_scope_patch(tmp_path: Path, monkeypatch: p
     assert not (tmp_path / "rogue.txt").exists()
 
 
+def test_repo_mutation_accepts_unique_project_relative_paths_in_write_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    project_dir = tmp_path / "state" / "run" / "cocos_project"
+    project_dir.mkdir(parents=True)
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text('{"audio": false}\n', encoding="utf-8")
+
+    def _project_relative_runner(command, cwd, env, capture_output, text, check, timeout):
+        patch_text = (
+            "diff --git a/assets/scripts/AudioRuntimeState.ts b/assets/scripts/AudioRuntimeState.ts\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/assets/scripts/AudioRuntimeState.ts\n"
+            "@@ -0,0 +1 @@\n"
+            "+export const audioRuntimeHooksConfigured = true;\n"
+            "diff --git a/workflow_commercial_feature_evidence.json b/workflow_commercial_feature_evidence.json\n"
+            "--- a/workflow_commercial_feature_evidence.json\n"
+            "+++ b/workflow_commercial_feature_evidence.json\n"
+            "@@ -1 +1 @@\n"
+            "-{\"audio\": false}\n"
+            "+{\"audio\": true}\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_project_relative_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+    run = service.create_run("Accept project relative mutation", "feature_delivery")
+    write_set = [
+        "state/run/cocos_project/assets/scripts/AudioRuntimeState.ts",
+        "state/run/cocos_project/workflow_commercial_feature_evidence.json",
+    ]
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=write_set,
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, write_set),
+    )
+
+    assert (project_dir / "assets" / "scripts" / "AudioRuntimeState.ts").read_text(encoding="utf-8") == (
+        "export const audioRuntimeHooksConfigured = true;\n"
+    )
+    assert (project_dir / "workflow_commercial_feature_evidence.json").read_text(encoding="utf-8") == '{"audio": true}\n'
+    assert not (tmp_path / "assets" / "scripts" / "AudioRuntimeState.ts").exists()
+
+
+def test_repo_mutation_rejects_new_file_patch_when_target_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    target_file = tmp_path / "already_exists.txt"
+    target_file.write_text("existing\n", encoding="utf-8")
+
+    def _new_file_runner(command, cwd, env, capture_output, text, check, timeout):
+        patch_text = (
+            "diff --git a/already_exists.txt b/already_exists.txt\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/already_exists.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+replacement\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_new_file_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+    run = service.create_run("Reject new file over existing target", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=["already_exists.txt"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    bundle = service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["already_exists.txt"]),
+    )
+    detail = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "failed"
+    assert target_file.read_text(encoding="utf-8") == "existing\n"
+    assert detail["mutation_result"]["final_test_status"] == "patch_apply_failed"
+    assert "new-file patch target already exists" in detail["mutation_result"]["failure_reason"]
+
+
 def test_repo_mutation_retries_with_bounded_fix_iterations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(tmp_path)
@@ -2353,6 +2530,10 @@ def test_repo_mutation_retries_with_bounded_fix_iterations(tmp_path: Path, monke
     PresetRepository(db_path).seed_defaults()
 
     def _iterating_runner(command, cwd, env, capture_output, text, check, timeout):
+        assert env["WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY"] == "patch_only_no_shell"
+        read_context = json.loads(env["WORKFLOW_MUTATION_READ_SET_CONTEXT"])
+        assert read_context[0]["path"] == "notes.md"
+        assert read_context[0]["content_preview"] == "Use after as the repaired value.\n"
         target = json.loads(env["WORKFLOW_MUTATION_WRITE_SET"])[0].replace("\\", "/")
         attempt_index = int(env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0"))
         next_value = "broken" if attempt_index == 0 else "after"
@@ -2375,6 +2556,8 @@ def test_repo_mutation_retries_with_bounded_fix_iterations(tmp_path: Path, monke
 
     target_file = tmp_path / "iterated.txt"
     target_file.write_text("before\n", encoding="utf-8")
+    read_context_file = tmp_path / "notes.md"
+    read_context_file.write_text("Use after as the repaired value.\n", encoding="utf-8")
     verifier = tmp_path / "verify_iterated.py"
     verifier.write_text(
         "from pathlib import Path\n"
@@ -2389,6 +2572,7 @@ def test_repo_mutation_retries_with_bounded_fix_iterations(tmp_path: Path, monke
         run.run_id,
         adapter_name="opencode",
         write_set=["iterated.txt"],
+        read_set=["notes.md"],
         test_commands=[test_command],
         max_fix_iterations=1,
         mutation_mode=MutationMode.patch_apply,
@@ -2455,6 +2639,54 @@ def test_project_delivery_coder_uses_repo_mutation_when_parent_contract_is_prese
 
     assert detail["orchestration"]["role_progress"]["coder"]["mutation_report"]["mutation_result"]["final_test_status"] == "passed"
     assert target_file.read_text(encoding="utf-8") == "after\n"
+
+
+def test_project_delivery_patch_apply_does_not_fallback_to_non_patch_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter(
+        [
+            ShellAdapter(),
+            CodexAdapter(runner=_fake_timeout_runner),
+            NoopAdapter(),
+        ]
+    )
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "project_slice.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "project_task_card.md"
+    task_card.write_text("# Project Slice\n\nImplement the bounded coder change.\n", encoding="utf-8")
+
+    run = service.create_run("Dogfood project delivery mutation timeout", "project_delivery")
+    service.compile_run(
+        run.run_id,
+        task_card_ref="M17-3A",
+        task_card_path=task_card.as_posix(),
+        write_set=["project_slice.txt"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["project_slice.txt"]),
+    )
+    detail = service.get_status_detail(run.run_id)
+    child_runs = detail["orchestration"]["child_runs"]
+    coder_children = [item for item in child_runs if item["role"] == "coder"]
+
+    assert len(coder_children) == 1
+    assert coder_children[0]["status"] in {"failed", "rejected"}
+    assert coder_children[0]["fallback_status"] == "fallback_provider_unavailable"
+    assert coder_children[0]["fallback_adapter"] == "shell"
+    assert coder_children[0]["fallback_blocker"] == "fallback_adapter_not_patch_capable"
+    assert target_file.read_text(encoding="utf-8") == "before\n"
 
 
 def test_domain_pack_skill_export_requires_flag_then_exports_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

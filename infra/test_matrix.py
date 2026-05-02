@@ -47,6 +47,25 @@ SLOW_TARGETS = [
     "tests/test_release_closeout.py",
 ]
 
+COMMERCIAL_FAST_TARGETS = [
+    "tests/test_active_truth_check.py",
+    "tests/test_commercial_game_evidence_contracts.py",
+]
+
+COMMERCIAL_INTEGRATION_TARGETS = [
+    "tests/test_pipeline_and_automation_cli.py",
+    "tests/test_m109_unified_brief.py",
+]
+
+COMMERCIAL_COCOS_BROWSER_TARGETS = [
+    "tests/test_cocos_e2e.py",
+]
+
+COMMERCIAL_PROVIDER_CONTRACT_TARGETS = [
+    "tests/test_capability_probe.py",
+    "tests/test_capability_control_plane.py",
+]
+
 PYTEST_TEMP_ROOT_NAME = ".pytest-tmp-workflow"
 PYTEST_TEMP_PREFIXES = ("matrix-", "default-")
 KEEP_TEST_TEMP_ENV = "WORKFLOW_KEEP_TEST_TEMP"
@@ -236,6 +255,18 @@ def select_matrix(suite: str, shard: str | None = None) -> MatrixSelection:
         return MatrixSelection(suite=suite, targets=_apply_shard(INTEGRATION_TARGETS, parsed_shard))
     if suite == "slow":
         return MatrixSelection(suite=suite, targets=_apply_shard(SLOW_TARGETS, parsed_shard), run_slow=True)
+    if suite == "commercial_fast":
+        return MatrixSelection(suite=suite, targets=_apply_shard(COMMERCIAL_FAST_TARGETS, parsed_shard))
+    if suite == "commercial_integration":
+        return MatrixSelection(suite=suite, targets=_apply_shard(COMMERCIAL_INTEGRATION_TARGETS, parsed_shard))
+    if suite == "commercial_cocos_browser":
+        return MatrixSelection(
+            suite=suite,
+            targets=_apply_shard(COMMERCIAL_COCOS_BROWSER_TARGETS, parsed_shard),
+            run_slow=True,
+        )
+    if suite == "commercial_provider_contract":
+        return MatrixSelection(suite=suite, targets=_apply_shard(COMMERCIAL_PROVIDER_CONTRACT_TARGETS, parsed_shard))
     if suite == "full":
         targets = [*CORE_TARGETS, *INTEGRATION_TARGETS]
         return MatrixSelection(suite=suite, targets=_apply_shard(targets, parsed_shard))

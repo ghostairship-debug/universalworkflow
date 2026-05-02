@@ -11,7 +11,7 @@
 ## Real Game Pipeline Correction (2026-04-28)
 
 - The legacy `commercial_cocos_game` fixed-template pipeline is removed as an executable delivery path.
-- Running that legacy template now returns a blocked deprecation guard instead of generating a template-based Cocos project.
+- Running that legacy template now returns the blocked deprecation guard `legacy_cocos_template_removed` instead of generating a template-based Cocos project.
 - Real commercial game work must enter `commercial_game_production`: unified brief, role outputs, DB task cards, real asset generation, task-card implementation, player QA, supervisor decision, and final commercial readiness gate.
 - Low-level Cocos E2E/scaffold commands may still exist for diagnostics, but they are not allowed to prove or deliver a commercial game by themselves.
 - A Cocos engine empty project may be used only as technical bootstrapping; final content cannot be the old fixed game template.
@@ -30,12 +30,19 @@
 - Current evaluation report: [docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md](docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md).
 - Commercial production v2 design blueprint: [COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md](COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md). It describes the stage-internal phase graph, asset graph, Cocos bridge workers, supervisor repair loops, and final gate contract; it is not an active task-card export.
 
-## 当前状态：M108 Cocos 小目标样机闭环完成
+## Commercial Runtime Evidence Closeout (2026-05-02)
+
+- Strict pipeline `pipeline_ecf26665254e` produced real asset generation, same-project implementation evidence, trusted Cocos bridge evidence, Cocos Creator 3.8.8 Web Mobile build ledger, HTTP/browser playtest ledger, screenshots, and audio/BGM/SFX/volume runtime proof, but the subsequent real human review rejected the launched build.
+- Current final gate is `NO-GO`: `machine_evidence_go=false`, `human_player_review_go=false`, and `commercial_playable_go=false`.
+- The reviewed URL did point at the current pipeline `build/web-mobile`; the failure is product-level, not a wrong launch path. The machine gate over-accepted runtime hook / canvas / event coverage as if it proved a completed game body.
+- Next commercial-game work must open a new active phase to repair both the real game body and the final gate. Unattended automation must not convert event-only, canvas-only, scaffold, build-only, or browser-event evidence into commercial GO.
+
+## 当前状态：M109 Pipeline / Technical-Smoke Baseline
 
 - 包版本：`0.66.0`。
-- 当前接受实现基线：M108 已完成 Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout。
-- 当前质量结论：Cocos 生产线已能生成可检查的本地样机工程和诚实 closeout 报告；但在缺少真实 build/playtest 玩家证据时，`commercial_playable_go` 仍为 NO-GO，不能宣称商业化可玩成品。
-- 当前工作重点：M108.5 review 决策点先修复证据闸口和商业化 gap 归因；不得自动延续“继续做游戏”。
+- 当前接受实现基线：M109 已完成统一资料包、单 agent 角色管线、设计/方案输出、多模态路由真相表、DB task-card quality gate、有限 Cocos technical-smoke trial 和 cluster-upgrade review。
+- 当前质量结论：M108 Cocos 小目标样机闭环是历史基线；M109 只证明 pipeline / technical-smoke，`commercial_playable_go` 仍为 NO-GO，不能宣称商业化可玩成品。
+- 当前工作重点：M109 后 `commercial_game_production` 无降级修复；不自动进入 M110，不提前生成未来 phase task card。
 - task card 规则：数据库是权威来源，Markdown 只是自动导出的人工快照；每张卡必须包含目标、读写范围、测试、证据、阻塞条件和模型执行提示。
 - M108.5 决策记录：[docs/evaluations/m108_5_review_decision.md](docs/evaluations/m108_5_review_decision.md)。
 - 活跃开发方案见：[CURRENT_DEVELOPMENT_WORKFLOW.md](CURRENT_DEVELOPMENT_WORKFLOW.md)。

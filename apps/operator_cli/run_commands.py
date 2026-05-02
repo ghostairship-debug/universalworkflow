@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +37,128 @@ def _normal_task_card_path(task_card_path: str | Path | None) -> str | None:
     if task_card_path is None:
         return None
     return Path(task_card_path).resolve().as_posix()
+
+
+def _emit_from_task_card_progress(
+    *,
+    db_path: Path,
+    run_id: str,
+    runtime_task_id: str,
+    capability_adapter: str | None,
+    task_card_ref: str,
+) -> None:
+    payload = {
+        "event": "workflow_progress",
+        "source": "from-task-card",
+        "run_id": run_id,
+        "runtime_task_id": runtime_task_id,
+        "task_card_ref": task_card_ref,
+        "capability_adapter": capability_adapter,
+        "emitted_at": datetime.now(UTC).isoformat(),
+        "runtime_state": _from_task_card_runtime_state(db_path=db_path, run_id=run_id),
+    }
+    typer.echo("workflow_progress " + json.dumps(payload, ensure_ascii=False, sort_keys=True), err=True)
+
+
+def _from_task_card_runtime_state(*, db_path: Path, run_id: str) -> dict[str, object]:
+    try:
+        with sqlite3.connect(db_path) as connection:
+            connection.row_factory = sqlite3.Row
+            attempt = connection.execute(
+                """
+                SELECT attempt_id, runtime_task_id, status, created_at, closed_at, close_reason
+                FROM runtime_attempts
+                WHERE run_id = ?
+                ORDER BY sequence_no DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            lease = connection.execute(
+                """
+                SELECT lease_id, adapter_name, status, heartbeat_at, lease_expires_at, released_at, release_reason
+                FROM worker_leases
+                WHERE run_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            heartbeat = connection.execute(
+                """
+                SELECT created_at, payload_json
+                FROM run_events
+                WHERE run_id = ? AND event_type = 'worker_heartbeat_received'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            provider_events = connection.execute(
+                """
+                SELECT created_at, payload_json
+                FROM run_events
+                WHERE run_id = ? AND event_type = 'provider_stream_observed'
+                ORDER BY created_at
+                """,
+                (run_id,),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return {"status": "db_probe_failed", "error": str(exc)}
+    provider_output_events = []
+    material_progress_events = []
+    for event in provider_events:
+        try:
+            payload = json.loads(event["payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        if payload.get("classification") != "control":
+            provider_output_events.append(event)
+        if payload.get("is_material_progress"):
+            material_progress_events.append(event)
+    latest_provider_event = provider_output_events[-1] if provider_output_events else None
+    latest_material_event = material_progress_events[-1] if material_progress_events else None
+    return {
+        "status": "observed",
+        "attempt_id": attempt["attempt_id"] if attempt is not None else None,
+        "attempt_status": attempt["status"] if attempt is not None else None,
+        "worker_lease_id": lease["lease_id"] if lease is not None else None,
+        "worker_lease_status": lease["status"] if lease is not None else None,
+        "worker_adapter": lease["adapter_name"] if lease is not None else None,
+        "worker_heartbeat_at": lease["heartbeat_at"] if lease is not None else None,
+        "latest_event_heartbeat_at": heartbeat["created_at"] if heartbeat is not None else None,
+        "provider_output_event_count": len(provider_output_events),
+        "material_progress_event_count": len(material_progress_events),
+        "last_provider_output_at": latest_provider_event["created_at"] if latest_provider_event is not None else None,
+        "last_material_progress_at": latest_material_event["created_at"] if latest_material_event is not None else None,
+    }
+
+
+def _start_from_task_card_progress_thread(
+    *,
+    db_path: Path,
+    run_id: str,
+    runtime_task_id: str,
+    capability_adapter: str | None,
+    task_card_ref: str,
+    interval_seconds: float = 30.0,
+) -> threading.Event:
+    stop_event = threading.Event()
+
+    def _loop() -> None:
+        while not stop_event.is_set():
+            _emit_from_task_card_progress(
+                db_path=db_path,
+                run_id=run_id,
+                runtime_task_id=runtime_task_id,
+                capability_adapter=capability_adapter,
+                task_card_ref=task_card_ref,
+            )
+            stop_event.wait(interval_seconds)
+
+    thread = threading.Thread(target=_loop, name=f"from-task-card-progress-{run_id}", daemon=True)
+    thread.start()
+    return stop_event
 
 
 def _resume_scope(run_id: str) -> dict[str, object]:
@@ -379,11 +504,28 @@ def run_from_task_card(
                 mutation_mode="patch_apply",
             ),
         )
-        executed = _run_workflow_action(lambda: service.resume_run(run.run_id, operator_receipt_id=operator_receipt_id))
-        payload["run"] = executed.run.model_dump(mode="json")
-        payload["evidence_id"] = executed.evidence.evidence_id
-        payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
+        progress_stop = _start_from_task_card_progress_thread(
+            db_path=_db_path_from_context(ctx),
+            run_id=run.run_id,
+            runtime_task_id=prepared.task_packet.runtime_task_id,
+            capability_adapter=prepared.capability_route.adapter_name if prepared.capability_route is not None else None,
+            task_card_ref=ref,
+        )
+        try:
+            executed = _run_workflow_action(lambda: service.resume_run(run.run_id, operator_receipt_id=operator_receipt_id))
+            payload["run"] = executed.run.model_dump(mode="json")
+            payload["evidence_id"] = executed.evidence.evidence_id
+            payload["review_decision"] = executed.review_verdict.decision if executed.review_verdict is not None else None
+            payload["capability_adapter"] = (
+                prepared.capability_route.adapter_name if prepared.capability_route is not None else None
+            )
+            payload["runtime_state"] = _from_task_card_runtime_state(db_path=_db_path_from_context(ctx), run_id=run.run_id)
+        finally:
+            progress_stop.set()
     payload["pr_ready_summary"] = _run_workflow_action(lambda: service.get_run_pr_ready_summary(run.run_id))
+    status_detail = _run_workflow_action(lambda: service.get_status_detail(run.run_id))
+    if isinstance(status_detail.get("orchestration"), dict):
+        payload["orchestration"] = status_detail["orchestration"]
     _emit_json(payload)
 
 

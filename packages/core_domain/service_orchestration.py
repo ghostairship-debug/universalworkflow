@@ -229,6 +229,8 @@ class OrchestrationExecutionService:
             if adapter_name in seen:
                 continue
             seen.add(adapter_name)
+            if not self._adapter_can_satisfy_mutation_contract(adapter_name, mutation_contract):
+                continue
             try:
                 return self._facade.compile_run(
                     run_id,
@@ -253,6 +255,23 @@ class OrchestrationExecutionService:
                 UnsupportedTaskKindError,
             ):
                 continue
+        if mutation_contract is not None and mutation_contract.mutation_mode == MutationMode.patch_apply:
+            return self._facade.compile_run(
+                run_id,
+                adapter_name=self._facade._default_patch_apply_adapter_name(),
+                task_card_ref=mutation_contract.task_card_ref,
+                task_card_path=mutation_contract.task_card_path,
+                write_set=mutation_contract.write_set,
+                read_set=mutation_contract.read_set,
+                test_commands=mutation_contract.test_commands,
+                max_fix_iterations=mutation_contract.max_fix_iterations,
+                mutation_mode=mutation_contract.mutation_mode,
+                agent_profile_id=agent_profile_id,
+                cluster_template_id=cluster_template_id,
+                cluster_member_id=cluster_member_id,
+                public_role=public_role,
+                role_label=role_label,
+            )
         return self._facade.compile_run(
             run_id,
             agent_profile_id=agent_profile_id,
@@ -261,6 +280,17 @@ class OrchestrationExecutionService:
             public_role=public_role,
             role_label=role_label,
         )
+
+    def _adapter_can_satisfy_mutation_contract(
+        self,
+        adapter_name: str | None,
+        mutation_contract: MutationContract | None,
+    ) -> bool:
+        if mutation_contract is None or mutation_contract.mutation_mode != MutationMode.patch_apply:
+            return True
+        if adapter_name is None:
+            return True
+        return self._facade._adapter_supports_mutation_mode(adapter_name, MutationMode.patch_apply)
 
     def _latest_review_decision_for_run(self, run_id: str) -> str | None:
         verdict = self._facade.review_repo.latest_for_run(run_id)
@@ -453,42 +483,51 @@ class OrchestrationExecutionService:
                     and step.fallback_adapter
                     and step.fallback_adapter != step.preferred_adapter
                 ):
-                    latest_decision = self._latest_review_decision_for_run(finalized.run_id)
-                    latest_return_code = self._latest_return_code_for_run(finalized.run_id)
-                    if (
-                        str(finalized.status) == RunStatus.awaiting_review
-                        and (
-                            latest_decision == str(ReviewDecision.fail)
-                            or (latest_decision is None and latest_return_code not in (None, 0))
+                    fallback_mutation_contract = step_mutation_contracts.get(step.step_id)
+                    if not self._adapter_can_satisfy_mutation_contract(step.fallback_adapter, fallback_mutation_contract):
+                        for child in child_runs:
+                            if child["step_id"] == step.step_id:
+                                child["fallback_status"] = "fallback_provider_unavailable"
+                                child["fallback_adapter"] = step.fallback_adapter
+                                child["fallback_blocker"] = "fallback_adapter_not_patch_capable"
+                        step.status = str(finalized.status)
+                    else:
+                        latest_decision = self._latest_review_decision_for_run(finalized.run_id)
+                        latest_return_code = self._latest_return_code_for_run(finalized.run_id)
+                        if (
+                            str(finalized.status) == RunStatus.awaiting_review
+                            and (
+                                latest_decision == str(ReviewDecision.fail)
+                                or (latest_decision is None and latest_return_code not in (None, 0))
+                            )
+                        ):
+                            finalized = self._facade.reject_run_review(
+                                finalized.run_id,
+                                rationale="orchestration child failed auto-review before fallback",
+                            ).run
+                        recovered_run = self._facade.create_run(
+                            self._goal_for_step(parent_goal, step, prior_run_ids=prior_run_ids),
+                            step.preset_id,
                         )
-                    ):
-                        finalized = self._facade.reject_run_review(
-                            finalized.run_id,
-                            rationale="orchestration child failed auto-review before fallback",
-                        ).run
-                    recovered_run = self._facade.create_run(
-                        self._goal_for_step(parent_goal, step, prior_run_ids=prior_run_ids),
-                        step.preset_id,
-                    )
-                    recovered_bundle = self.compile_child_run_with_fallback(
-                        recovered_run.run_id,
-                        preferred_adapter=step.fallback_adapter,
-                        fallback_adapter=None,
-                        mutation_contract=step_mutation_contracts.get(step.step_id),
-                        execution_profile=step.execution_profile,
-                        agent_profile_id=step.agent_profile_id,
-                        cluster_template_id=step.cluster_template_id,
-                        cluster_member_id=step.cluster_member_id,
-                        public_role=str(step.role),
-                        role_label=step.role_label,
-                    )
-                    self._facade.resume_run(recovered_run.run_id, operator_receipt_id=operator_receipt_id)
-                    finalized = self.finalize_child_run_if_waiting(recovered_run.run_id)
-                    step.run_id = recovered_run.run_id
-                    for child in child_runs:
-                        if child["step_id"] == step.step_id:
-                            child["run_id"] = recovered_run.run_id
-                            child["runtime_task_id"] = recovered_bundle.task_packet.runtime_task_id
+                        recovered_bundle = self.compile_child_run_with_fallback(
+                            recovered_run.run_id,
+                            preferred_adapter=step.fallback_adapter,
+                            fallback_adapter=None,
+                            mutation_contract=fallback_mutation_contract,
+                            execution_profile=step.execution_profile,
+                            agent_profile_id=step.agent_profile_id,
+                            cluster_template_id=step.cluster_template_id,
+                            cluster_member_id=step.cluster_member_id,
+                            public_role=str(step.role),
+                            role_label=step.role_label,
+                        )
+                        self._facade.resume_run(recovered_run.run_id, operator_receipt_id=operator_receipt_id)
+                        finalized = self.finalize_child_run_if_waiting(recovered_run.run_id)
+                        step.run_id = recovered_run.run_id
+                        for child in child_runs:
+                            if child["step_id"] == step.step_id:
+                                child["run_id"] = recovered_run.run_id
+                                child["runtime_task_id"] = recovered_bundle.task_packet.runtime_task_id
                 step.status = str(finalized.status)
                 mutation_report = (
                     self._facade.get_run_mutation_report(step.run_id)

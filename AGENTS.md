@@ -16,11 +16,11 @@
 
 ## 当前基线
 
-当前接受实现基线是 `M108`：Cocos command/config truth、project inspector v2、本地稳定资产包、Prefab/Panel/交互契约、玩家视角 gate、graph evidence bridge 和小目标样机 closeout 已落地。
+当前接受实现基线是 `M109`：统一资料包、单 agent 角色管线、设计/方案输出、多模态路由真相表、DB task-card quality gate、有限 Cocos technical-smoke trial 和 cluster-upgrade review 已落地。M108 Cocos 小目标样机闭环保留为历史基线。
 
 商业化 Cocos 游戏生成是正式需求，相关功能和 pipeline 必须保留并继续优化；但最近一次真实生成结果质量不足，不能宣称“完整商业化游戏已完成”。
 
-当前主线是 M108 后 review / 外部评估前状态：不得自动进入 M109+ 或继续扩大 Cocos 投入。LangGraph 可以承接状态推进、checkpoint、人审暂停、subgraph、多 agent 和 repair loop；workflow 仍负责 receipt、lease、write_set、provider live proof、evidence 和 operator packet。
+当前主线是 M109 后 `commercial_game_production` 无降级修复：不得自动进入 M110 或提前生成未来 phase task card，也不得把 technical smoke / production scaffold 解释为商业化可玩完成。LangGraph 可以承接状态推进、checkpoint、人审暂停、subgraph、多 agent 和 repair loop；workflow 仍负责 receipt、lease、write_set、provider live proof、evidence 和 operator packet。
 
 本仓库是个人自用、本地优先的 agentic workflow runtime，不是公开 SaaS、多租户平台、插件市场、自动 PR 发布器或外部托管执行服务。
 

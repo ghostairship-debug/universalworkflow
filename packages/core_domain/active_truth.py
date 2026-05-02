@@ -14,6 +14,7 @@ ACTIVE_TRUTH_FILES = [
     "CURRENT_DEVELOPMENT_WORKFLOW.md",
     "docs/milestone_history.md",
     "docs/tech-debt-registry.md",
+    "docs/development/commercial_game_production_next_sequence_2026_04_29.md",
 ]
 
 LEGACY_ACTIVE_WORKFLOW_FILES = [
@@ -30,6 +31,44 @@ STALE_M79_PATTERNS = [
     ("m79_current_priority", re.compile(r"M79[^\n]*(?:当前最优先|当前主线|focused on true commercial)", re.IGNORECASE)),
     ("m79_open_acceptance", re.compile(r"(?:remain open M79|M79 acceptance work)", re.IGNORECASE)),
 ]
+
+COMMERCIAL_GO_CLAIM_PATTERNS = [
+    (
+        "commercial_playable_go_true_claim_without_guard",
+        re.compile(r"commercial_playable_go\s*[:=]\s*(?:true|GO)\b", re.IGNORECASE),
+    ),
+    (
+        "commercial_playable_completion_claim_without_guard",
+        re.compile(r"(?:完整商业化游戏已完成|commercial playable(?: game)?\s+(?:completed|ready|delivered|GO))", re.IGNORECASE),
+    ),
+]
+
+COMMERCIAL_GO_GUARD_MARKERS = (
+    "不得",
+    "不能",
+    "禁止",
+    "仍为",
+    "保持 false",
+    "阻塞",
+    "缺",
+    "未",
+    "必须",
+    "才允许",
+    "no-go",
+    "not ",
+    "cannot",
+    "without",
+    "unless",
+    "only if",
+    "requires",
+    "required",
+    "must not",
+    "false",
+    "awaiting",
+    "blocked",
+    "failed",
+    "missing",
+)
 
 
 def build_active_truth_check(
@@ -53,6 +92,9 @@ def build_active_truth_check(
     issues.extend(_check_active_workflow_uniqueness(root))
     issues.extend(_check_stale_active_workflow_patterns(docs))
     issues.extend(_check_current_version(facts))
+    issues.extend(_check_latest_baseline_consistency(docs, facts))
+    issues.extend(_check_m109_pipeline_truth_docs(docs, facts))
+    issues.extend(_check_commercial_ready_claims(_load_commercial_claim_scan_docs(root, docs)))
     issues.extend(_check_tech_debt_consistency(tech_debt))
     payload = {
         "schema_version": "m82_active_truth_check_v1",
@@ -83,6 +125,21 @@ def _load_active_docs(root: Path) -> dict[str, str]:
         path = root / relative
         if path.exists():
             docs[relative] = path.read_text(encoding="utf-8")
+    return docs
+
+
+def _load_commercial_claim_scan_docs(root: Path, active_docs: dict[str, str]) -> dict[str, str]:
+    docs = dict(active_docs)
+    for path in sorted(root.glob("*.md")):
+        relative = path.relative_to(root).as_posix()
+        docs.setdefault(relative, path.read_text(encoding="utf-8", errors="replace"))
+    for folder in ["docs/development", "docs/evaluations"]:
+        directory = root / folder
+        if not directory.exists():
+            continue
+        for path in sorted(directory.glob("*.md")):
+            relative = path.relative_to(root).as_posix()
+            docs.setdefault(relative, path.read_text(encoding="utf-8", errors="replace"))
     return docs
 
 
@@ -162,6 +219,113 @@ def _check_current_version(facts: dict[str, Any]) -> list[dict[str, Any]]:
     return issues
 
 
+def _check_latest_baseline_consistency(docs: dict[str, str], facts: dict[str, Any]) -> list[dict[str, Any]]:
+    latest_baseline = str(facts.get("latest_milestone_baseline") or "")
+    latest_number = _latest_milestone_number(latest_baseline)
+    if latest_number is None:
+        return []
+    issues: list[dict[str, Any]] = []
+    current_version = str(facts.get("current_version") or "")
+    current_number = _latest_milestone_number(current_version)
+    if current_number is None or current_number < latest_number:
+        issues.append(
+            {
+                "code": "readme_current_version_behind_latest_baseline",
+                "severity": "P1",
+                "file": "README.md",
+                "detail": "README current version is behind the latest accepted milestone baseline.",
+                "current_version": current_version,
+                "latest_milestone_baseline": latest_baseline,
+            }
+        )
+    baseline_pattern = re.compile(r"(?:Accepted baseline|当前接受实现基线)[^\n]*\bM([0-9]+)\b", re.IGNORECASE)
+    for relative, text in docs.items():
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            match = baseline_pattern.search(line)
+            if match is None:
+                continue
+            line_milestones = [int(item) for item in re.findall(r"\bM([0-9]+)\b", line)]
+            if line_milestones and max(line_milestones) < latest_number:
+                issues.append(
+                    {
+                        "code": "active_doc_baseline_conflicts_with_latest",
+                        "severity": "P1",
+                        "file": relative,
+                        "line": line_number,
+                        "detail": "An active truth document names an older accepted baseline than milestone history.",
+                        "match": line.strip(),
+                        "latest_milestone_baseline": latest_baseline,
+                    }
+                )
+        if latest_number >= 109:
+            stale_m108_mainline = re.search(r"当前主线[^\n]*M108[^\n]*不得自动进入\s*M109", text)
+            if stale_m108_mainline:
+                issues.append(
+                    {
+                        "code": "active_doc_m109_reentry_conflict",
+                        "severity": "P1",
+                        "file": relative,
+                        "detail": "An active truth document still says the project must not enter M109 even though M109 is the accepted baseline.",
+                        "match": stale_m108_mainline.group(0),
+                    }
+                )
+    return issues
+
+
+def _check_m109_pipeline_truth_docs(docs: dict[str, str], facts: dict[str, Any]) -> list[dict[str, Any]]:
+    latest_number = _latest_milestone_number(str(facts.get("latest_milestone_baseline") or ""))
+    if latest_number is None or latest_number < 109:
+        return []
+    issues: list[dict[str, Any]] = []
+    required_docs = ["README.md", "AGENTS.md", "CURRENT_DEVELOPMENT_WORKFLOW.md"]
+    for relative in required_docs:
+        text = docs.get(relative, "")
+        if not text:
+            continue
+        if "commercial_game_production" not in text:
+            issues.append(
+                {
+                    "code": "m109_commercial_game_production_entry_missing",
+                    "severity": "P1",
+                    "file": relative,
+                    "detail": "M109 active truth docs must name commercial_game_production as the real commercial game entry.",
+                }
+            )
+        if "legacy_cocos_template_removed" not in text:
+            issues.append(
+                {
+                    "code": "m109_legacy_cocos_template_blocker_missing",
+                    "severity": "P1",
+                    "file": relative,
+                    "detail": "M109 active truth docs must state that the legacy commercial_cocos_game path blocks with legacy_cocos_template_removed.",
+                }
+            )
+    return issues
+
+
+def _check_commercial_ready_claims(docs: dict[str, str]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for relative, text in docs.items():
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if _line_has_commercial_go_guard(line):
+                continue
+            for code, pattern in COMMERCIAL_GO_CLAIM_PATTERNS:
+                match = pattern.search(line)
+                if match is None:
+                    continue
+                issues.append(
+                    {
+                        "code": code,
+                        "severity": "P1",
+                        "file": relative,
+                        "line": line_number,
+                        "detail": "A design/evaluation/active truth document appears to claim commercial playable GO without a local no-go or human-review guard.",
+                        "match": match.group(0),
+                    }
+                )
+    return issues
+
+
 def _check_active_workflow_uniqueness(root: Path) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     canonical = root / "CURRENT_DEVELOPMENT_WORKFLOW.md"
@@ -220,6 +384,16 @@ def _check_stale_active_workflow_patterns(docs: dict[str, str]) -> list[dict[str
 
 def _mentions_milestone_at_least(text: str, minimum: int) -> bool:
     return any(int(match.group(1)) >= minimum for match in re.finditer(r"\bM([0-9]+)\b", text))
+
+
+def _latest_milestone_number(text: str) -> int | None:
+    numbers = [int(match.group(1)) for match in re.finditer(r"\bM([0-9]+)\b", text)]
+    return max(numbers) if numbers else None
+
+
+def _line_has_commercial_go_guard(line: str) -> bool:
+    lowered = line.lower()
+    return any(marker in lowered for marker in COMMERCIAL_GO_GUARD_MARKERS)
 
 
 def _check_tech_debt_consistency(payload: dict[str, Any]) -> list[dict[str, Any]]:

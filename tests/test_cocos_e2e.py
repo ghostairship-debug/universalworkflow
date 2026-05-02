@@ -25,6 +25,8 @@ from packages.contributions.games.cocos.graph_bridge import build_cocos_graph_ev
 from packages.contributions.games.cocos.inspector import describe_cocos_delivery_modes, inspect_cocos_project_v2
 from packages.contributions.games.cocos.player_validation import validate_cocos_player_visible_evidence
 from packages.contributions.games.cocos.sample_closeout import run_cocos_small_goal_sample_closeout
+from infra.scripts.validate_cocos_browser_runtime_hook import validate_cocos_browser_runtime_hook
+from infra.scripts.validate_cocos_start_scene import validate_cocos_start_scene
 
 
 def _fake_asset_generator(request: AssetGenerationRequest) -> AssetGenerationResult:
@@ -142,6 +144,170 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     globals_data = scene_data[globals_ref]
     assert globals_data["__type__"] == "cc.SceneGlobals"
     assert "_skybox" in globals_data
+
+
+def test_validate_cocos_start_scene_requires_scene_meta_settings_and_nodes(tmp_path: Path) -> None:
+    project = tmp_path / "cocos_project"
+    (project / "assets" / "scene").mkdir(parents=True)
+    (project / "settings" / "v2" / "packages").mkdir(parents=True)
+    (project / "assets" / "scene" / "main.scene").write_text(
+        json.dumps([{"__type__": "cc.SceneAsset"}, {"__type__": "cc.Scene", "_id": "scene-a"}]),
+        encoding="utf-8",
+    )
+    (project / "assets" / "scene" / "main.scene.meta").write_text(
+        json.dumps({"uuid": "scene-a"}),
+        encoding="utf-8",
+    )
+    (project / "settings" / "v2" / "packages" / "scene.json").write_text(
+        json.dumps({"__version__": "1.0.0", "current-scene": "scene-b"}),
+        encoding="utf-8",
+    )
+
+    payload = validate_cocos_start_scene(project)
+
+    assert payload["status"] == "failed"
+    assert "scene_settings_uuid_mismatch" in payload["issues"]
+    assert "required_scene_nodes_missing" in payload["issues"]
+    assert "scene_globals_missing" in payload["issues"]
+    assert "scene_globals_reference_missing" in payload["issues"]
+
+
+def test_validate_cocos_start_scene_accepts_generated_production_scene(tmp_path: Path) -> None:
+    project = tmp_path / "cocos_project"
+    cocos_e2e_module._write_production_scene(project)
+
+    payload = validate_cocos_start_scene(project)
+
+    assert payload["status"] == "passed"
+    assert payload["issues"] == []
+
+
+def test_validate_cocos_start_scene_rejects_non_cocos_globals_classes(tmp_path: Path) -> None:
+    project = tmp_path / "cocos_project"
+    cocos_e2e_module._write_production_scene(project)
+    scene_path = project / "assets" / "scene" / "main.scene"
+    scene_data = json.loads(scene_path.read_text(encoding="utf-8"))
+    globals_ref = scene_data[1]["_globals"]["__id__"]
+    scene_data[globals_ref]["shadows"] = {"__type__": "ShadowsInfo", "_type": 0}
+    scene_data[globals_ref]["_skybox"] = {"__type__": "SkyboxInfo"}
+    scene_path.write_text(json.dumps(scene_data), encoding="utf-8")
+
+    payload = validate_cocos_start_scene(project)
+
+    assert payload["status"] == "failed"
+    assert "scene_globals_shadows_reference_invalid" in payload["issues"]
+    assert "scene_globals_skybox_reference_invalid" in payload["issues"]
+
+
+def test_validate_cocos_browser_runtime_hook_requires_script_meta_and_scene_component(tmp_path: Path) -> None:
+    project = tmp_path / "cocos_project"
+    (project / "assets" / "scripts").mkdir(parents=True)
+    (project / "assets" / "scene").mkdir(parents=True)
+    (project / "assets" / "scene" / "main.scene").write_text(
+        json.dumps([{"__type__": "cc.SceneAsset"}, {"__type__": "cc.Scene", "_components": []}]),
+        encoding="utf-8",
+    )
+
+    payload = validate_cocos_browser_runtime_hook(project)
+
+    assert payload["status"] == "failed"
+    assert "block_puzzle_runtime_script_missing" in payload["issues"]
+    assert "block_puzzle_runtime_script_meta_missing" in payload["issues"]
+    assert "block_puzzle_scene_component_missing" in payload["issues"]
+
+
+def test_validate_cocos_browser_runtime_hook_accepts_runtime_contract(tmp_path: Path) -> None:
+    project = tmp_path / "cocos_project"
+    (project / "assets" / "scripts").mkdir(parents=True)
+    (project / "assets" / "scene").mkdir(parents=True)
+    (project / "assets" / "scripts" / "BlockPuzzleGame.ts").write_text(
+        "\n".join(
+            [
+                "import { _decorator, Component } from 'cc';",
+                "const { ccclass } = _decorator;",
+                "@ccclass('BlockPuzzleGame')",
+                "export class BlockPuzzleGame extends Component {",
+                "  start() {",
+                "    const canvasId = 'block-puzzle-canvas';",
+                "    (globalThis as any).__COCOS_BLOCK_PUZZLE_E2E__ = {",
+                "      candidateCenters: [],",
+                "      clearTarget: { x: 0, y: 0 },",
+                "      buttonCenters: {},",
+                "      featureCoverage: {",
+                "        audioPlaybackVerified: true,",
+                "        bgmStarted: true,",
+                "        sfxPlaybackVerified: true,",
+                "        volumeToggleUsable: true,",
+                "      },",
+                "      canvasId,",
+                "    };",
+                "  }",
+                "}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project / "assets" / "scripts" / "BlockPuzzleGame.ts.meta").write_text(
+        json.dumps({"importer": "typescript", "uuid": "block-puzzle-script"}),
+        encoding="utf-8",
+    )
+    (project / "assets" / "scene" / "main.scene").write_text(
+        json.dumps(
+            [
+                {"__type__": "cc.SceneAsset"},
+                {"__type__": "cc.Scene", "_components": [{"__id__": 2}]},
+                {"__type__": "BlockPuzzleGame", "_enabled": True, "node": {"__id__": 1}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = validate_cocos_browser_runtime_hook(project)
+
+    assert payload["status"] == "passed"
+    assert payload["issues"] == []
+
+
+def test_validate_cocos_browser_runtime_hook_rejects_missing_audio_runtime_marker(tmp_path: Path) -> None:
+    project = tmp_path / "cocos_project"
+    (project / "assets" / "scripts").mkdir(parents=True)
+    (project / "assets" / "scene").mkdir(parents=True)
+    script = "\n".join(
+        [
+            "import { _decorator, Component } from 'cc';",
+            "const { ccclass } = _decorator;",
+            "@ccclass('BlockPuzzleGame')",
+            "export class BlockPuzzleGame extends Component {",
+            "  start() {",
+            "    (globalThis as any).__COCOS_BLOCK_PUZZLE_E2E__ = {",
+            "      candidateCenters: [], clearTarget: {}, buttonCenters: {},",
+            "      featureCoverage: { audioPlaybackVerified: true, bgmStarted: true, sfxPlaybackVerified: true },",
+            "    };",
+            "  }",
+            "}",
+        ]
+    )
+    (project / "assets" / "scripts" / "BlockPuzzleGame.ts").write_text(script, encoding="utf-8")
+    (project / "assets" / "scripts" / "BlockPuzzleGame.ts.meta").write_text(
+        json.dumps({"importer": "typescript", "uuid": "block-puzzle-script"}),
+        encoding="utf-8",
+    )
+    (project / "assets" / "scene" / "main.scene").write_text(
+        json.dumps(
+            [
+                {"__type__": "cc.SceneAsset"},
+                {"__type__": "cc.Scene", "_components": [{"__id__": 2}]},
+                {"__type__": "BlockPuzzleGame", "_enabled": True, "node": {"__id__": 1}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = validate_cocos_browser_runtime_hook(project)
+
+    assert payload["status"] == "failed"
+    assert "block_puzzle_runtime_markers_missing" in payload["issues"]
+    assert "volumeToggleUsable" in payload["missing_script_markers"]
 
 
 def test_cocos_e2e_accepts_markdown_source_without_pdf_parser(tmp_path: Path, monkeypatch) -> None:
@@ -265,6 +431,31 @@ def test_cocos_build_rejects_success_code_with_fatal_runtime_marker(tmp_path: Pa
     assert build["creator_exit_code"] == 36
     assert build["artifact_success"] is False
     assert build["fatal_marker_detected"] is True
+
+
+def test_cocos_build_timeout_returns_failed_build_evidence(tmp_path: Path, monkeypatch) -> None:
+    stopped: list[set[int]] = []
+
+    def _timeout_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build started")
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(cocos_e2e_module, "_cocos_creator_pids", lambda: {101})
+    monkeypatch.setattr(cocos_e2e_module, "_stop_cocos_creator_pids", lambda pids: stopped.append(pids))
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _timeout_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+        timeout_seconds=7,
+    )
+
+    assert build["creator_exit_code"] == 124
+    assert build["timeout"] is True
+    assert build["timeout_seconds"] == 7
+    assert build["artifact_success"] is False
+    assert "timed out after 7s" in build["stderr_tail"]
+    assert stopped == [set()]
 
 
 def test_cocos_ecosystem_bridge_records_missing_editor_contract_without_diagnostic_blocking(tmp_path: Path) -> None:

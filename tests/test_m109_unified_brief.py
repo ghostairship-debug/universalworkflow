@@ -178,6 +178,10 @@ def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: 
     task_card_output = payload["stage_results"][5]["output"]
     assert task_card_output["role_id"] == "task_card_generation_agent"
     assert task_card_output["structured_output"]["quality_gate"]["authority_source"] == "sqlite_task_cards_table"
+    phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
+    assert phase_graph["active_materialization_policy"] == "only_open_active_phase_task_cards"
+    assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert len(phase_graph["phases"]) >= 3
     persistence = task_card_output["structured_output"]["task_card_persistence"]
     assert persistence["task_card_count"] >= 4
     assert persistence["quality"]["go_no_go"] == "GO"
@@ -188,6 +192,8 @@ def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: 
     cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("m109_role_db_smoke")
     same_project_cards = [card for card in cards if card.execution_mode == "same_project_patch"]
     assert len(same_project_cards) >= 6
+    assert all(card.metadata.get("stage_phase") for card in same_project_cards)
+    assert any(card.metadata.get("depends_on_task_card_ids") for card in same_project_cards)
     assert all(
         not command.startswith("workflowctl pipeline run")
         for card in same_project_cards

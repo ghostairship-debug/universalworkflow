@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
 import shutil
+import sqlite3
 import subprocess
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from packages.contracts import MutationMode, TaskKind, TaskPacket
 from packages.core_domain.compile import build_artifact_content
@@ -27,6 +32,22 @@ DOGFOOD_ARTIFACT_RUNTIME_BRIEF_LIMIT = 1200
 DOGFOOD_ARTIFACT_HANDOFF_LIMIT = 1400
 DOGFOOD_ARTIFACT_RESPONSIBILITY_LIMIT = 6
 STREAM_PREVIEW_LIMIT = 4000
+PROVIDER_STREAM_EVENT_TYPE = "provider_stream_observed"
+PATCH_APPLY_DISABLED_CODEX_FEATURES = (
+    "apps",
+    "plugins",
+    "memories",
+    "tool_search",
+    "browser_use",
+    "computer_use",
+    "image_generation",
+    "workspace_dependencies",
+)
+PATCH_APPLY_PROMPT_WORKSPACE_ROOT = "workflow_codex_patch_apply"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _coerce_codex_timeout_seconds(raw_value: str | None, default: int) -> int:
@@ -51,6 +72,26 @@ def _stream_preview(value: str, *, limit: int = STREAM_PREVIEW_LIMIT) -> str:
     if len(value) <= limit:
         return value
     return value[-limit:]
+
+
+def _safe_codex_event_metadata(text: str) -> tuple[str | None, list[str]]:
+    stripped = text.strip()
+    if not stripped:
+        return None, []
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None, []
+    if not isinstance(payload, dict):
+        return None, []
+    msg = payload.get("msg")
+    event_type = payload.get("type") or payload.get("event") or (msg.get("type") if isinstance(msg, dict) else None)
+    return (str(event_type) if event_type is not None else None), sorted(str(key) for key in payload.keys())[:20]
+
+
+def _safe_path_segment(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value.strip())
+    return cleaned[:96] or "unknown"
 
 
 class CodexAdapter(CliAdapterBase):
@@ -97,6 +138,73 @@ class CodexAdapter(CliAdapterBase):
             {"executable": self.executable},
         )
 
+    def _provider_stream_callback_for(self, packet: TaskPacket):
+        db_path = packet.env.get("WORKFLOW_DB_PATH")
+        if not db_path:
+            return None
+        runtime_task_id = packet.runtime_task_id
+        run_id = packet.run_id
+        adapter_name = self.normalized_name()
+        task_card_ref = packet.mutation_contract.task_card_ref if packet.mutation_contract is not None else None
+        counter = {"line_index": 0}
+
+        def _record(event: dict[str, object]) -> None:
+            text = str(event.get("text") or "")
+            if not text:
+                return
+            counter["line_index"] += 1
+            provider_event_type, parsed_keys = _safe_codex_event_metadata(text)
+            is_control = bool(event.get("is_control"))
+            is_material_progress = bool(event.get("is_material_progress"))
+            classification = "control" if is_control else "provider_output"
+            observed_at = str(event.get("observed_at") or _utc_now_iso())
+            payload = {
+                "trace_context": {
+                    "run_id": run_id,
+                    "runtime_task_id": runtime_task_id,
+                },
+                "run_id": run_id,
+                "runtime_task_id": runtime_task_id,
+                "adapter_name": adapter_name,
+                "stream": str(event.get("stream") or "stdout"),
+                "classification": classification,
+                "observed_at": observed_at,
+                "byte_count": int(event.get("byte_count") or len(text.encode("utf-8", errors="replace"))),
+                "line_index": counter["line_index"],
+                "line_sha256": hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest(),
+                "provider_event_type": provider_event_type,
+                "parsed_keys": parsed_keys,
+                "is_material_progress": is_material_progress,
+                "task_card_ref": task_card_ref,
+            }
+            try:
+                with sqlite3.connect(db_path) as connection:
+                    connection.execute(
+                        """
+                        INSERT INTO run_events (
+                          event_id, run_id, event_type, object_type, object_id, summary,
+                          payload_json, schema_version, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"event_{uuid4().hex[:12]}",
+                            run_id,
+                            PROVIDER_STREAM_EVENT_TYPE,
+                            "runtime_task",
+                            runtime_task_id,
+                            "Provider stream observed from Codex adapter",
+                            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                            "v1",
+                            observed_at,
+                        ),
+                    )
+                    connection.commit()
+            except sqlite3.Error:
+                return
+
+        return _record
+
     def _artifact_path_for(self, packet: TaskPacket) -> str:
         artifact = packet.expected_artifacts[0] if packet.expected_artifacts else "state/artifacts/codex_output.md"
         path = Path(artifact)
@@ -104,6 +212,25 @@ class CodexAdapter(CliAdapterBase):
             path = Path(packet.working_directory) / path
         path.parent.mkdir(parents=True, exist_ok=True)
         return path.resolve().as_posix()
+
+    def _prompt_workspace_for(self, packet: TaskPacket) -> Path:
+        if self._mutation_mode_for(packet) != MutationMode.patch_apply:
+            return Path(packet.working_directory).resolve()
+        override = packet.env.get("WORKFLOW_CODEX_PATCH_APPLY_PROMPT_WORKSPACE")
+        if override:
+            root = Path(override)
+        else:
+            root = Path(tempfile.gettempdir()) / PATCH_APPLY_PROMPT_WORKSPACE_ROOT
+        task_ref = ""
+        if packet.mutation_contract is not None and packet.mutation_contract.task_card_ref:
+            task_ref = packet.mutation_contract.task_card_ref
+        prompt_workspace = (
+            root
+            / _safe_path_segment(packet.run_id or "run")
+            / _safe_path_segment(packet.runtime_task_id or task_ref or "task")
+        )
+        prompt_workspace.mkdir(parents=True, exist_ok=True)
+        return prompt_workspace.resolve()
 
     def _mutation_mode_for(self, packet: TaskPacket) -> MutationMode:
         if packet.mutation_contract is not None:
@@ -192,6 +319,18 @@ class CodexAdapter(CliAdapterBase):
             return _resolve_codex_idle_timeout_seconds(timeout_seconds)
         return _coerce_codex_timeout_seconds(raw_value, min(timeout_seconds, 120))
 
+    def _env_value_or_file(self, packet: TaskPacket, key: str, default: str = "") -> str:
+        value = packet.env.get(key)
+        if value:
+            return str(value)
+        file_path = packet.env.get(f"{key}_FILE")
+        if not file_path:
+            return default
+        try:
+            return Path(file_path).read_text(encoding="utf-8")
+        except OSError:
+            return default
+
     def _prompt_for(self, packet: TaskPacket) -> str:
         mutation_mode = self._mutation_mode_for(packet)
         if mutation_mode == MutationMode.patch_apply:
@@ -200,8 +339,10 @@ class CodexAdapter(CliAdapterBase):
             test_commands = packet.env.get("WORKFLOW_MUTATION_TEST_COMMANDS", "[]")
             attempt_index = packet.env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0")
             failure_feedback = packet.env.get("WORKFLOW_MUTATION_FAILURE_FEEDBACK", "").strip()
+            provider_command_policy = packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY", "patch_only_no_shell")
+            read_set_context = self._env_value_or_file(packet, "WORKFLOW_MUTATION_READ_SET_CONTEXT", "[]")
             task_card_ref = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_REF", "").strip()
-            task_card_content = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
+            task_card_content = self._env_value_or_file(packet, "WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
             failure_block = (
                 "Previous attempt failed. Use the feedback below to produce a corrected patch.\n"
                 f"{failure_feedback}\n"
@@ -214,18 +355,23 @@ class CodexAdapter(CliAdapterBase):
                 else ""
             )
             return (
-                "You are executing a local workflow repo mutation task inside a controlled repository.\n"
-                f"Working directory: {Path(packet.working_directory).resolve().as_posix()}\n"
+                "You are executing a single-turn prompt-only patch proposal for a controlled repository.\n"
+                f"Patch target working directory: {Path(packet.working_directory).resolve().as_posix()}\n"
                 f"Attempt index: {attempt_index}\n"
                 f"Allowed write_set JSON: {write_set}\n"
                 f"Read-only context paths JSON: {read_set}\n"
+                f"Embedded read-set context JSON: {read_set_context}\n"
                 f"Explicit test commands JSON: {test_commands}\n"
+                f"Provider command policy: {provider_command_policy}.\n"
+                "Patch-only mode: do not run shell, PowerShell, cmd, Python, Node, npm, package-manager, "
+                "file-inspection, or other tool commands. Do not ask for command output. Use only the "
+                "embedded task-card content, read-set context, failure feedback, and paths already provided here.\n"
+                "The CLI working directory is an isolated prompt-only broker directory; do not inspect it.\n"
                 f"{task_card_block}"
                 f"{failure_block}"
-                "Return only one valid unified diff patch that modifies files inside write_set.\n"
+                "Return exactly one valid unified diff patch that modifies files inside write_set.\n"
                 "Do not wrap the patch in code fences. Do not add commentary before or after the diff.\n"
-                "Windows sandbox note: do not set [Console]::OutputEncoding from PowerShell; "
-                "use rg or Get-Content -Encoding UTF8 directly when inspecting files.\n"
+                "Do not include shell transcripts, markdown, explanations, or non-diff text.\n"
             )
         if self._is_dogfood_artifact_agent(packet):
             return self._dogfood_artifact_prompt_for(packet)
@@ -242,6 +388,7 @@ class CodexAdapter(CliAdapterBase):
 
     def build_command(self, packet: TaskPacket, *, prompt_via_stdin: bool = False) -> list[str]:
         artifact_path = self._artifact_path_for(packet)
+        command_cwd = self._prompt_workspace_for(packet)
         command = [
             self._resolved_executable(),
             "exec",
@@ -249,13 +396,18 @@ class CodexAdapter(CliAdapterBase):
             "--output-last-message",
             artifact_path,
             "--cd",
-            str(Path(packet.working_directory).resolve()),
+            command_cwd.as_posix(),
             "--skip-git-repo-check",
             "--sandbox",
             self.sandbox_mode,
             "--color",
             "never",
         ]
+        if self._mutation_mode_for(packet) == MutationMode.patch_apply:
+            command.append("--ignore-user-config")
+            command.append("--ignore-rules")
+            for feature in PATCH_APPLY_DISABLED_CODEX_FEATURES:
+                command.extend(["--disable", feature])
         if self.ephemeral:
             command.append("--ephemeral")
         model = self._model_for_packet(packet)
@@ -271,11 +423,12 @@ class CodexAdapter(CliAdapterBase):
         started_at = utc_now()
         use_stdin_prompt = self._runner is subprocess.run
         command = self.build_command(packet, prompt_via_stdin=use_stdin_prompt)
+        command_cwd = self._prompt_workspace_for(packet)
         env = build_subprocess_env(packet.env)
         timeout_seconds = self._timeout_seconds_for_packet(packet)
         idle_timeout_seconds = self._idle_timeout_seconds_for_packet(packet, timeout_seconds)
         run_kwargs = {
-            "cwd": packet.working_directory,
+            "cwd": command_cwd.as_posix(),
             "env": env,
             "capture_output": True,
             "text": True,
@@ -288,6 +441,9 @@ class CodexAdapter(CliAdapterBase):
             run_kwargs["errors"] = "replace"
         try:
             if use_stdin_prompt:
+                stream_callback = self._provider_stream_callback_for(packet)
+                if stream_callback is not None:
+                    run_kwargs["on_output"] = stream_callback
                 completed = run_subprocess_with_tree_timeout(command, **run_kwargs, idle_timeout=idle_timeout_seconds)
             else:
                 completed = self._runner(command, **run_kwargs)
@@ -307,6 +463,15 @@ class CodexAdapter(CliAdapterBase):
             "ephemeral": self.ephemeral,
             "timeout_seconds": timeout_seconds,
             "idle_timeout_seconds": idle_timeout_seconds,
+            "provider_command_policy": packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY"),
+            "transport_isolation_enabled": self._mutation_mode_for(packet) == MutationMode.patch_apply,
+            "transport_disabled_features": list(PATCH_APPLY_DISABLED_CODEX_FEATURES)
+            if self._mutation_mode_for(packet) == MutationMode.patch_apply
+            else [],
+            "prompt_transport": "stdin" if use_stdin_prompt else "argv",
+            "prompt_workspace": command_cwd.as_posix(),
+            "project_working_directory": Path(packet.working_directory).resolve().as_posix(),
+            "project_rules_ignored": self._mutation_mode_for(packet) == MutationMode.patch_apply,
             **completed_process_watchdog_metadata(completed),
         }
         if failure_class is not None:

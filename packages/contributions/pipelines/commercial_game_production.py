@@ -13,6 +13,7 @@ from packages.contributions.games.cocos.commercial_assets import (
 from packages.contributions.games.cocos.ecosystem_bridge import collect_cocos_ecosystem_bridge_evidence
 from packages.contributions.games.cocos.e2e import discover_cocos_creator_exe
 from packages.contributions.pipelines.commercial_game_task_worker import (
+    blocked_project_runtime_evidence_due_to_upstream,
     bootstrap_cocos_project_shell,
     collect_project_runtime_evidence,
     execute_same_project_task_cards,
@@ -69,6 +70,78 @@ PROVIDER_RECOVERY_BLOCKERS = {
         "max_attempts": 1,
         "suggestion": "Repair the asset provider request payload or prompt budget, then rerun the asset stage.",
         "acceptance": ["provider_request_valid", "asset_stage_rechecked"],
+    },
+    "child_stdout_silent_recoverable": {
+        "failure_class": "child_stdout_silent",
+        "owner_role": "workflow_control_plane",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "fresh_receipt_retry_until_three_attempts",
+        "max_attempts": 3,
+        "suggestion": "Resume the same task card with a fresh receipt and DB heartbeat-aware watchdog until the three-attempt runtime policy is exhausted.",
+        "acceptance": ["fresh_receipt_created", "db_heartbeat_checked", "same_task_card_resumed", "attempt_recorded"],
+    },
+    "provider_output_idle_timeout_recoverable": {
+        "failure_class": "provider_output_idle_timeout",
+        "owner_role": "workflow_control_plane",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "fresh_receipt_retry_after_provider_output_idle",
+        "max_attempts": 3,
+        "suggestion": "Restart the same task card with a fresh receipt after provider output has been idle; workflow_progress heartbeats alone do not satisfy provider progress.",
+        "acceptance": ["fresh_receipt_created", "last_provider_output_at_recorded", "same_project_reused", "attempt_recorded"],
+    },
+    "provider_no_material_progress_timeout_recoverable": {
+        "failure_class": "provider_no_material_progress_timeout",
+        "owner_role": "workflow_control_plane",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "fresh_receipt_retry_or_scope_split_after_no_material_progress",
+        "max_attempts": 3,
+        "suggestion": "Restart the same task card with a fresh receipt or split the card if provider output continues without changed files, tests, evidence, or artifact progress.",
+        "acceptance": ["fresh_receipt_created", "last_material_progress_at_recorded", "same_project_reused", "attempt_recorded"],
+    },
+    "workflow_child_stalled": {
+        "failure_class": "workflow_child_stalled",
+        "owner_role": "workflow_control_plane",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "close_child_run_then_fresh_receipt_retry_until_three_attempts",
+        "max_attempts": 3,
+        "suggestion": "Close the stalled child run, release its worker lease, then retry the same task card with a fresh receipt until the three-attempt policy is exhausted.",
+        "acceptance": ["child_run_closed", "worker_lease_released", "fresh_receipt_created", "attempt_recorded"],
+    },
+    "provider_timeout_recoverable": {
+        "failure_class": "provider_timeout",
+        "owner_role": "provider_operator",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "provider_live_proof_or_verified_fallback_then_three_attempt_retry",
+        "max_attempts": 3,
+        "suggestion": "Verify provider-specific live proof for the worker or a real fallback provider, then retry the same task card with a fresh receipt.",
+        "acceptance": ["provider_live_proof_present", "fallback_not_shell_or_noop", "fresh_receipt_created", "attempt_recorded"],
+    },
+    "task_scope_too_large_after_adaptive_wall_timeout": {
+        "failure_class": "task_scope_too_large_after_adaptive_wall_timeout",
+        "owner_role": "operator_or_task_planner",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "split_or_narrow_task_card_before_retry",
+        "max_attempts": 0,
+        "suggestion": "Do not keep extending the same task. Split or narrow the active task card, then resume only the next smaller same-project card with a fresh receipt.",
+        "acceptance": ["task_card_split_or_scope_narrowed", "downstream_remains_short_circuited", "fresh_receipt_created_for_smaller_card"],
+    },
+    "provider_execution_failed": {
+        "failure_class": "provider_execution_failed",
+        "owner_role": "provider_operator",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "provider_execution_repair_then_three_attempt_retry",
+        "max_attempts": 3,
+        "suggestion": "Repair the provider execution failure or switch to a verified real provider, then retry with a fresh receipt.",
+        "acceptance": ["provider_execution_succeeds", "fallback_not_shell_or_noop", "fresh_receipt_created", "attempt_recorded"],
+    },
+    "blocked_after_three_attempts": {
+        "failure_class": "blocked_after_three_attempts",
+        "owner_role": "operator_or_workflow_repair",
+        "affected_stage": "same_project_task_card_worker",
+        "repair_mode": "manual_root_cause_repair_after_retry_exhaustion",
+        "max_attempts": 0,
+        "suggestion": "Do not continue downstream stages; inspect the recorded attempts, repair the root cause, then explicitly resume the task card.",
+        "acceptance": ["attempts_reviewed", "root_cause_repaired", "downstream_remains_short_circuited_until_resume"],
     },
 }
 
@@ -316,12 +389,20 @@ def execute_commercial_game_task_card_worker(
         bridge_report_path=cocos_bridge_report_path,
         allow_existing_cocos_process=allow_existing_cocos_process,
     )
-    runtime_evidence = collect_project_runtime_evidence(
-        project_dir=project_dir,
-        creator_exe=Path(resolved_creator_exe),
-        require_build=require_build,
-        require_playtest=require_playtest,
-    )
+    if patch_ledger.get("same_project_worker_patch_go"):
+        runtime_evidence = collect_project_runtime_evidence(
+            project_dir=project_dir,
+            creator_exe=Path(resolved_creator_exe),
+            require_build=require_build,
+            require_playtest=require_playtest,
+        )
+    else:
+        runtime_evidence = blocked_project_runtime_evidence_due_to_upstream(
+            project_dir=project_dir,
+            patch_ledger=patch_ledger,
+            require_build=require_build,
+            require_playtest=require_playtest,
+        )
     ecosystem_evidence = collect_cocos_ecosystem_bridge_evidence(
         project_path=project_dir,
         creator_exe=resolved_creator_exe,

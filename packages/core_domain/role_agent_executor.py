@@ -443,6 +443,7 @@ def _structured_output_for_role(
     if role_id == "task_card_generation_agent":
         return {
             "context": context,
+            "stage_internal_phase_graph": _stage_internal_phase_graph(pipeline_id or stage.stage_id),
             "task_card_candidates": _task_card_candidate_payloads(
                 pipeline_id=pipeline_id or stage.stage_id,
                 pipeline_goal=pipeline_goal or stage.goal,
@@ -586,7 +587,7 @@ def _task_card_candidate_payloads(
     pipeline_template: str,
 ) -> list[dict[str, Any]]:
     base = _safe_id(pipeline_id)
-    return [
+    candidates = [
         {
             "task_card_id": f"{base}_m109_role_brief_contract",
             "title": "Verify unified brief and role handoff contract",
@@ -792,6 +793,92 @@ def _task_card_candidate_payloads(
             "execution_mode": "same_project_patch",
         },
     ]
+    return _attach_stage_phase_metadata(candidates, base)
+
+
+def _stage_internal_phase_graph(pipeline_id: str) -> dict[str, Any]:
+    base = _safe_id(pipeline_id)
+    return {
+        "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+        "pipeline_id": pipeline_id,
+        "active_materialization_policy": "only_open_active_phase_task_cards",
+        "future_phase_task_cards_materialized": False,
+        "phases": [
+            {
+                "phase_id": f"{base}_product_depth",
+                "order": 1,
+                "title": "Product depth implementation",
+                "task_card_ids": [
+                    f"{base}_commercial_gameplay_levels",
+                    f"{base}_commercial_core_loop_rewards",
+                ],
+            },
+            {
+                "phase_id": f"{base}_player_visible_ui_assets",
+                "order": 2,
+                "title": "Player-visible UI assets and shop flow",
+                "task_card_ids": [
+                    f"{base}_commercial_shop_skin_collection",
+                    f"{base}_commercial_scene_prefab_ui",
+                ],
+            },
+            {
+                "phase_id": f"{base}_runtime_audio_review",
+                "order": 3,
+                "title": "Runtime audio and human review packet",
+                "task_card_ids": [
+                    f"{base}_commercial_audio_runtime",
+                    f"{base}_commercial_human_player_review",
+                ],
+            },
+        ],
+    }
+
+
+def _attach_stage_phase_metadata(candidates: list[dict[str, Any]], base: str) -> list[dict[str, Any]]:
+    phase_metadata = {
+        f"{base}_commercial_gameplay_levels": {
+            "stage_phase": "product_depth",
+            "phase_order": 1,
+            "depends_on_task_card_ids": [],
+        },
+        f"{base}_commercial_core_loop_rewards": {
+            "stage_phase": "product_depth",
+            "phase_order": 1,
+            "depends_on_task_card_ids": [f"{base}_commercial_gameplay_levels"],
+        },
+        f"{base}_commercial_shop_skin_collection": {
+            "stage_phase": "player_visible_ui_assets",
+            "phase_order": 2,
+            "depends_on_task_card_ids": [f"{base}_commercial_core_loop_rewards"],
+        },
+        f"{base}_commercial_scene_prefab_ui": {
+            "stage_phase": "player_visible_ui_assets",
+            "phase_order": 2,
+            "depends_on_task_card_ids": [f"{base}_commercial_shop_skin_collection"],
+        },
+        f"{base}_commercial_audio_runtime": {
+            "stage_phase": "runtime_audio_review",
+            "phase_order": 3,
+            "depends_on_task_card_ids": [f"{base}_commercial_scene_prefab_ui"],
+        },
+        f"{base}_commercial_human_player_review": {
+            "stage_phase": "runtime_audio_review",
+            "phase_order": 3,
+            "depends_on_task_card_ids": [
+                f"{base}_commercial_gameplay_levels",
+                f"{base}_commercial_shop_skin_collection",
+                f"{base}_commercial_audio_runtime",
+                f"{base}_commercial_scene_prefab_ui",
+            ],
+        },
+    }
+    for candidate in candidates:
+        metadata = dict(candidate.get("metadata") or {})
+        metadata.update(phase_metadata.get(candidate["task_card_id"], {}))
+        if metadata:
+            candidate["metadata"] = metadata
+    return candidates
 
 
 def _persist_task_card_candidates(
@@ -841,6 +928,7 @@ def _persist_task_card_candidates(
                 "generated_by": "task_card_generation_agent",
                 "pipeline_template": pipeline_template,
                 "authority_source": "sqlite_task_cards",
+                **(candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}),
             },
         )
         existing = task_repo.get_task_card(task_card.task_card_id)

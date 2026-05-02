@@ -10,6 +10,7 @@ from typing import Any, Callable
 from packages.contracts import PipelineStage, PipelineStageKind, TaskKind, WorkflowPipeline
 from packages.contracts.models import new_id
 from packages.core_domain.automation_lease import record_automation_lease_use, validate_automation_lease
+from packages.core_domain.pipeline_retention import build_pipeline_retention_manifest
 from packages.runtime_security.safe_command_runner import SAFE_COMMAND_TIMEOUT_EXIT_CODE, run_safe_command
 
 
@@ -537,6 +538,12 @@ def run_workflow_pipeline(
     )
     output = target_dir / f"{pipeline.pipeline_id}.json"
     payload["evidence_path"] = output.as_posix()
+    retention_manifest = build_pipeline_retention_manifest(payload, workspace_root=root, target_dir=target_dir)
+    retention_output = target_dir / f"{pipeline.pipeline_id}.retention.json"
+    retention_manifest["manifest_path"] = retention_output.as_posix()
+    payload["retention_manifest_path"] = retention_output.as_posix()
+    payload["retention_manifest"] = retention_manifest
+    retention_output.write_text(json.dumps(retention_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     if automation_lease_id:
         record_automation_lease_use(root, automation_lease_id, action="pipeline_run")

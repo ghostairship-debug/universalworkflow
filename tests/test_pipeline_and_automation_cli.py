@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -17,6 +19,115 @@ def _invoke(tmp_path: Path, *args: str):
         app,
         ["--db-path", str(tmp_path / "workflow.db"), "--workspace-root", str(tmp_path), *args],
     )
+
+
+def _seed_child_workflow_state(
+    db_path: Path,
+    *,
+    goal: str,
+    receipt_id: str,
+    heartbeat_age_seconds: int,
+) -> None:
+    now = datetime.now(UTC)
+    receipt_created = (now - timedelta(seconds=60)).isoformat()
+    run_created = (now - timedelta(seconds=30)).isoformat()
+    heartbeat_at = (now - timedelta(seconds=heartbeat_age_seconds)).isoformat()
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE operator_action_receipts (receipt_id TEXT PRIMARY KEY, created_at TEXT, consumed_at TEXT);
+            CREATE TABLE runs (run_id TEXT PRIMARY KEY, goal TEXT, status TEXT, created_at TEXT, updated_at TEXT);
+            CREATE TABLE runtime_attempts (
+              attempt_id TEXT PRIMARY KEY,
+              run_id TEXT,
+              runtime_task_id TEXT,
+              status TEXT,
+              created_at TEXT,
+              closed_at TEXT,
+              close_reason TEXT,
+              sequence_no INTEGER
+            );
+            CREATE TABLE worker_leases (
+              lease_id TEXT PRIMARY KEY,
+              run_id TEXT,
+              adapter_name TEXT,
+              status TEXT,
+              heartbeat_at TEXT,
+              lease_expires_at TEXT,
+              released_at TEXT,
+              release_reason TEXT,
+              created_at TEXT
+            );
+            CREATE TABLE run_events (
+              event_id TEXT PRIMARY KEY,
+              run_id TEXT,
+              event_type TEXT,
+              object_type TEXT,
+              object_id TEXT,
+              summary TEXT,
+              payload_json TEXT,
+              schema_version TEXT,
+              created_at TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO operator_action_receipts (receipt_id, created_at, consumed_at) VALUES (?, ?, ?)",
+            (receipt_id, receipt_created, (now - timedelta(seconds=50)).isoformat()),
+        )
+        connection.execute(
+            "INSERT INTO runs (run_id, goal, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("child_run_001", goal, "running", run_created, run_created),
+        )
+        connection.execute(
+            """
+            INSERT INTO runtime_attempts (
+              attempt_id, run_id, runtime_task_id, status, created_at, closed_at, close_reason, sequence_no
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("attempt_001", "child_run_001", "task_001", "current", run_created, None, None, 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO worker_leases (
+              lease_id, run_id, adapter_name, status, heartbeat_at, lease_expires_at, released_at, release_reason, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "lease_001",
+                "child_run_001",
+                "codex",
+                "active",
+                heartbeat_at,
+                (now + timedelta(minutes=10)).isoformat(),
+                None,
+                None,
+                run_created,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO run_events (
+              event_id, run_id, event_type, object_type, object_id, summary, payload_json, schema_version, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "event_heartbeat_001",
+                "child_run_001",
+                "worker_heartbeat_received",
+                "runtime_task",
+                "task_001",
+                "heartbeat",
+                "{}",
+                "v1",
+                heartbeat_at,
+            ),
+        )
+        connection.commit()
+
 
 def test_pipeline_preview_exposes_h5_game_commercialization_pipeline(tmp_path: Path) -> None:
     result = _invoke(tmp_path, "pipeline", "preview", "--goal", "基于 PDF 做 Cocos H5 俄罗斯方块小游戏")
@@ -463,10 +574,16 @@ def test_commercial_gate_v2_rejects_event_only_scaffold_go() -> None:
     assert "live_role_provider_proof_missing" in blockers
     assert "cocos_ecosystem_bridge_missing" in blockers
     assert "awaiting_human_player_review" in blockers
-    assert "cocos_build_nonzero_exit" in blockers
-    assert "browser_or_audio_runtime_error" in blockers
-    assert "levels_not_distinct_or_less_than_eight" in blockers
-    assert "skin_system_not_player_visible" in blockers
+    assert "blocked_by_same_project_worker" in blockers
+    assert "cocos_build_nonzero_exit" not in blockers
+    assert "browser_or_audio_runtime_error" not in blockers
+    assert "levels_not_distinct_or_less_than_eight" not in blockers
+    assert "skin_system_not_player_visible" not in blockers
+    assert gate["output"]["no_degradation_contract"]["commercial_final_gate_evidence"]["blocked_downstream_stages"] == [
+        "cocos_build",
+        "browser_playtest",
+        "product_depth",
+    ]
     assert gate["output"]["no_degradation_contract"]["go_no_go"] == "NO-GO"
 
 
@@ -477,9 +594,14 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
         "eightDistinctLevelGoals": True,
         "skinEquippedVisualChange": True,
         "shopOwnershipStates": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
         "audioPlaybackVerified": True,
         "bgmStarted": True,
+        "sfxPlaybackVerified": True,
         "volumeToggleUsable": True,
+        "animationFeedbackVerified": True,
     }
     payload = pipeline_registry.execute_contribution_validation(
         "commercial_game_production_go_no_go",
@@ -488,9 +610,40 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
                 "commercial_playable_go": True,
                 "same_project_worker_patch_go": True,
                 "ecosystem_integration_go": True,
-                "build": {"creator_exit_code": 0, "fatal_marker_detected": False},
-                "playtest": {"console_errors": [], "page_errors": [], "feature_coverage": product_features},
+                "same_project_patch_ledger": {
+                    "same_project_worker_patch_go": True,
+                    "task_card_count": 1,
+                    "completed_count": 1,
+                    "entries": [{"task_card_id": "tc_product_depth", "status": "completed"}],
+                    "blockers": [],
+                },
+                "cocos_ecosystem_evidence": {"ecosystem_integration_go": True, "blockers": [], "checks": {"assetdb": True}},
+                "build": {
+                    "creator_exit_code": 0,
+                    "fatal_marker_detected": False,
+                    "artifact_success": True,
+                    "build_output_path": "build/web-mobile",
+                },
+                "playtest": {
+                    "passed": True,
+                    "url": "http://127.0.0.1:3000/index.html",
+                    "screenshots": ["mobile.png"],
+                    "console_errors": [],
+                    "page_errors": [],
+                    "feature_coverage": {**product_features, "mobilePortraitUi": True},
+                },
                 "commercial_feature_coverage": product_features,
+                "product_depth_evidence": {
+                    "level_goals": [f"goal-{index}" for index in range(8)],
+                    "feature_coverage": product_features,
+                },
+            },
+            "commercial_game_assets": {
+                "commercial_assets_go": True,
+                "asset_manifest_path": "assets/commercial_asset_manifest.json",
+                "provider_evidence": [{"provider": "test", "status": "verified_ready"}],
+                "asset_manifest": {"go_no_go": "GO", "manifest_path": "assets/commercial_asset_manifest.json"},
+                "commercial_asset_blockers": [],
             },
             "role_output:qa_player_perspective_agent": {
                 "llm_call_status": "called",
@@ -510,6 +663,8 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
     assert gate["failure_class"] == "awaiting_human_player_review"
     assert gate["output"]["blockers"] == ["awaiting_human_player_review"]
     assert gate["output"]["no_degradation_contract"]["go_no_go"] == "AWAITING_HUMAN_REVIEW"
+    assert gate["output"]["machine_evidence_go"] is True
+    assert gate["output"]["commercial_final_gate_evidence"]["commercial_playable_go"] is False
 
 
 def test_real_commercial_game_pipeline_runs_registered_stages_and_blocks_on_missing_task_cards(tmp_path: Path) -> None:
@@ -710,16 +865,35 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
 
     def _fake_runtime_evidence(**_kwargs):
         evidence_order.append("runtime")
+        feature_coverage = {
+            "mobilePortraitUi": True,
+            "audioPlaybackVerified": True,
+            "bgmStarted": True,
+            "sfxPlaybackVerified": True,
+            "volumeToggleUsable": True,
+        }
         return {
             "technical_smoke_go": True,
             "production_scaffold_go": False,
             "commercial_playable_go": True,
             "commercial_playable_blockers": [],
-            "commercial_feature_coverage": {},
+            "commercial_feature_coverage": feature_coverage,
             "player_visible_checks": {},
             "manual_player_evidence": {},
-            "build": {"creator_exit_code": 0, "fatal_marker_detected": False},
-            "playtest": {"console_errors": [], "page_errors": []},
+            "build": {
+                "creator_exit_code": 0,
+                "fatal_marker_detected": False,
+                "artifact_success": True,
+                "build_output_path": (tmp_path / "cocos_project" / "build" / "web-mobile").as_posix(),
+            },
+            "playtest": {
+                "passed": True,
+                "url": "http://127.0.0.1:3000/index.html",
+                "screenshots": ["mobile.png"],
+                "console_errors": [],
+                "page_errors": [],
+                "feature_coverage": feature_coverage,
+            },
             "manifest_path": (tmp_path / "cocos_project" / "workflow_project_manifest.json").as_posix(),
         }
 
@@ -751,11 +925,1314 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
     assert output["same_project_patch_ledger"]["entries"][0]["changed_files"]
     assert output["same_project_patch_ledger"]["entries"][0]["watchdog"]["stream_event_count"] == 3
     assert output["same_project_patch_ledger"]["entries"][0]["idle_timeout_seconds"] == 240
+    assert output["same_project_patch_ledger"]["entries"][0]["task_card_path"].endswith("tc_levels.md")
+    assert output["same_project_patch_ledger"]["entries"][0]["continuation_required"] is False
+    assert output["same_project_patch_ledger"]["next_incomplete_task_card_id"] is None
+    assert output["same_project_patch_ledger"]["next_continuation_command"] is None
     assert output["skipped_non_worker_task_cards"] == ["tc_bridge_contract"]
     assert len(runner_calls) == 1
     assert runner_calls[0]["task_card"].task_card_id == "tc_levels"
     assert evidence_order == ["ecosystem:auto", "runtime", "ecosystem:report_only"]
+    assert set(output["evidence_contracts"]) == {
+        "asset_graph",
+        "cocos_bridge_evidence",
+        "same_project_patch_ledger",
+        "build_ledger",
+        "browser_playtest_ledger",
+        "product_depth_evidence",
+    }
+    assert output["build_ledger_go"] is True
+    assert output["browser_playtest_ledger_go"] is True
     assert (tmp_path / "cocos_project" / "workflow_project_source.json").exists()
+
+
+def test_commercial_worker_short_circuits_downstream_after_same_project_patch_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from packages.contracts import Run, TaskCard
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+    from packages.core_domain.db import migrate
+    from packages.core_domain.repositories import RunRepository, TaskRepository
+
+    db_path = tmp_path / "workflow.db"
+    pipeline_id = "pipeline_same_project_worker_failed"
+    migrate(db_path)
+    RunRepository(db_path).create(Run(run_id=pipeline_id, goal="commercial worker", preset_id="commercial_game_production"))
+    TaskRepository(db_path).create_task_card(
+        TaskCard(
+            run_id=pipeline_id,
+            task_card_id="tc_levels",
+            title="Implement levels",
+            description="Implement eight distinct level goals on the same Cocos project.",
+            goal="Implement eight distinct level goals on the same Cocos project.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["role_output:product_gameplay_agent"],
+            test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
+            acceptance_criteria=["eight goals visible", "same project patched"],
+            evidence_requirements=["same_project_patch", "feature_coverage"],
+            blocking_conditions=["workflow_child_stalled"],
+            model_guidance=["Patch the same project only."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+        )
+    )
+    source = tmp_path / "brief.md"
+    source.write_text("# commercial game", encoding="utf-8")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    def _failed_runner(**kwargs):
+        return {
+            "status": "failed",
+            "failure_class": "workflow_child_stalled",
+            "receipt_id": "receipt_tc_levels",
+            "child_run_id": "run_tc_levels",
+            "child_attempt_id": "attempt_tc_levels",
+            "worker_adapter": "codex",
+            "watchdog_source": "db_runtime_state",
+            "watchdog": {"timeout_type": "idle_timeout", "stream_event_count": 0},
+            "timeout_seconds": 900,
+            "idle_timeout_seconds": 240,
+            "recoverable_suggestion": "resume_from_next_incomplete_task_card_after_closed_child_run",
+            "command": [
+                "python",
+                "-m",
+                "apps.operator_cli.main",
+                "run",
+                "from-task-card",
+                Path(kwargs["task_card_path"]).as_posix(),
+                "--execute",
+            ],
+        }
+
+    def _fake_ecosystem_evidence(**_kwargs):
+        return {
+            "strict_required": False,
+            "ecosystem_integration_go": True,
+            "blockers": [],
+            "failure_class": None,
+            "checks": {"build_api_evidence": True},
+        }
+
+    def _runtime_should_not_run(**_kwargs):
+        raise AssertionError("downstream runtime evidence must short-circuit after upstream patch failure")
+
+    monkeypatch.setattr(commercial_pipeline, "collect_cocos_ecosystem_bridge_evidence", _fake_ecosystem_evidence)
+    monkeypatch.setattr(commercial_pipeline, "collect_project_runtime_evidence", _runtime_should_not_run)
+
+    payload = commercial_pipeline.execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=source,
+        creator_exe=creator,
+        output_dir=tmp_path / "cocos_project",
+        require_build=True,
+        require_playtest=True,
+        require_commercial=True,
+        require_cocos_ecosystem=False,
+        task_card_runner=_failed_runner,
+    )
+
+    output = payload["output"]
+    blockers = output["commercial_playable_blockers"]
+    assert output["same_project_worker_patch_go"] is False
+    assert output["build_ledger"]["status"] == "blocked"
+    assert output["browser_playtest_ledger"]["status"] == "blocked"
+    assert output["product_depth_evidence"]["status"] == "blocked"
+    assert output["build_ledger"]["blockers"] == ["blocked_by_same_project_worker"]
+    assert output["product_depth_evidence"]["blockers"] == ["blocked_by_same_project_worker"]
+    assert output["blocked_downstream_stages"] == [
+        "cocos_build",
+        "browser_playtest",
+        "audio_runtime",
+        "product_depth",
+        "human_player_review",
+    ]
+    assert output["normalized_repair_packet"]["root_cause"] == "same_project_worker_patch_failed"
+    assert output["normalized_repair_packet"]["blocked_downstream_stages"] == output["blocked_downstream_stages"]
+    assert "workflow_child_stalled" in output["same_project_patch_ledger"]["blockers"]
+    assert "blocked_by_same_project_worker" in blockers
+    assert "levels_not_distinct_or_less_than_eight" not in blockers
+    assert "audio_runtime_not_verified" not in blockers
+
+
+def test_collect_project_runtime_evidence_writes_build_and_browser_ledgers(tmp_path: Path, monkeypatch) -> None:
+    import packages.contributions.pipelines.commercial_game_task_worker as worker_module
+
+    project_dir = tmp_path / "cocos_project"
+    build_output = project_dir / "build" / "web-mobile"
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    feature_coverage = {
+        "mobilePortraitUi": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+    }
+
+    def _fake_build(**_kwargs):
+        return {
+            "creator_exit_code": 0,
+            "fatal_marker_detected": False,
+            "artifact_success": True,
+            "build_output_path": build_output.as_posix(),
+        }
+
+    def _fake_playtest(**_kwargs):
+        return {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png", "desktop.png"],
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": feature_coverage,
+            "result_path": (project_dir / "playtest_evidence" / "cocos_playtest_result.json").as_posix(),
+        }
+
+    monkeypatch.setattr(worker_module, "build_cocos_project", _fake_build)
+    monkeypatch.setattr(worker_module, "playtest_cocos_build", _fake_playtest)
+
+    payload = worker_module.collect_project_runtime_evidence(
+        project_dir=project_dir,
+        creator_exe=creator,
+        require_build=True,
+        require_playtest=True,
+    )
+
+    assert payload["commercial_playable_blockers"] == []
+    assert payload["build_ledger"]["go"] is True
+    assert payload["browser_playtest_ledger"]["go"] is True
+    assert payload["build_ledger"]["source"]["build_command"]
+    assert payload["browser_playtest_ledger"]["source"]["audio_runtime_proof"]["sfxPlaybackVerified"] is True
+    assert Path(payload["build_ledger_path"]).exists()
+    assert Path(payload["browser_playtest_ledger_path"]).exists()
+
+
+def test_collect_project_runtime_evidence_records_browser_playtest_exception(tmp_path: Path, monkeypatch) -> None:
+    import packages.contributions.pipelines.commercial_game_task_worker as worker_module
+
+    project_dir = tmp_path / "cocos_project"
+    build_output = project_dir / "build" / "web-mobile"
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    def _fake_build(**_kwargs):
+        return {
+            "creator_exit_code": 36,
+            "fatal_marker_detected": False,
+            "artifact_success": True,
+            "build_output_path": build_output.as_posix(),
+        }
+
+    def _failing_playtest(**_kwargs):
+        raise TimeoutError("canvas selector timed out")
+
+    monkeypatch.setattr(worker_module, "build_cocos_project", _fake_build)
+    monkeypatch.setattr(worker_module, "playtest_cocos_build", _failing_playtest)
+
+    payload = worker_module.collect_project_runtime_evidence(
+        project_dir=project_dir,
+        creator_exe=creator,
+        require_build=True,
+        require_playtest=True,
+    )
+
+    assert payload["build_ledger"]["go"] is True
+    assert payload["browser_playtest_ledger"]["go"] is False
+    assert "browser_playtest_TimeoutError" in payload["browser_playtest_ledger"]["blockers"]
+    assert "browser_playtest_execution_failed" in payload["browser_playtest_ledger"]["blockers"]
+    assert Path(payload["browser_playtest_ledger_path"]).exists()
+    assert Path(project_dir / "playtest_evidence" / "cocos_playtest_exception.json").exists()
+
+
+def test_production_worker_generates_human_review_packet_without_human_go(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import production_payload_from_worker
+
+    def _dedupe(values):
+        result = []
+        seen = set()
+        for value in values:
+            text = str(value)
+            if text not in seen:
+                seen.add(text)
+                result.append(text)
+        return result
+
+    product_features = {
+        "shopOwnershipStates": True,
+        "skinEquippedVisualChange": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+        "animationFeedbackVerified": True,
+    }
+    payload = production_payload_from_worker(
+        schema_version="test_worker_schema",
+        created_at="2026-04-29T00:00:00Z",
+        pipeline_id="pipeline_human_review_packet_test",
+        project_dir=tmp_path / "cocos_project",
+        task_card_quality={"task_card_count": 1, "go_no_go": "GO"},
+        runtime_evidence={
+            "technical_smoke_go": True,
+            "production_scaffold_go": False,
+            "commercial_playable_go": True,
+            "commercial_playable_blockers": [],
+            "commercial_feature_coverage": product_features,
+            "player_visible_checks": {},
+            "manual_player_evidence": {},
+            "product_depth_evidence": {
+                "level_goals": [f"goal-{index}" for index in range(8)],
+                "feature_coverage": product_features,
+            },
+            "build": {
+                "creator_exit_code": 0,
+                "fatal_marker_detected": False,
+                "artifact_success": True,
+                "build_output_path": "build/web-mobile",
+            },
+            "playtest": {
+                "passed": True,
+                "url": "http://127.0.0.1:3000/index.html",
+                "screenshots": ["mobile.png"],
+                "console_errors": [],
+                "page_errors": [],
+                "feature_coverage": {"mobilePortraitUi": True, **product_features},
+            },
+        },
+        assets_stage={
+            "commercial_assets_go": True,
+            "asset_manifest_path": "assets/commercial_asset_manifest.json",
+            "asset_manifest": {"go_no_go": "GO", "manifest_path": "assets/commercial_asset_manifest.json"},
+            "commercial_asset_blockers": [],
+        },
+        ecosystem_evidence={"ecosystem_integration_go": True, "blockers": [], "checks": {"assetdb": True}},
+        patch_ledger={
+            "same_project_worker_patch_go": True,
+            "task_card_count": 1,
+            "completed_count": 1,
+            "entries": [{"task_card_id": "tc_product_depth", "status": "completed"}],
+            "blockers": [],
+        },
+        skipped_task_cards=[],
+        max_repair_attempts=3,
+        dedupe_strings=_dedupe,
+        blocker_details=lambda blockers: [{"blocker": item} for item in blockers],
+        recoverable_suggestions=lambda blockers: [],
+    )
+
+    assert payload["machine_evidence_go"] is True
+    assert payload["product_depth_evidence"]["go"] is True
+    assert payload["human_review_packet"]["status"] == "AWAITING_HUMAN_REVIEW"
+    assert payload["human_review_packet"]["human_player_review_go"] is False
+    assert payload["human_player_review_go"] is False
+    assert payload["commercial_playable_go"] is False
+
+
+def test_same_project_patch_ledger_records_continuation_for_idle_timeout(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_idle_timeout",
+        task_card_id="tc_audio",
+        title="Repair audio runtime",
+        description="Repair browser-supported audio runtime in the same Cocos project.",
+        goal="Repair browser-supported audio runtime in the same Cocos project.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["commercial_asset_bindings.json"],
+        test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
+        acceptance_criteria=["audio works", "same project patched"],
+        evidence_requirements=["audio_runtime_evidence", "same_project_patch"],
+        blocking_conditions=["provider_idle_timeout"],
+        model_guidance=["Resume this exact card; do not create a new project."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    receipts: list[str] = []
+
+    def _timeout_runner(**kwargs):
+        task_card_path = Path(kwargs["task_card_path"])
+        receipt_id = f"receipt_audio_{len(receipts) + 1}"
+        receipts.append(receipt_id)
+        return {
+            "status": "failed",
+            "failure_class": "provider_idle_timeout",
+            "receipt_id": receipt_id,
+            "watchdog": {"timeout_type": "idle_timeout", "stream_event_count": 0},
+            "timeout_seconds": 900,
+            "idle_timeout_seconds": 240,
+            "recoverable_suggestion": "retry_with_higher_idle_timeout_or_split_task",
+            "command": ["python", "-m", "apps.operator_cli.main", "run", "from-task-card", task_card_path.as_posix(), "--execute"],
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_idle_timeout",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=2,
+        task_card_runner=_timeout_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is False
+    assert "same_project_task_card_patch_failed" in ledger["blockers"]
+    assert "blocked_after_three_attempts" in ledger["blockers"]
+    assert "provider_timeout_recoverable" in ledger["blockers"]
+    assert ledger["next_incomplete_task_card_id"] == "tc_audio"
+    assert ledger["next_continuation_command"] == entry["continuation_command"]
+    assert len(receipts) == 3
+    assert receipts == ["receipt_audio_1", "receipt_audio_2", "receipt_audio_3"]
+    assert entry["status"] == "blocked"
+    assert entry["failure_class"] == "blocked_after_three_attempts"
+    assert entry["final_failure_class"] == "provider_timeout"
+    assert entry["retry_exhausted"] is True
+    assert len(entry["attempts"]) == 3
+    assert entry["continuation_required"] is True
+    assert entry["continuation_reason"] == "blocked_after_three_attempts"
+    assert "commercial_game_task_card_resume" in entry["continuation_command"]
+    assert "--operator-receipt-id" not in entry["continuation_command"]
+    assert entry["task_card_path"].endswith("tc_audio.md")
+
+
+def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    def _card(task_card_id: str) -> TaskCard:
+        return TaskCard(
+            run_id="pipeline_retry_success",
+            task_card_id=task_card_id,
+            title=f"Task {task_card_id}",
+            description=f"Task {task_card_id}",
+            goal=f"Patch {task_card_id} in the same project with fresh receipt retry accounting.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["brief.md"],
+            test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+            acceptance_criteria=["same project patched", "tests passed"],
+            evidence_requirements=["same_project_patch"],
+            blocking_conditions=["provider_output_idle_timeout"],
+            model_guidance=["Retry the same card only with fresh receipts."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+        )
+
+    calls: list[str] = []
+
+    def _runner(**kwargs):
+        task_id = kwargs["task_card"].task_card_id
+        calls.append(task_id)
+        attempt_index = calls.count(task_id)
+        if task_id == "tc_levels" and attempt_index < 3:
+            return {
+                "status": "failed",
+                "failure_class": "provider_output_idle_timeout",
+                "receipt_id": f"receipt_levels_{attempt_index}",
+                "watchdog": {
+                    "timeout_type": "provider_output_idle_timeout",
+                    "stream_event_count": attempt_index,
+                    "control_output_event_count": attempt_index,
+                    "provider_output_event_count": 0,
+                    "last_provider_output_at": f"2026-04-30T00:00:0{attempt_index}+00:00",
+                },
+            }
+        return {
+            "status": "completed",
+            "failure_class": None,
+            "receipt_id": f"receipt_{task_id}_{attempt_index}",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": [f"state/project/assets/scripts/{task_id}.ts"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3, "provider_output_event_count": 2, "material_progress_event_count": 1},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_retry_success",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[_card("tc_levels"), _card("tc_shop")],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    first_entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert ledger["blockers"] == []
+    assert calls == ["tc_levels", "tc_levels", "tc_levels", "tc_shop"]
+    assert first_entry["status"] == "completed"
+    assert first_entry["final_test_status"] == "passed"
+    assert first_entry["consecutive_failure_count"] == 0
+    assert first_entry["retry_exhausted"] is False
+    assert [attempt["receipt_id"] for attempt in first_entry["attempts"]] == [
+        "receipt_levels_1",
+        "receipt_levels_2",
+        "receipt_tc_levels_3",
+    ]
+
+
+def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_retry_review_failure",
+        task_card_id="tc_revive",
+        title="Task tc_revive",
+        description="Task tc_revive",
+        goal="Patch revive prompt state in the same project with fresh receipt retry accounting.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["same project patched", "tests passed"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["same_project_patch_review_failed"],
+        model_guidance=["Retry the same card only with fresh receipts."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    receipts: list[str] = []
+
+    def _runner(**_kwargs):
+        attempt_index = len(receipts) + 1
+        receipts.append(f"receipt_revive_{attempt_index}")
+        if attempt_index < 3:
+            return {
+                "status": "failed",
+                "failure_class": "same_project_patch_review_failed",
+                "receipt_id": receipts[-1],
+                "review_decision": "fail",
+                "watchdog": {"stream_event_count": attempt_index, "provider_output_event_count": attempt_index},
+            }
+        return {
+            "status": "completed",
+            "failure_class": None,
+            "receipt_id": receipts[-1],
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/RevivePromptState.ts"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3, "provider_output_event_count": 3, "material_progress_event_count": 1},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_retry_review_failure",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert ledger["blockers"] == []
+    assert receipts == ["receipt_revive_1", "receipt_revive_2", "receipt_revive_3"]
+    assert entry["status"] == "completed"
+    assert entry["consecutive_failure_count"] == 0
+    assert entry["retry_exhausted"] is False
+    assert [attempt["failure_class"] for attempt in entry["attempts"]] == [
+        "same_project_patch_review_failed",
+        "same_project_patch_review_failed",
+        None,
+    ]
+
+
+def test_same_project_patch_ledger_fail_fast_precondition_does_not_retry(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_preflight_blocker",
+        task_card_id="tc_levels",
+        title="Implement levels",
+        description="Implement level goals in the same Cocos project.",
+        goal="Implement level goals in the same Cocos project with preflight validation.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["same project patched", "tests passed"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["provider_live_proof_missing"],
+        model_guidance=["Do not retry hard precondition failures."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+    calls = 0
+
+    def _preflight_runner(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "status": "blocked",
+            "failure_class": "provider_live_proof_missing",
+            "receipt_id": None,
+            "watchdog": {},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_preflight_blocker",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_preflight_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert calls == 1
+    assert entry["preflight_blocker"] is True
+    assert entry["retry_exhausted"] is False
+    assert entry["failure_class"] == "provider_live_proof_missing"
+    assert "blocked_after_three_attempts" not in ledger["blockers"]
+
+
+def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    def _card(task_card_id: str) -> TaskCard:
+        return TaskCard(
+            run_id="pipeline_resume",
+            task_card_id=task_card_id,
+            title=f"Task {task_card_id}",
+            description=f"Task {task_card_id}",
+            goal=f"Task {task_card_id}",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["brief.md"],
+            test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+            acceptance_criteria=["same project patched"],
+            evidence_requirements=["same_project_patch"],
+            blocking_conditions=["provider_timeout"],
+            model_guidance=["Patch only the same project."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+        )
+
+    ledger_root = tmp_path / "pipeline_evidence" / "task_card_worker"
+    ledger_root.mkdir(parents=True)
+    (ledger_root / "same_project_patch_ledger.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "task_card_id": "tc_levels",
+                        "title": "Task tc_levels",
+                        "status": "completed",
+                        "failure_class": None,
+                        "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
+                        "mutation_result": {
+                            "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
+                            "final_test_status": "passed",
+                        },
+                        "continuation_required": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner_calls: list[str] = []
+
+    def _runner(**kwargs):
+        runner_calls.append(kwargs["task_card"].task_card_id)
+        return {
+            "status": "completed",
+            "failure_class": None,
+            "receipt_id": "receipt_shop",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/Shop.ts"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 5},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_resume",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[_card("tc_levels"), _card("tc_shop")],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    assert runner_calls == ["tc_shop"]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert ledger["completed_count"] == 2
+    assert [entry["task_card_id"] for entry in ledger["entries"]] == ["tc_levels", "tc_shop"]
+
+
+def test_same_project_patch_ledger_accepts_existing_real_shop_evidence_without_provider_rerun(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    project_dir = tmp_path / "cocos_project"
+    (project_dir / "assets/scripts").mkdir(parents=True)
+    (project_dir / "assets/resources/commercial_assets").mkdir(parents=True)
+    (project_dir / "playtest_evidence").mkdir(parents=True)
+    (project_dir / "assets/scripts/ShopSkinSystem.ts").write_text("export const shop = true;\n", encoding="utf-8")
+    (project_dir / "assets/resources/commercial_assets/skin_catalog.json").write_text("{}", encoding="utf-8")
+    screenshot = project_dir / "playtest_evidence/shop_panel.png"
+    screenshot.write_bytes(b"png")
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text(
+        json.dumps(
+            {
+                "commercial_feature_coverage": {
+                    "shopOwnershipStates": True,
+                    "skinEquippedVisualChange": True,
+                },
+                "player_visible_checks": {
+                    "shopOwnershipStates": True,
+                    "skinEquippedVisualChange": True,
+                },
+                "same_project_patch_files": [
+                    "assets/scripts/ShopSkinSystem.ts",
+                    "assets/resources/commercial_assets/skin_catalog.json",
+                ],
+                "screenshots": [screenshot.as_posix()],
+                "open_panels": ["皮肤图鉴"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_existing_shop",
+        task_card_id="tc_shop",
+        title="Implement shop skin collection ownership and equip flow",
+        description="Use existing same-project shop evidence.",
+        goal="Use existing same-project shop evidence.",
+        write_set=[
+            "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+            "state/pipeline_runs/<run>/cocos_project/assets/resources",
+        ],
+        read_set=["commercial_asset_bindings.json"],
+        test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
+        acceptance_criteria=["shop states visible"],
+        evidence_requirements=["shopOwnershipStates", "skinEquippedVisualChange", "collection_panel_screenshot"],
+        blocking_conditions=["skin_panel_event_only"],
+        model_guidance=["Do not rerun provider when evidence is already real."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("existing real shop evidence should satisfy the task card without provider rerun")
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=project_dir,
+        pipeline_id="pipeline_existing_shop",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_unexpected_runner,
+    )
+
+    assert ledger["same_project_worker_patch_go"] is True
+    assert ledger["completed_count"] == 1
+    entry = ledger["entries"][0]
+    assert entry["status"] == "completed"
+    assert entry["satisfaction_mode"] == "existing_same_project_evidence"
+    assert entry["evidence_reuse_real_files"] is True
+    assert set(entry["evidence_requirements_satisfied"]) == {
+        "shopOwnershipStates",
+        "skinEquippedVisualChange",
+        "collection_panel_screenshot",
+    }
+    assert any(path.endswith("ShopSkinSystem.ts") for path in entry["changed_files"])
+
+
+def test_same_project_patch_ledger_accepts_existing_core_loop_reward_evidence_without_provider_rerun(
+    tmp_path: Path,
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    project_dir = tmp_path / "cocos_project"
+    (project_dir / "assets/scripts").mkdir(parents=True)
+    (project_dir / "assets/scene").mkdir(parents=True)
+    (project_dir / "assets/scripts/level_manifest.json").write_text(
+        json.dumps(
+            {
+                "levels": [
+                    {
+                        "id": "level_01_score_sprint",
+                        "reward": {"coins": 80, "unlock_level_ids": ["level_02_combo_chain"]},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "assets/scene/level_goal_preview.json").write_text(
+        json.dumps(
+            {
+                "ui_bindings": {"unlock_progress_node": "Canvas/HUD/LevelGoalPanel/UnlockProgress"},
+                "sections": [{"section_id": "unlock_progress", "title_zh": "解锁进度"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text(
+        json.dumps(
+            {
+                "player_visible_checks": {
+                    "rewardPreviewConfigured": True,
+                    "sessionUnlockChainConfigured": True,
+                },
+                "same_project_patch_files": [
+                    "assets/scripts/level_manifest.json",
+                    "assets/scene/level_goal_preview.json",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_existing_rewards",
+        task_card_id="tc_core_loop",
+        title="Implement core loop rewards and growth economy",
+        description="Use existing same-project core loop evidence.",
+        goal="Use existing same-project core loop evidence.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["role_output:product_gameplay_agent"],
+        test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
+        acceptance_criteria=["core loop reward state is visible"],
+        evidence_requirements=["rewardCurrencyChanges", "unlockProgressVisible", "same_project_patch"],
+        blocking_conditions=["reward_event_only"],
+        model_guidance=["Do not rerun provider when evidence is already real."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("existing core loop evidence should satisfy the task card without provider rerun")
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=project_dir,
+        pipeline_id="pipeline_existing_rewards",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_unexpected_runner,
+    )
+
+    assert ledger["same_project_worker_patch_go"] is True
+    entry = ledger["entries"][0]
+    assert entry["status"] == "completed"
+    assert entry["satisfaction_mode"] == "existing_same_project_evidence"
+    assert set(entry["evidence_requirements_satisfied"]) == {
+        "rewardCurrencyChanges",
+        "unlockProgressVisible",
+        "same_project_patch",
+    }
+    assert any(path.endswith("level_manifest.json") for path in entry["changed_files"])
+
+
+def test_same_project_patch_ledger_generates_human_review_packet_without_provider_rerun(
+    tmp_path: Path,
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    project_dir = tmp_path / "cocos_project"
+    (project_dir / "playtest_evidence").mkdir(parents=True)
+    screenshot = project_dir / "playtest_evidence" / "review.png"
+    screenshot.write_bytes(b"png")
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text(
+        json.dumps(
+            {
+                "screenshots": [screenshot.as_posix()],
+                "same_project_patch_files": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_existing_human_review",
+        task_card_id="tc_human_review",
+        title="Prepare human player review packet",
+        description="Generate an unattended review packet without self-approval.",
+        goal="Stop at AWAITING_HUMAN_REVIEW unless a real reviewer accepts.",
+        write_set=[
+            "state/pipeline_runs/<run>/cocos_project/player_visible_evidence",
+            "state/pipeline_runs/<run>/cocos_project/workflow_commercial_feature_evidence.json",
+        ],
+        read_set=["playtest_evidence"],
+        test_commands=[
+            "python -m pytest tests/test_pipeline_and_automation_cli.py::test_commercial_gate_v2_can_stop_at_human_review_only -q"
+        ],
+        acceptance_criteria=["review packet exists", "no human acceptance is fabricated"],
+        evidence_requirements=["human_review_packet", "awaiting_human_review_status"],
+        blocking_conditions=["fabricated_human_acceptance"],
+        model_guidance=["Do not self-approve."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("human review packet should be generated by workflow without provider rerun")
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=project_dir,
+        pipeline_id="pipeline_existing_human_review",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_unexpected_runner,
+    )
+
+    packet = json.loads((project_dir / "player_visible_evidence/human_player_review_packet.json").read_text())
+    assert ledger["same_project_worker_patch_go"] is True
+    entry = ledger["entries"][0]
+    assert entry["status"] == "completed"
+    assert entry["satisfaction_mode"] == "existing_same_project_evidence"
+    assert packet["status"] == "AWAITING_HUMAN_REVIEW"
+    assert packet["accepted_by_human"] is False
+    assert packet["human_player_review_go"] is False
+    assert packet["commercial_playable_go_allowed"] is False
+
+
+def test_task_card_worker_cli_rejects_zero_patch_review_failed_payload() -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    status = worker_cli._implementation_status_from_payload(
+        executed={"status": "completed"},
+        payload={
+            "review_decision": "fail",
+            "pr_ready_summary": {
+                "readiness": "review_required",
+                "bounded_patch": {"changed_files": []},
+                "tests": {"status": "not_requested"},
+                "review": {"latest_review_decision": "fail"},
+            },
+        },
+        mutation_result={},
+    )
+
+    assert status == {
+        "status": "failed",
+        "failure_class": "same_project_patch_review_failed",
+        "readiness": "review_required",
+    }
+
+
+def test_task_card_worker_cli_maps_patch_generation_failure_to_provider_execution_failed() -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    status = worker_cli._implementation_status_from_payload(
+        executed={"status": "completed"},
+        payload={
+            "review_decision": "fail",
+            "pr_ready_summary": {
+                "readiness": "blocked",
+                "bounded_patch": {"changed_files": []},
+                "tests": {"status": "patch_generation_failed"},
+                "review": {"latest_review_decision": "fail"},
+            },
+        },
+        mutation_result={},
+    )
+
+    assert status == {
+        "status": "failed",
+        "failure_class": "provider_execution_failed",
+        "readiness": "blocked",
+    }
+
+
+def test_task_card_worker_cli_maps_patch_apply_failure_to_retryable_failure() -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    status = worker_cli._implementation_status_from_payload(
+        executed={"status": "completed"},
+        payload={
+            "review_decision": "fail",
+            "pr_ready_summary": {
+                "readiness": "blocked",
+                "bounded_patch": {"changed_files": []},
+                "tests": {"status": "patch_apply_failed"},
+                "review": {"latest_review_decision": "fail"},
+            },
+        },
+        mutation_result={"changed_files": [], "final_test_status": "patch_apply_failed"},
+    )
+
+    assert status == {
+        "status": "failed",
+        "failure_class": "same_project_patch_apply_failed",
+        "readiness": "blocked",
+    }
+
+
+def test_task_card_worker_cli_accepts_orchestration_coder_mutation_report() -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    payload = {
+        "review_decision": "pass",
+        "pr_ready_summary": {
+            "readiness": "not_ready",
+            "bounded_patch": {"changed_files": []},
+            "tests": {"status": "not_requested"},
+            "review": {"latest_review_decision": "pass"},
+        },
+        "orchestration": {
+            "role_progress": {
+                "coder": {
+                    "mutation_report": {
+                        "mutation_result": {
+                            "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
+                            "final_test_status": "passed",
+                        }
+                    }
+                }
+            }
+        },
+    }
+    mutation_result = worker_cli._mutation_result_from_payload(payload)
+
+    status = worker_cli._implementation_status_from_payload(
+        executed={"status": "completed"},
+        payload=payload,
+        mutation_result=mutation_result,
+    )
+
+    assert mutation_result["changed_files"] == ["state/project/assets/scripts/LevelGoalProgression.ts"]
+    assert status == {
+        "status": "completed",
+        "failure_class": None,
+        "readiness": "ready_via_orchestration_coder",
+    }
+
+
+def test_task_card_worker_cli_invokes_from_task_card_with_codex_patch_adapter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_run_json_command(command, **_kwargs):
+        calls.append({"command": command, "kwargs": _kwargs})
+        if "issue-receipt" in command:
+            return {"status": "completed", "payload": {"receipt_id": "receipt_codex_patch"}}
+        return {
+            "status": "completed",
+            "payload": {
+                "run": {"run_id": "run_codex_patch"},
+                "review_decision": "pass",
+                "pr_ready_summary": {
+                    "readiness": "ready",
+                    "bounded_patch": {"changed_files": ["state/project/assets/scripts/Game.ts"]},
+                    "tests": {"status": "passed"},
+                    "review": {"latest_review_decision": "pass"},
+                },
+            },
+            "watchdog_source": "workflowctl_payload",
+        }
+
+    monkeypatch.setattr(worker_cli, "_run_json_command", _fake_run_json_command)
+    task_card_path = tmp_path / "tc_levels.md"
+    task_card_path.write_text("# Implement levels\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_codex_adapter",
+        task_card_id="tc_levels",
+        title="Implement levels",
+        description="Implement level goals in the same project.",
+        goal="Implement level goals in the same project.",
+        write_set=["state/project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["same project patched"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["provider_timeout"],
+        model_guidance=["Use the same project only."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    result = worker_cli.run_task_card_patch_via_workflowctl(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=tmp_path / "project",
+        pipeline_id="pipeline_codex_adapter",
+        task_card=card,
+        task_card_path=task_card_path,
+        write_set=card.write_set,
+        read_set=card.read_set,
+        test_commands=card.test_commands,
+        max_fix_iterations=1,
+    )
+
+    issue_command = calls[0]["command"]
+    run_command = calls[1]["command"]
+    env_overrides = calls[1]["kwargs"]["env_overrides"]
+    assert result["status"] == "completed"
+    assert result["requested_adapter"] == "codex"
+    assert result["changed_files"] == ["state/project/assets/scripts/Game.ts"]
+    assert result["final_test_status"] == "passed"
+    assert "--adapter" in issue_command
+    assert issue_command[issue_command.index("--adapter") + 1] == "codex"
+    assert "--preset" in issue_command
+    assert issue_command[issue_command.index("--preset") + 1] == "feature_delivery"
+    assert "--adapter" in run_command
+    assert run_command[run_command.index("--adapter") + 1] == "codex"
+    assert "--preset" in run_command
+    assert run_command[run_command.index("--preset") + 1] == "feature_delivery"
+    assert env_overrides["WORKFLOW_CODEX_TIMEOUT_SECONDS"] == "1800"
+    assert env_overrides["WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_OPENCODE_TIMEOUT_SECONDS"] == "1800"
+    assert env_overrides["WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_PROVIDER_TIMEOUT_SECONDS"] == "1800"
+    assert env_overrides["WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_PROVIDER_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS"] == "720"
+    assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_INITIAL_SECONDS"] == "900"
+    assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS"] == "900"
+    assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS"] == "1"
+    assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS"] == "1800"
+    assert calls[1]["kwargs"]["provider_output_idle_timeout_seconds"] == 480
+    assert calls[1]["kwargs"]["material_progress_idle_timeout_seconds"] == 720
+    assert calls[1]["kwargs"]["adaptive_wall_timeout_extension_seconds"] == 900
+    assert calls[1]["kwargs"]["adaptive_wall_timeout_max_extensions"] == 1
+    assert calls[1]["kwargs"]["adaptive_wall_timeout_absolute_max_seconds"] == 1800
+    assert calls[1]["kwargs"]["adaptive_wall_timeout_progress_window_seconds"] == 720
+    assert "shell" not in run_command
+    assert "noop" not in run_command
+
+
+def test_task_card_worker_cli_normalizes_patch_adapter_aliases() -> None:
+    from types import SimpleNamespace
+
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="codex_cli"), None) == "codex"
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="codex-cli"), None) == "codex"
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="opencode_cli"), None) == "opencode"
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="opencode-cli"), None) == "opencode"
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="shell"), None) == "codex"
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="noop"), None) == "codex"
+    assert worker_cli._resolve_task_card_adapter(SimpleNamespace(provider_lane="codex"), "codex_cli") == "codex"
+
+
+def test_task_card_worker_cli_honors_explicit_real_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_run_json_command(command: list[str], **kwargs: object) -> dict[str, object]:
+        calls.append({"command": command, "kwargs": kwargs})
+        if "issue-receipt" in command:
+            return {"status": "completed", "payload": {"receipt_id": "receipt_opencode"}}
+        return {
+            "status": "completed",
+            "payload": {
+                "run": {"run_id": "run_opencode"},
+                "capability_adapter": "opencode",
+                "review_decision": "pass",
+                "pr_ready_summary": {
+                    "readiness": "ready",
+                    "bounded_patch": {"changed_files": ["state/project/workflow_commercial_feature_evidence.json"]},
+                    "tests": {"status": "passed"},
+                    "review": {"latest_review_decision": "pass"},
+                },
+            },
+            "watchdog_source": "workflowctl_payload",
+        }
+
+    monkeypatch.setattr(worker_cli, "_run_json_command", _fake_run_json_command)
+    task_card_path = tmp_path / "tc_feedback.md"
+    task_card_path.write_text("# Feedback evidence\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_opencode_adapter",
+        task_card_id="tc_feedback",
+        title="Feedback evidence",
+        description="Patch feedback evidence in the same project.",
+        goal="Patch feedback evidence in the same project.",
+        write_set=["state/project/workflow_commercial_feature_evidence.json"],
+        read_set=["state/project/workflow_commercial_feature_evidence.json"],
+        test_commands=["python -m json.tool state/project/workflow_commercial_feature_evidence.json"],
+        acceptance_criteria=["same project patched"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["provider_timeout"],
+        model_guidance=["Use the same project only."],
+        provider_lane="codex",
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    result = worker_cli.run_task_card_patch_via_workflowctl(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=tmp_path / "project",
+        pipeline_id="pipeline_opencode_adapter",
+        task_card=card,
+        task_card_path=task_card_path,
+        write_set=card.write_set,
+        read_set=card.read_set,
+        test_commands=card.test_commands,
+        max_fix_iterations=1,
+        adapter_name="opencode",
+    )
+
+    issue_command = calls[0]["command"]
+    run_command = calls[1]["command"]
+    assert result["status"] == "completed"
+    assert result["requested_adapter"] == "opencode"
+    assert issue_command[issue_command.index("--adapter") + 1] == "opencode"
+    assert run_command[run_command.index("--adapter") + 1] == "opencode"
+    assert "shell" not in run_command
+    assert "noop" not in run_command
+
+
+def test_task_card_worker_cli_close_child_workflow_marks_runtime_task_terminal(tmp_path: Path) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    db_path = tmp_path / "workflow.db"
+    now = datetime.now(UTC).isoformat()
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE runs (run_id TEXT PRIMARY KEY, status TEXT, updated_at TEXT);
+            CREATE TABLE runtime_tasks (runtime_task_id TEXT PRIMARY KEY, status TEXT);
+            CREATE TABLE runtime_attempts (attempt_id TEXT PRIMARY KEY, status TEXT, closed_at TEXT, close_reason TEXT);
+            CREATE TABLE worker_leases (lease_id TEXT PRIMARY KEY, status TEXT, released_at TEXT, release_reason TEXT);
+            CREATE TABLE runtime_claims (claim_id TEXT PRIMARY KEY, runtime_task_id TEXT, status TEXT, released_at TEXT, release_reason TEXT);
+            CREATE TABLE scheduler_lease_decisions (decision_id TEXT PRIMARY KEY, runtime_task_id TEXT, released_at TEXT, release_reason TEXT);
+            CREATE TABLE scheduler_committed_leases (committed_lease_id TEXT PRIMARY KEY, runtime_task_id TEXT, status TEXT, released_at TEXT, release_reason TEXT);
+            CREATE TABLE run_events (
+              event_id TEXT PRIMARY KEY,
+              run_id TEXT,
+              event_type TEXT,
+              object_type TEXT,
+              object_id TEXT,
+              summary TEXT,
+              payload_json TEXT,
+              schema_version TEXT,
+              created_at TEXT
+            );
+            """
+        )
+        connection.execute("INSERT INTO runs VALUES (?, ?, ?)", ("run_child", "running", now))
+        connection.execute("INSERT INTO runtime_tasks VALUES (?, ?)", ("task_child", "running"))
+        connection.execute("INSERT INTO runtime_attempts VALUES (?, ?, ?, ?)", ("attempt_child", "current", None, None))
+        connection.execute("INSERT INTO worker_leases VALUES (?, ?, ?, ?)", ("lease_child", "active", None, None))
+        connection.execute("INSERT INTO runtime_claims VALUES (?, ?, ?, ?, ?)", ("claim_child", "task_child", "active", None, None))
+        connection.execute("INSERT INTO scheduler_lease_decisions VALUES (?, ?, ?, ?)", ("decision_child", "task_child", None, None))
+        connection.execute("INSERT INTO scheduler_committed_leases VALUES (?, ?, ?, ?, ?)", ("committed_child", "task_child", "active", None, None))
+        connection.commit()
+
+    worker_cli._close_child_workflow(
+        db_path=db_path,
+        child_state={
+            "run_id": "run_child",
+            "runtime_task_id": "task_child",
+            "attempt_id": "attempt_child",
+            "worker_lease_id": "lease_child",
+        },
+        failure_class="provider_output_idle_timeout",
+        receipt_id="receipt_child",
+        command=["workflowctl", "run", "from-task-card"],
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        run_status = connection.execute("SELECT status FROM runs WHERE run_id = 'run_child'").fetchone()[0]
+        task_status = connection.execute("SELECT status FROM runtime_tasks WHERE runtime_task_id = 'task_child'").fetchone()[0]
+        attempt = connection.execute("SELECT status, close_reason FROM runtime_attempts WHERE attempt_id = 'attempt_child'").fetchone()
+        lease = connection.execute("SELECT status, release_reason FROM worker_leases WHERE lease_id = 'lease_child'").fetchone()
+        claim = connection.execute("SELECT status, release_reason FROM runtime_claims WHERE claim_id = 'claim_child'").fetchone()
+        committed = connection.execute("SELECT status, release_reason FROM scheduler_committed_leases WHERE committed_lease_id = 'committed_child'").fetchone()
+
+    assert run_status == "failed"
+    assert task_status == "failed"
+    assert attempt == ("closed", "provider_output_idle_timeout")
+    assert lease == ("released", "provider_output_idle_timeout")
+    assert claim == ("released", "provider_output_idle_timeout")
+    assert committed == ("released", "provider_output_idle_timeout")
+
+
+def test_same_project_patch_ledger_rejects_no_changed_files_as_implementation(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_zero_patch",
+        task_card_id="tc_levels",
+        title="Implement levels",
+        description="Implement level goals in the same Cocos project.",
+        goal="Implement level goals in the same Cocos project with changed files and evidence.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["files changed", "tests passed"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["zero_patch_false_positive"],
+        model_guidance=["Do not claim completion without changed files."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+    )
+
+    def _zero_patch_runner(**_kwargs):
+        return {
+            "status": "failed",
+            "failure_class": "same_project_patch_no_changed_files",
+            "receipt_id": "receipt_zero_patch",
+            "mutation_result": {"changed_files": []},
+            "watchdog": {"stream_event_count": 1},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_zero_patch",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_zero_patch_runner,
+    )
+
+    assert ledger["same_project_worker_patch_go"] is False
+    assert "same_project_patch_no_changed_files" in ledger["blockers"]
 
 
 def test_commercial_worker_blocks_when_no_same_project_business_cards(tmp_path: Path) -> None:
@@ -853,6 +2330,309 @@ def test_commercial_task_worker_cli_uses_progress_watchdog(monkeypatch, tmp_path
     assert "retry_with_higher_idle_timeout_or_split_task" in result["recoverable_suggestion"]
 
 
+def test_commercial_task_worker_cli_classifies_stdout_silence_with_live_db_heartbeat(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_levels"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_001", heartbeat_age_seconds=5)
+
+    def _fake_tree_runner(command, cwd, capture_output, text, timeout, idle_timeout, check):
+        completed = subprocess.CompletedProcess(command, 124, stdout="", stderr="command timed out after 240s (idle_timeout)")
+        setattr(completed, "timeout_type", "idle_timeout")
+        setattr(completed, "stdout_event_count", 0)
+        setattr(completed, "stderr_event_count", 0)
+        setattr(completed, "stream_event_count", 0)
+        setattr(completed, "last_output_age_seconds", 240.0)
+        return completed
+
+    monkeypatch.setattr(worker_cli, "run_subprocess_with_tree_timeout", _fake_tree_runner)
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_001",
+    )
+
+    assert result["failure_class"] == "child_stdout_silent"
+    assert result["watchdog_source"] == "db_runtime_state"
+    assert result["child_run_id"] == "child_run_001"
+    assert result["child_workflow_state"]["worker_adapter"] == "codex"
+    assert "resume_with_fresh_receipt" in result["recoverable_suggestion"]
+    with sqlite3.connect(db_path) as connection:
+        run_status = connection.execute("SELECT status FROM runs WHERE run_id = 'child_run_001'").fetchone()[0]
+        event_count = connection.execute(
+            "SELECT COUNT(*) FROM run_events WHERE event_type = 'watchdog_terminated_without_child_closure'"
+        ).fetchone()[0]
+    assert run_status == "failed"
+    assert event_count == 1
+
+
+def test_commercial_task_worker_cli_classifies_provider_output_idle_without_fallback_to_stdout_silence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_panels"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_001", heartbeat_age_seconds=5)
+
+    def _fake_tree_runner(
+        command,
+        cwd,
+        capture_output,
+        text,
+        timeout,
+        idle_timeout,
+        provider_output_idle_timeout,
+        check,
+        material_progress_idle_timeout=None,
+        env=None,
+    ):
+        completed = subprocess.CompletedProcess(command, 124, stdout="", stderr="workflow_progress alive\ncommand timed out")
+        setattr(completed, "timeout_type", "provider_output_idle_timeout")
+        setattr(completed, "stdout_event_count", 0)
+        setattr(completed, "stderr_event_count", 1)
+        setattr(completed, "stream_event_count", 1)
+        setattr(completed, "control_output_event_count", 1)
+        setattr(completed, "provider_output_event_count", 0)
+        setattr(completed, "last_provider_output_age_seconds", float(provider_output_idle_timeout))
+        return completed
+
+    monkeypatch.setattr(worker_cli, "run_subprocess_with_tree_timeout", _fake_tree_runner)
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        provider_output_idle_timeout_seconds=480,
+        material_progress_idle_timeout_seconds=720,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_001",
+    )
+
+    assert result["failure_class"] == "provider_output_idle_timeout"
+    assert result["watchdog"]["timeout_type"] == "provider_output_idle_timeout"
+    assert result["watchdog"]["control_output_event_count"] == 1
+    assert result["watchdog_source"] == "db_runtime_state"
+
+
+def test_commercial_task_worker_cli_closes_stalled_child_run(monkeypatch, tmp_path: Path) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_levels"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_001", heartbeat_age_seconds=600)
+
+    def _fake_tree_runner(command, cwd, capture_output, text, timeout, idle_timeout, check):
+        completed = subprocess.CompletedProcess(command, 124, stdout="", stderr="command timed out after 240s (idle_timeout)")
+        setattr(completed, "timeout_type", "idle_timeout")
+        setattr(completed, "stdout_event_count", 0)
+        setattr(completed, "stderr_event_count", 0)
+        setattr(completed, "stream_event_count", 0)
+        setattr(completed, "last_output_age_seconds", 240.0)
+        return completed
+
+    monkeypatch.setattr(worker_cli, "run_subprocess_with_tree_timeout", _fake_tree_runner)
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_001",
+    )
+
+    assert result["failure_class"] == "workflow_child_stalled"
+    assert result["child_attempt_id"] == "attempt_001"
+    with sqlite3.connect(db_path) as connection:
+        attempt_status, close_reason = connection.execute(
+            "SELECT status, close_reason FROM runtime_attempts WHERE attempt_id = 'attempt_001'"
+        ).fetchone()
+        lease_status, release_reason = connection.execute(
+            "SELECT status, release_reason FROM worker_leases WHERE lease_id = 'lease_001'"
+        ).fetchone()
+    assert (attempt_status, close_reason) == ("closed", "workflow_child_stalled")
+    assert (lease_status, release_reason) == ("released", "workflow_child_stalled")
+
+
+def test_commercial_task_worker_cli_closes_nested_child_runs_after_outer_timeout(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_shop"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_001", heartbeat_age_seconds=5)
+    now = datetime.now(UTC)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO runs (run_id, goal, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                "nested_run_001",
+                f"Implement the primary delivery slice for: {task_goal}",
+                "running",
+                (now - timedelta(seconds=20)).isoformat(),
+                (now - timedelta(seconds=20)).isoformat(),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO runtime_attempts (
+              attempt_id, run_id, runtime_task_id, status, created_at, closed_at, close_reason, sequence_no
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("nested_attempt_001", "nested_run_001", "nested_task_001", "current", now.isoformat(), None, None, 1),
+        )
+        connection.execute(
+            """
+            INSERT INTO worker_leases (
+              lease_id, run_id, adapter_name, status, heartbeat_at, lease_expires_at, released_at, release_reason, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "nested_lease_001",
+                "nested_run_001",
+                "codex",
+                "active",
+                (now - timedelta(seconds=5)).isoformat(),
+                (now + timedelta(seconds=300)).isoformat(),
+                None,
+                None,
+                now.isoformat(),
+            ),
+        )
+        connection.commit()
+
+    def _fake_tree_runner(command, cwd, capture_output, text, timeout, idle_timeout, check, env=None):
+        completed = subprocess.CompletedProcess(command, 124, stdout="", stderr="command timed out after 900s (wall_timeout)")
+        setattr(completed, "timeout_type", "wall_timeout")
+        setattr(completed, "timeout_failure_class", "provider_wall_timeout")
+        setattr(completed, "stdout_event_count", 0)
+        setattr(completed, "stderr_event_count", 1)
+        setattr(completed, "stream_event_count", 1)
+        setattr(completed, "last_output_age_seconds", 0.0)
+        return completed
+
+    monkeypatch.setattr(worker_cli, "run_subprocess_with_tree_timeout", _fake_tree_runner)
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_001",
+        env_overrides={"WORKFLOW_CODEX_TIMEOUT_SECONDS": "900"},
+    )
+
+    assert result["failure_class"] == "provider_timeout"
+    nested_state = result["child_workflow_state"]["nested_child_states"][0]
+    assert nested_state["run_id"] == "nested_run_001"
+    with sqlite3.connect(db_path) as connection:
+        nested_run_status = connection.execute("SELECT status FROM runs WHERE run_id = 'nested_run_001'").fetchone()[0]
+        nested_attempt_status, nested_close_reason = connection.execute(
+            "SELECT status, close_reason FROM runtime_attempts WHERE attempt_id = 'nested_attempt_001'"
+        ).fetchone()
+        nested_lease_status, nested_release_reason = connection.execute(
+            "SELECT status, release_reason FROM worker_leases WHERE lease_id = 'nested_lease_001'"
+        ).fetchone()
+    assert nested_run_status == "failed"
+    assert (nested_attempt_status, nested_close_reason) == ("closed", "provider_timeout")
+    assert (nested_lease_status, nested_release_reason) == ("released", "provider_timeout")
+
+
+def test_commercial_task_worker_cli_classifies_adaptive_wall_timeout_exhaustion(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_panels"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_001", heartbeat_age_seconds=5)
+
+    def _fake_tree_runner(
+        command,
+        cwd,
+        capture_output,
+        text,
+        timeout,
+        idle_timeout,
+        check,
+        provider_output_idle_timeout=None,
+        material_progress_idle_timeout=None,
+        adaptive_wall_timeout_extension=None,
+        adaptive_wall_timeout_max_extensions=None,
+        adaptive_wall_timeout_absolute_max=None,
+        adaptive_wall_timeout_progress_window=None,
+        adaptive_wall_timeout_requires_material_progress=None,
+        activity_probe=None,
+        activity_probe_interval=None,
+        env=None,
+    ):
+        completed = subprocess.CompletedProcess(
+            command,
+            124,
+            stdout="",
+            stderr="command timed out after 1800s (adaptive_wall_timeout_exhausted)",
+        )
+        setattr(completed, "timeout_type", "adaptive_wall_timeout_exhausted")
+        setattr(completed, "stdout_event_count", 0)
+        setattr(completed, "stderr_event_count", 30)
+        setattr(completed, "stream_event_count", 30)
+        setattr(completed, "provider_output_event_count", 25)
+        setattr(completed, "material_progress_event_count", 4)
+        setattr(completed, "adaptive_wall_timeout_extension_count", 1)
+        setattr(completed, "adaptive_wall_timeout_effective_seconds", 1800)
+        setattr(completed, "adaptive_wall_timeout_absolute_max_seconds", 1800)
+        setattr(completed, "adaptive_wall_timeout_exhausted", True)
+        return completed
+
+    monkeypatch.setattr(worker_cli, "run_subprocess_with_tree_timeout", _fake_tree_runner)
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        provider_output_idle_timeout_seconds=480,
+        material_progress_idle_timeout_seconds=720,
+        adaptive_wall_timeout_extension_seconds=900,
+        adaptive_wall_timeout_max_extensions=1,
+        adaptive_wall_timeout_absolute_max_seconds=1800,
+        adaptive_wall_timeout_progress_window_seconds=720,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_001",
+    )
+
+    assert result["failure_class"] == "task_scope_too_large_after_adaptive_wall_timeout"
+    assert result["watchdog"]["timeout_type"] == "adaptive_wall_timeout_exhausted"
+    assert result["watchdog"]["adaptive_wall_timeout_extension_count"] == 1
+    assert result["recoverable_suggestion"] == "split_or_narrow_task_after_adaptive_wall_timeout_exhausted"
+    with sqlite3.connect(db_path) as connection:
+        attempt_status, close_reason = connection.execute(
+            "SELECT status, close_reason FROM runtime_attempts WHERE attempt_id = 'attempt_001'"
+        ).fetchone()
+    assert (attempt_status, close_reason) == (
+        "closed",
+        "task_scope_too_large_after_adaptive_wall_timeout",
+    )
+
+
 def test_commercial_game_repair_packet_classifies_missing_creator_as_operator_input() -> None:
     from packages.contributions.pipelines.commercial_game_production import build_supervisor_repair_packets
 
@@ -901,6 +2681,30 @@ def test_commercial_game_repair_packet_classifies_provider_failures_without_proj
     assert packets[1]["repair_mode"] == "provider_quota_or_key_recovery"
     assert packets[1]["max_attempts"] == 0
     assert packets[1]["failure_class"] == "provider_usage_limit_exceeded"
+
+
+def test_commercial_game_repair_packet_classifies_same_project_provider_watchdog() -> None:
+    from packages.contributions.pipelines.commercial_game_production import build_supervisor_repair_packets
+
+    packets = build_supervisor_repair_packets(
+        structured_output={},
+        shared_outputs={
+            "commercial_game_production": {
+                "commercial_playable_blockers": [
+                    "child_stdout_silent_recoverable",
+                    "workflow_child_stalled",
+                    "provider_timeout_recoverable",
+                ]
+            }
+        },
+    )
+
+    assert [packet["failure_class"] for packet in packets] == [
+        "child_stdout_silent",
+        "workflow_child_stalled",
+        "provider_timeout",
+    ]
+    assert all(packet["repair_mode"] != "same_project_incremental_patch" for packet in packets)
 
 
 def test_automation_lease_create_status_and_revoke(tmp_path: Path) -> None:

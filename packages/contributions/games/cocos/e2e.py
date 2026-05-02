@@ -1697,14 +1697,24 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout, stderr_path.open(
         "w", encoding="utf-8", errors="replace"
     ) as stderr:
+        command = [str(creator), "--project", str(project), "--build", "platform=web-mobile;debug=false"]
+        timeout_error: str | None = None
         try:
             proc = subprocess.run(
-                [str(creator), "--project", str(project), "--build", "platform=web-mobile;debug=false"],
+                command,
                 stdout=stdout,
                 stderr=stderr,
                 timeout=timeout_seconds,
                 check=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            timeout_error = f"cocos build timed out after {timeout_seconds}s"
+            if exc.stdout:
+                stdout.write(str(exc.stdout))
+            if exc.stderr:
+                stderr.write(str(exc.stderr))
+            stderr.write(f"\n{timeout_error}\n")
+            proc = subprocess.CompletedProcess(command, 124)
         finally:
             _stop_cocos_creator_pids(_cocos_creator_pids() - creator_pids_before)
     build_output = project / "build" / "web-mobile"
@@ -1732,6 +1742,9 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     )
     return {
         "creator_exit_code": proc.returncode,
+        "timeout": timeout_error is not None,
+        "timeout_seconds": timeout_seconds if timeout_error is not None else None,
+        "timeout_error": timeout_error,
         "artifact_success": artifact_success,
         "fatal_marker_detected": fatal_marker_detected,
         "build_output_path": build_output.as_posix() if build_output.exists() else None,

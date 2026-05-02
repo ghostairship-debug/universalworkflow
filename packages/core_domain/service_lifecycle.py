@@ -59,6 +59,14 @@ class LifecycleServiceMixin:
     def _default_patch_apply_adapter_name(self) -> str:
         return "codex"
 
+    def _is_direct_task_card_patch_packet(self, packet: TaskPacket) -> bool:
+        contract = packet.mutation_contract
+        return bool(
+            contract is not None
+            and MutationMode(contract.mutation_mode) == MutationMode.patch_apply
+            and (contract.task_card_ref or contract.task_card_path)
+        )
+
     def _local_worker_heartbeat_interval_seconds(self, packet: TaskPacket) -> float:
         raw_value = (
             packet.env.get("WORKFLOW_LOCAL_WORKER_HEARTBEAT_INTERVAL_SECONDS")
@@ -660,7 +668,7 @@ class LifecycleServiceMixin:
                 }
             )
         orchestration_plan = None
-        if cluster_member_id is None:
+        if cluster_member_id is None and not self._is_direct_task_card_patch_packet(snapshot.task_packet):
             orchestration_plan = self._default_orchestration_plan_for_preset(
                 preset.preset_id,
                 run.run_id,
@@ -1427,6 +1435,7 @@ class LifecycleServiceMixin:
                     **task_packet.model_dump(mode="json"),
                     "env": {
                         **task_packet.env,
+                        "WORKFLOW_DB_PATH": str(self.db_path),
                         **{key: str(value) for key, value in brief_env.items()},
                     },
                 }
@@ -1564,13 +1573,19 @@ class LifecycleServiceMixin:
                     connection.commit()
                     local_heartbeat_control = self._start_local_worker_heartbeat(worker_lease, execution_packet)
                 is_cluster_member_run = bool(execution_packet.env.get("WORKFLOW_CLUSTER_MEMBER_ID"))
-                if not is_cluster_member_run and self._default_orchestration_plan_for_preset(
-                    preset.preset_id,
-                    run.run_id,
-                    preferred_cluster_template_ids=[
-                        execution_packet.env["WORKFLOW_CLUSTER_TEMPLATE_ID"]
-                    ] if execution_packet.env.get("WORKFLOW_CLUSTER_TEMPLATE_ID") else None,
-                ) is not None:
+                if (
+                    not is_cluster_member_run
+                    and not self._is_direct_task_card_patch_packet(execution_packet)
+                    and self._default_orchestration_plan_for_preset(
+                        preset.preset_id,
+                        run.run_id,
+                        preferred_cluster_template_ids=(
+                            [execution_packet.env["WORKFLOW_CLUSTER_TEMPLATE_ID"]]
+                            if execution_packet.env.get("WORKFLOW_CLUSTER_TEMPLATE_ID")
+                            else None
+                        ),
+                    ) is not None
+                ):
                     connection.commit()
                     execution_result = self._execute_project_delivery_orchestration(execution_packet)
                 elif worker_pool_profile is not None:

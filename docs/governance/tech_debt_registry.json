@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "updated_at": "2026-04-29",
-  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-04-28 the commercial_game_production repair window repaid workflow route/evidence/watchdog/receipt/scheduler/heartbeat blockers, split short SFX from voice/music with local procedural QA, fixed Cocos Creator autodiscovery, added no-degradation gate v2, fixed markdown source intake, and fixed persisted pipeline evidence_path. On 2026-04-29 the zero-degradation Cocos/worker repair added a project-local Cocos Editor bridge package, trusted bridge-report contract, license/cost manifest, filesystem-only bridge rejection, same-project task-card worker ledger, and progress-aware child workflow watchdog for task-card execution. Later on 2026-04-29 the Cocos ecosystem bridge runner passed local Cocos Creator 3.8.8 smoke with true Editor/AssetDB/Scene/Prefab/Build API evidence. pipeline_a41e231c69a4 is preserved as gate v1 automated scaffold/build/playtest evidence only. Strict rerun zero_degradation_cocos_worker_rerun4_20260429 failed with commercial_game_no_degradation_failed, so final commercial playable readiness remains blocked. Same-project patch success, product-depth features, audio runtime proof, build/playtest success, and human player review remain open.",
+  "updated_at": "2026-05-02T06:51:45.7269131Z",
+  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. Current commercial game truth is NO-GO: machine_evidence_go=false, human_player_review_go=false, and commercial_playable_go=false. The failure is product-level, not a wrong launch path: the reviewed URL pointed at the current pipeline build/web-mobile, but the gate over-accepted runtime hook / canvas / event coverage as product-body completion. Next work must open a new active phase to repair both the commercial game body and the final gate; no unattended run may convert event-only, canvas-only, scaffold, build-only, or browser-event evidence into commercial GO.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -37,6 +37,20 @@
       "introduced_in": "2026-04-28 commercial game workflow repair planning",
       "repaid_in": "2026-04-29 local Cocos bridge smoke",
       "result": "Project-local Editor extension plus unattended runner passed local Cocos Creator 3.8.8 smoke with Editor version/project open, AssetDB import/query, Scene open/execute/save, node/component binding, Prefab instantiate, Build hook report, and license/cost manifest evidence. Cocos Store or paid ecosystem assets remain opt-in and out of scope."
+    },
+    {
+      "debt_id": "M109-TASK-CARD-RETRY-001",
+      "description": "Same-project task-card worker needed a unified three-attempt runtime retry policy for provider output idle, no material progress, provider timeout, child stalled, zero patch, and tests-not-passed failures before marking a card blocked.",
+      "introduced_in": "2026-04-30 same-project provider timeout diagnosis",
+      "repaid_in": "2026-04-30 Task Card Three-Attempt Retry And Output Idle Restart Repair",
+      "result": "The subprocess watchdog now separates workflow_progress control heartbeats from provider output and material progress, the task-card CLI preserves provider_output_idle_timeout and provider_no_material_progress_timeout classes, and the same-project patch ledger records attempts, final_failure_class, retry_exhausted, fresh-receipt continuation argv, and blocked_after_three_attempts after three consecutive runtime failures. Hard preconditions fail fast without retry."
+    },
+    {
+      "debt_id": "M109-TASK-CARD-DIRECT-OBSERVABILITY-001",
+      "description": "from-task-card patch apply could enter project_delivery orchestration and Codex adapter output was not bridged into DB provider stream evidence, leaving the outer watchdog with only workflow_progress control heartbeats.",
+      "introduced_in": "2026-04-30 post three-attempt provider output diagnosis",
+      "repaid_in": "2026-04-30 Task Card Direct Execution And Provider Stream Observability Repair",
+      "result": "Task-card patch apply now uses a direct feature_delivery Codex path and lifecycle guard, Codex adapter output writes provider_stream_observed metadata without raw text or chain-of-thought, from-task-card runtime state exposes provider and material progress timestamps, the outer watchdog can probe nested child DB stream activity, and watchdog closure now marks runtime tasks, attempts, leases, claims, and scheduler leases terminal or released."
     },
     {
       "debt_id": "TD-STRUCT-003",
@@ -163,32 +177,92 @@
       "introduced_in": "M85 LangGraph/workflow convergence evaluation",
       "repaid_in": "M104",
       "result": "Established the boundary where LangGraph carries graph state, checkpoint, interrupt/resume, subgraph/supervisor probes, repair loops, stream evidence, and Cocos graph pressure execution while workflow keeps receipts, leases, write_set audit, provider live proof, evidence, and operator packets."
+    },
+    {
+      "debt_id": "M109-ADAPTIVE-WALL-TIMEOUT-001",
+      "description": "Same-project task-card worker used a fixed 900 second wall timeout, which could terminate complex tasks even while provider stream and material progress were active.",
+      "introduced_in": "2026-04-30 post-repair chinese_ui_panels_and_feedback resume evidence",
+      "repaid_in": "2026-05-01 Adaptive Wall Timeout For Active Provider Progress Repair",
+      "result": "run_subprocess_with_tree_timeout now supports bounded adaptive wall timeout metadata and extension, the commercial task-card worker wires 900s initial plus one 900s extension with an 1800s absolute max, Codex inner timeout is aligned to the absolute max, and adaptive exhaustion is classified as task_scope_too_large_after_adaptive_wall_timeout with a split/narrow repair suggestion."
+    },
+    {
+      "debt_id": "M109-REVIVE-FEEDBACK-COVERAGE-001",
+      "description": "Revive prompt evidence exists, but commercial_feature_coverage/player_visible_checks still lack explicit failureReviveFeedback=true and task-card coverage metadata still points at the prior failure overlay card.",
+      "introduced_in": "2026-05-02 Patch Generation No-Patch Diagnostic Repair resume gate",
+      "planned_repayment_phase": "Revive Feedback Feature Coverage Completion",
+      "current_status": "closed_repair_guard",
+      "blocking_impact": "Blocks product-depth gate and therefore blocks audio/build/playtest/human-review progression until the coverage metadata is patched by workflow task-card execution.",
+      "closed_in": "2026-05-02 Revive Feedback Feature Coverage Completion",
+      "closure_evidence": "state/revive_feedback_feature_coverage_completion_20260502/phase_closeout.json",
+      "repayment_note": "Codex exhausted three fresh receipts, OpenCode current-phase live proof allowed real fallback, and the same DB task card completed with failureReviveFeedback=true in commercial_feature_coverage and player_visible_checks."
     }
   ],
   "open_items": [
     {
       "debt_id": "M77-COCOS-001",
-      "description": "Cocos game pipeline can generate a real local project with command/config truth, inspector evidence, local stable assets, Prefab/Panel/interaction contracts, graph bridge, sample closeout, CLI build/playtest evidence, and a gate v1 automated run. No-degradation gate v2 has not passed.",
+      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, and real asset chain evidence, but the latest human review confirmed the current build is not a valid completed game body.",
       "introduced_in": "M76-M84 commercial game evaluation",
-      "planned_repayment_phase": "Broader repeated commercial-game validation and external/player-device review when approved with a capped budget",
-      "current_status": "partially_repaid",
-      "blocking_impact": "Blocks claiming commercial_playable_go=true; does not block technical smoke, scaffold, or automated playtest evidence claims."
+      "planned_repayment_phase": "New active phase for commercial game body reconstruction and gate hardening",
+      "current_status": "reopened_by_human_review",
+      "blocking_impact": "Blocks claiming commercial_playable_go=true and blocks machine_evidence_go=true; no longer permits machine evidence complete / AWAITING_HUMAN_REVIEW claims for pipeline_ecf26665254e."
     },
     {
       "debt_id": "M84-GAME-QA-001",
-      "description": "Commercial readiness now has a structured player-visible gate, but gate v1 was too broad. No-degradation gate v2 now blocks event-only feature coverage, shallow levels, label-only skin/shop flows, audio binding-only evidence, nonzero build exits, and missing human review.",
+      "description": "Commercial readiness gate still over-accepts runtime hook / canvas / event coverage. The latest human review proved gate v2 did not reject a non-game-body machine false positive.",
       "introduced_in": "M84 real generated game review",
-      "planned_repayment_phase": "No-degradation commercial product QA and human/player-device review phase",
-      "current_status": "partially_repaid",
-      "blocking_impact": "Blocks commercial GO until real product-depth and human/player review evidence exists."
+      "planned_repayment_phase": "New active phase for player-visible gate hardening before any new commercial GO attempt",
+      "current_status": "reopened_by_human_review",
+      "blocking_impact": "Blocks commercial GO and machine-evidence-complete claims until the final gate rejects runtime-hook/event-only/canvas-only product evidence and requires player-visible functionality."
     },
     {
       "debt_id": "M109-NO-DEGRADATION-COMMERCIAL-001",
-      "description": "Strict rerun zero_degradation_cocos_worker_rerun4_20260429 exposed provider_idle_timeout on the first same-project task-card patch, missing 8 distinct level goals, visible shop/skin ownership, audio runtime verification, strict build/playtest acceptance, and human player review. The local Cocos Editor bridge/API report blocker was repaid later by cocos_bridge_smoke_20260429_145028.",
+      "description": "Strict pipeline pipeline_ecf26665254e was accepted by machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation, playtest, and product-depth evidence must be redefined as player-visible, non-runtime-hook hard evidence.",
       "introduced_in": "2026-04-29 no-degradation Cocos/worker rerun",
-      "planned_repayment_phase": "Active no-degradation commercial-game production phase",
-      "current_status": "open",
-      "blocking_impact": "Directly blocks commercial_playable_go=true."
+      "planned_repayment_phase": "New active phase for commercial game body reconstruction and no-degradation final gate repair",
+      "current_status": "human_review_failed_no_go",
+      "blocking_impact": "Directly blocks commercial_playable_go=true and machine_evidence_go=true; requires product-body reconstruction and gate hardening before any new final-gate attempt."
+    },
+    {
+      "debt_id": "M109-PROVIDER-WATCHDOG-001",
+      "description": "The latest same-project worker evidence showed child workflow DB heartbeat while stdout/stderr stayed silent, so the outer task-card wrapper can misclassify child stdout silence as provider idle timeout and leave child runs or attempts running.",
+      "introduced_in": "2026-04-29 provider watchdog diagnosis",
+      "planned_repayment_phase": "Provider Watchdog And Upstream Short-Circuit Repair",
+      "current_status": "closed_repair_guard",
+      "blocking_impact": "No longer blocks resuming product implementation task cards; future runs must retain DB heartbeat-aware watchdog and fresh receipt continuation."
+    },
+    {
+      "debt_id": "M109-UPSTREAM-SHORT-CIRCUIT-001",
+      "description": "Same-project implementation failure can allow downstream build, browser playtest, audio runtime, and product-depth evidence collection to continue, producing noisy derived blockers rather than a concise upstream root cause.",
+      "introduced_in": "2026-04-29 final pipeline closeout diagnosis",
+      "planned_repayment_phase": "Provider Watchdog And Upstream Short-Circuit Repair",
+      "current_status": "closed_repair_guard",
+      "blocking_impact": "No longer blocks trusted commercial final gate closeout; downstream stages must remain blocked or skipped when upstream implementation evidence is missing."
+    },
+    {
+      "debt_id": "M109-SAME-PROJECT-PRODUCT-001",
+      "description": "Same-project commercial gameplay implementation was previously marked complete by machine evidence, but real human review confirmed the build is not a completed game body, so product-depth evidence is polluted by runtime hook / event coverage.",
+      "introduced_in": "2026-04-29 same-project product implementation resume",
+      "planned_repayment_phase": "New active phase for commercial game body reconstruction",
+      "current_status": "reopened_by_human_review",
+      "blocking_impact": "Blocks machine evidence and commercial GO until player-visible game body functionality is rebuilt and verified without event-marker substitution.",
+      "closure_evidence": "state/trusted_cocos_build_browser_audio_runtime_20260502/phase_closeout.json",
+      "repayment_note": "Prior machine-evidence completion is superseded by 2026-05-02 human review NO-GO; do not use the previous product-depth result as commercial readiness proof."
+    },
+    {
+      "debt_id": "M109-CODEX-PATCH-APPLY-TURN-STALL-001",
+      "description": "After patch-only/no-shell prompt repair and Codex patch_apply transport isolation, isolated Codex patch_apply can reach turn.started/provider stream observation but still fail to return an acceptable unified diff before idle timeout.",
+      "introduced_in": "2026-05-02 Provider Command Policy And Patch Generation Prompt Repair closeout",
+      "planned_repayment_phase": "Patch Worker Strategy Repair For Codex Turn-Start Stalls",
+      "current_status": "closed_repair_guard",
+      "blocking_impact": "Prompt-only broker workspace and --ignore-rules are now in place. The remaining product blocker is narrower: revive prompt needs exact-context micro-split cards rather than retrying the same broad card."
+    },
+    {
+      "debt_id": "M109-REVIVE-PROMPT-MICRO-SPLIT-001",
+      "description": "The revive prompt same-project product card remains too broad or insufficiently exact for Codex patch_apply diff generation even after command-policy, transport isolation, and prompt-only broker workspace repairs.",
+      "introduced_in": "2026-05-02 Patch Worker Strategy Repair For Codex Turn-Start Stalls closeout",
+      "planned_repayment_phase": "Revive Prompt Micro-Split Exact Context Repair",
+      "current_status": "partially_repaid",
+      "blocking_impact": "Script-only exact-context micro-card completed; layout/evidence JSON still needs an ultra-split active phase."
     },
     {
       "debt_id": "M109-COCOS-BRIDGE-SPLIT-001",
@@ -213,6 +287,22 @@
       "planned_repayment_phase": "Capability-driven maintenance",
       "current_status": "carry_forward",
       "blocking_impact": "Non-blocking maintainability debt; revisit when capability development exposes real friction."
+    },
+    {
+      "debt_id": "M109-REVIVE-LAYOUT-EVIDENCE-ULTRA-SPLIT-001",
+      "description": "The revive prompt layout/evidence JSON combined card failed after the script state card completed. The ultra-split phase completed layout-only; the remaining feature-evidence no-diff stall was repaid by the patch no-diff idle-budget repair.",
+      "introduced_in": "2026-05-02 Revive Prompt Micro-Split Exact Context Repair closeout",
+      "planned_repayment_phase": "Patch Generation No-Patch Diagnostic Repair",
+      "current_status": "closed_repair_guard",
+      "blocking_impact": "No longer blocks feature-evidence patch generation; carry-forward blocker is explicit failureReviveFeedback coverage for product-depth."
+    },
+    {
+      "debt_id": "M109-PATCH-NO-DIFF-IDLE-BUDGET-001",
+      "description": "Feature-evidence child runs reached thread.started/turn.started but produced no patch artifact because the task-card wrapper injected WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS=240 while the intended provider-output idle window was 480 seconds.",
+      "introduced_in": "2026-05-02 Revive Prompt Layout Evidence Ultra-Split Repair closeout",
+      "planned_repayment_phase": "Patch Generation No-Patch Diagnostic Repair",
+      "current_status": "closed_repair_guard",
+      "blocking_impact": "Repaid by aligning inner Codex/provider idle budget to 480 seconds; run_f41c5b586681 completed the feature-evidence patch with fresh receipt."
     }
   ],
   "obsolete_items": [],

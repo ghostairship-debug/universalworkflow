@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from packages.contributions.pipelines.commercial_game_evidence_contracts import (
+    BROWSER_PLAYTEST_LEDGER_SCHEMA,
+    BUILD_LEDGER_SCHEMA,
+    PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+    build_asset_graph_contract,
+    build_browser_playtest_ledger,
+    build_build_ledger,
+    build_cocos_bridge_evidence_contract,
+    build_commercial_final_gate_evidence,
+    build_product_depth_evidence,
+    build_same_project_patch_ledger_contract,
+    runtime_error_markers,
+)
+
 
 NO_DEGRADATION_CONTRACT_SCHEMA = "commercial_game_no_degradation_contract_v1"
 
@@ -9,9 +23,14 @@ _PRODUCT_FEATURES = {
     "eightDistinctLevelGoals": "levels_not_distinct_or_less_than_eight",
     "skinEquippedVisualChange": "skin_system_not_player_visible",
     "shopOwnershipStates": "shop_ownership_states_missing",
+    "chineseUiPanelsVisible": "chinese_ui_panels_missing",
+    "levelFlowPlayable": "level_flow_not_verified",
+    "failureReviveFeedback": "failure_revive_feedback_missing",
     "audioPlaybackVerified": "audio_runtime_not_verified",
     "bgmStarted": "bgm_runtime_not_verified",
+    "sfxPlaybackVerified": "sfx_runtime_not_verified",
     "volumeToggleUsable": "volume_toggle_missing",
+    "animationFeedbackVerified": "animation_feedback_missing",
 }
 
 
@@ -30,30 +49,94 @@ def evaluate_no_degradation_contract(
     build = _dict_from(production_payload.get("build")) or _dict_from(cocos_e2e.get("build"))
     feature_coverage = _feature_coverage(production_payload, cocos_e2e, playtest)
     console_and_page_errors = [*list(playtest.get("console_errors") or []), *list(playtest.get("page_errors") or [])]
+    asset_graph = build_asset_graph_contract(
+        _dict_from(production_payload.get("assets")) or _dict_from(shared_outputs.get("commercial_game_assets"))
+    )
+    patch_ledger = build_same_project_patch_ledger_contract(_dict_from(production_payload.get("same_project_patch_ledger")))
+    build_ledger = build_build_ledger(_dict_from(production_payload.get("build_ledger")) or build)
+    browser_playtest_ledger = build_browser_playtest_ledger(
+        _dict_from(production_payload.get("browser_playtest_ledger")) or playtest
+    )
 
     ecosystem = _dict_from(shared_outputs.get("cocos_ecosystem_evidence")) or _dict_from(
         production_payload.get("cocos_ecosystem_evidence")
     )
-    ecosystem_go = bool(production_payload.get("ecosystem_integration_go") or ecosystem.get("ecosystem_integration_go"))
+    cocos_bridge_evidence = build_cocos_bridge_evidence_contract(ecosystem)
+    product_depth_evidence = build_product_depth_evidence(
+        product_depth=_dict_from(production_payload.get("product_depth_evidence")),
+        feature_coverage=feature_coverage,
+        player_visible_checks=_dict_from(production_payload.get("player_visible_checks")),
+        playtest=playtest,
+    )
+    ecosystem_go = bool(cocos_bridge_evidence["go"])
     live_role_go = _live_role_provider_proof_go(shared_outputs)
-    same_project_worker_patch_go = bool(production_payload.get("same_project_worker_patch_go"))
+    same_project_worker_patch_go = bool(patch_ledger["go"])
+    upstream_implementation_failed = bool(require_commercial and not same_project_worker_patch_go)
+    if upstream_implementation_failed:
+        upstream_source = {
+            "upstream_stage": "same_project_worker_patch",
+            "upstream_blockers": list(patch_ledger.get("blockers") or []),
+            "skip_reason": "skipped_due_to_upstream_failure",
+        }
+        build_ledger = _blocked_by_same_project_worker_contract(
+            schema_version=BUILD_LEDGER_SCHEMA,
+            stage="cocos_build",
+            source=upstream_source,
+        )
+        browser_playtest_ledger = _blocked_by_same_project_worker_contract(
+            schema_version=BROWSER_PLAYTEST_LEDGER_SCHEMA,
+            stage="browser_playtest",
+            source=upstream_source,
+        )
+        product_depth_evidence = _blocked_by_same_project_worker_contract(
+            schema_version=PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+            stage="product_depth",
+            source=upstream_source,
+        )
     human_player_review_go = _human_player_review_go(shared_outputs, production_payload)
-    product_feature_depth_go = all(bool(feature_coverage.get(key)) for key in _PRODUCT_FEATURES)
-    build_exit_go = _build_exit_go(build)
-    browser_runtime_go = not _runtime_errors(console_and_page_errors)
+    product_feature_depth_go = bool(product_depth_evidence["go"])
+    product_feature_blockers = list(product_depth_evidence["blockers"])
+    build_exit_go = bool(build_ledger["go"])
+    browser_runtime_go = bool(browser_playtest_ledger["go"])
+    final_gate_evidence = build_commercial_final_gate_evidence(
+        technical_smoke_go=bool(production_payload.get("technical_smoke_go")),
+        production_scaffold_go=bool(production_payload.get("production_scaffold_go")),
+        require_commercial=require_commercial,
+        require_cocos_ecosystem=require_cocos_ecosystem,
+        require_live_agent_roles=require_live_agent_roles,
+        require_human_player_review=require_human_player_review,
+        asset_graph=asset_graph,
+        cocos_bridge_evidence=cocos_bridge_evidence,
+        same_project_patch_ledger=patch_ledger,
+        build_ledger=build_ledger,
+        browser_playtest_ledger=browser_playtest_ledger,
+        product_feature_depth_go=product_feature_depth_go,
+        product_feature_blockers=product_feature_blockers,
+        live_role_provider_proof_go=live_role_go,
+        human_player_review_go=human_player_review_go,
+    )
 
     findings: list[dict[str, Any]] = []
     if require_commercial:
         _append_if_false(findings, same_project_worker_patch_go, "same_project_worker_patch_missing")
         _append_if_false(findings, live_role_go, "live_role_provider_proof_missing")
-        _append_if_false(findings, product_feature_depth_go, "product_feature_depth_missing")
-        _append_if_false(findings, build_exit_go, "cocos_build_nonzero_exit")
-        _append_if_false(findings, browser_runtime_go, "browser_or_audio_runtime_error")
-        for feature_name, blocker in _PRODUCT_FEATURES.items():
-            if not bool(feature_coverage.get(feature_name)):
-                findings.append({"finding": blocker, "feature": feature_name, "severity": "high"})
-    if require_cocos_ecosystem:
-        _append_if_false(findings, ecosystem_go, "cocos_ecosystem_bridge_missing")
+        if upstream_implementation_failed:
+            for blocker in patch_ledger["blockers"]:
+                findings.append({"finding": blocker, "severity": "high"})
+            findings.append({"finding": "blocked_by_same_project_worker", "severity": "high"})
+        else:
+            _append_if_false(findings, product_feature_depth_go, "product_feature_depth_missing")
+            for blocker in build_ledger["blockers"]:
+                findings.append({"finding": blocker, "severity": "high"})
+            for blocker in browser_playtest_ledger["blockers"]:
+                findings.append({"finding": blocker, "severity": "high"})
+            for blocker in product_depth_evidence["blockers"]:
+                findings.append({"finding": blocker, "severity": "high"})
+        for blocker in asset_graph["blockers"]:
+            findings.append({"finding": blocker, "severity": "high"})
+    if require_cocos_ecosystem and not ecosystem_go:
+        for blocker in cocos_bridge_evidence["blockers"] or ["cocos_ecosystem_bridge_missing"]:
+            findings.append({"finding": blocker, "severity": "high"})
     if require_live_agent_roles:
         _append_if_false(findings, live_role_go, "live_role_provider_proof_missing")
     if require_human_player_review:
@@ -74,9 +157,23 @@ def evaluate_no_degradation_contract(
         "product_feature_depth_go": product_feature_depth_go,
         "build_exit_go": build_exit_go,
         "browser_runtime_go": browser_runtime_go,
+        "asset_graph_go": bool(asset_graph["go"]),
+        "build_ledger_go": bool(build_ledger["go"]),
+        "browser_playtest_ledger_go": bool(browser_playtest_ledger["go"]),
+        "machine_evidence_go": bool(final_gate_evidence["machine_evidence_go"]),
         "required_product_features": sorted(_PRODUCT_FEATURES),
         "feature_coverage": feature_coverage,
-        "runtime_error_markers": _runtime_errors(console_and_page_errors),
+        "runtime_error_markers": runtime_error_markers(console_and_page_errors),
+        "evidence_contracts": {
+            "asset_graph": asset_graph,
+            "cocos_bridge_evidence": cocos_bridge_evidence,
+            "same_project_patch_ledger": patch_ledger,
+            "build_ledger": build_ledger,
+            "browser_playtest_ledger": browser_playtest_ledger,
+            "product_depth_evidence": product_depth_evidence,
+        },
+        "commercial_final_gate_evidence": final_gate_evidence,
+        "product_depth_evidence": product_depth_evidence,
         "degradation_findings": findings,
         "blockers": blockers,
     }
@@ -116,28 +213,19 @@ def _human_player_review_go(shared_outputs: dict[str, Any], production: dict[str
     return bool(manual.get("accepted_by_human") and manual.get("reviewer") and manual.get("evidence_path"))
 
 
-def _build_exit_go(build: dict[str, Any]) -> bool:
-    if not build:
-        return False
-    if bool(build.get("fatal_marker_detected")):
-        return False
-    exit_code = build.get("creator_exit_code")
-    return exit_code in (0, "0", None)
-
-
-def _runtime_errors(errors: list[Any]) -> list[str]:
-    markers = ("NotSupportedError", "media", "audio", "decode", "play() failed", "DOMException")
-    result = []
-    for error in errors:
-        text = str(error)
-        if any(marker.lower() in text.lower() for marker in markers):
-            result.append(text[:500])
-    return result
-
-
 def _append_if_false(findings: list[dict[str, Any]], passed: bool, finding: str) -> None:
     if not passed:
         findings.append({"finding": finding, "severity": "high"})
+
+
+def _blocked_by_same_project_worker_contract(*, schema_version: str, stage: str, source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": schema_version,
+        "status": "blocked",
+        "go": False,
+        "blockers": ["blocked_by_same_project_worker"],
+        "source": {"stage": stage, **source},
+    }
 
 
 def _dedupe(values: list[str]) -> list[str]:

@@ -299,7 +299,9 @@ def apply_unified_diff(
         if file_patch.new_path is None:
             planned_writes.append((target, None))
             continue
-        original_text = target.read_text(encoding="utf-8") if target.exists() else ""
+        if file_patch.old_path is None and target.exists():
+            raise ValueError(f"new-file patch target already exists `{rel_path}`")
+        original_text = "" if file_patch.old_path is None else (target.read_text(encoding="utf-8") if target.exists() else "")
         original_lines = original_text.splitlines()
         updated_lines = _apply_hunks(original_lines, file_patch.hunks)
         new_text = "\n".join(updated_lines)

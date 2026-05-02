@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import json
+import sqlite3
 from pathlib import Path
 import sys
 
@@ -41,6 +42,11 @@ AVAILABLE_SHELL_EXEC_ADAPTERS = [
 
 def _invoke(tmp_path: Path, *args: str, env: dict[str, str] | None = None):
     return runner.invoke(app, ["--db-path", str(tmp_path / "workflow.db"), *args], env=env)
+
+
+def _load_json_after_progress(output: str):
+    json_start = output.rfind("\n{")
+    return json.loads(output[json_start + 1 :] if json_start >= 0 else output)
 
 
 def _fake_cli_patch_launch(self, packet):  # type: ignore[override]
@@ -495,7 +501,7 @@ def test_cli_run_langgraph_focus_writes_advisory_evidence(tmp_path: Path) -> Non
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
+    payload = _load_json_after_progress(result.stdout)
     assert payload["comparison"]["passed"] is True
     assert payload["comparison"]["mutation_allowed"] is False
     assert payload["comparison"]["direct_mutation_disabled"] is True
@@ -556,7 +562,7 @@ def test_cli_can_export_domain_pack_skill_when_flag_enabled(tmp_path: Path) -> N
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
+    payload = _load_json_after_progress(result.stdout)
     bundle_path = Path(payload["bundle_path"])
     assert payload["domain_pack_id"] == "software_delivery_pack"
     assert (bundle_path / "README.md").exists()
@@ -1132,13 +1138,78 @@ def test_cli_from_task_card_executes_bounded_patch_and_returns_pr_ready_summary(
     )
 
     assert result.exit_code == 0
-    payload = json.loads(result.stdout)
+    payload = _load_json_after_progress(result.stdout)
     assert payload["run"]["goal"] == "Local task card from CLI"
     assert payload["capability_adapter"] == "opencode"
     assert payload["mutation_contract"]["task_card_ref"] == "local_task_card"
     assert payload["pr_ready_summary"]["readiness"] == "ready"
     assert payload["pr_ready_summary"]["tests"]["status"] == "passed"
     assert target_file.read_text(encoding="utf-8") == "after\n"
+
+
+def test_cli_from_task_card_project_delivery_patch_apply_stays_direct(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    monkeypatch.setattr(OpenCodeAdapter, "launch", _fake_cli_patch_launch)
+    target_file = tmp_path / "cli_target.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "local_task_card.md"
+    task_card.write_text("# Local direct task card\n\nImplement one bounded patch.\n", encoding="utf-8")
+
+    _invoke(tmp_path, "db", "reset")
+    receipt_result = _invoke(
+        tmp_path,
+        "run",
+        "issue-receipt",
+        "--action-type",
+        "launch_execute",
+        "--goal",
+        "Local direct task card",
+        "--preset",
+        "project_delivery",
+        "--adapter",
+        "opencode",
+        "--task-card-ref",
+        "local_direct_task_card",
+        "--task-card-path",
+        task_card.as_posix(),
+        "--write-set",
+        "cli_target.txt",
+        "--mutation-mode",
+        "patch_apply",
+    )
+    receipt_id = json.loads(receipt_result.stdout)["receipt_id"]
+
+    result = _invoke(
+        tmp_path,
+        "run",
+        "from-task-card",
+        task_card.as_posix(),
+        "--preset",
+        "project_delivery",
+        "--adapter",
+        "opencode",
+        "--task-card-ref",
+        "local_direct_task_card",
+        "--write-set",
+        "cli_target.txt",
+        "--execute",
+        "--operator-receipt-id",
+        receipt_id,
+    )
+
+    assert result.exit_code == 0
+    payload = _load_json_after_progress(result.stdout)
+    assert payload["run"]["preset_id"] == "project_delivery"
+    assert payload["pr_ready_summary"]["bounded_patch"]["changed_files"] == ["cli_target.txt"]
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+    with sqlite3.connect(tmp_path / "workflow.db") as connection:
+        runs = connection.execute("SELECT goal, preset_id FROM runs ORDER BY created_at").fetchall()
+    assert runs == [("Local direct task card", "project_delivery")]
 
 
 def test_cli_from_task_card_defaults_patch_apply_to_codex(tmp_path: Path) -> None:

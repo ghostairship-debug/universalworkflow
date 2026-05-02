@@ -80,6 +80,86 @@ def test_active_truth_check_accepts_future_milestone_ranges() -> None:
     assert issues == []
 
 
+def test_active_truth_check_blocks_readme_title_behind_latest_baseline(tmp_path: Path) -> None:
+    _write_minimal_truth_set(tmp_path, stale_m79=False)
+    (tmp_path / "README.md").write_text(
+        "## 当前状态：M108 Cocos 小目标样机闭环完成\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "当前接受实现基线是 `M108`。\n当前主线是 M108 后 review / 外部评估前状态：不得自动进入 M109+。\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "milestone_history.md").write_text(
+        "- 最新接受实现基线：`M109`\n",
+        encoding="utf-8",
+    )
+
+    payload = build_active_truth_check(tmp_path)
+
+    codes = {issue["code"] for issue in payload["issues"]}
+    assert payload["go_no_go"] == "NO-GO"
+    assert "readme_current_version_behind_latest_baseline" in codes
+    assert "active_doc_baseline_conflicts_with_latest" in codes
+    assert "active_doc_m109_reentry_conflict" in codes
+
+
+def test_active_truth_check_blocks_m109_docs_without_legacy_pipeline_truth(tmp_path: Path) -> None:
+    _write_minimal_truth_set(tmp_path, stale_m79=False)
+    (tmp_path / "README.md").write_text(
+        "## 当前状态：M109 Pipeline\n\nReal work uses `commercial_game_production`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CURRENT_DEVELOPMENT_WORKFLOW.md").write_text(
+        "`commercial_game_production` is active.\n`commercial_cocos_game` blocks with `legacy_cocos_template_removed`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "`commercial_game_production` is active.\n`commercial_cocos_game` blocks with `legacy_cocos_template_removed`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "milestone_history.md").write_text(
+        "- 最新接受实现基线：`M109`\n",
+        encoding="utf-8",
+    )
+
+    payload = build_active_truth_check(tmp_path)
+
+    assert payload["go_no_go"] == "NO-GO"
+    assert "m109_legacy_cocos_template_blocker_missing" in {issue["code"] for issue in payload["issues"]}
+
+
+def test_active_truth_check_blocks_unguarded_commercial_go_claim(tmp_path: Path) -> None:
+    _write_minimal_truth_set(tmp_path, stale_m79=False)
+    (tmp_path / "README.md").write_text(
+        "## 当前状态：M109 Pipeline\n\n"
+        "Real work uses `commercial_game_production`.\n"
+        "`commercial_cocos_game` blocks with `legacy_cocos_template_removed`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CURRENT_DEVELOPMENT_WORKFLOW.md").write_text(
+        "`commercial_game_production` active; `commercial_cocos_game` blocks with `legacy_cocos_template_removed`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "`commercial_game_production` active; `commercial_cocos_game` blocks with `legacy_cocos_template_removed`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "milestone_history.md").write_text(
+        "- 最新接受实现基线：`M109`\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "root_evaluation.md").write_text(
+        "Final status: commercial_playable_go=true\n",
+        encoding="utf-8",
+    )
+
+    payload = build_active_truth_check(tmp_path)
+
+    assert payload["go_no_go"] == "NO-GO"
+    assert "commercial_playable_go_true_claim_without_guard" in {issue["code"] for issue in payload["issues"]}
+
+
 def test_active_truth_check_blocks_duplicate_legacy_workflow_doc(tmp_path: Path) -> None:
     _write_minimal_truth_set(tmp_path, stale_m79=False)
     (tmp_path / "docs" / "current_development_workflow.md").write_text(

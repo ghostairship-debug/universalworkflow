@@ -1,13 +1,58 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
 from packages.contracts import TaskCard
 from packages.contributions.games.cocos.e2e import build_cocos_project
 from packages.contributions.games.cocos.playtest import playtest_cocos_build
+from packages.contributions.pipelines.commercial_game_evidence_contracts import (
+    BROWSER_PLAYTEST_LEDGER_SCHEMA,
+    BUILD_LEDGER_SCHEMA,
+    PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+    build_asset_graph_contract,
+    build_browser_playtest_ledger,
+    build_build_ledger,
+    build_cocos_bridge_evidence_contract,
+    build_human_review_packet,
+    build_product_depth_evidence,
+    build_same_project_patch_ledger_contract,
+)
 from packages.contributions.pipelines.commercial_game_task_worker_cli import run_task_card_patch_via_workflowctl
+
+
+TASK_CARD_RUNTIME_MAX_ATTEMPTS = 3
+RETRYABLE_RUNTIME_FAILURE_CLASSES = {
+    "child_stdout_silent",
+    "provider_execution_failed",
+    "provider_idle_timeout",
+    "provider_no_material_progress_timeout",
+    "provider_output_idle_timeout",
+    "provider_timeout",
+    "provider_wall_timeout",
+    "same_project_patch_no_changed_files",
+    "same_project_patch_apply_failed",
+    "same_project_patch_parse_failed",
+    "same_project_patch_review_failed",
+    "same_project_patch_tests_not_passed",
+    "workflow_child_stalled",
+}
+FAIL_FAST_PRECONDITION_FAILURE_CLASSES = {
+    "cocos_creator_exe_missing",
+    "db_path_required_for_task_card_worker",
+    "fallback_provider_unavailable",
+    "operator_receipt_scope_mismatch",
+    "provider_live_proof_missing",
+    "receipt_scope_invalid",
+    "source_path_missing",
+    "task_card_receipt_issue_failed",
+    "worker_lease_scope_invalid",
+    "workspace_write_set_violation",
+    "write_set_scope_invalid",
+}
 
 
 def same_project_business_task_cards(task_cards: list[TaskCard]) -> list[TaskCard]:
@@ -77,6 +122,7 @@ def execute_same_project_task_cards(
     card_root = ledger_root / "cards"
     card_root.mkdir(parents=True, exist_ok=True)
     entries: list[dict[str, Any]] = []
+    prior_completed_entries = _prior_completed_patch_entries(ledger_root)
     if not task_cards:
         return _write_ledger(
             ledger_root,
@@ -91,10 +137,24 @@ def execute_same_project_task_cards(
         )
     runner = task_card_runner or run_task_card_patch_via_workflowctl
     for card in task_cards:
+        prior_entry = prior_completed_entries.get(card.task_card_id)
+        if prior_entry is not None:
+            entries.append(prior_entry)
+            continue
         materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=pipeline_id)
         card_path = card_root / f"{_safe_id(card.task_card_id)}.md"
         card_path.write_text(_task_card_markdown(card, materialized), encoding="utf-8")
-        entry = runner(
+        already_satisfied = _already_satisfied_task_card_entry(
+            card,
+            materialized,
+            project_dir=project_dir,
+            card_path=card_path,
+        )
+        if already_satisfied is not None:
+            entries.append(already_satisfied)
+            continue
+        entry = _run_task_card_with_retry_policy(
+            runner=runner,
             root=root,
             db_path=db_path,
             project_dir=project_dir,
@@ -105,11 +165,24 @@ def execute_same_project_task_cards(
             read_set=materialized["read_set"],
             test_commands=materialized["test_commands"],
             max_fix_iterations=max_repair_attempts,
+            max_runtime_attempts=TASK_CARD_RUNTIME_MAX_ATTEMPTS,
         )
-        entries.append(_normalize_patch_ledger_entry(card, materialized, entry))
+        entries.append(
+            _normalize_patch_ledger_entry(
+                card,
+                materialized,
+                entry,
+                root=root,
+                db_path=db_path,
+                project_dir=project_dir,
+                card_path=card_path,
+                max_repair_attempts=max_repair_attempts,
+            )
+        )
         if entries[-1]["status"] != "completed":
             break
     blockers = _patch_ledger_blockers(entries, expected_count=len(task_cards))
+    next_incomplete = next((entry for entry in entries if entry.get("status") != "completed"), None)
     return _write_ledger(
         ledger_root,
         {
@@ -121,8 +194,180 @@ def execute_same_project_task_cards(
             "completed_count": sum(1 for entry in entries if entry["status"] == "completed"),
             "entries": entries,
             "blockers": blockers,
+            "retry_policy": {
+                "runtime_max_attempts": TASK_CARD_RUNTIME_MAX_ATTEMPTS,
+                "fresh_receipt_required_per_attempt": True,
+                "same_project_required": True,
+            },
+            "next_incomplete_task_card_id": next_incomplete.get("task_card_id") if next_incomplete else None,
+            "next_continuation_command": next_incomplete.get("continuation_command") if next_incomplete else None,
+            "next_continuation_argv": next_incomplete.get("continuation_argv") if next_incomplete else None,
         },
     )
+
+
+def _prior_completed_patch_entries(ledger_root: Path) -> dict[str, dict[str, Any]]:
+    ledger_path = ledger_root / "same_project_patch_ledger.json"
+    try:
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        return {}
+    completed: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("status") != "completed":
+            continue
+        task_card_id = str(entry.get("task_card_id") or "")
+        if task_card_id:
+            completed[task_card_id] = entry
+    return completed
+
+
+def _run_task_card_with_retry_policy(
+    *,
+    runner: Callable[..., dict[str, Any]],
+    root: Path,
+    db_path: Path | None,
+    project_dir: Path,
+    pipeline_id: str,
+    task_card: TaskCard,
+    task_card_path: Path,
+    write_set: list[str],
+    read_set: list[str],
+    test_commands: list[str],
+    max_fix_iterations: int,
+    max_runtime_attempts: int,
+) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    last_entry: dict[str, Any] = {}
+    continuation_argv = _continuation_argv(
+        root=root,
+        db_path=db_path,
+        project_dir=project_dir,
+        card_path=task_card_path,
+        card=task_card,
+        materialized={"write_set": write_set, "read_set": read_set, "test_commands": test_commands},
+        max_repair_attempts=max_fix_iterations,
+        entry={},
+    )
+    for attempt_index in range(1, max_runtime_attempts + 1):
+        raw_entry = runner(
+            root=root,
+            db_path=db_path,
+            project_dir=project_dir,
+            pipeline_id=pipeline_id,
+            task_card=task_card,
+            task_card_path=task_card_path,
+            write_set=write_set,
+            read_set=read_set,
+            test_commands=test_commands,
+            max_fix_iterations=max_fix_iterations,
+        )
+        last_entry = dict(raw_entry)
+        last_entry["attempt_index"] = attempt_index
+        last_entry["max_attempts"] = max_runtime_attempts
+        attempt_continuation_argv = _continuation_argv(
+            root=root,
+            db_path=db_path,
+            project_dir=project_dir,
+            card_path=task_card_path,
+            card=task_card,
+            materialized={"write_set": write_set, "read_set": read_set, "test_commands": test_commands},
+            max_repair_attempts=max_fix_iterations,
+            entry=last_entry,
+        )
+        attempts.append(
+            _patch_attempt_record(
+                entry=last_entry,
+                attempt_index=attempt_index,
+                max_attempts=max_runtime_attempts,
+                continuation_argv=attempt_continuation_argv,
+            )
+        )
+        continuation_argv = attempt_continuation_argv
+        if str(last_entry.get("status") or "") == "completed":
+            return {
+                **last_entry,
+                "attempts": attempts,
+                "consecutive_failure_count": 0,
+                "final_failure_class": None,
+                "retry_exhausted": False,
+                "preflight_blocker": False,
+            }
+        if _is_fail_fast_precondition(last_entry):
+            return {
+                **last_entry,
+                "attempts": attempts,
+                "consecutive_failure_count": 0,
+                "final_failure_class": _patch_failure_class(last_entry) or str(last_entry.get("failure_class") or ""),
+                "retry_exhausted": False,
+                "preflight_blocker": True,
+            }
+        if not _is_retryable_runtime_failure(last_entry):
+            return {
+                **last_entry,
+                "attempts": attempts,
+                "consecutive_failure_count": len(attempts),
+                "final_failure_class": _patch_failure_class(last_entry) or str(last_entry.get("failure_class") or ""),
+                "retry_exhausted": False,
+                "preflight_blocker": False,
+            }
+    final_failure_class = _patch_failure_class(last_entry) or str(last_entry.get("failure_class") or "same_project_task_card_patch_failed")
+    return {
+        **last_entry,
+        "status": "blocked",
+        "failure_class": "blocked_after_three_attempts",
+        "attempts": attempts,
+        "consecutive_failure_count": len(attempts),
+        "final_failure_class": final_failure_class,
+        "retry_exhausted": True,
+        "preflight_blocker": False,
+        "recoverable_suggestion": "operator_repair_required_after_three_consecutive_runtime_failures",
+    }
+
+
+def _patch_attempt_record(
+    *,
+    entry: dict[str, Any],
+    attempt_index: int,
+    max_attempts: int,
+    continuation_argv: list[str],
+) -> dict[str, Any]:
+    watchdog = entry.get("watchdog") if isinstance(entry.get("watchdog"), dict) else {}
+    mutation_result = entry.get("mutation_result") if isinstance(entry.get("mutation_result"), dict) else {}
+    return {
+        "attempt_index": attempt_index,
+        "max_attempts": max_attempts,
+        "status": str(entry.get("status") or "failed"),
+        "failure_class": entry.get("failure_class"),
+        "receipt_id": entry.get("receipt_id"),
+        "child_run_id": entry.get("child_run_id"),
+        "child_attempt_id": entry.get("child_attempt_id"),
+        "worker_adapter": entry.get("worker_adapter"),
+        "watchdog_source": entry.get("watchdog_source"),
+        "watchdog": watchdog,
+        "stdout_preview": entry.get("stdout_preview"),
+        "stderr_preview": entry.get("stderr_preview"),
+        "changed_files": mutation_result.get("changed_files") or entry.get("changed_files") or [],
+        "tests_status": mutation_result.get("final_test_status") or entry.get("final_test_status"),
+        "last_provider_output_at": entry.get("last_provider_output_at") or watchdog.get("last_provider_output_at"),
+        "last_material_progress_at": entry.get("last_material_progress_at") or watchdog.get("last_material_progress_at"),
+        "last_provider_output_age_seconds": watchdog.get("last_provider_output_age_seconds"),
+        "last_material_progress_age_seconds": watchdog.get("last_material_progress_age_seconds"),
+        "continuation_argv": continuation_argv,
+        "continuation_command": subprocess.list2cmdline(continuation_argv),
+    }
+
+
+def _is_fail_fast_precondition(entry: dict[str, Any]) -> bool:
+    failure_class = str(entry.get("failure_class") or "")
+    return failure_class in FAIL_FAST_PRECONDITION_FAILURE_CLASSES or failure_class.endswith("_preflight_blocker")
+
+
+def _is_retryable_runtime_failure(entry: dict[str, Any]) -> bool:
+    return _patch_root_failure_class(entry) in RETRYABLE_RUNTIME_FAILURE_CLASSES
 
 
 def collect_project_runtime_evidence(
@@ -131,34 +376,145 @@ def collect_project_runtime_evidence(
     creator_exe: Path,
     require_build: bool,
     require_playtest: bool,
+    build_timeout_seconds: int = 900,
 ) -> dict[str, Any]:
     build: dict[str, Any] | None = None
     playtest: dict[str, Any] | None = None
+    build_ledger: dict[str, Any] | None = None
+    browser_playtest_ledger: dict[str, Any] | None = None
+    build_ledger_path: str | None = None
+    browser_playtest_ledger_path: str | None = None
     blockers: list[str] = []
+    runtime_evidence_root = project_dir / "workflow_runtime_evidence"
     if require_build:
-        build = build_cocos_project(project_path=project_dir, creator_exe=creator_exe)
-        if not build.get("artifact_success"):
-            blockers.append("cocos_build_no_artifact_success")
+        runtime_evidence_root.mkdir(parents=True, exist_ok=True)
+        build = build_cocos_project(project_path=project_dir, creator_exe=creator_exe, timeout_seconds=build_timeout_seconds)
+        build.setdefault(
+            "build_command",
+            [creator_exe.as_posix(), "--project", project_dir.as_posix(), "--build", "platform=web-mobile;debug=false"],
+        )
+        build_ledger = build_build_ledger(build)
+        build_ledger_path = (runtime_evidence_root / "build_ledger.json").as_posix()
+        build_ledger["evidence_path"] = build_ledger_path
+        _write_json(runtime_evidence_root / "build_ledger.json", build_ledger)
+        blockers.extend(build_ledger.get("blockers") or [])
         build_output = build.get("build_output_path")
-        if require_playtest and build_output:
-            playtest = playtest_cocos_build(build_output_path=build_output, evidence_dir=project_dir / "playtest_evidence")
-            if not playtest.get("playtest_go"):
-                blockers.append("browser_playtest_no_go")
+        if require_playtest and build_ledger.get("go") and build_output:
+            try:
+                playtest = playtest_cocos_build(build_output_path=build_output, evidence_dir=project_dir / "playtest_evidence")
+            except Exception as exc:
+                playtest = _failed_browser_playtest_evidence(
+                    build_output_path=build_output,
+                    evidence_dir=project_dir / "playtest_evidence",
+                    exc=exc,
+                )
+            browser_playtest_ledger = build_browser_playtest_ledger(playtest)
+            browser_playtest_ledger_path = (runtime_evidence_root / "browser_playtest_ledger.json").as_posix()
+            browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path
+            _write_json(runtime_evidence_root / "browser_playtest_ledger.json", browser_playtest_ledger)
+            blockers.extend(browser_playtest_ledger.get("blockers") or [])
         elif require_playtest:
             blockers.append("browser_playtest_missing_build_output")
+            browser_playtest_ledger = build_browser_playtest_ledger(None)
+            browser_playtest_ledger_path = (runtime_evidence_root / "browser_playtest_ledger.json").as_posix()
+            browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path
+            _write_json(runtime_evidence_root / "browser_playtest_ledger.json", browser_playtest_ledger)
+            blockers.extend(browser_playtest_ledger.get("blockers") or [])
+    elif require_playtest:
+        runtime_evidence_root.mkdir(parents=True, exist_ok=True)
+        blockers.append("browser_playtest_requires_build")
+        browser_playtest_ledger = build_browser_playtest_ledger(None)
+        browser_playtest_ledger_path = (runtime_evidence_root / "browser_playtest_ledger.json").as_posix()
+        browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path
+        _write_json(runtime_evidence_root / "browser_playtest_ledger.json", browser_playtest_ledger)
+        blockers.extend(browser_playtest_ledger.get("blockers") or [])
     feature_evidence = _load_project_feature_evidence(project_dir)
     return {
         "schema_version": "commercial_game_same_project_runtime_evidence_v1",
         "technical_smoke_go": project_dir.exists(),
         "production_scaffold_go": False,
         "commercial_playable_go": False,
-        "commercial_playable_blockers": blockers,
+        "commercial_playable_blockers": _dedupe_strings(blockers),
         "commercial_feature_coverage": feature_evidence.get("commercial_feature_coverage", {}),
         "player_visible_checks": feature_evidence.get("player_visible_checks", {}),
         "manual_player_evidence": feature_evidence.get("manual_player_evidence", {}),
+        "product_depth_evidence": feature_evidence.get("product_depth_evidence", {}),
         "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
         "build": build,
         "playtest": playtest,
+        "build_ledger": build_ledger,
+        "browser_playtest_ledger": browser_playtest_ledger,
+        "build_ledger_path": build_ledger_path,
+        "browser_playtest_ledger_path": browser_playtest_ledger_path,
+    }
+
+
+def blocked_project_runtime_evidence_due_to_upstream(
+    *,
+    project_dir: Path,
+    patch_ledger: dict[str, Any],
+    require_build: bool,
+    require_playtest: bool,
+) -> dict[str, Any]:
+    runtime_evidence_root = project_dir / "workflow_runtime_evidence"
+    runtime_evidence_root.mkdir(parents=True, exist_ok=True)
+    downstream_stages = _blocked_downstream_stages(require_build=require_build, require_playtest=require_playtest)
+    blockers = ["blocked_by_same_project_worker"]
+    source = {
+        "upstream_stage": "same_project_worker_patch",
+        "upstream_blockers": list(patch_ledger.get("blockers") or []),
+        "blocked_downstream_stages": downstream_stages,
+        "skip_reason": "skipped_due_to_upstream_failure",
+        "next_continuation_command": patch_ledger.get("next_continuation_command"),
+    }
+    build_ledger = _blocked_evidence_contract(
+        schema_version=BUILD_LEDGER_SCHEMA,
+        stage="cocos_build",
+        blockers=blockers,
+        source=source,
+    )
+    browser_playtest_ledger = _blocked_evidence_contract(
+        schema_version=BROWSER_PLAYTEST_LEDGER_SCHEMA,
+        stage="browser_playtest",
+        blockers=blockers,
+        source=source,
+    )
+    product_depth_evidence = _blocked_evidence_contract(
+        schema_version=PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+        stage="product_depth",
+        blockers=blockers,
+        source=source,
+    )
+    build_ledger_path = runtime_evidence_root / "build_ledger.json"
+    browser_playtest_ledger_path = runtime_evidence_root / "browser_playtest_ledger.json"
+    product_depth_evidence_path = runtime_evidence_root / "product_depth_evidence.json"
+    build_ledger["evidence_path"] = build_ledger_path.as_posix()
+    browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path.as_posix()
+    product_depth_evidence["evidence_path"] = product_depth_evidence_path.as_posix()
+    _write_json(build_ledger_path, build_ledger)
+    _write_json(browser_playtest_ledger_path, browser_playtest_ledger)
+    _write_json(product_depth_evidence_path, product_depth_evidence)
+    return {
+        "schema_version": "commercial_game_same_project_runtime_evidence_v1",
+        "status": "blocked",
+        "technical_smoke_go": project_dir.exists(),
+        "production_scaffold_go": False,
+        "commercial_playable_go": False,
+        "commercial_playable_blockers": blockers,
+        "blocked_downstream_stages": downstream_stages,
+        "skip_reason": "skipped_due_to_upstream_failure",
+        "commercial_feature_coverage": {},
+        "player_visible_checks": {},
+        "manual_player_evidence": {},
+        "product_depth_evidence": product_depth_evidence,
+        "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
+        "build": None,
+        "playtest": None,
+        "build_ledger": build_ledger,
+        "browser_playtest_ledger": browser_playtest_ledger,
+        "build_ledger_path": build_ledger_path.as_posix(),
+        "browser_playtest_ledger_path": browser_playtest_ledger_path.as_posix(),
+        "product_depth_evidence_path": product_depth_evidence_path.as_posix(),
     }
 
 
@@ -181,18 +537,54 @@ def production_payload_from_worker(
 ) -> dict[str, Any]:
     blockers = list(runtime_evidence.get("commercial_playable_blockers") or [])
     ecosystem_payload = dict(ecosystem_evidence or {})
+    asset_graph = build_asset_graph_contract(assets_stage)
+    cocos_bridge_evidence = build_cocos_bridge_evidence_contract(ecosystem_payload)
+    same_project_patch_ledger_contract = build_same_project_patch_ledger_contract(patch_ledger)
+    build_ledger = build_build_ledger(runtime_evidence.get("build_ledger") or runtime_evidence.get("build"))
+    browser_playtest_ledger = build_browser_playtest_ledger(
+        runtime_evidence.get("browser_playtest_ledger") or runtime_evidence.get("playtest")
+    )
+    product_depth_evidence = build_product_depth_evidence(
+        product_depth=runtime_evidence.get("product_depth_evidence"),
+        feature_coverage=runtime_evidence.get("commercial_feature_coverage"),
+        player_visible_checks=runtime_evidence.get("player_visible_checks"),
+        playtest=runtime_evidence.get("playtest"),
+    )
+    evidence_contracts = {
+        "asset_graph": asset_graph,
+        "cocos_bridge_evidence": cocos_bridge_evidence,
+        "same_project_patch_ledger": same_project_patch_ledger_contract,
+        "build_ledger": build_ledger,
+        "browser_playtest_ledger": browser_playtest_ledger,
+        "product_depth_evidence": product_depth_evidence,
+    }
     if assets_stage.get("placeholder_only"):
         blockers.append("placeholder_assets_only")
     if assets_stage and not assets_stage.get("commercial_assets_go"):
         blockers.extend(assets_stage.get("commercial_asset_blockers") or ["commercial_assets_no_go"])
     if not patch_ledger.get("same_project_worker_patch_go"):
         blockers.extend(patch_ledger.get("blockers") or ["same_project_worker_patch_missing"])
+        blockers.append("blocked_by_same_project_worker")
     if ecosystem_payload and ecosystem_payload.get("strict_required") and not ecosystem_payload.get("ecosystem_integration_go"):
         blockers.extend(ecosystem_payload.get("blockers") or ["cocos_ecosystem_bridge_missing"])
+    for contract in evidence_contracts.values():
+        blockers.extend(contract.get("blockers") or [])
     blockers = dedupe_strings(blockers)
+    machine_evidence_go = all(bool(contract.get("go")) for contract in evidence_contracts.values())
+    playtest_payload = runtime_evidence.get("playtest") if isinstance(runtime_evidence.get("playtest"), dict) else {}
+    human_review_packet = build_human_review_packet(
+        product_depth_evidence=product_depth_evidence,
+        evidence_contracts=evidence_contracts,
+        manual_player_evidence=runtime_evidence.get("manual_player_evidence"),
+        screenshots=list(playtest_payload.get("screenshots") or []),
+        blockers=blockers,
+    )
+    human_player_review_go = bool(human_review_packet.get("human_player_review_go"))
     commercial_playable_go = (
         bool(runtime_evidence.get("commercial_playable_go"))
         and bool(patch_ledger.get("same_project_worker_patch_go"))
+        and machine_evidence_go
+        and human_player_review_go
         and not blockers
     )
     return {
@@ -209,7 +601,11 @@ def production_payload_from_worker(
         "ecosystem_integration_go": bool(ecosystem_payload.get("ecosystem_integration_go")),
         "live_role_provider_proof_go": False,
         "same_project_worker_patch_go": bool(patch_ledger.get("same_project_worker_patch_go")),
-        "human_player_review_go": False,
+        "human_player_review_go": human_player_review_go,
+        "machine_evidence_go": machine_evidence_go,
+        "asset_graph_go": bool(asset_graph.get("go")),
+        "build_ledger_go": bool(build_ledger.get("go")),
+        "browser_playtest_ledger_go": bool(browser_playtest_ledger.get("go")),
         "degradation_findings": [],
         "commercial_playable_blockers": blockers,
         "commercial_playable_blocker_details": blocker_details(blockers),
@@ -220,6 +616,19 @@ def production_payload_from_worker(
         "same_project_patch_ledger": patch_ledger,
         "skipped_non_worker_task_cards": skipped_task_cards,
         "cocos_ecosystem_evidence": ecosystem_payload,
+        "evidence_contracts": evidence_contracts,
+        "asset_graph": asset_graph,
+        "cocos_bridge_evidence_contract": cocos_bridge_evidence,
+        "same_project_patch_ledger_contract": same_project_patch_ledger_contract,
+        "build_ledger": build_ledger,
+        "browser_playtest_ledger": browser_playtest_ledger,
+        "product_depth_evidence": product_depth_evidence,
+        "human_review_packet": human_review_packet,
+        "blocked_downstream_stages": runtime_evidence.get("blocked_downstream_stages") or [],
+        "normalized_repair_packet": _normalized_repair_packet(
+            patch_ledger=patch_ledger,
+            runtime_evidence=runtime_evidence,
+        ),
         "manifest_path": runtime_evidence.get("manifest_path"),
         "build": runtime_evidence.get("build"),
         "playtest": runtime_evidence.get("playtest"),
@@ -235,6 +644,11 @@ def _write_ledger(ledger_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     ledger_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     payload["ledger_path"] = ledger_path.as_posix()
     return payload
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _materialize_task_card(card: TaskCard, *, project_dir: Path, pipeline_id: str) -> dict[str, list[str]]:
@@ -271,30 +685,415 @@ def _task_card_markdown(card: TaskCard, materialized: dict[str, list[str]]) -> s
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _normalize_patch_ledger_entry(card: TaskCard, materialized: dict[str, list[str]], entry: dict[str, Any]) -> dict[str, Any]:
+def _normalize_patch_ledger_entry(
+    card: TaskCard,
+    materialized: dict[str, list[str]],
+    entry: dict[str, Any],
+    *,
+    root: Path,
+    db_path: Path | None,
+    project_dir: Path,
+    card_path: Path,
+    max_repair_attempts: int,
+) -> dict[str, Any]:
     mutation_result = entry.get("mutation_result") if isinstance(entry.get("mutation_result"), dict) else {}
+    status = str(entry.get("status") or "failed")
+    continuation_argv = _continuation_argv(
+        root=root,
+        db_path=db_path,
+        project_dir=project_dir,
+        card_path=card_path,
+        card=card,
+        materialized=materialized,
+        max_repair_attempts=max_repair_attempts,
+        entry=entry,
+    )
+    continuation_required = status != "completed"
+    watchdog = entry.get("watchdog") if isinstance(entry.get("watchdog"), dict) else {}
+    attempts = entry.get("attempts") if isinstance(entry.get("attempts"), list) else []
+    final_failure_class = entry.get("final_failure_class")
+    if status != "completed" and not final_failure_class:
+        final_failure_class = _patch_root_failure_class(entry)
     return {
         "task_card_id": card.task_card_id,
         "title": card.title,
-        "status": str(entry.get("status") or "failed"),
+        "status": status,
         "failure_class": entry.get("failure_class"),
+        "final_failure_class": final_failure_class,
+        "retry_exhausted": bool(entry.get("retry_exhausted")),
+        "preflight_blocker": bool(entry.get("preflight_blocker")),
+        "attempt_index": entry.get("attempt_index"),
+        "max_attempts": entry.get("max_attempts") or TASK_CARD_RUNTIME_MAX_ATTEMPTS,
+        "consecutive_failure_count": int(entry.get("consecutive_failure_count") or 0),
+        "attempts": attempts,
         "receipt_id": entry.get("receipt_id"),
         "child_run_id": entry.get("child_run_id"),
+        "child_attempt_id": entry.get("child_attempt_id"),
+        "worker_adapter": entry.get("worker_adapter"),
+        "watchdog_source": entry.get("watchdog_source"),
         "evidence_id": entry.get("evidence_id"),
         "review_decision": entry.get("review_decision"),
+        "task_card_path": card_path.as_posix(),
         "write_set": materialized["write_set"],
         "read_set": materialized["read_set"],
         "test_commands": materialized["test_commands"],
         "mutation_result": mutation_result,
         "changed_files": mutation_result.get("changed_files") or entry.get("changed_files") or [],
+        "final_test_status": mutation_result.get("final_test_status") or entry.get("final_test_status"),
         "applied_patch_hash": mutation_result.get("applied_patch_hash") or entry.get("applied_patch_hash"),
         "stdout_preview": entry.get("stdout_preview"),
         "stderr_preview": entry.get("stderr_preview"),
-        "watchdog": entry.get("watchdog") if isinstance(entry.get("watchdog"), dict) else {},
+        "watchdog": watchdog,
         "timeout_seconds": entry.get("timeout_seconds"),
         "idle_timeout_seconds": entry.get("idle_timeout_seconds"),
+        "provider_output_idle_timeout_seconds": entry.get("provider_output_idle_timeout_seconds"),
+        "material_progress_idle_timeout_seconds": entry.get("material_progress_idle_timeout_seconds"),
+        "last_provider_output_at": entry.get("last_provider_output_at") or watchdog.get("last_provider_output_at"),
+        "last_material_progress_at": entry.get("last_material_progress_at") or watchdog.get("last_material_progress_at"),
+        "last_provider_output_age_seconds": watchdog.get("last_provider_output_age_seconds"),
+        "last_material_progress_age_seconds": watchdog.get("last_material_progress_age_seconds"),
         "recoverable_suggestion": entry.get("recoverable_suggestion"),
+        "continuation_required": continuation_required,
+        "continuation_reason": _continuation_reason(status=status, entry=entry, watchdog=watchdog),
+        "continuation_argv": continuation_argv if continuation_required else None,
+        "next_continuation_argv": continuation_argv if continuation_required else None,
+        "continuation_command": subprocess.list2cmdline(continuation_argv) if continuation_required else None,
     }
+
+
+def _already_satisfied_task_card_entry(
+    card: TaskCard,
+    materialized: dict[str, list[str]],
+    *,
+    project_dir: Path,
+    card_path: Path,
+) -> dict[str, Any] | None:
+    evidence = _load_project_feature_evidence(project_dir)
+    satisfaction = _existing_evidence_satisfaction(
+        card,
+        evidence=evidence,
+        project_dir=project_dir,
+    )
+    if not satisfaction["go"]:
+        return None
+    evidence_files = _existing_evidence_files_for_card(card, materialized, evidence=evidence, project_dir=project_dir)
+    if not evidence_files:
+        return None
+    return {
+        "task_card_id": card.task_card_id,
+        "title": card.title,
+        "status": "completed",
+        "failure_class": None,
+        "final_failure_class": None,
+        "retry_exhausted": False,
+        "preflight_blocker": False,
+        "attempt_index": 0,
+        "max_attempts": TASK_CARD_RUNTIME_MAX_ATTEMPTS,
+        "consecutive_failure_count": 0,
+        "attempts": [],
+        "receipt_id": None,
+        "child_run_id": None,
+        "child_attempt_id": None,
+        "worker_adapter": "existing_same_project_evidence",
+        "watchdog_source": "project_feature_evidence",
+        "evidence_id": None,
+        "review_decision": "evidence_precheck_pass",
+        "task_card_path": card_path.as_posix(),
+        "write_set": materialized["write_set"],
+        "read_set": materialized["read_set"],
+        "test_commands": materialized["test_commands"],
+        "mutation_result": {
+            "changed_files": evidence_files,
+            "final_test_status": "evidence_precheck_passed",
+            "satisfaction_mode": "existing_same_project_evidence",
+        },
+        "changed_files": evidence_files,
+        "final_test_status": "evidence_precheck_passed",
+        "applied_patch_hash": None,
+        "stdout_preview": None,
+        "stderr_preview": None,
+        "watchdog": {
+            "source": "project_feature_evidence",
+            "evidence_requirements_satisfied": satisfaction["satisfied"],
+        },
+        "timeout_seconds": None,
+        "idle_timeout_seconds": None,
+        "provider_output_idle_timeout_seconds": None,
+        "material_progress_idle_timeout_seconds": None,
+        "last_provider_output_at": None,
+        "last_material_progress_at": None,
+        "last_provider_output_age_seconds": None,
+        "last_material_progress_age_seconds": None,
+        "recoverable_suggestion": None,
+        "continuation_required": False,
+        "continuation_reason": None,
+        "continuation_argv": None,
+        "next_continuation_argv": None,
+        "continuation_command": None,
+        "satisfaction_mode": "existing_same_project_evidence",
+        "evidence_reuse_real_files": True,
+        "evidence_requirements_satisfied": satisfaction["satisfied"],
+        "evidence_refs": satisfaction["evidence_refs"],
+    }
+
+
+def _existing_evidence_satisfaction(
+    card: TaskCard,
+    *,
+    evidence: dict[str, Any],
+    project_dir: Path,
+) -> dict[str, Any]:
+    satisfied: list[str] = []
+    evidence_refs: list[str] = []
+    requirements = [str(item).strip() for item in card.evidence_requirements if str(item).strip()]
+    if not requirements:
+        return {"go": False, "satisfied": [], "evidence_refs": []}
+    for requirement in requirements:
+        ok, refs = _existing_requirement_satisfied(requirement, evidence=evidence, project_dir=project_dir)
+        if not ok:
+            return {"go": False, "satisfied": satisfied, "evidence_refs": _dedupe_strings(evidence_refs)}
+        satisfied.append(requirement)
+        evidence_refs.extend(refs)
+    return {"go": True, "satisfied": satisfied, "evidence_refs": _dedupe_strings(evidence_refs)}
+
+
+def _existing_requirement_satisfied(
+    requirement: str,
+    *,
+    evidence: dict[str, Any],
+    project_dir: Path,
+) -> tuple[bool, list[str]]:
+    normalized = requirement.strip().lower().replace("-", "_").replace(" ", "_")
+    feature_map = _existing_feature_map(evidence)
+    if normalized in {"same_project_patch", "repair_patch"}:
+        return bool(evidence.get("same_project_patch_files")), ["same_project_patch_files"]
+    if normalized == "eightdistinctlevelgoals":
+        distinct_count = _as_int(
+            evidence.get("distinctLevelGoalCount")
+            or _dict(evidence.get("product_depth_evidence")).get("distinctLevelGoalCount")
+        )
+        return distinct_count >= 8 or _feature_true(feature_map, "levelGoalVariety"), ["product_depth_evidence"]
+    if normalized == "level_completion_screenshot":
+        return _has_existing_screenshot(evidence, project_dir), ["playtest_screenshots"]
+    if normalized == "collection_panel_screenshot":
+        return _has_existing_screenshot(evidence, project_dir) and _has_open_panel(evidence, ["皮肤图鉴", "collection"]), [
+            "playtest_screenshots",
+            "open_panels",
+        ]
+    if normalized == "audio_runtime_evidence":
+        audio_manifest = project_dir / "assets/resources/commercial_assets/audio_manifest.json"
+        return (
+            audio_manifest.exists()
+            and _feature_true(feature_map, "audioPlaybackVerified")
+            and _feature_true(feature_map, "bgmStarted")
+            and _feature_true(feature_map, "sfxPlaybackVerified")
+            and _feature_true(feature_map, "volumeToggleUsable")
+        ), ["audio_manifest", "feature_coverage"]
+    if normalized in {"console/page_error_capture", "console_page_error_capture"}:
+        return not evidence.get("console_errors") and not evidence.get("page_errors"), ["playtest_error_capture"]
+    if normalized == "sceneprefabuievidence":
+        scene_dir = project_dir / "assets/scene"
+        return scene_dir.exists() and any(scene_dir.glob("*.scene")) and (
+            _feature_true(feature_map, "nativeCocosUiNodes")
+            or _feature_true(feature_map, "editorVisibleSceneHierarchy")
+            or _feature_true(feature_map, "chineseUiPanelsVisible")
+        ), ["scene_files", "feature_coverage"]
+    if normalized == "panelvisibilityscreenshots":
+        return _has_existing_screenshot(evidence, project_dir) and bool(evidence.get("open_panels")), [
+            "playtest_screenshots",
+            "open_panels",
+        ]
+    if normalized == "rewardcurrencychanges":
+        return (
+            _feature_true(feature_map, "rewardCurrencyChanges")
+            or _feature_true(feature_map, "rewardPreviewConfigured")
+            or _level_manifest_has_rewards(project_dir)
+        ), ["feature_coverage", "level_manifest"]
+    if normalized == "unlockprogressvisible":
+        return (
+            _feature_true(feature_map, "unlockProgressVisible")
+            or _feature_true(feature_map, "sessionUnlockChainConfigured")
+            or _level_preview_has_unlock_progress(project_dir)
+        ), ["feature_coverage", "level_goal_preview"]
+    if normalized == "human_review_packet":
+        packet = project_dir / "player_visible_evidence/human_player_review_packet.json"
+        if not packet.exists():
+            _ensure_human_review_packet_file(project_dir, evidence=evidence)
+        return packet.exists(), ["human_review_packet"]
+    if normalized == "awaiting_human_review_status":
+        return True, ["awaiting_human_review_gate"]
+    direct_feature_keys = {
+        "animationfeedbackverified": "animationFeedbackVerified",
+        "audioplaybackverified": "audioPlaybackVerified",
+        "bgmstarted": "bgmStarted",
+        "chineseuipanelsvisible": "chineseUiPanelsVisible",
+        "failurerevivefeedback": "failureReviveFeedback",
+        "levelflowplayable": "levelFlowPlayable",
+        "sfxplaybackverified": "sfxPlaybackVerified",
+        "shopownershipstates": "shopOwnershipStates",
+        "skinequippedvisualchange": "skinEquippedVisualChange",
+        "volumetoggleusable": "volumeToggleUsable",
+    }
+    feature_key = direct_feature_keys.get(normalized)
+    if feature_key:
+        return _feature_true(feature_map, feature_key), ["feature_coverage"]
+    return False, []
+
+
+def _existing_feature_map(evidence: dict[str, Any]) -> dict[str, Any]:
+    product_depth = _dict(evidence.get("product_depth_evidence"))
+    merged: dict[str, Any] = {}
+    for source in [
+        evidence.get("commercial_feature_coverage"),
+        evidence.get("player_visible_checks"),
+        product_depth,
+        product_depth.get("feature_coverage"),
+        product_depth.get("player_visible_checks"),
+    ]:
+        if isinstance(source, dict):
+            merged.update(source)
+    return merged
+
+
+def _existing_evidence_files_for_card(
+    card: TaskCard,
+    materialized: dict[str, list[str]],
+    *,
+    evidence: dict[str, Any],
+    project_dir: Path,
+) -> list[str]:
+    evidence_files: list[str] = []
+    for raw in evidence.get("same_project_patch_files") or []:
+        path = project_dir / str(raw)
+        if path.exists() and _path_is_in_write_set(path, materialized["write_set"]):
+            evidence_files.append(path.as_posix())
+    for raw in _dict(evidence.get("product_depth_evidence")).get("screenshots") or []:
+        path = Path(str(raw))
+        if path.exists():
+            evidence_files.append(path.as_posix())
+    human_packet = project_dir / "player_visible_evidence/human_player_review_packet.json"
+    if human_packet.exists() and _path_is_in_write_set(human_packet, materialized["write_set"]):
+        evidence_files.append(human_packet.as_posix())
+    return _dedupe_strings(evidence_files)
+
+
+def _path_is_in_write_set(path: Path, write_set: list[str]) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    for item in write_set:
+        candidate = Path(item)
+        try:
+            base = candidate.resolve()
+        except OSError:
+            base = candidate
+        if resolved == base or base in resolved.parents:
+            return True
+    return False
+
+
+def _feature_true(feature_map: dict[str, Any], key: str) -> bool:
+    return bool(feature_map.get(key))
+
+
+def _has_existing_screenshot(evidence: dict[str, Any], project_dir: Path) -> bool:
+    screenshots = list(evidence.get("screenshots") or [])
+    screenshots.extend(_dict(evidence.get("product_depth_evidence")).get("screenshots") or [])
+    for raw in screenshots:
+        path = Path(str(raw))
+        if not path.is_absolute():
+            path = project_dir / path
+        if path.exists():
+            return True
+    return False
+
+
+def _has_open_panel(evidence: dict[str, Any], tokens: list[str]) -> bool:
+    values: list[str] = [str(item) for item in evidence.get("open_panels") or []]
+    values.extend(str(item) for item in _dict(evidence.get("product_depth_evidence")).get("open_panels") or [])
+    values.extend(str(item) for item in evidence.get("events") or [])
+    haystack = "\n".join(values).lower()
+    return any(token.lower() in haystack for token in tokens)
+
+
+def _level_manifest_has_rewards(project_dir: Path) -> bool:
+    for path in [
+        project_dir / "assets/scripts/level_manifest.json",
+        project_dir / "assets/level_goal_manifest.json",
+    ]:
+        data = _read_json_dict(path)
+        levels = data.get("levels") if isinstance(data, dict) else None
+        if isinstance(levels, list):
+            for level in levels:
+                reward = _dict(_dict(level).get("reward"))
+                if _as_int(reward.get("coins")) > 0 or reward.get("unlock_level_ids"):
+                    return True
+    return False
+
+
+def _level_preview_has_unlock_progress(project_dir: Path) -> bool:
+    data = _read_json_dict(project_dir / "assets/scene/level_goal_preview.json")
+    bindings = _dict(data.get("ui_bindings"))
+    if bindings.get("unlock_progress_node"):
+        return True
+    sections = data.get("sections")
+    if isinstance(sections, list):
+        return any(str(_dict(section).get("section_id")).lower() == "unlock_progress" for section in sections)
+    return False
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _ensure_human_review_packet_file(project_dir: Path, *, evidence: dict[str, Any]) -> Path:
+    packet_path = project_dir / "player_visible_evidence/human_player_review_packet.json"
+    packet_path.parent.mkdir(parents=True, exist_ok=True)
+    screenshots = list(evidence.get("screenshots") or [])
+    screenshots.extend(_dict(evidence.get("product_depth_evidence")).get("screenshots") or [])
+    packet = {
+        "schema_version": "commercial_game_human_review_packet_v1",
+        "status": "AWAITING_HUMAN_REVIEW",
+        "reviewer_required": True,
+        "accepted_by_human": False,
+        "human_player_review_go": False,
+        "commercial_playable_go_allowed": False,
+        "ready_for_human_review": False,
+        "machine_evidence_status": "pending_final_gate_refresh",
+        "machine_blockers": ["awaiting_human_player_review"],
+        "screenshots": _dedupe_strings(screenshots),
+        "review_items": [
+            "eight distinct level goals",
+            "shop and skin ownership states",
+            "equipped skin visual change",
+            "Chinese UI panels",
+            "level flow",
+            "failure and revive feedback",
+            "audio, BGM, SFX, and volume behavior",
+            "animation and feedback polish",
+        ],
+        "manual_player_evidence": {},
+        "forbidden_claim": "unattended_packet_is_not_human_review",
+    }
+    _write_json(packet_path, packet)
+    return packet_path
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _patch_ledger_blockers(entries: list[dict[str, Any]], *, expected_count: int) -> list[str]:
@@ -303,9 +1102,179 @@ def _patch_ledger_blockers(entries: list[dict[str, Any]], *, expected_count: int
         blockers.append("same_project_task_card_patch_incomplete")
     if any(entry.get("status") != "completed" for entry in entries):
         blockers.append("same_project_task_card_patch_failed")
+    failure_classes = _dedupe_strings([_patch_failure_class(entry) for entry in entries] + [_patch_root_failure_class(entry) for entry in entries])
+    if "blocked_after_three_attempts" in failure_classes:
+        blockers.append("blocked_after_three_attempts")
+    if "child_stdout_silent" in failure_classes:
+        blockers.append("child_stdout_silent_recoverable")
+    if "provider_output_idle_timeout" in failure_classes:
+        blockers.append("provider_output_idle_timeout_recoverable")
+    if "provider_no_material_progress_timeout" in failure_classes:
+        blockers.append("provider_no_material_progress_timeout_recoverable")
+    if "workflow_child_stalled" in failure_classes:
+        blockers.append("workflow_child_stalled")
+    if "provider_timeout" in failure_classes:
+        blockers.append("provider_timeout_recoverable")
+    if "provider_execution_failed" in failure_classes:
+        blockers.append("provider_execution_failed")
+    for failure_class in failure_classes:
+        if failure_class and failure_class not in {
+            "blocked_after_three_attempts",
+            "child_stdout_silent",
+            "provider_output_idle_timeout",
+            "provider_no_material_progress_timeout",
+            "workflow_child_stalled",
+            "provider_timeout",
+            "provider_execution_failed",
+        }:
+            blockers.append(failure_class)
     if not entries:
         blockers.append("same_project_worker_patch_missing")
     return _dedupe_strings(blockers)
+
+
+def _continuation_argv(
+    *,
+    root: Path,
+    db_path: Path | None,
+    project_dir: Path,
+    card_path: Path,
+    card: TaskCard,
+    materialized: dict[str, list[str]],
+    max_repair_attempts: int,
+    entry: dict[str, Any],
+) -> list[str]:
+    argv = [
+        sys.executable,
+        "-m",
+        "packages.contributions.pipelines.commercial_game_task_card_resume",
+        "--workspace-root",
+        root.as_posix(),
+        "--project-dir",
+        project_dir.as_posix(),
+        "--pipeline-id",
+        card.run_id,
+        "--task-card-path",
+        card_path.as_posix(),
+        "--task-card-ref",
+        card.task_card_id,
+        "--max-fix-iterations",
+        str(max_repair_attempts),
+    ]
+    adapter_name = str(entry.get("requested_adapter") or entry.get("worker_adapter") or card.provider_lane or "").strip()
+    if adapter_name:
+        argv.extend(["--adapter", adapter_name])
+    if db_path is not None:
+        argv.extend(["--db-path", db_path.as_posix()])
+    for item in materialized["write_set"]:
+        argv.extend(["--write-set", item])
+    for item in materialized["read_set"]:
+        argv.extend(["--read-set", item])
+    for item in materialized["test_commands"]:
+        argv.extend(["--test-command", item])
+    return argv
+
+
+def _continuation_reason(*, status: str, entry: dict[str, Any], watchdog: dict[str, Any]) -> str | None:
+    if status == "completed":
+        return None
+    if entry.get("retry_exhausted"):
+        return "blocked_after_three_attempts"
+    if entry.get("preflight_blocker"):
+        return "preflight_blocker"
+    failure_class = str(entry.get("failure_class") or "")
+    normalized_failure = _patch_root_failure_class(entry)
+    if normalized_failure == "child_stdout_silent":
+        return "child_stdout_silent_recoverable"
+    if normalized_failure == "provider_output_idle_timeout":
+        return "provider_output_idle_timeout_recoverable"
+    if normalized_failure == "provider_no_material_progress_timeout":
+        return "provider_no_material_progress_timeout_recoverable"
+    if normalized_failure == "workflow_child_stalled":
+        return "workflow_child_stalled"
+    if normalized_failure == "provider_timeout":
+        return "provider_timeout_recoverable"
+    return failure_class or "same_project_task_card_patch_failed"
+
+
+def _patch_failure_class(entry: dict[str, Any]) -> str:
+    watchdog = entry.get("watchdog") if isinstance(entry.get("watchdog"), dict) else {}
+    failure_class = str(entry.get("failure_class") or "")
+    if failure_class == "blocked_after_three_attempts":
+        return failure_class
+    if failure_class in {"provider_output_idle_timeout", "provider_no_material_progress_timeout"}:
+        return failure_class
+    if failure_class in {"provider_timeout", "provider_idle_timeout", "provider_wall_timeout"}:
+        return "provider_timeout"
+    if failure_class:
+        return failure_class
+    timeout_type = str(watchdog.get("timeout_type") or "")
+    if timeout_type in {"provider_output_idle_timeout", "provider_no_material_progress_timeout"}:
+        return timeout_type
+    if timeout_type in {"idle_timeout", "wall_timeout"}:
+        return "provider_timeout"
+    return ""
+
+
+def _patch_root_failure_class(entry: dict[str, Any]) -> str:
+    final_failure_class = str(entry.get("final_failure_class") or "")
+    if final_failure_class:
+        normalized = _patch_failure_class({"failure_class": final_failure_class, "watchdog": entry.get("watchdog")})
+        return normalized or final_failure_class
+    failure_class = _patch_failure_class(entry)
+    if failure_class == "blocked_after_three_attempts":
+        attempts = entry.get("attempts") if isinstance(entry.get("attempts"), list) else []
+        if attempts:
+            return _patch_failure_class(attempts[-1])
+    return failure_class
+
+
+def _blocked_downstream_stages(*, require_build: bool, require_playtest: bool) -> list[str]:
+    stages = ["product_depth", "human_player_review"]
+    if require_build:
+        stages.insert(0, "cocos_build")
+    if require_playtest:
+        insert_at = 1 if require_build else 0
+        stages.insert(insert_at, "browser_playtest")
+        stages.insert(insert_at + 1, "audio_runtime")
+    return _dedupe_strings(stages)
+
+
+def _blocked_evidence_contract(
+    *,
+    schema_version: str,
+    stage: str,
+    blockers: list[str],
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": schema_version,
+        "status": "blocked",
+        "go": False,
+        "blockers": list(blockers),
+        "source": {"stage": stage, **source},
+    }
+
+
+def _normalized_repair_packet(*, patch_ledger: dict[str, Any], runtime_evidence: dict[str, Any]) -> dict[str, Any] | None:
+    if patch_ledger.get("same_project_worker_patch_go"):
+        return None
+    entries = [entry for entry in patch_ledger.get("entries") or [] if isinstance(entry, dict)]
+    failed_entry = next((entry for entry in entries if entry.get("status") != "completed"), None)
+    return {
+        "root_cause": "same_project_worker_patch_failed",
+        "upstream_blockers": _dedupe_strings(list(patch_ledger.get("blockers") or [])),
+        "blocked_downstream_stages": _dedupe_strings(list(runtime_evidence.get("blocked_downstream_stages") or [])),
+        "next_incomplete_task_card_id": patch_ledger.get("next_incomplete_task_card_id"),
+        "final_failure_class": failed_entry.get("final_failure_class") if failed_entry else None,
+        "retry_exhausted": bool(failed_entry.get("retry_exhausted")) if failed_entry else False,
+        "attempt_count": len(failed_entry.get("attempts") or []) if failed_entry else 0,
+        "max_attempts": failed_entry.get("max_attempts") if failed_entry else None,
+        "last_provider_output_at": failed_entry.get("last_provider_output_at") if failed_entry else None,
+        "last_material_progress_at": failed_entry.get("last_material_progress_at") if failed_entry else None,
+        "continuation_command": patch_ledger.get("next_continuation_command"),
+        "continuation_argv": patch_ledger.get("next_continuation_argv"),
+    }
 
 
 def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
@@ -313,6 +1282,7 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
     for path in [
         project_dir / "workflow_commercial_feature_evidence.json",
         project_dir / "player_visible_evidence" / "cocos_player_visible_evidence.json",
+        project_dir / "playtest_evidence" / "cocos_playtest_result.json",
     ]:
         if not path.exists():
             continue
@@ -327,7 +1297,51 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
             if isinstance(value, dict):
                 target_key = "commercial_feature_coverage" if key == "feature_coverage" else key
                 merged.setdefault(target_key, {}).update(value)
+        product_depth = payload.get("product_depth_evidence")
+        if isinstance(product_depth, dict):
+            merged.setdefault("product_depth_evidence", {}).update(product_depth)
+        for key in ("level_goals", "levelGoals", "distinctLevelGoalCount"):
+            if key in payload:
+                merged.setdefault("product_depth_evidence", {})[key] = payload[key]
+                merged[key] = payload[key]
+        for key in ("same_project_patch_files", "screenshots", "open_panels", "events", "console_errors", "page_errors"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                merged.setdefault(key, [])
+                merged[key].extend(value)
+        if isinstance(product_depth, dict):
+            for key in ("screenshots", "open_panels", "events"):
+                value = product_depth.get(key)
+                if isinstance(value, list):
+                    merged.setdefault(key, [])
+                    merged[key].extend(value)
+    for key in ("same_project_patch_files", "screenshots", "open_panels", "events", "console_errors", "page_errors"):
+        if isinstance(merged.get(key), list):
+            merged[key] = _dedupe_strings(merged[key])
     return merged
+
+
+def _failed_browser_playtest_evidence(*, build_output_path: str | Path, evidence_dir: str | Path, exc: Exception) -> dict[str, Any]:
+    evidence = Path(evidence_dir)
+    evidence.mkdir(parents=True, exist_ok=True)
+    result = {
+        "status": "failed",
+        "passed": False,
+        "commercial_passed": False,
+        "failure_class": exc.__class__.__name__,
+        "failure_reason": str(exc),
+        "build_output_path": Path(build_output_path).as_posix(),
+        "url": None,
+        "screenshots": [],
+        "canvas_hashes": [],
+        "console_errors": [],
+        "page_errors": [str(exc)],
+        "feature_coverage": {},
+    }
+    output = evidence / "cocos_playtest_exception.json"
+    _write_json(output, result)
+    result["result_path"] = output.as_posix()
+    return result
 
 
 def _safe_id(value: str) -> str:
