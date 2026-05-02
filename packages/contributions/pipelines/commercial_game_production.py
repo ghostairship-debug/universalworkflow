@@ -12,6 +12,9 @@ from packages.contributions.games.cocos.commercial_assets import (
 )
 from packages.contributions.games.cocos.ecosystem_bridge import collect_cocos_ecosystem_bridge_evidence
 from packages.contributions.games.cocos.e2e import discover_cocos_creator_exe
+from packages.contributions.pipelines.commercial_game_development_readiness import (
+    build_commercial_game_development_readiness_evidence,
+)
 from packages.contributions.pipelines.commercial_game_task_worker import (
     blocked_project_runtime_evidence_due_to_upstream,
     bootstrap_cocos_project_shell,
@@ -313,17 +316,19 @@ def execute_commercial_game_task_card_worker(
     task_cards = TaskCardStore(db_path).list_for_run(pipeline_id) if db_path is not None else []
     quality = task_card_quality_report(task_cards)
     if quality["go_no_go"] != "GO":
+        lifecycle_no_go = int(quality.get("lifecycle_blocked_count") or 0) > 0
+        failure_class = "task_card_lifecycle_no_go" if lifecycle_no_go else "task_card_quality_no_go"
         payload = _worker_payload(
             pipeline_id=pipeline_id,
             project_dir=project_dir,
             task_card_quality=quality,
             commercial_playable_go=False,
-            blockers=["task_card_quality_no_go"],
+            blockers=[failure_class],
             max_repair_attempts=max_repair_attempts,
         )
         return {
             "status": "blocked",
-            "failure_class": "task_card_quality_no_go",
+            "failure_class": failure_class,
             "execution_backend": "commercial_game_task_card_worker_v1",
             "output": payload,
             "shared_outputs": {"commercial_game_production": payload},
@@ -556,6 +561,13 @@ def _worker_payload(
     blockers: list[str],
     max_repair_attempts: int,
 ) -> dict[str, Any]:
+    development_readiness = build_commercial_game_development_readiness_evidence(
+        task_card_quality=task_card_quality,
+        same_project_worker_gate_present=False,
+        requirement_coverage_gate_present="requirement_coverage_blocked_count" in task_card_quality,
+        commercial_playable_go=commercial_playable_go,
+        human_player_review_go=False,
+    )
     return {
         "schema_version": COMMERCIAL_GAME_WORKER_SCHEMA,
         "created_at": _utc_now(),
@@ -567,6 +579,7 @@ def _worker_payload(
         "technical_smoke_go": False,
         "production_scaffold_go": False,
         "commercial_playable_go": commercial_playable_go,
+        "commercial_game_development_readiness_go": False,
         "ecosystem_integration_go": False,
         "live_role_provider_proof_go": False,
         "same_project_worker_patch_go": False,
@@ -577,6 +590,7 @@ def _worker_payload(
         "recoverable_suggestions": _recoverable_suggestions(_dedupe_strings(blockers)),
         "commercial_feature_coverage": {},
         "player_visible_checks": {},
+        "commercial_game_development_readiness": development_readiness,
         "max_repair_attempts": max_repair_attempts,
         "repair_policy": "same_project_incremental_repair",
         "forbids_fixed_template": True,

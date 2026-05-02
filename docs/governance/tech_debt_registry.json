@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "updated_at": "2026-05-02T06:51:45.7269131Z",
-  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. Current commercial game truth is NO-GO: machine_evidence_go=false, human_player_review_go=false, and commercial_playable_go=false. The failure is product-level, not a wrong launch path: the reviewed URL pointed at the current pipeline build/web-mobile, but the gate over-accepted runtime hook / canvas / event coverage as product-body completion. Next work must open a new active phase to repair both the commercial game body and the final gate; no unattended run may convert event-only, canvas-only, scaffold, build-only, or browser-event evidence into commercial GO.",
+  "updated_at": "2026-05-02T15:20:00Z",
+  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. Current commercial game truth is NO-GO: machine_evidence_go=false, human_player_review_go=false, and commercial_playable_go=false. The failure is product-level, not a wrong launch path: the reviewed URL pointed at the current pipeline build/web-mobile, but the gate over-accepted runtime hook / canvas / event coverage as product-body completion. Post-review hardening now adds DB lifecycle execution eligibility, fresh same-project implementation proof, reference-only evidence reuse, gameplay semantic evidence, product-body evidence gates, source requirement matrix output, task-card req_id coverage gating, an independent commercial_game_development_readiness_go evidence contract, active-phase-only product-body runtime task cards, and a non-commercial Cocos product-body baseline bootstrap. commercial_game_development_readiness_go=true means development-start readiness only; product-body reconstruction remains open and no unattended run may convert event-only, canvas-only, scaffold, build-only, browser-event, requirement-untraced, or baseline-only evidence into commercial GO.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -200,27 +200,30 @@
   "open_items": [
     {
       "debt_id": "M77-COCOS-001",
-      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, and real asset chain evidence, but the latest human review confirmed the current build is not a valid completed game body.",
+      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, real asset chain evidence, a non-commercial product-body baseline bootstrap, and a development-readiness contract, but the latest human review confirmed the current build is not a valid completed game body.",
       "introduced_in": "M76-M84 commercial game evaluation",
       "planned_repayment_phase": "New active phase for commercial game body reconstruction and gate hardening",
-      "current_status": "reopened_by_human_review",
-      "blocking_impact": "Blocks claiming commercial_playable_go=true and blocks machine_evidence_go=true; no longer permits machine evidence complete / AWAITING_HUMAN_REVIEW claims for pipeline_ecf26665254e."
+      "current_status": "development_ready_product_body_active_phase_opened",
+      "blocking_impact": "Blocks claiming commercial_playable_go=true and blocks machine_evidence_go=true for product delivery. The final gate now requires gameplay semantic and product-body evidence, rejects baseline-only final gate claims, task cards require source req_id coverage, and the next commercial content phase can start from development readiness.",
+      "repayment_note": "2026-05-02 hardening added lifecycle/fresh-execution/reference-only/semantic/product-body/requirement-coverage gates, a separate development-readiness contract, active product-body runtime task cards, a baseline-only Cocos product body bootstrap, and regression tests; it does not claim product-body completion."
     },
     {
       "debt_id": "M84-GAME-QA-001",
       "description": "Commercial readiness gate still over-accepts runtime hook / canvas / event coverage. The latest human review proved gate v2 did not reject a non-game-body machine false positive.",
       "introduced_in": "M84 real generated game review",
       "planned_repayment_phase": "New active phase for player-visible gate hardening before any new commercial GO attempt",
-      "current_status": "reopened_by_human_review",
-      "blocking_impact": "Blocks commercial GO and machine-evidence-complete claims until the final gate rejects runtime-hook/event-only/canvas-only product evidence and requires player-visible functionality."
+      "current_status": "development_gate_repaired_commercial_go_still_blocked",
+      "blocking_impact": "Blocks commercial GO and machine-evidence-complete claims unless source requirements are traceable and gameplay semantic, product-body, product-depth, build/playtest, and human review contracts all pass.",
+      "repayment_note": "2026-05-02 hardening added blockers for runtime-hook, canvas-only, feature-flag-only, event-only, baseline-only final gate evidence, missing semantic trace, missing Cocos component binding, missing fresh task-card execution, and missing task-card req_id coverage."
     },
     {
       "debt_id": "M109-NO-DEGRADATION-COMMERCIAL-001",
       "description": "Strict pipeline pipeline_ecf26665254e was accepted by machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation, playtest, and product-depth evidence must be redefined as player-visible, non-runtime-hook hard evidence.",
       "introduced_in": "2026-04-29 no-degradation Cocos/worker rerun",
       "planned_repayment_phase": "New active phase for commercial game body reconstruction and no-degradation final gate repair",
-      "current_status": "human_review_failed_no_go",
-      "blocking_impact": "Directly blocks commercial_playable_go=true and machine_evidence_go=true; requires product-body reconstruction and gate hardening before any new final-gate attempt."
+      "current_status": "development_ready_final_gate_no_go",
+      "blocking_impact": "Directly blocks commercial_playable_go=true and product delivery. Development readiness is GO, but product-body reconstruction and a new final-gate attempt remain required before machine_evidence_go can be trusted.",
+      "repayment_note": "2026-05-02 hardening prevents attempts-zero, historical-evidence, event-only, feature-flag-only, canvas-only, runtime-hook, baseline-only, and requirement-untraced evidence from satisfying commercial final gate."
     },
     {
       "debt_id": "M109-PROVIDER-WATCHDOG-001",
@@ -318,6 +321,8 @@
     "Do pipeline stage results distinguish completed, blocked, failed, skipped, stubbed, and simulated without marking unexecuted work completed?",
     "Do validation commands use packages/runtime_security/safe_command_runner.py with shell metacharacter rejection and shell=False by default?",
     "Do active game-pipeline docs and gates distinguish technical smoke, E2E scaffold success, production scaffold success, and final commercial-playable readiness?",
+    "Do implementation task cards that are derived from source material carry complete req_id coverage before execution?",
+    "Do product-body baseline artifacts remain marked baseline_only and forbidden from commercial playable claims?",
     "Does any new graph-backed execution keep receipt, lease, workspace root, write_set, provider live proof, and evidence/operator packet semantics outside LangGraph shortcuts?"
   ]
 }

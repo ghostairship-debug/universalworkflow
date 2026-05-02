@@ -5,12 +5,16 @@ from typing import Any
 from packages.contributions.pipelines.commercial_game_evidence_contracts import (
     BROWSER_PLAYTEST_LEDGER_SCHEMA,
     BUILD_LEDGER_SCHEMA,
+    GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA,
     PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+    PRODUCT_BODY_EVIDENCE_SCHEMA,
     build_asset_graph_contract,
     build_browser_playtest_ledger,
     build_build_ledger,
     build_cocos_bridge_evidence_contract,
     build_commercial_final_gate_evidence,
+    build_gameplay_semantic_evidence,
+    build_product_body_evidence,
     build_product_depth_evidence,
     build_same_project_patch_ledger_contract,
     runtime_error_markers,
@@ -68,6 +72,16 @@ def evaluate_no_degradation_contract(
         player_visible_checks=_dict_from(production_payload.get("player_visible_checks")),
         playtest=playtest,
     )
+    gameplay_semantic_evidence = build_gameplay_semantic_evidence(
+        _dict_from(production_payload.get("gameplay_semantic_evidence")),
+        feature_coverage=feature_coverage,
+        playtest=playtest,
+    )
+    product_body_evidence = build_product_body_evidence(
+        _dict_from(production_payload.get("product_body_evidence")),
+        gameplay_semantic_evidence=gameplay_semantic_evidence,
+        playtest=playtest,
+    )
     ecosystem_go = bool(cocos_bridge_evidence["go"])
     live_role_go = _live_role_provider_proof_go(shared_outputs)
     same_project_worker_patch_go = bool(patch_ledger["go"])
@@ -93,6 +107,16 @@ def evaluate_no_degradation_contract(
             stage="product_depth",
             source=upstream_source,
         )
+        gameplay_semantic_evidence = _blocked_by_same_project_worker_contract(
+            schema_version=GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA,
+            stage="gameplay_semantic",
+            source=upstream_source,
+        )
+        product_body_evidence = _blocked_by_same_project_worker_contract(
+            schema_version=PRODUCT_BODY_EVIDENCE_SCHEMA,
+            stage="product_body",
+            source=upstream_source,
+        )
     human_player_review_go = _human_player_review_go(shared_outputs, production_payload)
     product_feature_depth_go = bool(product_depth_evidence["go"])
     product_feature_blockers = list(product_depth_evidence["blockers"])
@@ -114,6 +138,8 @@ def evaluate_no_degradation_contract(
         product_feature_blockers=product_feature_blockers,
         live_role_provider_proof_go=live_role_go,
         human_player_review_go=human_player_review_go,
+        gameplay_semantic_evidence=gameplay_semantic_evidence,
+        product_body_evidence=product_body_evidence,
     )
 
     findings: list[dict[str, Any]] = []
@@ -131,6 +157,10 @@ def evaluate_no_degradation_contract(
             for blocker in browser_playtest_ledger["blockers"]:
                 findings.append({"finding": blocker, "severity": "high"})
             for blocker in product_depth_evidence["blockers"]:
+                findings.append({"finding": blocker, "severity": "high"})
+            for blocker in gameplay_semantic_evidence["blockers"]:
+                findings.append({"finding": blocker, "severity": "high"})
+            for blocker in product_body_evidence["blockers"]:
                 findings.append({"finding": blocker, "severity": "high"})
         for blocker in asset_graph["blockers"]:
             findings.append({"finding": blocker, "severity": "high"})
@@ -155,6 +185,8 @@ def evaluate_no_degradation_contract(
         "same_project_worker_patch_go": same_project_worker_patch_go,
         "human_player_review_go": human_player_review_go,
         "product_feature_depth_go": product_feature_depth_go,
+        "gameplay_semantic_go": bool(gameplay_semantic_evidence["go"]),
+        "product_body_go": bool(product_body_evidence["go"]),
         "build_exit_go": build_exit_go,
         "browser_runtime_go": browser_runtime_go,
         "asset_graph_go": bool(asset_graph["go"]),
@@ -170,9 +202,13 @@ def evaluate_no_degradation_contract(
             "same_project_patch_ledger": patch_ledger,
             "build_ledger": build_ledger,
             "browser_playtest_ledger": browser_playtest_ledger,
+            "gameplay_semantic_evidence": gameplay_semantic_evidence,
+            "product_body_evidence": product_body_evidence,
             "product_depth_evidence": product_depth_evidence,
         },
         "commercial_final_gate_evidence": final_gate_evidence,
+        "gameplay_semantic_evidence": gameplay_semantic_evidence,
+        "product_body_evidence": product_body_evidence,
         "product_depth_evidence": product_depth_evidence,
         "degradation_findings": findings,
         "blockers": blockers,

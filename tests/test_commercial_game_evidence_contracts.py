@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 
 from infra.scripts.validate_animation_artifact_integrity import validate_animation_artifact_integrity
+from packages.contributions.pipelines.commercial_game_development_readiness import (
+    build_commercial_game_development_readiness_evidence,
+)
 from packages.contributions.pipelines.commercial_game_evidence_contracts import (
     BROWSER_PLAYTEST_LEDGER_SCHEMA,
     BUILD_LEDGER_SCHEMA,
     PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+    build_gameplay_semantic_evidence,
+    build_product_body_evidence,
     build_asset_graph_contract,
     build_browser_playtest_ledger,
     build_build_ledger,
@@ -96,7 +101,7 @@ def test_same_project_contract_rejects_shell_noop_and_fallback_only_execution() 
         assert {"same_project_patch_non_provider_adapter", "fallback_provider_unavailable"} & set(contract["blockers"])
 
 
-def test_same_project_contract_accepts_existing_same_project_evidence_entries() -> None:
+def test_same_project_contract_rejects_existing_same_project_evidence_entries() -> None:
     contract = build_same_project_patch_ledger_contract(
         {
             "same_project_worker_patch_go": True,
@@ -114,8 +119,9 @@ def test_same_project_contract_accepts_existing_same_project_evidence_entries() 
         }
     )
 
-    assert contract["go"] is True
-    assert contract["blockers"] == []
+    assert contract["go"] is False
+    assert "fresh_cli_execution_missing" in contract["blockers"]
+    assert "same_project_patch_attempts_missing" in contract["blockers"]
 
 
 def test_final_gate_reports_upstream_short_circuit_without_product_noise() -> None:
@@ -208,6 +214,8 @@ def test_final_gate_stops_at_awaiting_human_review_when_machine_evidence_is_comp
         product_feature_blockers=[],
         live_role_provider_proof_go=True,
         human_player_review_go=False,
+        gameplay_semantic_evidence=complete,
+        product_body_evidence=complete,
     )
 
     assert evidence["go_no_go"] == "AWAITING_HUMAN_REVIEW"
@@ -215,6 +223,127 @@ def test_final_gate_stops_at_awaiting_human_review_when_machine_evidence_is_comp
     assert evidence["machine_evidence_go"] is True
     assert evidence["commercial_playable_go"] is False
     assert evidence["blockers"] == ["awaiting_human_player_review"]
+
+
+def test_development_readiness_go_is_separate_from_commercial_playable_go() -> None:
+    semantic = build_gameplay_semantic_evidence(
+        {
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+            "baseline_only": True,
+        }
+    )
+    product_body = build_product_body_evidence(
+        {
+            "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+            "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
+            "baseline_only": True,
+        },
+        gameplay_semantic_evidence=semantic,
+    )
+
+    readiness = build_commercial_game_development_readiness_evidence(
+        task_card_quality={
+            "schema_version": "m108_task_card_quality_v2",
+            "task_card_count": 3,
+            "execution_eligible_count": 3,
+            "lifecycle_blocked_count": 0,
+            "requirement_coverage_blocked_count": 0,
+            "go_no_go": "GO",
+        },
+        same_project_patch_ledger={
+            "schema_version": "commercial_game_same_project_patch_ledger_contract_v1",
+            "go": True,
+            "blockers": [],
+            "source": {},
+        },
+        gameplay_semantic_evidence=semantic,
+        product_body_evidence=product_body,
+        product_body_baseline={"baseline_only": True, "commercial_playable_go": False},
+        validation_gates={
+            "doc_links_go": True,
+            "active_truth_go": True,
+            "targeted_tests_go": True,
+            "full_matrix_go": True,
+            "diff_check_go": True,
+        },
+    )
+
+    assert readiness["commercial_game_development_readiness_go"] is True
+    assert readiness["commercial_playable_go"] is False
+    assert readiness["baseline_only"] is True
+    assert readiness["forbidden_claim"] == "development_readiness_is_not_commercial_playable_completion"
+
+
+def test_final_gate_rejects_baseline_only_product_body_even_when_other_machine_contracts_pass() -> None:
+    complete = {"go": True, "blockers": [], "status": "completed", "schema_version": "test", "source": {}}
+    semantic = build_gameplay_semantic_evidence(
+        {
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+            "baseline_only": True,
+        }
+    )
+    product_body = build_product_body_evidence(
+        {"scene_nodes": ["Canvas"], "cocos_component_bindings": ["BoardModel"], "baseline_only": True},
+        gameplay_semantic_evidence=semantic,
+    )
+
+    evidence = build_commercial_final_gate_evidence(
+        technical_smoke_go=True,
+        production_scaffold_go=True,
+        require_commercial=True,
+        require_cocos_ecosystem=False,
+        require_live_agent_roles=False,
+        require_human_player_review=False,
+        asset_graph=complete,
+        cocos_bridge_evidence=complete,
+        same_project_patch_ledger=complete,
+        build_ledger=complete,
+        browser_playtest_ledger=complete,
+        product_feature_depth_go=True,
+        product_feature_blockers=[],
+        live_role_provider_proof_go=False,
+        human_player_review_go=False,
+        gameplay_semantic_evidence=semantic,
+        product_body_evidence=product_body,
+    )
+
+    assert evidence["commercial_playable_go"] is False
+    assert "baseline_only_cannot_pass_commercial_final_gate" in evidence["machine_blockers"]
+
+
+def test_development_readiness_blocks_commercial_claim_and_missing_req_id_gate() -> None:
+    readiness = build_commercial_game_development_readiness_evidence(
+        task_card_quality={"task_card_count": 1, "go_no_go": "GO"},
+        same_project_worker_gate_present=True,
+        gameplay_semantic_evidence={"go": True, "blockers": [], "source": {}},
+        product_body_evidence={"go": True, "blockers": [], "source": {}},
+        product_body_baseline={"baseline_only": True, "commercial_playable_go": True},
+        commercial_playable_go=True,
+        human_player_review_go=False,
+    )
+
+    assert readiness["commercial_game_development_readiness_go"] is False
+    assert "requirement_coverage_gate_missing" in readiness["blockers"]
+    assert "baseline_claimed_as_commercial_playable" in readiness["blockers"]
+    assert "commercial_playable_go_claimed_before_human_review" in readiness["blockers"]
 
 
 def test_product_depth_contract_rejects_event_only_markers() -> None:
@@ -235,6 +364,45 @@ def test_product_depth_contract_rejects_event_only_markers() -> None:
     assert "event_only_player_visible_evidence" in evidence["blockers"]
     assert "levels_not_distinct_or_less_than_eight" in evidence["blockers"]
     assert "skin_system_not_player_visible" in evidence["blockers"]
+
+
+def test_gameplay_semantic_contract_rejects_feature_flags_and_events_only() -> None:
+    evidence = build_gameplay_semantic_evidence(
+        {"events": ["placed_piece", "line_clear"]},
+        feature_coverage={"levelFlowPlayable": True},
+    )
+
+    assert evidence["go"] is False
+    assert "event_only_gameplay_evidence" in evidence["blockers"]
+    assert "semantic_board_state_missing" in evidence["blockers"]
+    assert "semantic_placement_trace_missing" in evidence["blockers"]
+
+
+def test_product_body_contract_rejects_canvas_runtime_hook_without_components() -> None:
+    semantic = build_gameplay_semantic_evidence(
+        {
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+        }
+    )
+    evidence = build_product_body_evidence(
+        {"canvas_only": True, "runtime_hook": True, "events": ["button_clicked"]},
+        gameplay_semantic_evidence=semantic,
+    )
+
+    assert semantic["go"] is True
+    assert evidence["go"] is False
+    assert "runtime_hook_not_product_body" in evidence["blockers"]
+    assert "canvas_only_product_body" in evidence["blockers"]
+    assert "cocos_component_binding_missing" in evidence["blockers"]
 
 
 def test_product_depth_contract_accepts_machine_visible_depth() -> None:

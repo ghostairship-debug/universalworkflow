@@ -13,6 +13,8 @@ BUILD_LEDGER_SCHEMA = "commercial_game_build_ledger_v1"
 BROWSER_PLAYTEST_LEDGER_SCHEMA = "commercial_game_browser_playtest_ledger_v1"
 COMMERCIAL_FINAL_GATE_EVIDENCE_SCHEMA = "commercial_game_final_gate_evidence_v1"
 PRODUCT_DEPTH_EVIDENCE_SCHEMA = "commercial_game_product_depth_evidence_v1"
+GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA = "commercial_game_gameplay_semantic_evidence_v1"
+PRODUCT_BODY_EVIDENCE_SCHEMA = "commercial_game_product_body_evidence_v1"
 HUMAN_REVIEW_PACKET_SCHEMA = "commercial_game_human_review_packet_v1"
 
 _NON_REAL_STATUS = {"skipped", "stubbed", "simulated", "filesystem_only", "offline_only", "build_only"}
@@ -110,10 +112,33 @@ def build_same_project_patch_ledger_contract(patch_ledger: dict[str, Any] | None
         adapter = str(entry.get("worker_adapter") or entry.get("adapter") or entry.get("capability_adapter") or "").strip().lower()
         if adapter in _NON_IMPLEMENTATION_ADAPTERS:
             blockers.append("same_project_patch_non_provider_adapter")
+        satisfaction_mode = str(entry.get("satisfaction_mode") or "").strip().lower()
+        if adapter in {"existing_same_project_evidence", "reference_evidence"} or satisfaction_mode in {
+            "existing_same_project_evidence",
+            "reused_reference_only",
+        }:
+            blockers.append("fresh_cli_execution_missing")
+        if entry.get("implementation_gate_satisfied") is False:
+            blockers.append("fresh_cli_execution_missing")
         if entry.get("fallback_only"):
             blockers.append("fallback_provider_unavailable")
         if entry.get("fallback_provider") and not entry.get("fallback_provider_live_proof"):
             blockers.append("fallback_provider_unavailable")
+        mutation_result = _dict_from(entry.get("mutation_result"))
+        changed_files = mutation_result.get("changed_files") or entry.get("changed_files") or []
+        final_test_status = str(mutation_result.get("final_test_status") or entry.get("final_test_status") or "").strip().lower()
+        attempts = entry.get("attempts") if isinstance(entry.get("attempts"), list) else []
+        if entry.get("status") == "completed":
+            if not attempts and not entry.get("attempt_id") and not entry.get("child_attempt_id"):
+                blockers.append("same_project_patch_attempts_missing")
+            if not entry.get("receipt_id") or not entry.get("child_run_id") or not (entry.get("child_attempt_id") or entry.get("attempt_id")):
+                blockers.append("fresh_cli_execution_missing")
+            if not changed_files:
+                blockers.append("same_project_patch_changed_files_missing")
+            if final_test_status != "passed":
+                blockers.append("same_project_patch_tests_not_passed")
+        if entry.get("product_implementation_by_operator_fallback"):
+            blockers.append("operator_fallback_product_implementation_not_allowed")
     failed_entries = [entry for entry in entries if entry.get("status") != "completed"]
     if failed_entries:
         blockers.append("same_project_task_card_patch_failed")
@@ -227,6 +252,102 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
     )
 
 
+def build_gameplay_semantic_evidence(
+    gameplay: dict[str, Any] | None = None,
+    *,
+    feature_coverage: dict[str, Any] | None = None,
+    playtest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = _dict_from(gameplay)
+    if _is_contract(payload, GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA):
+        return payload
+    features = _merge_dicts(_dict_from(_dict_from(playtest).get("feature_coverage")), _dict_from(feature_coverage), _dict_from(payload.get("feature_coverage")))
+    traces = _dict_from(payload.get("semantic_traces") or payload.get("traces"))
+    blockers: list[str] = []
+    if payload and _has_non_real_status(payload):
+        blockers.append("gameplay_semantic_not_real_execution")
+    if features and not payload:
+        blockers.append("feature_flag_only_evidence")
+    if payload.get("events") and not traces:
+        blockers.append("event_only_gameplay_evidence")
+    if not _board_is_10x10(payload):
+        blockers.append("semantic_board_state_missing")
+    if not _has_piece_model(payload):
+        blockers.append("semantic_piece_model_missing")
+    if not _candidate_tray_has_three(payload):
+        blockers.append("semantic_candidate_tray_missing")
+    for trace_name, blocker in [
+        ("placement", "semantic_placement_trace_missing"),
+        ("line_clear", "semantic_line_clear_trace_missing"),
+        ("candidate_refresh", "semantic_candidate_refresh_trace_missing"),
+        ("game_over", "semantic_game_over_trace_missing"),
+        ("anti_stall", "semantic_anti_stall_trace_missing"),
+    ]:
+        if not _has_semantic_trace(payload, traces, trace_name):
+            blockers.append(blocker)
+    go = not blockers
+    return _contract(
+        schema_version=GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA,
+        status="completed" if go else "blocked",
+        go=go,
+        blockers=blockers,
+        source={
+            "board_size": _board_size_source(payload),
+            "piece_shape_count": _piece_shape_count(payload),
+            "candidate_count": _candidate_count(payload),
+            "trace_keys": sorted(traces),
+            "feature_coverage_keys": sorted(features),
+            "baseline_only": bool(payload.get("baseline_only")),
+        },
+    )
+
+
+def build_product_body_evidence(
+    product_body: dict[str, Any] | None = None,
+    *,
+    gameplay_semantic_evidence: dict[str, Any] | None = None,
+    playtest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = _dict_from(product_body)
+    if _is_contract(payload, PRODUCT_BODY_EVIDENCE_SCHEMA):
+        return payload
+    playtest_payload = _dict_from(playtest)
+    blockers: list[str] = []
+    if payload and _has_non_real_status(payload):
+        blockers.append("product_body_not_real_execution")
+    if payload.get("runtime_hook") or payload.get("runtimeHook") or playtest_payload.get("runtime_hook"):
+        blockers.append("runtime_hook_not_product_body")
+    if payload.get("canvas_only") or payload.get("canvasOnly") or playtest_payload.get("canvas_only"):
+        blockers.append("canvas_only_product_body")
+    if payload.get("events") and not _has_component_binding(payload):
+        blockers.append("event_only_gameplay_evidence")
+    if payload.get("feature_coverage") and not _has_component_binding(payload):
+        blockers.append("feature_flag_only_evidence")
+    if not _has_component_binding(payload):
+        blockers.append("cocos_component_binding_missing")
+    if not _has_scene_body(payload):
+        blockers.append("scene_product_body_missing")
+    semantic = _dict_from(gameplay_semantic_evidence)
+    if semantic and not semantic.get("go"):
+        blockers.extend(_strings(semantic.get("blockers")))
+    elif not semantic:
+        blockers.append("gameplay_semantic_evidence_missing")
+    go = not blockers
+    return _contract(
+        schema_version=PRODUCT_BODY_EVIDENCE_SCHEMA,
+        status="completed" if go else "blocked",
+        go=go,
+        blockers=blockers,
+        source={
+            "component_binding_count": _component_binding_count(payload),
+            "scene_node_count": _scene_node_count(payload),
+            "semantic_go": bool(semantic.get("go")) if semantic else False,
+            "product_body_path": payload.get("product_body_path") or payload.get("evidence_path"),
+            "baseline_only": bool(payload.get("baseline_only")),
+        },
+    )
+
+
 def build_commercial_final_gate_evidence(
     *,
     technical_smoke_go: bool,
@@ -244,12 +365,28 @@ def build_commercial_final_gate_evidence(
     product_feature_blockers: list[str],
     live_role_provider_proof_go: bool,
     human_player_review_go: bool,
+    gameplay_semantic_evidence: dict[str, Any] | None = None,
+    product_body_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    gameplay_semantic_contract = gameplay_semantic_evidence or build_gameplay_semantic_evidence(None)
+    product_body_contract = product_body_evidence or build_product_body_evidence(
+        None,
+        gameplay_semantic_evidence=gameplay_semantic_contract,
+    )
     machine_blockers: list[str] = []
     if require_commercial:
-        for contract in [asset_graph, same_project_patch_ledger, build_ledger, browser_playtest_ledger]:
+        for contract in [
+            asset_graph,
+            same_project_patch_ledger,
+            build_ledger,
+            browser_playtest_ledger,
+            gameplay_semantic_contract,
+            product_body_contract,
+        ]:
             if not contract.get("go"):
                 machine_blockers.extend(_strings(contract.get("blockers")))
+            if _dict_from(contract.get("source")).get("baseline_only"):
+                machine_blockers.append("baseline_only_cannot_pass_commercial_final_gate")
         if not product_feature_depth_go:
             machine_blockers.extend(product_feature_blockers or ["product_feature_depth_missing"])
     if require_cocos_ecosystem and not cocos_bridge_evidence.get("go"):
@@ -296,6 +433,8 @@ def build_commercial_final_gate_evidence(
             "same_project_patch_ledger": same_project_patch_ledger,
             "build_ledger": build_ledger,
             "browser_playtest_ledger": browser_playtest_ledger,
+            "gameplay_semantic_evidence": gameplay_semantic_contract,
+            "product_body_evidence": product_body_contract,
         },
     }
 
@@ -505,6 +644,88 @@ def _distinct_level_goal_count(level_goals: list[str], *payloads: dict[str, Any]
                 explicit_counts.append(int(value))
     unique_goals = len({goal.lower() for goal in level_goals})
     return max([unique_goals, *explicit_counts], default=0)
+
+
+def _board_is_10x10(payload: dict[str, Any]) -> bool:
+    board = _dict_from(payload.get("board_state") or payload.get("board"))
+    size = payload.get("board_size") or board.get("size")
+    if isinstance(size, str):
+        return size.lower().replace(" ", "") in {"10x10", "10*10"}
+    if isinstance(size, (list, tuple)) and len(size) == 2:
+        return list(size) == [10, 10]
+    rows = board.get("rows") or payload.get("rows")
+    cols = board.get("cols") or board.get("columns") or payload.get("cols") or payload.get("columns")
+    return rows == 10 and cols == 10
+
+
+def _board_size_source(payload: dict[str, Any]) -> Any:
+    board = _dict_from(payload.get("board_state") or payload.get("board"))
+    return payload.get("board_size") or board.get("size") or {"rows": board.get("rows"), "cols": board.get("cols") or board.get("columns")}
+
+
+def _has_piece_model(payload: dict[str, Any]) -> bool:
+    return _piece_shape_count(payload) > 0 or bool(payload.get("piece_model") or payload.get("pieceModel"))
+
+
+def _piece_shape_count(payload: dict[str, Any]) -> int:
+    shapes = payload.get("piece_shapes") or payload.get("pieceShapes") or _dict_from(payload.get("piece_model")).get("shapes")
+    return len(shapes) if isinstance(shapes, list) else 0
+
+
+def _candidate_tray_has_three(payload: dict[str, Any]) -> bool:
+    return _candidate_count(payload) == 3
+
+
+def _candidate_count(payload: dict[str, Any]) -> int:
+    tray = payload.get("candidate_tray") or payload.get("candidateTray") or payload.get("candidates")
+    if isinstance(tray, list):
+        return len(tray)
+    tray_dict = _dict_from(tray)
+    count = tray_dict.get("count") or payload.get("candidate_count") or payload.get("candidateCount")
+    try:
+        return int(count)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _has_semantic_trace(payload: dict[str, Any], traces: dict[str, Any], trace_name: str) -> bool:
+    keys = {
+        trace_name,
+        f"{trace_name}_trace",
+        f"{trace_name}_trace_path",
+        trace_name.replace("_", ""),
+    }
+    return any(bool(payload.get(key) or traces.get(key)) for key in keys)
+
+
+def _has_component_binding(payload: dict[str, Any]) -> bool:
+    return _component_binding_count(payload) > 0
+
+
+def _component_binding_count(payload: dict[str, Any]) -> int:
+    bindings = payload.get("cocos_component_bindings") or payload.get("component_bindings") or payload.get("components")
+    if isinstance(bindings, list):
+        return len(bindings)
+    value = payload.get("component_binding_count") or payload.get("componentBindingCount")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _has_scene_body(payload: dict[str, Any]) -> bool:
+    return _scene_node_count(payload) > 0 or bool(payload.get("scene_path") or payload.get("sceneGraph"))
+
+
+def _scene_node_count(payload: dict[str, Any]) -> int:
+    nodes = payload.get("scene_nodes") or payload.get("sceneNodes") or payload.get("node_hierarchy")
+    if isinstance(nodes, list):
+        return len(nodes)
+    value = payload.get("scene_node_count") or payload.get("sceneNodeCount")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _feature_proven(feature_name: str, *payloads: dict[str, Any]) -> bool:

@@ -43,10 +43,18 @@ def test_unified_project_brief_preserves_long_text_and_writes_agent_packets(tmp_
     assert len(full_brief) > len(long_text)
     assert payload["chunk_count"] >= 2
     assert payload["media_count"] == 1
+    assert payload["requirement_count"] >= 2
 
     ui_packet = Path(payload["agent_packets"]["ui_agent"]).read_text(encoding="utf-8")
     assert "packet_policy: `selected_full_chunks_not_summary_replacement`" in ui_packet
+    assert "requirement_matrix_path:" in ui_packet
+    assert "REQ-S001" in ui_packet
     assert "UI 面板必须可见可点" in ui_packet
+    requirement_matrix = json.loads(Path(payload["requirement_matrix_path"]).read_text(encoding="utf-8"))
+    assert requirement_matrix["schema_version"] == "post_m109_requirement_matrix_v1"
+    assert requirement_matrix["requirements"][0]["req_id"].startswith("REQ-S001")
+    assert requirement_matrix["requirements"][0]["original_quote"]
+    assert requirement_matrix["requirements"][0]["normalized_requirement"]
     media_manifest = json.loads(Path(payload["media_manifest_path"]).read_text(encoding="utf-8"))
     assert media_manifest["media"][0]["sha256"]
 
@@ -71,6 +79,8 @@ def test_cli_intake_package_outputs_unified_brief(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["schema_version"] == "m109_unified_project_brief_v1"
     assert Path(payload["project_brief_path"]).exists()
+    assert Path(payload["requirement_matrix_path"]).exists()
+    assert payload["requirement_ids"]
     assert "product_agent" in payload["agent_packets"]
 
 
@@ -194,11 +204,51 @@ def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: 
     assert len(same_project_cards) >= 6
     assert all(card.metadata.get("stage_phase") for card in same_project_cards)
     assert any(card.metadata.get("depends_on_task_card_ids") for card in same_project_cards)
+    assert all(card.metadata.get("requirement_coverage_required") is True for card in same_project_cards)
+    assert all(card.metadata.get("covered_requirement_ids") for card in same_project_cards)
+    assert all(card.metadata.get("required_requirement_ids") for card in same_project_cards)
     assert all(
         not command.startswith("workflowctl pipeline run")
         for card in same_project_cards
         for command in card.test_commands
     )
+
+
+def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp_path: Path) -> None:
+    source = tmp_path / "brief.md"
+    source.write_text("# 需求\n\n先实现产品本体运行时、语义 trace 和 Cocos component evidence。\n", encoding="utf-8")
+    result = _invoke(
+        tmp_path,
+        "pipeline",
+        "run",
+        "--template",
+        "commercial_game_production",
+        "--goal",
+        "Product Body Runtime And Semantic Trace Implementation",
+        "--pipeline-id",
+        "product_body_runtime_phase",
+        "--pdf-path",
+        source.as_posix(),
+        "--execute-agent-roles",
+        "--evidence-dir",
+        (tmp_path / "pipeline_evidence").as_posix(),
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    task_card_output = payload["stage_results"][5]["output"]
+    phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
+    assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert [phase["title"] for phase in phase_graph["phases"]] == ["Product Body Runtime And Semantic Trace Implementation"]
+
+    persistence = task_card_output["structured_output"]["task_card_persistence"]
+    assert persistence["task_card_count"] == 3
+    assert persistence["quality"]["go_no_go"] == "GO"
+    cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("product_body_runtime_phase")
+    assert len(cards) == 3
+    assert {card.phase_name for card in cards} == {"Product Body Runtime And Semantic Trace Implementation"}
+    assert all(card.execution_mode == "same_project_patch" for card in cards)
+    assert all(card.metadata.get("requirement_coverage_required") is True for card in cards)
 
 
 def test_m109_role_outputs_are_role_specific(tmp_path: Path) -> None:

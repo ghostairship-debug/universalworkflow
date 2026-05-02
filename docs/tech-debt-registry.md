@@ -24,15 +24,16 @@
 - 2026-05-02 `Provider Command Policy And Patch Generation Prompt Repair` repaid patch-only/no-shell provider command policy and Codex patch_apply user-config transport isolation. The revive prompt same-project card still blocked after three isolated fresh-receipt retries because Codex patch_apply reached `turn.started` but produced no acceptable diff before idle timeout; downstream build/playtest/audio/product-depth/human-review remains short-circuited.
 - 2026-05-02 `Patch Worker Strategy Repair For Codex Turn-Start Stalls` repaid repo/project-rule contamination in Codex patch_apply by moving diff generation to a prompt-only broker workspace and adding `--ignore-rules`. `Revive Prompt Micro-Split Exact Context Repair` then completed the script-only revive prompt state patch. `Revive Prompt Layout Evidence Ultra-Split Repair` completed layout-only but exposed a no-diff feature-evidence stall. `Patch Generation No-Patch Diagnostic Repair` fixed the inner Codex idle budget mismatch and completed the feature-evidence patch; `Revive Feedback Feature Coverage Completion` then repaid explicit `failureReviveFeedback` player-visible coverage.
 - 2026-05-02 `Trusted Cocos Build Browser Audio Runtime Evidence` initially reached machine-only `AWAITING_HUMAN_REVIEW`, but real human review then rejected the launched build as not being a completed game body. Strict pipeline `pipeline_ecf26665254e` is now `NO-GO`: `machine_evidence_go=false`, `human_player_review_go=false`, and `commercial_playable_go=false` because the gate over-accepted runtime hook / canvas / event coverage.
+- 2026-05-02 post-review hardening 已完成 development-readiness loop：DB lifecycle execution eligibility、fresh same-project implementation proof、reference-only evidence reuse、gameplay semantic evidence、product-body evidence gate、source requirement matrix、task-card req_id coverage gate、独立 `commercial_game_development_readiness_go` 证据口径和非商业成品 Cocos product-body baseline bootstrap 已加入。DB active phase `product_body_runtime_semantic_trace_20260502` 已生成 3 张当前 phase task card 且 quality/lifecycle/req_id coverage 为 `GO`；这只表示可以开始真实商业游戏内容开发，不代表商业游戏本体已完成。
 - 留存策略本轮暂不处理；大型生成态清理仍会持续发生。
 
 ## 当前未偿还或部分偿还债务
 
 | ID | 描述 | 当前状态 | 阻塞影响 |
 | --- | --- | --- | --- |
-| M77-COCOS-001 | Cocos pipeline 已有 CLI/E2E/build/playtest、trusted Editor bridge、same-project task-card worker 和真实资产链路，但最新人审确认当前 build 不是合格游戏本体 | reopened_by_human_review | 阻塞声明 `commercial_playable_go` 为 true；不再允许声明 machine evidence complete / `AWAITING_HUMAN_REVIEW` |
-| M84-GAME-QA-001 | 商业化验收 gate 仍会误收 runtime hook / canvas / event coverage；最新人审证明 gate v2 没有真正挡住“非游戏本体”的机器假阳性 | reopened_by_human_review | 阻塞任何商业 GO 或 machine-evidence-complete 声明；下一阶段必须先修 final gate 和玩家视角产品证据 |
-| M109-NO-DEGRADATION-COMMERCIAL-001 | `pipeline_ecf26665254e` 曾被机器证据接受，但真实人审判定产物不是完整游戏本体；同项目实现、playtest 和 product-depth 证据需要重新定义为玩家可见、非 runtime-hook 的硬证据 | human_review_failed_no_go | 直接阻塞 `commercial_playable_go=true`，也阻塞 `machine_evidence_go=true`；必须新开 active phase 修复产品本体和 gate |
+| M77-COCOS-001 | Cocos pipeline 已有 CLI/E2E/build/playtest、trusted Editor bridge、same-project task-card worker、真实资产链路、非商业成品 product-body baseline 和 development-readiness gate，但最新人审确认当前 build 不是合格游戏本体 | development_ready_product_body_active_phase_opened | 阻塞声明 `commercial_playable_go` 为 true；final gate 已新增 semantic/product-body/baseline-only 约束，task card 已新增 req_id coverage gate，下一阶段可开始真实商业游戏内容开发 |
+| M84-GAME-QA-001 | 商业化验收 gate 曾误收 runtime hook / canvas / event coverage；最新人审证明 gate v2 没有真正挡住“非游戏本体”的机器假阳性 | development_gate_repaired_commercial_go_still_blocked | 阻塞任何商业 GO；当前已新增 runtime-hook/event-only/canvas-only/feature-flag-only/baseline-only 负例 gate 和 requirement coverage gate，后续还需真实产品证据 |
+| M109-NO-DEGRADATION-COMMERCIAL-001 | `pipeline_ecf26665254e` 曾被机器证据接受，但真实人审判定产物不是完整游戏本体；同项目实现、playtest 和 product-depth 证据需要重新定义为玩家可见、非 runtime-hook 的硬证据 | development_ready_final_gate_no_go | 直接阻塞 `commercial_playable_go=true`；development readiness 已 GO，但产品本体重建和新 final-gate attempt 仍未完成 |
 | M109-PROVIDER-WATCHDOG-001 | latest same-project worker evidence showed child workflow DB heartbeat while stdout/stderr stayed silent, so the outer task-card wrapper can misclassify child stdout silence as provider idle timeout and leave child runs/attempts running | repaid | 已由 `Provider Watchdog And Upstream Short-Circuit Repair` 修复；后续同项目实现恢复必须继续使用 DB heartbeat-aware watchdog 和 fresh receipt 续跑 |
 | M109-UPSTREAM-SHORT-CIRCUIT-001 | same-project implementation failure currently allows downstream build/playtest/product-depth evidence collection to continue and produce noisy derived blockers | repaid | 已由 `Provider Watchdog And Upstream Short-Circuit Repair` 修复；上游实现失败时下游必须 `blocked_by_same_project_worker` 或 `skipped_due_to_upstream_failure` |
 | M109-TASK-CARD-RETRY-001 | 同项目 task-card worker 对 provider output idle、无实质进展、provider timeout、child stalled、零补丁和测试失败缺少“三次 fresh receipt 重试后再阻塞”的统一 ledger 规则 | repaid | `Task Card Three-Attempt Retry And Output Idle Restart Repair` 已补充 `attempts[]`、`blocked_after_three_attempts`、provider/control/material watchdog 计数和 fail-fast 前置条件；未重新开启产品实现卡 |
@@ -80,7 +81,7 @@
 ## 下一阶段建议
 
 1. 下一步不能继续等待人审，也不能继续声明 machine evidence complete；真实 human/player review 已给出 `NO-GO`。
-2. 按 active-phase-only 原则新开修复 phase，同时修复商业游戏本体和 final gate；开发计划仍只写到 milestone 和 phase，task card 只在 active phase 生成。
+2. push 成功后按 active-phase-only 原则开启 `Commercial Game Core Content Implementation`，只为该 phase 生成 DB task cards；开发计划仍只写到 milestone 和 phase。
 3. 继续区分 technical smoke、pipeline/build/browser runtime、machine gate 和 commercial playable；runtime hook / canvas / event-only evidence 不能满足产品本体 gate。
 4. 保持 `state/` 生成态定期清理，避免 evidence 和构建产物再次膨胀到 GB 级。
 ## 2026-04-28 Commercial Pipeline Debt Update

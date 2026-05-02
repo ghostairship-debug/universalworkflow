@@ -386,7 +386,7 @@ def test_rich_task_card_store_round_trip_and_markdown_export(tmp_path: Path) -> 
             risk_level="medium",
             provider_lane="codex",
             execution_mode="patch_apply",
-            status="ready",
+            status="active",
         )
     )
 

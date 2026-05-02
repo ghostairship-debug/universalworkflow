@@ -321,16 +321,20 @@ def _structured_output_for_role(
     pipeline_template: str | None,
 ) -> dict[str, Any]:
     brief_text = _read_brief_text(brief_manifest, limit=8_000)
+    source_requirements = _load_requirement_entries(brief_manifest)
     source_counts = {
         "source_count": int(brief_manifest.get("source_count") or 0),
         "chunk_count": int(brief_manifest.get("chunk_count") or 0),
         "media_count": int(brief_manifest.get("media_count") or 0),
+        "requirement_count": len(source_requirements),
     }
     context = {
         "pipeline_id": pipeline_id,
         "pipeline_goal": pipeline_goal or stage.goal,
         "pipeline_template": pipeline_template or stage.metadata.get("template"),
         "brief_policy": "source_preserving_unified_brief",
+        "requirement_matrix_path": brief_manifest.get("requirement_matrix_path"),
+        "requirement_coverage_policy": "implementation_task_cards_must_carry_source_req_id_coverage",
         **source_counts,
     }
     if role_id == "intake_packaging_agent":
@@ -340,8 +344,10 @@ def _structured_output_for_role(
                 "project_brief_path": brief_manifest.get("project_brief_path"),
                 "source_index_path": brief_manifest.get("source_index_path"),
                 "media_manifest_path": brief_manifest.get("media_manifest_path"),
+                "requirement_matrix_path": brief_manifest.get("requirement_matrix_path"),
                 "agent_packets": brief_manifest.get("agent_packets", {}),
             },
+            "source_requirement_ids": _requirement_ids(source_requirements),
             "handoff_contract": "Downstream roles should cite the unified brief path and packet path instead of asking for raw scattered inputs.",
         }
     if role_id == "product_gameplay_agent":
@@ -363,6 +369,7 @@ def _structured_output_for_role(
                 "Level target, progress, and reward are inspectable in evidence.",
                 "Commercial readiness is blocked unless UI, audio, assets, and playtest evidence pass.",
             ],
+            "source_requirement_ids": _role_requirement_ids("product_gameplay_agent", source_requirements),
             "brief_signal": _brief_signal(brief_text, packet_preview),
         }
     if role_id == "ui_experience_agent":
@@ -380,6 +387,7 @@ def _structured_output_for_role(
                 "safe_area_required": True,
                 "no_text_overlap": True,
             },
+            "source_requirement_ids": _role_requirement_ids("ui_experience_agent", source_requirements),
         }
     if role_id == "technical_plan_agent":
         return {
@@ -404,6 +412,7 @@ def _structured_output_for_role(
                 "Do not claim commercial playable readiness without Cocos build and player-visible evidence.",
                 "Do not route around receipt, lease, write_set, or evidence rules.",
             ],
+            "source_requirement_ids": _role_requirement_ids("technical_plan_agent", source_requirements),
         }
     if role_id == "multimodal_generation_agent":
         route_plan = build_multimodal_route_plan()
@@ -439,19 +448,25 @@ def _structured_output_for_role(
             ],
             "route_plan": route_plan,
             "generation_policy": "Planning can run offline; actual media generation must use a live provider or be marked as placeholder.",
+            "source_requirement_ids": _role_requirement_ids("multimodal_generation_agent", source_requirements),
         }
     if role_id == "task_card_generation_agent":
         return {
             "context": context,
-            "stage_internal_phase_graph": _stage_internal_phase_graph(pipeline_id or stage.stage_id),
+            "stage_internal_phase_graph": _stage_internal_phase_graph(
+                pipeline_id or stage.stage_id,
+                pipeline_goal=pipeline_goal or stage.goal,
+            ),
             "task_card_candidates": _task_card_candidate_payloads(
                 pipeline_id=pipeline_id or stage.stage_id,
                 pipeline_goal=pipeline_goal or stage.goal,
                 pipeline_template=pipeline_template or str(stage.metadata.get("pipeline_recipe") or "commercial_game_production"),
+                brief_manifest=brief_manifest,
             ),
             "quality_gate": {
                 "authority_source": "sqlite_task_cards_table",
                 "markdown_role": "human_snapshot_only",
+                "requirement_coverage_required_for_implementation": True,
                 "minimum_fields": [
                     "goal",
                     "read_set",
@@ -580,13 +595,44 @@ def _brief_signal(brief_text: str, packet_preview: str) -> dict[str, bool]:
     }
 
 
+def _load_requirement_entries(brief_manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    path_value = brief_manifest.get("requirement_matrix_path")
+    if not path_value:
+        return []
+    path = Path(path_value)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    requirements = payload.get("requirements")
+    if not isinstance(requirements, list):
+        return []
+    return [item for item in requirements if isinstance(item, dict) and item.get("req_id")]
+
+
+def _requirement_ids(requirements: list[dict[str, Any]]) -> list[str]:
+    return [str(item["req_id"]) for item in requirements if item.get("req_id")]
+
+
+def _role_requirement_ids(role_id: str, requirements: list[dict[str, Any]]) -> list[str]:
+    selected = [item for item in requirements if item.get("downstream_owner") == role_id]
+    if not selected and role_id == "task_card_generation_agent":
+        selected = requirements
+    return _requirement_ids(selected)
+
+
 def _task_card_candidate_payloads(
     *,
     pipeline_id: str,
     pipeline_goal: str,
     pipeline_template: str,
+    brief_manifest: dict[str, Any],
 ) -> list[dict[str, Any]]:
     base = _safe_id(pipeline_id)
+    if _is_product_body_runtime_phase(pipeline_goal):
+        return _product_body_runtime_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     candidates = [
         {
             "task_card_id": f"{base}_m109_role_brief_contract",
@@ -793,11 +839,173 @@ def _task_card_candidate_payloads(
             "execution_mode": "same_project_patch",
         },
     ]
+    candidates = _attach_requirement_coverage(candidates, brief_manifest)
     return _attach_stage_phase_metadata(candidates, base)
 
 
-def _stage_internal_phase_graph(pipeline_id: str) -> dict[str, Any]:
+def _product_body_runtime_task_card_candidates(
+    *,
+    base: str,
+    pipeline_goal: str,
+    brief_manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    phase = "product_body_runtime_semantic_trace"
+    active_phase_name = "Product Body Runtime And Semantic Trace Implementation"
+    candidates = [
+        {
+            "task_card_id": f"{base}_runtime_models",
+            "title": "Implement product body runtime models",
+            "description": "Convert BoardModel, PieceModel, RuleEngine, CandidateTray, and SemanticTestBridge from baseline component shells into deterministic runtime models in the same Cocos project.",
+            "goal": f"Implement real product-body runtime state for {pipeline_goal} before any commercial content phase starts.",
+            "write_set": [
+                "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+                "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence",
+            ],
+            "read_set": ["role_output:technical_plan_agent", "requirement_matrix.json", "workflow_product_body_baseline.json"],
+            "acceptance_criteria": [
+                "Board, piece, rule, tray, and semantic bridge models hold runtime state.",
+                "Runtime model evidence is emitted from model logic rather than DOM or canvas hooks.",
+                "Baseline-only manifests remain marked as non-commercial delivery evidence.",
+            ],
+            "test_commands": [
+                "python -m pytest tests/test_cocos_product_body_baseline.py tests/test_commercial_game_evidence_contracts.py -q"
+            ],
+            "expected_artifacts": ["BoardModel.ts", "PieceModel.ts", "RuleEngine.ts", "CandidateTray.ts", "SemanticTestBridge.ts"],
+            "evidence_requirements": [
+                "runtime_model_state",
+                "gameplay_semantic_evidence",
+                "product_body_evidence",
+                "requirement_coverage_trace",
+            ],
+            "blocking_conditions": ["baseline_component_only", "runtime_hook_evidence", "canvas_or_dom_event_only_trace"],
+            "model_guidance": [
+                "Patch the persistent Cocos project only.",
+                "Keep BoardModel and RuleEngine as runtime state sources, not UI event mirrors.",
+                "Do not set commercial_playable_go.",
+            ],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {
+                "active_phase_name": active_phase_name,
+                "stage_phase": phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [],
+            },
+        },
+        {
+            "task_card_id": f"{base}_semantic_core_loop_traces",
+            "title": "Implement 10x10 semantic core-loop traces",
+            "description": "Implement 10x10 board placement, line clear, candidate refresh, game-over, and anti-stall semantic traces sourced from runtime state transitions.",
+            "goal": "Make gameplay semantic evidence prove the playable core loop from runtime model transitions, not event coverage.",
+            "write_set": [
+                "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+                "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence/semantic_traces",
+            ],
+            "read_set": ["workflow_runtime_evidence/gameplay_semantic_evidence.raw.json", "role_output:product_gameplay_agent"],
+            "acceptance_criteria": [
+                "Board evidence proves a 10x10 state.",
+                "Placement, line clear, candidate refresh, game-over, and anti-stall traces are emitted.",
+                "Trace evidence can satisfy the gameplay semantic contract without DOM or canvas hooks.",
+            ],
+            "test_commands": [
+                "python -m pytest tests/test_cocos_product_body_baseline.py tests/test_commercial_game_evidence_contracts.py -q"
+            ],
+            "expected_artifacts": ["semantic_traces/*.json", "gameplay_semantic_evidence.json"],
+            "evidence_requirements": [
+                "semantic_placement_trace",
+                "semantic_line_clear_trace",
+                "semantic_candidate_refresh_trace",
+                "semantic_game_over_trace",
+                "semantic_anti_stall_trace",
+                "requirement_coverage_trace",
+            ],
+            "blocking_conditions": ["event_only_gameplay_evidence", "semantic_board_state_missing", "semantic_trace_missing"],
+            "model_guidance": [
+                "Drive traces from model transitions.",
+                "Keep candidate tray size at three.",
+                "Reject feature flags as gameplay evidence.",
+            ],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {
+                "active_phase_name": active_phase_name,
+                "stage_phase": phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [f"{base}_runtime_models"],
+            },
+        },
+        {
+            "task_card_id": f"{base}_scene_prefab_component_evidence",
+            "title": "Bind scene prefab component evidence",
+            "description": "Bind BoardView, InputController, LevelGoalController, ShopSkinController, AudioFeedbackController, HUD, shop, skin, gallery, and audio controls to product-body evidence.",
+            "goal": "Connect runtime model evidence to scene and component evidence so the next commercial content phase starts from a real product body.",
+            "write_set": [
+                "state/pipeline_runs/<run>/cocos_project/assets/scene",
+                "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+                "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence",
+            ],
+            "read_set": ["role_output:ui_experience_agent", "workflow_runtime_evidence/product_body_evidence.raw.json"],
+            "acceptance_criteria": [
+                "Required scene nodes and component bindings are present in evidence.",
+                "HUD, shop, skin, gallery, and audio controls have component-level bindings.",
+                "Product-body evidence passes while commercial playable GO remains false.",
+            ],
+            "test_commands": [
+                "python -m pytest tests/test_cocos_product_body_baseline.py tests/test_pipeline_and_automation_cli.py -q"
+            ],
+            "expected_artifacts": ["product_body_scene_manifest.json", "product_body_evidence.json"],
+            "evidence_requirements": [
+                "BoardView",
+                "InputController",
+                "LevelGoalController",
+                "ShopSkinController",
+                "AudioFeedbackController",
+                "scene_component_binding",
+                "requirement_coverage_trace",
+            ],
+            "blocking_conditions": ["scene_product_body_missing", "cocos_component_binding_missing", "commercial_playable_go_claimed"],
+            "model_guidance": [
+                "Use component and scene evidence rather than browser event hooks.",
+                "Preserve the final human review boundary.",
+                "Do not create future-phase task cards.",
+            ],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {
+                "active_phase_name": active_phase_name,
+                "stage_phase": phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [f"{base}_semantic_core_loop_traces"],
+            },
+        },
+    ]
+    return _attach_requirement_coverage(candidates, brief_manifest)
+
+
+def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") -> dict[str, Any]:
     base = _safe_id(pipeline_id)
+    if _is_product_body_runtime_phase(pipeline_goal):
+        return {
+            "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+            "pipeline_id": pipeline_id,
+            "active_materialization_policy": "only_open_active_phase_task_cards",
+            "future_phase_task_cards_materialized": False,
+            "phases": [
+                {
+                    "phase_id": f"{base}_product_body_runtime_semantic_trace",
+                    "order": 1,
+                    "title": "Product Body Runtime And Semantic Trace Implementation",
+                    "task_card_ids": [
+                        f"{base}_runtime_models",
+                        f"{base}_semantic_core_loop_traces",
+                        f"{base}_scene_prefab_component_evidence",
+                    ],
+                }
+            ],
+        }
     return {
         "schema_version": "commercial_game_stage_internal_phase_graph_v1",
         "pipeline_id": pipeline_id,
@@ -833,6 +1041,64 @@ def _stage_internal_phase_graph(pipeline_id: str) -> dict[str, Any]:
             },
         ],
     }
+
+
+def _attach_requirement_coverage(candidates: list[dict[str, Any]], brief_manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    requirements = _load_requirement_entries(brief_manifest)
+    requirement_matrix_path = brief_manifest.get("requirement_matrix_path")
+    if not requirements:
+        return candidates
+    for candidate in candidates:
+        covered_ids = _candidate_requirement_ids(candidate, requirements)
+        metadata = dict(candidate.get("metadata") or {})
+        metadata.update(
+            {
+                "requirement_matrix_path": requirement_matrix_path,
+                "covered_requirement_ids": covered_ids,
+                "source_requirement_count": len(requirements),
+            }
+        )
+        if str(candidate.get("execution_mode") or "") == "same_project_patch":
+            metadata["requirement_coverage_required"] = True
+            metadata["required_requirement_ids"] = covered_ids
+            candidate["read_set"] = _append_unique(candidate.get("read_set", []), str(requirement_matrix_path))
+            candidate["evidence_requirements"] = _append_unique(
+                candidate.get("evidence_requirements", []),
+                "requirement_coverage_trace",
+            )
+            candidate["model_guidance"] = _append_unique(
+                candidate.get("model_guidance", []),
+                "Cite covered_requirement_ids in implementation evidence.",
+            )
+        candidate["metadata"] = metadata
+    return candidates
+
+
+def _candidate_requirement_ids(candidate: dict[str, Any], requirements: list[dict[str, Any]]) -> list[str]:
+    task_card_id = str(candidate.get("task_card_id") or "").lower()
+    candidate_text = json.dumps(candidate, ensure_ascii=False).lower()
+    if "human_player_review" in task_card_id or "review" in candidate_text:
+        return _requirement_ids(requirements)
+    category_hints: set[str] = set()
+    if any(token in candidate_text for token in ("audio", "bgm", "sfx", "voice", "音频", "音乐", "音效", "语音")):
+        category_hints.update({"multimodal", "qa"})
+    if any(token in candidate_text for token in ("ui", "panel", "button", "prefab", "shop", "skin", "collection", "界面", "面板", "按钮", "皮肤", "画廊")):
+        category_hints.update({"ui", "multimodal"})
+    if any(token in candidate_text for token in ("gameplay", "level", "reward", "economy", "loop", "玩法", "关卡", "奖励", "成长", "循环")):
+        category_hints.add("product")
+    if any(token in candidate_text for token in ("build", "bridge", "cocos", "runtime", "构建", "工程", "技术")):
+        category_hints.add("technical")
+    selected = [item for item in requirements if str(item.get("category") or "") in category_hints]
+    if not selected:
+        selected = [item for item in requirements if str(item.get("priority") or "") == "high"]
+    return _requirement_ids(selected or requirements)
+
+
+def _append_unique(values: Any, item: str) -> list[str]:
+    result = [str(value) for value in values] if isinstance(values, list) else []
+    if item and item not in result:
+        result.append(item)
+    return result
 
 
 def _attach_stage_phase_metadata(candidates: list[dict[str, Any]], base: str) -> list[dict[str, Any]]:
@@ -902,9 +1168,10 @@ def _persist_task_card_candidates(
                 preset_id=pipeline_template or pipeline_name or "m109_single_agent_role_pipeline",
                 status="prepared",
             )
-        )
+    )
     stored: list[TaskCard] = []
     for candidate in candidates:
+        candidate_metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
         task_card = TaskCard(
             task_card_id=str(candidate["task_card_id"]),
             run_id=pipeline_id,
@@ -912,7 +1179,7 @@ def _persist_task_card_candidates(
             description=str(candidate["description"]),
             acceptance_criteria=list(candidate["acceptance_criteria"]),
             milestone="M109",
-            phase_name="M109.5 Task Card Quality Gate",
+            phase_name=str(candidate_metadata.get("active_phase_name") or "M109.5 Task Card Quality Gate"),
             goal=str(candidate["goal"]),
             write_set=list(candidate["write_set"]),
             read_set=list(candidate["read_set"]),
@@ -924,11 +1191,12 @@ def _persist_task_card_candidates(
             risk_level=str(candidate["risk_level"]),
             provider_lane=str(candidate["provider_lane"]),
             execution_mode=str(candidate["execution_mode"]),
+            status="active",
             metadata={
                 "generated_by": "task_card_generation_agent",
                 "pipeline_template": pipeline_template,
                 "authority_source": "sqlite_task_cards",
-                **(candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}),
+                **candidate_metadata,
             },
         )
         existing = task_repo.get_task_card(task_card.task_card_id)
@@ -951,6 +1219,11 @@ def _persist_task_card_candidates(
 
 def _safe_id(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in value).strip("_") or "pipeline"
+
+
+def _is_product_body_runtime_phase(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return "product body runtime" in normalized and "semantic trace" in normalized
 
 
 def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str | None:

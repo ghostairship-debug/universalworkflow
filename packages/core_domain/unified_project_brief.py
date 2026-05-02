@@ -19,6 +19,7 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 DOCX_EXTENSION = ".docx"
 XLSX_EXTENSION = ".xlsx"
 PDF_EXTENSION = ".pdf"
+REQUIREMENT_MATRIX_SCHEMA_VERSION = "post_m109_requirement_matrix_v1"
 
 ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "product_agent": ("玩法", "目标", "玩家", "关卡", "成长", "循环", "体验", "商业化", "gameplay", "level", "player"),
@@ -26,6 +27,42 @@ ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "tech_agent": ("技术", "工程", "cocos", "构建", "脚本", "prefab", "api", "平台", "性能", "build"),
     "multimodal_agent": ("图片", "图", "美术", "资产", "音效", "音乐", "语音", "风格", "icon", "audio", "asset"),
     "qa_agent": ("验收", "测试", "检查", "质量", "bug", "修复", "go/no-go", "可玩", "可用", "acceptance"),
+}
+REQUIREMENT_CATEGORY_OWNERS: dict[str, str] = {
+    "product": "product_gameplay_agent",
+    "ui": "ui_experience_agent",
+    "technical": "technical_plan_agent",
+    "multimodal": "multimodal_generation_agent",
+    "qa": "qa_player_perspective_agent",
+    "general": "task_card_generation_agent",
+}
+REQUIREMENT_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "multimodal": ("图片", "图", "美术", "资产", "音效", "音乐", "语音", "风格", "icon", "audio", "music", "sfx", "asset"),
+    "ui": ("ui", "界面", "按钮", "面板", "皮肤", "画廊", "交互", "布局", "视觉", "screen", "panel", "button"),
+    "technical": ("技术", "工程", "cocos", "构建", "脚本", "prefab", "api", "平台", "性能", "build", "runtime"),
+    "qa": ("验收", "测试", "检查", "质量", "bug", "修复", "go/no-go", "可玩", "可用", "acceptance", "review"),
+    "product": ("玩法", "目标", "玩家", "关卡", "成长", "循环", "体验", "商业化", "gameplay", "level", "player", "reward"),
+}
+HIGH_PRIORITY_REQUIREMENT_KEYWORDS = (
+    "必须",
+    "不得",
+    "禁止",
+    "阻塞",
+    "商业化",
+    "可玩",
+    "must",
+    "required",
+    "cannot",
+    "block",
+    "go/no-go",
+)
+MEDIUM_PRIORITY_REQUIREMENT_KEYWORDS = ("需要", "应", "应该", "需", "should", "need", "acceptance")
+ROLE_REQUIREMENT_OWNER: dict[str, str] = {
+    "product_agent": "product_gameplay_agent",
+    "ui_agent": "ui_experience_agent",
+    "tech_agent": "technical_plan_agent",
+    "multimodal_agent": "multimodal_generation_agent",
+    "qa_agent": "qa_player_perspective_agent",
 }
 
 
@@ -58,6 +95,23 @@ class MediaItem:
     size_bytes: int
     mime_type: str
     role_hints: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class SourceRequirement:
+    req_id: str
+    source_id: str
+    original_path: str
+    page: int | None
+    section: str | None
+    chunk_id: str
+    chunk_index: int | None
+    original_quote: str
+    normalized_requirement: str
+    category: str
+    priority: str
+    acceptance_method: str
+    downstream_owner: str
 
 
 def build_unified_project_brief(
@@ -111,6 +165,19 @@ def build_unified_project_brief(
             }
         )
 
+    requirements = compile_source_requirements(chunks)
+    requirement_matrix = {
+        "schema_version": REQUIREMENT_MATRIX_SCHEMA_VERSION,
+        "created_at": datetime.now(UTC).isoformat(),
+        "requirement_count": len(requirements),
+        "coverage_policy": "task_cards_that_implement_source_requirements_must_carry_req_id_coverage",
+        "requirements": [asdict(item) for item in requirements],
+    }
+    requirement_matrix_path = normalized_root / "requirement_matrix.json"
+    requirement_matrix_path.write_text(json.dumps(requirement_matrix, ensure_ascii=False, indent=2), encoding="utf-8")
+    requirement_matrix_markdown_path = normalized_root / "requirement_matrix.md"
+    requirement_matrix_markdown_path.write_text(_render_requirement_matrix(requirements), encoding="utf-8")
+
     full_brief_path = normalized_root / "project_brief.full.md"
     full_brief_path.write_text(_render_full_brief(title=title, chunks=chunks, media_items=media_items), encoding="utf-8")
 
@@ -131,19 +198,31 @@ def build_unified_project_brief(
     source_index_path = normalized_root / "source_index.json"
     source_index_path.write_text(json.dumps(source_index, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    packet_paths = _write_agent_packets(agent_root=agent_root, chunks=chunks, media_items=media_items, full_brief_path=full_brief_path)
+    packet_paths = _write_agent_packets(
+        agent_root=agent_root,
+        chunks=chunks,
+        media_items=media_items,
+        full_brief_path=full_brief_path,
+        requirement_matrix_path=requirement_matrix_path,
+        requirements=requirements,
+    )
     manifest = {
         "schema_version": "m109_unified_project_brief_v1",
         "created_at": datetime.now(UTC).isoformat(),
         "title": title,
         "input_count": len(files),
+        "source_count": len(source_index),
         "chunk_count": len(chunks),
         "media_count": len(media_items),
+        "requirement_count": len(requirements),
         "unsupported_count": len(unsupported),
         "loss_policy": "no_summary_replacement_full_text_preserved_when_extracted",
         "project_brief_path": full_brief_path.as_posix(),
         "media_manifest_path": media_manifest_path.as_posix(),
         "source_index_path": source_index_path.as_posix(),
+        "requirement_matrix_path": requirement_matrix_path.as_posix(),
+        "requirement_matrix_markdown_path": requirement_matrix_markdown_path.as_posix(),
+        "requirement_ids": [item.req_id for item in requirements],
         "agent_packets": packet_paths,
         "unsupported_inputs": unsupported,
     }
@@ -151,6 +230,38 @@ def build_unified_project_brief(
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     manifest["intake_manifest_path"] = manifest_path.as_posix()
     return manifest
+
+
+def compile_source_requirements(chunks: list[ContextChunk]) -> list[SourceRequirement]:
+    requirements: list[SourceRequirement] = []
+    seen: set[tuple[str, str]] = set()
+    for chunk in chunks:
+        statement_index = 0
+        for original_quote, normalized in _requirement_statements_from_text(chunk.content_text):
+            key = (chunk.source.source_id, normalized.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            statement_index += 1
+            category = _requirement_category(normalized, chunk.tags)
+            requirements.append(
+                SourceRequirement(
+                    req_id=_requirement_id(chunk, statement_index),
+                    source_id=chunk.source.source_id,
+                    original_path=chunk.source.original_path,
+                    page=chunk.source.page,
+                    section=chunk.source.section,
+                    chunk_id=chunk.chunk_id,
+                    chunk_index=chunk.source.chunk_index,
+                    original_quote=original_quote,
+                    normalized_requirement=normalized,
+                    category=category,
+                    priority=_requirement_priority(normalized),
+                    acceptance_method=_acceptance_method(normalized, category),
+                    downstream_owner=REQUIREMENT_CATEGORY_OWNERS.get(category, REQUIREMENT_CATEGORY_OWNERS["general"]),
+                )
+            )
+    return requirements
 
 
 def _expand_input_paths(input_paths: list[str | Path]) -> list[Path]:
@@ -340,6 +451,132 @@ def _split_text_lossless(text: str, *, max_chars: int) -> list[str]:
     return chunks
 
 
+def _requirement_statements_from_text(text: str) -> list[tuple[str, str]]:
+    statements: list[tuple[str, str]] = []
+    in_code_block = False
+    for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if re.match(r"^#{1,6}\s+", stripped):
+            continue
+        normalized = _normalize_requirement_statement(stripped)
+        if len(normalized) < 4:
+            continue
+        for part in _split_requirement_statement(normalized):
+            if len(part) >= 4:
+                statements.append((stripped, part))
+    return statements
+
+
+def _normalize_requirement_statement(value: str) -> str:
+    text = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|[（(]?\d+[）)]\s*)", "", value).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _split_requirement_statement(value: str, *, max_chars: int = 500) -> list[str]:
+    if len(value) <= max_chars:
+        return [value]
+    parts = re.split(r"(?<=[。！？.!?])\s*", value)
+    result: list[str] = []
+    current = ""
+    for part in parts:
+        if not part:
+            continue
+        if len(current) + len(part) <= max_chars:
+            current += part
+            continue
+        if current:
+            result.append(current.strip())
+        current = part
+    if current:
+        result.append(current.strip())
+    return result or [value[:max_chars].strip()]
+
+
+def _requirement_id(chunk: ContextChunk, statement_index: int) -> str:
+    source_number = re.sub(r"\D+", "", chunk.source.source_id) or "0"
+    chunk_index = chunk.source.chunk_index or 0
+    return f"REQ-S{int(source_number):03d}-C{chunk_index:04d}-{statement_index:03d}"
+
+
+def _requirement_category(text: str, tags: list[str]) -> str:
+    lowered = text.lower()
+    for category, keywords in REQUIREMENT_CATEGORY_KEYWORDS.items():
+        if any(keyword.lower() in lowered for keyword in keywords):
+            return category
+    tag_category = {
+        "product_agent": "product",
+        "ui_agent": "ui",
+        "tech_agent": "technical",
+        "multimodal_agent": "multimodal",
+        "qa_agent": "qa",
+    }
+    for tag in tags:
+        if tag in tag_category:
+            return tag_category[tag]
+    return "general"
+
+
+def _requirement_priority(text: str) -> str:
+    lowered = text.lower()
+    if any(keyword.lower() in lowered for keyword in HIGH_PRIORITY_REQUIREMENT_KEYWORDS):
+        return "high"
+    if any(keyword.lower() in lowered for keyword in MEDIUM_PRIORITY_REQUIREMENT_KEYWORDS):
+        return "medium"
+    return "normal"
+
+
+def _acceptance_method(text: str, category: str) -> str:
+    lowered = text.lower()
+    if "音" in text or "audio" in lowered or "music" in lowered or "sfx" in lowered:
+        return "runtime_media_evidence"
+    if category == "ui" or "截图" in text or "screenshot" in lowered:
+        return "player_visible_screenshot_or_visual_review"
+    if category == "technical" or "build" in lowered or "构建" in text:
+        return "contract_test_or_build_evidence"
+    if category == "qa" or "验收" in text or "review" in lowered:
+        return "qa_or_human_review_gate"
+    return "task_card_acceptance_and_player_visible_evidence"
+
+
+def _render_requirement_matrix(requirements: list[SourceRequirement]) -> str:
+    lines = [
+        "# Requirement Matrix",
+        "",
+        "> Generated from source-preserved intake chunks. Task cards may cite these req_ids for coverage.",
+        "",
+    ]
+    if not requirements:
+        lines.extend(["No source requirements were extracted.", ""])
+        return "\n".join(lines)
+    for requirement in requirements:
+        lines.extend(
+            [
+                f"## {requirement.req_id}",
+                "",
+                f"- source_id: `{requirement.source_id}`",
+                f"- original_path: `{requirement.original_path}`",
+                f"- page: `{requirement.page if requirement.page is not None else '-'}`",
+                f"- section: `{requirement.section or '-'}`",
+                f"- category: `{requirement.category}`",
+                f"- priority: `{requirement.priority}`",
+                f"- acceptance_method: `{requirement.acceptance_method}`",
+                f"- downstream_owner: `{requirement.downstream_owner}`",
+                "",
+                requirement.normalized_requirement,
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _copy_media(path: Path, *, source_id: str, media_root: Path) -> MediaItem:
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -424,6 +661,8 @@ def _write_agent_packets(
     chunks: list[ContextChunk],
     media_items: list[MediaItem],
     full_brief_path: Path,
+    requirement_matrix_path: Path,
+    requirements: list[SourceRequirement],
 ) -> dict[str, str]:
     paths: dict[str, str] = {}
     for role in ROLE_KEYWORDS:
@@ -431,21 +670,60 @@ def _write_agent_packets(
         if not selected:
             selected = [chunk for chunk in chunks if "general" in chunk.tags]
         packet_path = agent_root / f"{role}.md"
-        packet_path.write_text(_render_agent_packet(role, selected, media_items, full_brief_path), encoding="utf-8")
+        packet_path.write_text(
+            _render_agent_packet(
+                role,
+                selected,
+                media_items,
+                full_brief_path,
+                requirement_matrix_path,
+                _requirements_for_packet_role(role, requirements),
+            ),
+            encoding="utf-8",
+        )
         paths[role] = packet_path.as_posix()
     return paths
 
 
-def _render_agent_packet(role: str, chunks: list[ContextChunk], media_items: list[MediaItem], full_brief_path: Path) -> str:
+def _requirements_for_packet_role(role: str, requirements: list[SourceRequirement]) -> list[SourceRequirement]:
+    owner = ROLE_REQUIREMENT_OWNER.get(role)
+    selected = [item for item in requirements if item.downstream_owner == owner]
+    if not selected and role == "product_agent":
+        selected = [item for item in requirements if item.category in {"product", "general"}]
+    if not selected and requirements:
+        selected = [item for item in requirements if item.priority == "high"] or requirements
+    return selected
+
+
+def _render_agent_packet(
+    role: str,
+    chunks: list[ContextChunk],
+    media_items: list[MediaItem],
+    full_brief_path: Path,
+    requirement_matrix_path: Path,
+    requirements: list[SourceRequirement],
+) -> str:
     lines = [
         f"# {role} Context Packet",
         "",
         f"- full_brief_path: `{full_brief_path.as_posix()}`",
+        f"- requirement_matrix_path: `{requirement_matrix_path.as_posix()}`",
         "- packet_policy: `selected_full_chunks_not_summary_replacement`",
         "",
-        "## Selected Chunks",
+        "## Requirement Trace",
         "",
     ]
+    if requirements:
+        lines.extend(f"- `{item.req_id}` {item.normalized_requirement}" for item in requirements)
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "## Selected Chunks",
+            "",
+        ]
+    )
     for chunk in chunks:
         lines.extend(
             [

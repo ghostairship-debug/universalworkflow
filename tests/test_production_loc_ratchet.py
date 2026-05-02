@@ -19,9 +19,13 @@ PRODUCTION_SUFFIXES = {".css", ".js", ".json", ".ps1", ".py", ".sql"}
 # evidence. The 2026-04-29 validation bug-first pass also added structured
 # HTTP timeout/failure-class trace evidence for API validation. The 2026-04-29
 # Cocos ecosystem repair added the unattended Editor runner plus project-local
-# extension code for AssetDB/Scene/Prefab/Build API evidence; keep this tight
-# enough to catch accidental growth while allowing that accepted bridge surface.
-PRODUCTION_LOC_LIMIT = 60_050
+# extension code for AssetDB/Scene/Prefab/Build API evidence. The 2026-05-02
+# post-review commercial hardening added DB lifecycle/fresh-execution gates,
+# semantic/product-body contracts, and source requirement coverage. The
+# development-readiness loop then added a separate readiness contract plus
+# active-phase-only product-body runtime task-card materialization. Keep this
+# tight enough to catch accidental growth while preserving the accepted baseline.
+PRODUCTION_LOC_LIMIT = 65_500
 
 
 def _is_production_source(path: Path) -> bool:

@@ -27,9 +27,24 @@ BUSINESS_FILE_SIZE_EXCEPTIONS = {
         "reason": "M108.5 review extends the legacy arcade template split until the post-M108 game direction decision is complete",
     },
     Path("packages/contributions/pipelines/commercial_game_production.py"): {
-        "limit": 720,
+        "limit": 800,
         "remove_after_milestone": "M110",
-        "reason": "M108.5 review and M109 no-degradation repair keep commercial pipeline orchestration in contributions until a post-M109 split is scheduled",
+        "reason": "M108.5 review and M109 no-degradation repair keep commercial pipeline orchestration in contributions until the M110 split window",
+    },
+    Path("packages/contributions/pipelines/commercial_game_evidence_contracts.py"): {
+        "limit": 900,
+        "remove_after_milestone": "M110",
+        "reason": "M108.5 review and M109 no-degradation/post-review gate hardening expanded commercial evidence contracts; split semantic, product-body, and final-gate contracts in the M110 window",
+    },
+    Path("packages/contributions/pipelines/commercial_game_task_worker.py"): {
+        "limit": 1600,
+        "remove_after_milestone": "M110",
+        "reason": "M108.5 review and M109 no-degradation/post-review repair keep same-project worker, fresh receipt retry, upstream short-circuit, and product evidence wiring together until the M110 split window",
+    },
+    Path("packages/contributions/pipelines/commercial_game_task_worker_cli.py"): {
+        "limit": 950,
+        "remove_after_milestone": "M110",
+        "reason": "M108.5 review and M109 no-degradation repair keep task-card child workflow watchdog CLI logic together until the M110 split window",
     },
     Path("packages/contributions/pipelines/registry.py"): {
         "limit": 560,

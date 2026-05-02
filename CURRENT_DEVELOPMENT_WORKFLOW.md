@@ -17,6 +17,7 @@
 - Runtime gate: `state/trusted_cocos_build_browser_audio_runtime_20260502/runtime_gate.json`
 - 当前终态：`machine_evidence_go=false`，`commercial_final_gate_evidence.go_no_go=NO-GO`，`human_player_review_go=false`，`commercial_playable_go=false`。
 - 当前 blocker：`human_player_review_failed`、`product_body_not_valid`、`machine_gate_false_positive`。下一步必须新开 active phase 同时修复商业游戏本体与 final gate，不能继续用 event-only/canvas runtime hook 证明产品完成。
+- 根目录长程修复计划：[POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md](POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md)。该文档只写到 milestone/phase，不创建 M110 或未来 phase task card；当前实现切片已覆盖 DB lifecycle、fresh execution、evidence reuse、gameplay semantic、product body gate 假阳性、source requirement matrix / task-card req_id coverage gate，以及非商业成品的 Cocos product-body baseline bootstrap。
 
 ## 2026-05-02 Closeout: Audio Animation Runtime Hooks Same-Project Repair
 
@@ -379,16 +380,16 @@ python -m pytest -q
 
 ## 下一阶段开发计划
 
-- M105-M108 已完成并收口。
-- M108.5 review 决策报告见 `docs/evaluations/m108_5_review_decision.md`。
-- M108.5 已开始把 task card 权威源迁回数据库；Markdown 保留为快照，不再承担机器真相。
-- Cocos 当前投入预算到 M108 已用完；M109 不得解释为“继续无限做游戏”，而是一次有边界的管线试运行：先解决输入整理、角色思考、任务交付、资产生成、玩家审阅和 gate 诚实性。
-- M85-M90、M91-M98、M99-M104 已压缩进 `docs/milestone_history.md` 和 `docs/architecture/langgraph_runtime_notes.md`，不再保留根目录散装计划书。
-- 范围：用现有 LangGraph-backed 底座和 workflow 控制面，先让 `agent_role` / 单 agent 角色阶段真实产出方案、资料包、task card、资产需求和审阅结果；Cocos 只作为试运行场景。
-- 当前入口：M109 从“统一资料包 + 单 agent 角色管线试运行”开始；真实生产管线为 `commercial_game_production`，旧 `m109_single_agent_cocos` 只保留为兼容别名；active phase 开始后才生成 task card，不提前生成未来 phase 的 task card。
-- 暂不纳入：Gemini CLI、视频生成、GitHub 自动化、Hugging Face Jobs、远程 worker 扩展、托管 SaaS、广告 SDK 和 IAP。
-- active phase 开始后才生成 task card；phase closeout 必须包含 workflow 实际执行范围、Codex 兜底范围和 evidence。
-- 前一产品 phase 只包含同项目玩法实现恢复、商店/皮肤可视状态、中文 UI/失败复活反馈、音频/动效 runtime hook、产品深度 evidence writer 和本 phase closeout；当前三次重试修复 phase 关闭前，不得提前生成 Cocos build/playtest 或 human-review phase 的 task cards。
+- 当前基线：M109 已接受为 pipeline / technical-smoke baseline；2026-05-02 post-review hardening 已完成 DB lifecycle/fresh execution gate、reference-only evidence reuse、gameplay semantic/product-body gate、source requirement matrix、task-card req_id coverage gate，以及非商业成品 Cocos product-body baseline bootstrap。
+- 当前新增真相：`commercial_game_development_readiness_go=true` 只表示可以安全开始真实商业游戏内容开发；`machine_evidence_go=false`、`human_player_review_go=false`、`commercial_playable_go=false` 仍保持不变。baseline 组件、Cocos bridge、build、playtest、runtime hooks 或 feature coverage 均不能单独证明商业游戏完成。
+- 当前 active phase：`Product Body Runtime And Semantic Trace Implementation` 已在 DB 生成当前 phase task cards，run id 为 `product_body_runtime_semantic_trace_20260502`。共有 3 张卡：runtime models、semantic core-loop traces、scene/prefab component evidence；quality/lifecycle/req_id coverage gate 均为 `GO`。
+- Phase preflight：先运行 `plan-graph`、`policy-preview`、`goal-packet`；task card 必须满足 lifecycle `active/approved`、质量字段完整、fresh execution 约束、write_set/read_set/test/evidence 完整，以及 `covered_requirement_ids` 覆盖所需 source `req_id`。
+- Phase 1 runtime model：把 baseline `BoardModel`、`PieceModel`、`RuleEngine`、`CandidateTray`、`SemanticTestBridge` 变成真实同项目运行时代码，完成 10x10 board、placement、line clear、candidate refresh、game-over、anti-stall trace。trace 必须来自模型/运行时，不得来自 DOM/canvas/browser event hook。
+- Phase 2 product-body binding：把 `BoardView`、`InputController`、`LevelGoalController`、`ShopSkinController`、`AudioFeedbackController`、HUD、level-goal panel、shop/skin panel、gallery/collection surface 和 audio controls 绑定到 Cocos scene/prefab/component evidence。
+- Phase 3 requirement/product-depth alignment：把 source `req_id` 映射到核心循环、关卡目标、商店/皮肤、画廊/收藏、音频、反馈、失败/复活、中文 UI 可读性；证据必须证明玩家可见行为，不接受 feature flag / event marker 替代。
+- Phase 4 downstream handoff：只有 same-project worker、gameplay semantic、product body、product depth 均通过后，才允许打开 build/playtest/human-review 后续 phase；机器证据通过但无人审接受时只能停在 `AWAITING_HUMAN_REVIEW`。
+- Push 成功后下一 active phase 固定为 `Commercial Game Core Content Implementation`，只生成该 phase 的 DB task cards，并从真实商业化游戏内容开发开始。
+- Bug-first：workflow、receipt、lease、repo mutation、task-card worker、evidence contract、active truth 或 test matrix 任一路径出问题，先修 workflow bug 并补测试，再继续产品实现。
 
 ### Acceptable Detours
 

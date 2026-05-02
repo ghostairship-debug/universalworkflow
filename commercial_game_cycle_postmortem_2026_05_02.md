@@ -467,7 +467,7 @@ Cocos Editor/AssetDB/Scene/Prefab/Build API evidence 只能证明“可以操作
 - 不允许 agent 输出删减 PDF requirement。
 - 不允许没有 req id coverage 的 task card 进入执行。
 - 不允许上游实现失败后继续 build/playtest/product-depth/human-review。
-- 不允许无人值守声明 `commercial_playable_go=true`。
+- 不允许无人值守声明 `commercial_playable_go=true`；必须保留 NO-GO / human-review guard。
 
 ## Practical Answer To Two Immediate Questions
 

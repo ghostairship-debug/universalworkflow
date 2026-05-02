@@ -603,6 +603,34 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
         "volumeToggleUsable": True,
         "animationFeedbackVerified": True,
     }
+    semantic_evidence = {
+        "board_state": {"rows": 10, "cols": 10},
+        "piece_shapes": [{"cells": [[0, 0]]}],
+        "candidate_tray": [{}, {}, {}],
+        "semantic_traces": {
+            "placement": "trace/placement.json",
+            "line_clear": "trace/line_clear.json",
+            "candidate_refresh": "trace/candidate_refresh.json",
+            "game_over": "trace/game_over.json",
+            "anti_stall": "trace/anti_stall.json",
+        },
+    }
+    semantic_evidence = {
+        "board_state": {"rows": 10, "cols": 10},
+        "piece_shapes": [{"cells": [[0, 0]]}],
+        "candidate_tray": [{}, {}, {}],
+        "semantic_traces": {
+            "placement": "trace/placement.json",
+            "line_clear": "trace/line_clear.json",
+            "candidate_refresh": "trace/candidate_refresh.json",
+            "game_over": "trace/game_over.json",
+            "anti_stall": "trace/anti_stall.json",
+        },
+    }
+    product_body_evidence = {
+        "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+        "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
+    }
     payload = pipeline_registry.execute_contribution_validation(
         "commercial_game_production_go_no_go",
         shared_outputs={
@@ -614,7 +642,22 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
                     "same_project_worker_patch_go": True,
                     "task_card_count": 1,
                     "completed_count": 1,
-                    "entries": [{"task_card_id": "tc_product_depth", "status": "completed"}],
+                    "entries": [
+                        {
+                            "task_card_id": "tc_product_depth",
+                            "status": "completed",
+                            "receipt_id": "receipt_depth",
+                            "child_run_id": "run_depth",
+                            "child_attempt_id": "attempt_depth",
+                            "worker_adapter": "codex",
+                            "changed_files": ["state/project/assets/scripts/Game.ts"],
+                            "mutation_result": {
+                                "changed_files": ["state/project/assets/scripts/Game.ts"],
+                                "final_test_status": "passed",
+                            },
+                            "attempts": [{"attempt_index": 1, "receipt_id": "receipt_depth"}],
+                        }
+                    ],
                     "blockers": [],
                 },
                 "cocos_ecosystem_evidence": {"ecosystem_integration_go": True, "blockers": [], "checks": {"assetdb": True}},
@@ -637,6 +680,8 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
                     "level_goals": [f"goal-{index}" for index in range(8)],
                     "feature_coverage": product_features,
                 },
+                "gameplay_semantic_evidence": semantic_evidence,
+                "product_body_evidence": product_body_evidence,
             },
             "commercial_game_assets": {
                 "commercial_assets_go": True,
@@ -809,6 +854,7 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
             model_guidance=["Patch the same project only."],
             execution_mode="same_project_patch",
             risk_level="high",
+            status="active",
         )
     )
     task_repo.create_task_card(
@@ -827,6 +873,7 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
             model_guidance=["Do not patch game content for this card."],
             execution_mode="capability_contract",
             risk_level="high",
+            status="active",
         )
     )
     source = tmp_path / "brief.md"
@@ -842,6 +889,8 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
             "status": "completed",
             "receipt_id": "receipt_tc_levels",
             "child_run_id": "run_tc_levels",
+            "child_attempt_id": "attempt_tc_levels",
+            "worker_adapter": "codex",
             "evidence_id": "evidence_tc_levels",
             "mutation_result": {
                 "changed_files": [Path(kwargs["write_set"][0]).as_posix()],
@@ -879,8 +928,24 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
             "commercial_playable_blockers": [],
             "commercial_feature_coverage": feature_coverage,
             "player_visible_checks": {},
-            "manual_player_evidence": {},
-            "build": {
+                "manual_player_evidence": {},
+                "gameplay_semantic_evidence": {
+                    "board_state": {"rows": 10, "cols": 10},
+                    "piece_shapes": [{"cells": [[0, 0]]}],
+                    "candidate_tray": [{}, {}, {}],
+                    "semantic_traces": {
+                        "placement": "trace/placement.json",
+                        "line_clear": "trace/line_clear.json",
+                        "candidate_refresh": "trace/candidate_refresh.json",
+                        "game_over": "trace/game_over.json",
+                        "anti_stall": "trace/anti_stall.json",
+                    },
+                },
+                "product_body_evidence": {
+                    "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+                    "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
+                },
+                "build": {
                 "creator_exit_code": 0,
                 "fatal_marker_detected": False,
                 "artifact_success": True,
@@ -939,6 +1004,8 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
         "same_project_patch_ledger",
         "build_ledger",
         "browser_playtest_ledger",
+        "gameplay_semantic_evidence",
+        "product_body_evidence",
         "product_depth_evidence",
     }
     assert output["build_ledger_go"] is True
@@ -974,6 +1041,7 @@ def test_commercial_worker_short_circuits_downstream_after_same_project_patch_fa
             model_guidance=["Patch the same project only."],
             execution_mode="same_project_patch",
             risk_level="high",
+            status="active",
         )
     )
     source = tmp_path / "brief.md"
@@ -1048,6 +1116,8 @@ def test_commercial_worker_short_circuits_downstream_after_same_project_patch_fa
         "cocos_build",
         "browser_playtest",
         "audio_runtime",
+        "gameplay_semantic",
+        "product_body",
         "product_depth",
         "human_player_review",
     ]
@@ -1174,12 +1244,31 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
         "volumeToggleUsable": True,
         "animationFeedbackVerified": True,
     }
+    semantic_evidence = {
+        "board_state": {"rows": 10, "cols": 10},
+        "piece_shapes": [{"cells": [[0, 0]]}],
+        "candidate_tray": [{}, {}, {}],
+        "semantic_traces": {
+            "placement": "trace/placement.json",
+            "line_clear": "trace/line_clear.json",
+            "candidate_refresh": "trace/candidate_refresh.json",
+            "game_over": "trace/game_over.json",
+            "anti_stall": "trace/anti_stall.json",
+        },
+    }
     payload = production_payload_from_worker(
         schema_version="test_worker_schema",
         created_at="2026-04-29T00:00:00Z",
         pipeline_id="pipeline_human_review_packet_test",
         project_dir=tmp_path / "cocos_project",
-        task_card_quality={"task_card_count": 1, "go_no_go": "GO"},
+        task_card_quality={
+            "schema_version": "m108_task_card_quality_v2",
+            "task_card_count": 1,
+            "execution_eligible_count": 1,
+            "lifecycle_blocked_count": 0,
+            "requirement_coverage_blocked_count": 0,
+            "go_no_go": "GO",
+        },
         runtime_evidence={
             "technical_smoke_go": True,
             "production_scaffold_go": False,
@@ -1191,6 +1280,11 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
             "product_depth_evidence": {
                 "level_goals": [f"goal-{index}" for index in range(8)],
                 "feature_coverage": product_features,
+            },
+            "gameplay_semantic_evidence": semantic_evidence,
+            "product_body_evidence": {
+                "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+                "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
             },
             "build": {
                 "creator_exit_code": 0,
@@ -1218,7 +1312,22 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
             "same_project_worker_patch_go": True,
             "task_card_count": 1,
             "completed_count": 1,
-            "entries": [{"task_card_id": "tc_product_depth", "status": "completed"}],
+            "entries": [
+                {
+                    "task_card_id": "tc_product_depth",
+                    "status": "completed",
+                    "receipt_id": "receipt_depth",
+                    "child_run_id": "run_depth",
+                    "child_attempt_id": "attempt_depth",
+                    "worker_adapter": "codex",
+                    "changed_files": ["state/project/assets/scripts/Game.ts"],
+                    "mutation_result": {
+                        "changed_files": ["state/project/assets/scripts/Game.ts"],
+                        "final_test_status": "passed",
+                    },
+                    "attempts": [{"attempt_index": 1, "receipt_id": "receipt_depth"}],
+                }
+            ],
             "blockers": [],
         },
         skipped_task_cards=[],
@@ -1234,6 +1343,7 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
     assert payload["human_review_packet"]["human_player_review_go"] is False
     assert payload["human_player_review_go"] is False
     assert payload["commercial_playable_go"] is False
+    assert payload["commercial_game_development_readiness"]["commercial_game_development_readiness_go"] is True
 
 
 def test_same_project_patch_ledger_records_continuation_for_idle_timeout(tmp_path: Path) -> None:
@@ -1255,6 +1365,7 @@ def test_same_project_patch_ledger_records_continuation_for_idle_timeout(tmp_pat
         model_guidance=["Resume this exact card; do not create a new project."],
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
     receipts: list[str] = []
@@ -1326,6 +1437,7 @@ def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_pa
             model_guidance=["Retry the same card only with fresh receipts."],
             execution_mode="same_project_patch",
             risk_level="high",
+            status="active",
         )
 
     calls: list[str] = []
@@ -1351,6 +1463,8 @@ def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_pa
             "status": "completed",
             "failure_class": None,
             "receipt_id": f"receipt_{task_id}_{attempt_index}",
+            "child_run_id": f"run_{task_id}_{attempt_index}",
+            "child_attempt_id": f"attempt_{task_id}_{attempt_index}",
             "worker_adapter": "codex",
             "mutation_result": {
                 "changed_files": [f"state/project/assets/scripts/{task_id}.ts"],
@@ -1404,6 +1518,7 @@ def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_pat
         model_guidance=["Retry the same card only with fresh receipts."],
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
     receipts: list[str] = []
@@ -1423,6 +1538,8 @@ def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_pat
             "status": "completed",
             "failure_class": None,
             "receipt_id": receipts[-1],
+            "child_run_id": "run_revive",
+            "child_attempt_id": f"attempt_revive_{attempt_index}",
             "worker_adapter": "codex",
             "mutation_result": {
                 "changed_files": ["state/project/assets/scripts/RevivePromptState.ts"],
@@ -1475,6 +1592,7 @@ def test_same_project_patch_ledger_fail_fast_precondition_does_not_retry(tmp_pat
         model_guidance=["Do not retry hard precondition failures."],
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
     calls = 0
 
@@ -1516,17 +1634,18 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
             run_id="pipeline_resume",
             task_card_id=task_card_id,
             title=f"Task {task_card_id}",
-            description=f"Task {task_card_id}",
-            goal=f"Task {task_card_id}",
+            description=f"Task {task_card_id} patches the same Cocos project with fresh worker evidence.",
+            goal=f"Patch {task_card_id} in the same Cocos project while preserving fresh receipt and test evidence.",
             write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
             read_set=["brief.md"],
             test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
-            acceptance_criteria=["same project patched"],
+            acceptance_criteria=["same project patched", "fresh worker evidence remains valid"],
             evidence_requirements=["same_project_patch"],
             blocking_conditions=["provider_timeout"],
             model_guidance=["Patch only the same project."],
             execution_mode="same_project_patch",
             risk_level="high",
+            status="active",
         )
 
     ledger_root = tmp_path / "pipeline_evidence" / "task_card_worker"
@@ -1540,6 +1659,10 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
                         "title": "Task tc_levels",
                         "status": "completed",
                         "failure_class": None,
+                        "receipt_id": "receipt_levels_prior",
+                        "child_run_id": "run_levels_prior",
+                        "child_attempt_id": "attempt_levels_prior",
+                        "worker_adapter": "codex",
                         "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
                         "mutation_result": {
                             "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
@@ -1560,6 +1683,8 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
             "status": "completed",
             "failure_class": None,
             "receipt_id": "receipt_shop",
+            "child_run_id": "run_shop",
+            "child_attempt_id": "attempt_shop",
             "worker_adapter": "codex",
             "mutation_result": {
                 "changed_files": ["state/project/assets/scripts/Shop.ts"],
@@ -1585,7 +1710,7 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
     assert [entry["task_card_id"] for entry in ledger["entries"]] == ["tc_levels", "tc_shop"]
 
 
-def test_same_project_patch_ledger_accepts_existing_real_shop_evidence_without_provider_rerun(tmp_path: Path) -> None:
+def test_same_project_patch_ledger_treats_existing_shop_evidence_as_reference_only(tmp_path: Path) -> None:
     from packages.contracts import TaskCard
     from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
 
@@ -1624,24 +1749,36 @@ def test_same_project_patch_ledger_accepts_existing_real_shop_evidence_without_p
         task_card_id="tc_shop",
         title="Implement shop skin collection ownership and equip flow",
         description="Use existing same-project shop evidence.",
-        goal="Use existing same-project shop evidence.",
+        goal="Use existing same-project shop evidence as reference while still running a fresh worker patch.",
         write_set=[
             "state/pipeline_runs/<run>/cocos_project/assets/scripts",
             "state/pipeline_runs/<run>/cocos_project/assets/resources",
         ],
         read_set=["commercial_asset_bindings.json"],
         test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
-        acceptance_criteria=["shop states visible"],
+        acceptance_criteria=["shop states visible", "fresh worker patch is recorded"],
         evidence_requirements=["shopOwnershipStates", "skinEquippedVisualChange", "collection_panel_screenshot"],
         blocking_conditions=["skin_panel_event_only"],
         model_guidance=["Do not rerun provider when evidence is already real."],
         provider_lane="codex_cli",
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
-    def _unexpected_runner(**_kwargs):
-        raise AssertionError("existing real shop evidence should satisfy the task card without provider rerun")
+    def _fresh_runner(**_kwargs):
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_shop_fresh",
+            "child_run_id": "run_shop_fresh",
+            "child_attempt_id": "attempt_shop_fresh",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["assets/scripts/ShopSkinSystem.ts"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3},
+        }
 
     ledger = execute_same_project_task_cards(
         root=tmp_path,
@@ -1651,24 +1788,26 @@ def test_same_project_patch_ledger_accepts_existing_real_shop_evidence_without_p
         db_path=tmp_path / "workflow.db",
         task_cards=[card],
         max_repair_attempts=1,
-        task_card_runner=_unexpected_runner,
+        task_card_runner=_fresh_runner,
     )
 
     assert ledger["same_project_worker_patch_go"] is True
     assert ledger["completed_count"] == 1
     entry = ledger["entries"][0]
     assert entry["status"] == "completed"
-    assert entry["satisfaction_mode"] == "existing_same_project_evidence"
-    assert entry["evidence_reuse_real_files"] is True
-    assert set(entry["evidence_requirements_satisfied"]) == {
+    assert entry["receipt_id"] == "receipt_shop_fresh"
+    assert entry["worker_adapter"] == "codex"
+    assert entry["reference_evidence"]["satisfaction_mode"] == "reused_reference_only"
+    assert entry["reference_evidence"]["evidence_reuse_real_files"] is True
+    assert set(entry["reference_evidence"]["evidence_requirements_satisfied"]) == {
         "shopOwnershipStates",
         "skinEquippedVisualChange",
         "collection_panel_screenshot",
     }
-    assert any(path.endswith("ShopSkinSystem.ts") for path in entry["changed_files"])
+    assert any(path.endswith("ShopSkinSystem.ts") for path in entry["reference_evidence"]["reference_files"])
 
 
-def test_same_project_patch_ledger_accepts_existing_core_loop_reward_evidence_without_provider_rerun(
+def test_same_project_patch_ledger_treats_existing_core_loop_evidence_as_reference_only(
     tmp_path: Path,
 ) -> None:
     from packages.contracts import TaskCard
@@ -1722,21 +1861,33 @@ def test_same_project_patch_ledger_accepts_existing_core_loop_reward_evidence_wi
         task_card_id="tc_core_loop",
         title="Implement core loop rewards and growth economy",
         description="Use existing same-project core loop evidence.",
-        goal="Use existing same-project core loop evidence.",
+        goal="Use existing same-project core loop evidence as reference while still running a fresh worker patch.",
         write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
         read_set=["role_output:product_gameplay_agent"],
         test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
-        acceptance_criteria=["core loop reward state is visible"],
+        acceptance_criteria=["core loop reward state is visible", "fresh worker patch is recorded"],
         evidence_requirements=["rewardCurrencyChanges", "unlockProgressVisible", "same_project_patch"],
         blocking_conditions=["reward_event_only"],
         model_guidance=["Do not rerun provider when evidence is already real."],
         provider_lane="codex_cli",
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
-    def _unexpected_runner(**_kwargs):
-        raise AssertionError("existing core loop evidence should satisfy the task card without provider rerun")
+    def _fresh_runner(**_kwargs):
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_core_loop_fresh",
+            "child_run_id": "run_core_loop_fresh",
+            "child_attempt_id": "attempt_core_loop_fresh",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["assets/scripts/level_manifest.json"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3},
+        }
 
     ledger = execute_same_project_task_cards(
         root=tmp_path,
@@ -1746,22 +1897,23 @@ def test_same_project_patch_ledger_accepts_existing_core_loop_reward_evidence_wi
         db_path=tmp_path / "workflow.db",
         task_cards=[card],
         max_repair_attempts=1,
-        task_card_runner=_unexpected_runner,
+        task_card_runner=_fresh_runner,
     )
 
     assert ledger["same_project_worker_patch_go"] is True
     entry = ledger["entries"][0]
     assert entry["status"] == "completed"
-    assert entry["satisfaction_mode"] == "existing_same_project_evidence"
-    assert set(entry["evidence_requirements_satisfied"]) == {
+    assert entry["receipt_id"] == "receipt_core_loop_fresh"
+    assert entry["reference_evidence"]["satisfaction_mode"] == "reused_reference_only"
+    assert set(entry["reference_evidence"]["evidence_requirements_satisfied"]) == {
         "rewardCurrencyChanges",
         "unlockProgressVisible",
         "same_project_patch",
     }
-    assert any(path.endswith("level_manifest.json") for path in entry["changed_files"])
+    assert any(path.endswith("level_manifest.json") for path in entry["reference_evidence"]["reference_files"])
 
 
-def test_same_project_patch_ledger_generates_human_review_packet_without_provider_rerun(
+def test_same_project_patch_ledger_keeps_human_review_packet_as_reference_until_fresh_run(
     tmp_path: Path,
 ) -> None:
     from packages.contracts import TaskCard
@@ -1802,10 +1954,22 @@ def test_same_project_patch_ledger_generates_human_review_packet_without_provide
         provider_lane="codex_cli",
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
-    def _unexpected_runner(**_kwargs):
-        raise AssertionError("human review packet should be generated by workflow without provider rerun")
+    def _fresh_runner(**_kwargs):
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_human_review_fresh",
+            "child_run_id": "run_human_review_fresh",
+            "child_attempt_id": "attempt_human_review_fresh",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["player_visible_evidence/human_player_review_packet.json"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 3},
+        }
 
     ledger = execute_same_project_task_cards(
         root=tmp_path,
@@ -1815,14 +1979,15 @@ def test_same_project_patch_ledger_generates_human_review_packet_without_provide
         db_path=tmp_path / "workflow.db",
         task_cards=[card],
         max_repair_attempts=1,
-        task_card_runner=_unexpected_runner,
+        task_card_runner=_fresh_runner,
     )
 
     packet = json.loads((project_dir / "player_visible_evidence/human_player_review_packet.json").read_text())
     assert ledger["same_project_worker_patch_go"] is True
     entry = ledger["entries"][0]
     assert entry["status"] == "completed"
-    assert entry["satisfaction_mode"] == "existing_same_project_evidence"
+    assert entry["receipt_id"] == "receipt_human_review_fresh"
+    assert entry["reference_evidence"]["satisfaction_mode"] == "reused_reference_only"
     assert packet["status"] == "AWAITING_HUMAN_REVIEW"
     assert packet["accepted_by_human"] is False
     assert packet["human_player_review_go"] is False
@@ -1987,6 +2152,7 @@ def test_task_card_worker_cli_invokes_from_task_card_with_codex_patch_adapter(
         provider_lane="codex_cli",
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
     result = worker_cli.run_task_card_patch_via_workflowctl(
@@ -2098,6 +2264,7 @@ def test_task_card_worker_cli_honors_explicit_real_adapter(tmp_path: Path, monke
         provider_lane="codex",
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
     result = worker_cli.run_task_card_patch_via_workflowctl(
@@ -2209,6 +2376,7 @@ def test_same_project_patch_ledger_rejects_no_changed_files_as_implementation(tm
         model_guidance=["Do not claim completion without changed files."],
         execution_mode="same_project_patch",
         risk_level="high",
+        status="active",
     )
 
     def _zero_patch_runner(**_kwargs):
@@ -2261,6 +2429,7 @@ def test_commercial_worker_blocks_when_no_same_project_business_cards(tmp_path: 
             model_guidance=["Do not generate game content for this infra card."],
             execution_mode="workflow_infra_bugfix",
             risk_level="high",
+            status="active",
         )
     )
     source = tmp_path / "brief.md"
@@ -2286,6 +2455,120 @@ def test_commercial_worker_blocks_when_no_same_project_business_cards(tmp_path: 
     assert output["same_project_worker_patch_go"] is False
     assert "same_project_business_task_cards_missing" in output["commercial_playable_blockers"]
     assert output["same_project_patch_ledger"]["entries"] == []
+
+
+def test_commercial_worker_blocks_draft_task_card_lifecycle(tmp_path: Path) -> None:
+    from packages.contracts import Run, TaskCard
+    from packages.contributions.pipelines.commercial_game_production import execute_commercial_game_task_card_worker
+    from packages.core_domain.db import migrate
+    from packages.core_domain.repositories import RunRepository, TaskRepository
+
+    db_path = tmp_path / "workflow.db"
+    pipeline_id = "pipeline_draft_card"
+    migrate(db_path)
+    RunRepository(db_path).create(Run(run_id=pipeline_id, goal="commercial worker", preset_id="commercial_game_production"))
+    TaskRepository(db_path).create_task_card(
+        TaskCard(
+            run_id=pipeline_id,
+            task_card_id="tc_draft_gameplay",
+            title="Draft gameplay implementation",
+            description="Draft card has enough details but is not active in the DB lifecycle.",
+            goal="Draft card has enough details but must not execute until the lifecycle is active.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["brief.md"],
+            test_commands=["python -m pytest tests/test_task_card_store.py -q"],
+            acceptance_criteria=["draft blocks", "runner not called"],
+            evidence_requirements=["task_card_lifecycle_no_go"],
+            blocking_conditions=["draft_card_executed"],
+            model_guidance=["Do not execute this card while it is draft."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+            status="draft",
+        )
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("draft task card must block before worker execution")
+
+    source = tmp_path / "brief.md"
+    source.write_text("# 商业小游戏", encoding="utf-8")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    payload = execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=source,
+        creator_exe=creator,
+        output_dir=tmp_path / "cocos_project",
+        require_build=False,
+        require_playtest=False,
+        require_commercial=True,
+        task_card_runner=_unexpected_runner,
+    )
+
+    assert payload["status"] == "blocked"
+    assert payload["failure_class"] == "task_card_lifecycle_no_go"
+    assert payload["output"]["task_card_quality"]["lifecycle_blocked_count"] == 1
+
+
+def test_commercial_worker_blocks_requirement_coverage_missing(tmp_path: Path) -> None:
+    from packages.contracts import Run, TaskCard
+    from packages.contributions.pipelines.commercial_game_production import execute_commercial_game_task_card_worker
+    from packages.core_domain.db import migrate
+    from packages.core_domain.repositories import RunRepository, TaskRepository
+
+    db_path = tmp_path / "workflow.db"
+    pipeline_id = "pipeline_requirement_coverage_missing"
+    migrate(db_path)
+    RunRepository(db_path).create(Run(run_id=pipeline_id, goal="commercial worker", preset_id="commercial_game_production"))
+    TaskRepository(db_path).create_task_card(
+        TaskCard(
+            run_id=pipeline_id,
+            task_card_id="tc_gameplay_without_req_ids",
+            title="Gameplay implementation without requirement coverage",
+            description="Active same-project implementation card is complete except for source requirement coverage.",
+            goal="Active same-project implementation card must be blocked when it does not cite covered source requirement IDs.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["brief.md"],
+            test_commands=["python -m pytest tests/test_task_card_store.py -q"],
+            acceptance_criteria=["requirement coverage blocks", "runner not called"],
+            evidence_requirements=["requirement_coverage_trace"],
+            blocking_conditions=["requirement_coverage_missing"],
+            model_guidance=["Do not execute implementation cards without req_id coverage."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+            status="active",
+            metadata={"requirement_coverage_required": True},
+        )
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("missing requirement coverage must block before worker execution")
+
+    payload = execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=None,
+        creator_exe=None,
+        output_dir=tmp_path / "cocos_project",
+        require_build=False,
+        require_playtest=False,
+        require_commercial=True,
+        task_card_runner=_unexpected_runner,
+    )
+
+    quality = payload["output"]["task_card_quality"]
+    assert payload["status"] == "blocked"
+    assert payload["failure_class"] == "task_card_quality_no_go"
+    assert quality["requirement_coverage_blocked_count"] == 1
+    assert quality["task_cards"][0]["requirement_coverage_issues"][0]["code"] == "requirement_coverage_missing"
 
 
 def test_commercial_task_worker_cli_uses_progress_watchdog(monkeypatch, tmp_path: Path) -> None:

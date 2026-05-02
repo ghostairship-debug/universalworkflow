@@ -9,19 +9,28 @@ from typing import Any, Callable
 from packages.contracts import TaskCard
 from packages.contributions.games.cocos.e2e import build_cocos_project
 from packages.contributions.games.cocos.playtest import playtest_cocos_build
+from packages.contributions.games.cocos.product_body_baseline import write_cocos_product_body_baseline
+from packages.contributions.pipelines.commercial_game_development_readiness import (
+    build_commercial_game_development_readiness_evidence,
+)
 from packages.contributions.pipelines.commercial_game_evidence_contracts import (
     BROWSER_PLAYTEST_LEDGER_SCHEMA,
     BUILD_LEDGER_SCHEMA,
+    GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA,
     PRODUCT_DEPTH_EVIDENCE_SCHEMA,
+    PRODUCT_BODY_EVIDENCE_SCHEMA,
     build_asset_graph_contract,
     build_browser_playtest_ledger,
     build_build_ledger,
     build_cocos_bridge_evidence_contract,
+    build_gameplay_semantic_evidence,
     build_human_review_packet,
+    build_product_body_evidence,
     build_product_depth_evidence,
     build_same_project_patch_ledger_contract,
 )
 from packages.contributions.pipelines.commercial_game_task_worker_cli import run_task_card_patch_via_workflowctl
+from packages.core_domain.task_card_store import task_card_execution_eligibility
 
 
 TASK_CARD_RUNTIME_MAX_ATTEMPTS = 3
@@ -44,6 +53,7 @@ FAIL_FAST_PRECONDITION_FAILURE_CLASSES = {
     "cocos_creator_exe_missing",
     "db_path_required_for_task_card_worker",
     "fallback_provider_unavailable",
+    "fresh_cli_execution_missing",
     "operator_receipt_scope_mismatch",
     "provider_live_proof_missing",
     "receipt_scope_invalid",
@@ -56,7 +66,12 @@ FAIL_FAST_PRECONDITION_FAILURE_CLASSES = {
 
 
 def same_project_business_task_cards(task_cards: list[TaskCard]) -> list[TaskCard]:
-    return [card for card in task_cards if str(card.execution_mode or "").strip() == "same_project_patch"]
+    return [
+        card
+        for card in task_cards
+        if str(card.execution_mode or "").strip() == "same_project_patch"
+        and task_card_execution_eligibility(card)["execution_eligible"]
+    ]
 
 
 def bootstrap_cocos_project_shell(
@@ -90,6 +105,7 @@ def bootstrap_cocos_project_shell(
             ),
             encoding="utf-8",
         )
+    product_body_baseline = write_cocos_product_body_baseline(project_dir)
     (project_dir / "workflow_project_source.json").write_text(
         json.dumps(
             {
@@ -98,6 +114,8 @@ def bootstrap_cocos_project_shell(
                 "creator_exe": creator_exe.resolve().as_posix(),
                 "asset_manifest_path": asset_manifest.get("manifest_path") if isinstance(asset_manifest, dict) else None,
                 "bootstrap_mode": "empty_cocos_project_shell_for_task_card_patches",
+                "product_body_baseline_manifest_path": product_body_baseline.get("manifest_path"),
+                "product_body_baseline_only": True,
                 "forbidden_delivery_claim": "bootstrap_shell_is_not_commercial_game",
             },
             ensure_ascii=False,
@@ -135,6 +153,37 @@ def execute_same_project_task_cards(
                 "blockers": ["same_project_business_task_cards_missing"],
             },
         )
+    ineligible_entries = _ineligible_task_card_entries(
+        task_cards,
+        project_dir=project_dir,
+        pipeline_id=pipeline_id,
+        card_root=card_root,
+    )
+    if ineligible_entries:
+        blockers = _patch_ledger_blockers(ineligible_entries, expected_count=len(task_cards))
+        lifecycle_blocked = any(entry.get("failure_class") == "task_card_lifecycle_no_go" for entry in ineligible_entries)
+        blockers.append("task_card_lifecycle_no_go" if lifecycle_blocked else "task_card_quality_no_go")
+        return _write_ledger(
+            ledger_root,
+            {
+                "schema_version": "commercial_game_same_project_patch_ledger_v1",
+                "pipeline_id": pipeline_id,
+                "project_dir": project_dir.as_posix(),
+                "same_project_worker_patch_go": False,
+                "task_card_count": len(task_cards),
+                "completed_count": 0,
+                "entries": ineligible_entries,
+                "blockers": _dedupe_strings(blockers),
+                "retry_policy": {
+                    "runtime_max_attempts": TASK_CARD_RUNTIME_MAX_ATTEMPTS,
+                    "fresh_receipt_required_per_attempt": True,
+                    "same_project_required": True,
+                },
+                "next_incomplete_task_card_id": ineligible_entries[0].get("task_card_id"),
+                "next_continuation_command": None,
+                "next_continuation_argv": None,
+            },
+        )
     runner = task_card_runner or run_task_card_patch_via_workflowctl
     for card in task_cards:
         prior_entry = prior_completed_entries.get(card.task_card_id)
@@ -144,15 +193,12 @@ def execute_same_project_task_cards(
         materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=pipeline_id)
         card_path = card_root / f"{_safe_id(card.task_card_id)}.md"
         card_path.write_text(_task_card_markdown(card, materialized), encoding="utf-8")
-        already_satisfied = _already_satisfied_task_card_entry(
+        reference_evidence = _already_satisfied_task_card_entry(
             card,
             materialized,
             project_dir=project_dir,
             card_path=card_path,
         )
-        if already_satisfied is not None:
-            entries.append(already_satisfied)
-            continue
         entry = _run_task_card_with_retry_policy(
             runner=runner,
             root=root,
@@ -167,18 +213,19 @@ def execute_same_project_task_cards(
             max_fix_iterations=max_repair_attempts,
             max_runtime_attempts=TASK_CARD_RUNTIME_MAX_ATTEMPTS,
         )
-        entries.append(
-            _normalize_patch_ledger_entry(
-                card,
-                materialized,
-                entry,
-                root=root,
-                db_path=db_path,
-                project_dir=project_dir,
-                card_path=card_path,
-                max_repair_attempts=max_repair_attempts,
-            )
+        normalized_entry = _normalize_patch_ledger_entry(
+            card,
+            materialized,
+            entry,
+            root=root,
+            db_path=db_path,
+            project_dir=project_dir,
+            card_path=card_path,
+            max_repair_attempts=max_repair_attempts,
         )
+        if reference_evidence is not None:
+            normalized_entry["reference_evidence"] = reference_evidence
+        entries.append(normalized_entry)
         if entries[-1]["status"] != "completed":
             break
     blockers = _patch_ledger_blockers(entries, expected_count=len(task_cards))
@@ -219,10 +266,70 @@ def _prior_completed_patch_entries(ledger_root: Path) -> dict[str, dict[str, Any
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("status") != "completed":
             continue
+        if not _completed_patch_entry_has_fresh_execution(entry):
+            continue
         task_card_id = str(entry.get("task_card_id") or "")
         if task_card_id:
             completed[task_card_id] = entry
     return completed
+
+
+def _ineligible_task_card_entries(
+    task_cards: list[TaskCard],
+    *,
+    project_dir: Path,
+    pipeline_id: str,
+    card_root: Path,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for card in task_cards:
+        eligibility = task_card_execution_eligibility(card)
+        if eligibility["execution_eligible"]:
+            continue
+        materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=pipeline_id)
+        card_path = card_root / f"{_safe_id(card.task_card_id)}.md"
+        card_path.write_text(_task_card_markdown(card, materialized), encoding="utf-8")
+        lifecycle_blockers = [issue["code"] for issue in eligibility["issues"]]
+        quality_blockers = [issue["code"] for issue in eligibility.get("quality_issues", [])]
+        quality_blocked = eligibility["quality_status"] != "passed"
+        failure_class = "task_card_lifecycle_no_go" if lifecycle_blockers else "task_card_quality_no_go"
+        entries.append(
+            {
+                "task_card_id": card.task_card_id,
+                "title": card.title,
+                "status": "blocked",
+                "failure_class": failure_class,
+                "final_failure_class": failure_class,
+                "retry_exhausted": False,
+                "preflight_blocker": True,
+                "attempt_index": 0,
+                "max_attempts": TASK_CARD_RUNTIME_MAX_ATTEMPTS,
+                "consecutive_failure_count": 0,
+                "attempts": [],
+                "receipt_id": None,
+                "child_run_id": None,
+                "child_attempt_id": None,
+                "worker_adapter": None,
+                "task_card_path": card_path.as_posix(),
+                "write_set": materialized["write_set"],
+                "read_set": materialized["read_set"],
+                "test_commands": materialized["test_commands"],
+                "mutation_result": {"changed_files": [], "final_test_status": "not_run"},
+                "changed_files": [],
+                "final_test_status": "not_run",
+                "lifecycle_status": eligibility["lifecycle_status"],
+                "execution_eligible": False,
+                "quality_status": eligibility["quality_status"],
+                "quality_blocked": quality_blocked,
+                "blockers": [*lifecycle_blockers, *quality_blockers],
+                "continuation_required": False,
+                "continuation_reason": failure_class,
+                "continuation_argv": None,
+                "next_continuation_argv": None,
+                "continuation_command": None,
+            }
+        )
+    return entries
 
 
 def _run_task_card_with_retry_policy(
@@ -278,6 +385,14 @@ def _run_task_card_with_retry_policy(
             max_repair_attempts=max_fix_iterations,
             entry=last_entry,
         )
+        if str(last_entry.get("status") or "") == "completed" and not _completed_patch_entry_has_fresh_execution(last_entry):
+            last_entry = {
+                **last_entry,
+                "status": "failed",
+                "failure_class": "fresh_cli_execution_missing",
+                "final_failure_class": "fresh_cli_execution_missing",
+                "recoverable_suggestion": "rerun_task_card_with_fresh_workflowctl_receipt_child_run_and_passing_tests",
+            }
         attempts.append(
             _patch_attempt_record(
                 entry=last_entry,
@@ -370,6 +485,27 @@ def _is_retryable_runtime_failure(entry: dict[str, Any]) -> bool:
     return _patch_root_failure_class(entry) in RETRYABLE_RUNTIME_FAILURE_CLASSES
 
 
+def _completed_patch_entry_has_fresh_execution(entry: dict[str, Any]) -> bool:
+    if str(entry.get("status") or "") != "completed":
+        return False
+    adapter = str(entry.get("worker_adapter") or entry.get("adapter") or entry.get("capability_adapter") or "").strip().lower()
+    satisfaction_mode = str(entry.get("satisfaction_mode") or "").strip().lower()
+    if adapter in {"shell", "noop", "dry_run", "dry-run", "existing_same_project_evidence"}:
+        return False
+    if satisfaction_mode in {"existing_same_project_evidence", "reused_reference_only"}:
+        return False
+    mutation_result = entry.get("mutation_result") if isinstance(entry.get("mutation_result"), dict) else {}
+    changed_files = mutation_result.get("changed_files") or entry.get("changed_files") or []
+    final_test_status = str(mutation_result.get("final_test_status") or entry.get("final_test_status") or "").strip().lower()
+    return bool(
+        entry.get("receipt_id")
+        and entry.get("child_run_id")
+        and (entry.get("child_attempt_id") or entry.get("attempt_id"))
+        and changed_files
+        and final_test_status == "passed"
+    )
+
+
 def collect_project_runtime_evidence(
     *,
     project_dir: Path,
@@ -439,6 +575,10 @@ def collect_project_runtime_evidence(
         "player_visible_checks": feature_evidence.get("player_visible_checks", {}),
         "manual_player_evidence": feature_evidence.get("manual_player_evidence", {}),
         "product_depth_evidence": feature_evidence.get("product_depth_evidence", {}),
+        "gameplay_semantic_evidence": feature_evidence.get("gameplay_semantic_evidence", {}),
+        "product_body_evidence": feature_evidence.get("product_body_evidence", {}),
+        "product_body_baseline": feature_evidence.get("product_body_baseline", {}),
+        "development_readiness_validation_gates": feature_evidence.get("development_readiness_validation_gates", {}),
         "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
         "build": build,
         "playtest": playtest,
@@ -485,15 +625,33 @@ def blocked_project_runtime_evidence_due_to_upstream(
         blockers=blockers,
         source=source,
     )
+    gameplay_semantic_evidence = _blocked_evidence_contract(
+        schema_version=GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA,
+        stage="gameplay_semantic",
+        blockers=blockers,
+        source=source,
+    )
+    product_body_evidence = _blocked_evidence_contract(
+        schema_version=PRODUCT_BODY_EVIDENCE_SCHEMA,
+        stage="product_body",
+        blockers=blockers,
+        source=source,
+    )
     build_ledger_path = runtime_evidence_root / "build_ledger.json"
     browser_playtest_ledger_path = runtime_evidence_root / "browser_playtest_ledger.json"
     product_depth_evidence_path = runtime_evidence_root / "product_depth_evidence.json"
+    gameplay_semantic_evidence_path = runtime_evidence_root / "gameplay_semantic_evidence.json"
+    product_body_evidence_path = runtime_evidence_root / "product_body_evidence.json"
     build_ledger["evidence_path"] = build_ledger_path.as_posix()
     browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path.as_posix()
     product_depth_evidence["evidence_path"] = product_depth_evidence_path.as_posix()
+    gameplay_semantic_evidence["evidence_path"] = gameplay_semantic_evidence_path.as_posix()
+    product_body_evidence["evidence_path"] = product_body_evidence_path.as_posix()
     _write_json(build_ledger_path, build_ledger)
     _write_json(browser_playtest_ledger_path, browser_playtest_ledger)
     _write_json(product_depth_evidence_path, product_depth_evidence)
+    _write_json(gameplay_semantic_evidence_path, gameplay_semantic_evidence)
+    _write_json(product_body_evidence_path, product_body_evidence)
     return {
         "schema_version": "commercial_game_same_project_runtime_evidence_v1",
         "status": "blocked",
@@ -507,6 +665,8 @@ def blocked_project_runtime_evidence_due_to_upstream(
         "player_visible_checks": {},
         "manual_player_evidence": {},
         "product_depth_evidence": product_depth_evidence,
+        "gameplay_semantic_evidence": gameplay_semantic_evidence,
+        "product_body_evidence": product_body_evidence,
         "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
         "build": None,
         "playtest": None,
@@ -515,6 +675,8 @@ def blocked_project_runtime_evidence_due_to_upstream(
         "build_ledger_path": build_ledger_path.as_posix(),
         "browser_playtest_ledger_path": browser_playtest_ledger_path.as_posix(),
         "product_depth_evidence_path": product_depth_evidence_path.as_posix(),
+        "gameplay_semantic_evidence_path": gameplay_semantic_evidence_path.as_posix(),
+        "product_body_evidence_path": product_body_evidence_path.as_posix(),
     }
 
 
@@ -550,12 +712,24 @@ def production_payload_from_worker(
         player_visible_checks=runtime_evidence.get("player_visible_checks"),
         playtest=runtime_evidence.get("playtest"),
     )
+    gameplay_semantic_evidence = build_gameplay_semantic_evidence(
+        runtime_evidence.get("gameplay_semantic_evidence"),
+        feature_coverage=runtime_evidence.get("commercial_feature_coverage"),
+        playtest=runtime_evidence.get("playtest"),
+    )
+    product_body_evidence = build_product_body_evidence(
+        runtime_evidence.get("product_body_evidence"),
+        gameplay_semantic_evidence=gameplay_semantic_evidence,
+        playtest=runtime_evidence.get("playtest"),
+    )
     evidence_contracts = {
         "asset_graph": asset_graph,
         "cocos_bridge_evidence": cocos_bridge_evidence,
         "same_project_patch_ledger": same_project_patch_ledger_contract,
         "build_ledger": build_ledger,
         "browser_playtest_ledger": browser_playtest_ledger,
+        "gameplay_semantic_evidence": gameplay_semantic_evidence,
+        "product_body_evidence": product_body_evidence,
         "product_depth_evidence": product_depth_evidence,
     }
     if assets_stage.get("placeholder_only"):
@@ -587,6 +761,16 @@ def production_payload_from_worker(
         and human_player_review_go
         and not blockers
     )
+    development_readiness = build_commercial_game_development_readiness_evidence(
+        task_card_quality=task_card_quality,
+        same_project_patch_ledger=same_project_patch_ledger_contract,
+        gameplay_semantic_evidence=gameplay_semantic_evidence,
+        product_body_evidence=product_body_evidence,
+        product_body_baseline=runtime_evidence.get("product_body_baseline"),
+        validation_gates=runtime_evidence.get("development_readiness_validation_gates"),
+        commercial_playable_go=commercial_playable_go,
+        human_player_review_go=human_player_review_go,
+    )
     return {
         "schema_version": schema_version,
         "created_at": created_at,
@@ -598,6 +782,9 @@ def production_payload_from_worker(
         "technical_smoke_go": bool(runtime_evidence.get("technical_smoke_go")),
         "production_scaffold_go": bool(runtime_evidence.get("production_scaffold_go")),
         "commercial_playable_go": commercial_playable_go,
+        "commercial_game_development_readiness_go": bool(
+            development_readiness.get("commercial_game_development_readiness_go")
+        ),
         "ecosystem_integration_go": bool(ecosystem_payload.get("ecosystem_integration_go")),
         "live_role_provider_proof_go": False,
         "same_project_worker_patch_go": bool(patch_ledger.get("same_project_worker_patch_go")),
@@ -622,8 +809,11 @@ def production_payload_from_worker(
         "same_project_patch_ledger_contract": same_project_patch_ledger_contract,
         "build_ledger": build_ledger,
         "browser_playtest_ledger": browser_playtest_ledger,
+        "gameplay_semantic_evidence": gameplay_semantic_evidence,
+        "product_body_evidence": product_body_evidence,
         "product_depth_evidence": product_depth_evidence,
         "human_review_packet": human_review_packet,
+        "commercial_game_development_readiness": development_readiness,
         "blocked_downstream_stages": runtime_evidence.get("blocked_downstream_stages") or [],
         "normalized_repair_packet": _normalized_repair_packet(
             patch_ledger=patch_ledger,
@@ -782,11 +972,11 @@ def _already_satisfied_task_card_entry(
     return {
         "task_card_id": card.task_card_id,
         "title": card.title,
-        "status": "completed",
-        "failure_class": None,
-        "final_failure_class": None,
+        "status": "reference_only",
+        "failure_class": "fresh_cli_execution_missing",
+        "final_failure_class": "fresh_cli_execution_missing",
         "retry_exhausted": False,
-        "preflight_blocker": False,
+        "preflight_blocker": True,
         "attempt_index": 0,
         "max_attempts": TASK_CARD_RUNTIME_MAX_ATTEMPTS,
         "consecutive_failure_count": 0,
@@ -794,21 +984,22 @@ def _already_satisfied_task_card_entry(
         "receipt_id": None,
         "child_run_id": None,
         "child_attempt_id": None,
-        "worker_adapter": "existing_same_project_evidence",
+        "worker_adapter": "reference_evidence",
         "watchdog_source": "project_feature_evidence",
         "evidence_id": None,
-        "review_decision": "evidence_precheck_pass",
+        "review_decision": "evidence_reference_only",
         "task_card_path": card_path.as_posix(),
         "write_set": materialized["write_set"],
         "read_set": materialized["read_set"],
         "test_commands": materialized["test_commands"],
         "mutation_result": {
-            "changed_files": evidence_files,
-            "final_test_status": "evidence_precheck_passed",
-            "satisfaction_mode": "existing_same_project_evidence",
+            "changed_files": [],
+            "final_test_status": "not_run",
+            "satisfaction_mode": "reused_reference_only",
         },
-        "changed_files": evidence_files,
-        "final_test_status": "evidence_precheck_passed",
+        "changed_files": [],
+        "reference_files": evidence_files,
+        "final_test_status": "not_run",
         "applied_patch_hash": None,
         "stdout_preview": None,
         "stderr_preview": None,
@@ -830,7 +1021,9 @@ def _already_satisfied_task_card_entry(
         "continuation_argv": None,
         "next_continuation_argv": None,
         "continuation_command": None,
-        "satisfaction_mode": "existing_same_project_evidence",
+        "satisfaction_mode": "reused_reference_only",
+        "implementation_gate_satisfied": False,
+        "blockers": ["fresh_cli_execution_missing"],
         "evidence_reuse_real_files": True,
         "evidence_requirements_satisfied": satisfaction["satisfied"],
         "evidence_refs": satisfaction["evidence_refs"],
@@ -1098,6 +1291,12 @@ def _dict(value: Any) -> dict[str, Any]:
 
 def _patch_ledger_blockers(entries: list[dict[str, Any]], *, expected_count: int) -> list[str]:
     blockers: list[str] = []
+    for entry in entries:
+        blockers.extend(str(item) for item in entry.get("blockers") or [] if str(item))
+        if entry.get("implementation_gate_satisfied") is False:
+            blockers.append("fresh_cli_execution_missing")
+        if entry.get("status") == "completed" and not _completed_patch_entry_has_fresh_execution(entry):
+            blockers.append("fresh_cli_execution_missing")
     if len(entries) < expected_count:
         blockers.append("same_project_task_card_patch_incomplete")
     if any(entry.get("status") != "completed" for entry in entries):
@@ -1230,7 +1429,7 @@ def _patch_root_failure_class(entry: dict[str, Any]) -> str:
 
 
 def _blocked_downstream_stages(*, require_build: bool, require_playtest: bool) -> list[str]:
-    stages = ["product_depth", "human_player_review"]
+    stages = ["gameplay_semantic", "product_body", "product_depth", "human_player_review"]
     if require_build:
         stages.insert(0, "cocos_build")
     if require_playtest:
@@ -1315,6 +1514,16 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
                 if isinstance(value, list):
                     merged.setdefault(key, [])
                     merged[key].extend(value)
+    baseline = _read_json_dict(project_dir / "workflow_product_body_baseline.json")
+    if baseline:
+        merged["product_body_baseline"] = baseline
+        if isinstance(baseline.get("gameplay_semantic_evidence"), dict) and not merged.get("gameplay_semantic_evidence"):
+            merged["gameplay_semantic_evidence"] = baseline["gameplay_semantic_evidence"]
+        if isinstance(baseline.get("product_body_evidence"), dict) and not merged.get("product_body_evidence"):
+            merged["product_body_evidence"] = baseline["product_body_evidence"]
+    readiness_gates = _read_json_dict(project_dir / "workflow_development_readiness_validation_gates.json")
+    if readiness_gates:
+        merged["development_readiness_validation_gates"] = readiness_gates
     for key in ("same_project_patch_files", "screenshots", "open_panels", "events", "console_errors", "page_errors"):
         if isinstance(merged.get(key), list):
             merged[key] = _dedupe_strings(merged[key])
