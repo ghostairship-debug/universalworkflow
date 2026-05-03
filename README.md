@@ -39,6 +39,7 @@
 - The reviewed URL did point at the current pipeline `build/web-mobile`; the failure is product-level, not a wrong launch path. The machine gate over-accepted runtime hook / canvas / event coverage as if it proved a completed game body.
 - Next commercial-game work must use the DB-backed active phase `Product Body Runtime And Semantic Trace Implementation` as the development-readiness bridge, then open `Commercial Game Core Content Implementation` after the readiness commit is pushed. Unattended automation must not convert event-only, canvas-only, scaffold, build-only, baseline-only, or browser-event evidence into commercial GO.
 - 2026-05-03 hardening completes the pre-commercial control-plane repair: high-risk commercial cards cannot pass headlessly, single-agent roles cannot omit or rewrite input requirements, ordinary compile/recompile cannot overwrite active commercial DB task cards, and runtime semantic/product-body evidence must come from model transitions and Cocos component bindings.
+- 2026-05-03 machine-evidence narrowing completed `Commercial Machine Evidence And Player Visible Completion` with exactly three visible-CLI DB task cards. Product-body, gameplay semantic, product-depth, and Cocos build evidence are now GO; asset graph and browser/audio runtime proof remain NO-GO blockers. The next active phase is `Commercial Asset And Browser Runtime Proof Implementation`.
 
 ## 当前状态：M109 Pipeline / Technical-Smoke Baseline
 

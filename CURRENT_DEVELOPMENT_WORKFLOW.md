@@ -1,5 +1,20 @@
 # 当前开发工作流
 
+## 2026-05-03 Closeout: Commercial Machine Evidence And Player Visible Completion
+
+`Commercial Machine Evidence And Player Visible Completion` 已按 active-phase-only 原则执行到诚实 NO-GO；本阶段没有进入 M110，没有生成未来 phase task cards，也没有把机器证据或无人值守结果转换为商业可玩 GO。
+
+- DB task-card run id: `commercial_machine_evidence_20260503`
+- Cocos project: `state/pipeline_runs/commercial_game_core_content_20260503/cocos_project`
+- Pipeline evidence: `state/commercial_machine_evidence_20260503/pipeline_evidence/`
+- 当前 phase 只生成 3 张 DB-backed task cards：`commercial_machine_evidence_20260503_product_depth_chinese_ui`、`commercial_machine_evidence_20260503_build_browser_machine_evidence`、`commercial_machine_evidence_20260503_human_review_packet_gate`。
+- 三张卡均通过 `human_visible_cli_enforced` 执行链完成；visible CLI session metadata、mirrored `stdout.log` / `stderr.log` / `stream.jsonl`、fresh receipt、child run/attempt、changed files 和测试通过是完成条件。
+- 已修复控制面问题：`Commercial Machine Evidence And Player Visible Completion` 现在只 materialize 当前 phase 的三张卡；product-depth 证据会合并 `chinese_ui_panels_evidence.json`；Cocos browser playtest 会识别默认 `#GameCanvas`，不再误把 Cocos 默认 canvas 当成缺失。
+- 当前证据结论：`commercial_game_development_readiness_go=true`，`product_body_evidence.go=true`，`gameplay_semantic_evidence.go=true`，`product_depth_evidence.go=true`，`build_ledger.go=true`。
+- 当前商业终态仍为：`machine_evidence_go=false`，`human_player_review_go=false`，`commercial_playable_go=false`。
+- 剩余 blocker 已收窄为：`placeholder_assets_only`、`browser_playtest_no_go`、`audio_runtime_not_verified`、`bgm_runtime_not_verified`、`sfx_runtime_not_verified`、`volume_toggle_missing`。
+- 下一 active phase：`Commercial Asset And Browser Runtime Proof Implementation`。只允许为该 phase 生成当前 DB task cards，目标是补齐非 placeholder 资产证明、浏览器可交互运行证明、真实音频/BGM/SFX/音量控件运行证明，并在机器证据全过后停在 `AWAITING_HUMAN_REVIEW`。
+
 ## 2026-05-02 Human Review NO-GO: Trusted Cocos Build Browser Audio Runtime Evidence
 
 `Trusted Cocos Build Browser Audio Runtime Evidence` 原先按 machine-evidence closeout 收口；真实人工评审后已被复判为 `NO-GO`。本阶段仍未进入 M110，未生成未来 phase task cards，未自动 commit/push/PR，未声明商业可玩 GO。
@@ -380,15 +395,14 @@ python -m pytest -q
 
 ## 下一阶段开发计划
 
-- 当前基线：M109 已接受为 pipeline / technical-smoke baseline；2026-05-02 post-review hardening 已完成 DB lifecycle/fresh execution gate、reference-only evidence reuse、gameplay semantic/product-body gate、source requirement matrix、task-card req_id coverage gate，以及非商业成品 Cocos product-body baseline bootstrap。
+- 当前基线：M109 已接受为 pipeline / technical-smoke baseline；2026-05-02/2026-05-03 post-review hardening 已完成 DB lifecycle/fresh execution gate、reference-only evidence reuse、gameplay semantic/product-body gate、source requirement matrix、task-card req_id coverage gate、visible CLI 强制执行、lossless single-agent v2 preservation，以及非商业成品 Cocos product-body baseline bootstrap。
 - 当前新增真相：`commercial_game_development_readiness_go=true` 只表示可以安全开始真实商业游戏内容开发；`machine_evidence_go=false`、`human_player_review_go=false`、`commercial_playable_go=false` 仍保持不变。baseline 组件、Cocos bridge、build、playtest、runtime hooks 或 feature coverage 均不能单独证明商业游戏完成。
-- 当前 active phase：`Product Body Runtime And Semantic Trace Implementation` 已在 DB 生成当前 phase task cards，run id 为 `product_body_runtime_semantic_trace_20260502`。共有 3 张卡：runtime models、semantic core-loop traces、scene/prefab component evidence；quality/lifecycle/req_id coverage gate 均为 `GO`。
+- 已完成 active phases：`Product Body Runtime And Semantic Trace Implementation`、`Commercial Game Core Content Implementation`、`Commercial Machine Evidence And Player Visible Completion` 均只生成当前 phase DB cards，并保留 `commercial_playable_go=false`。
+- 当前完成证据：runtime model / semantic trace / scene-component binding / product-depth / Cocos build 已达到机器证据 GO；中文 UI panel evidence 已纳入 product-depth；human review packet 文件保持 blocked 而非自批。
+- 当前剩余 blocker：非 placeholder 资产证明、浏览器可交互 playtest GO、BGM/SFX/audio playback 与 volume toggle 的真实浏览器运行证明。
 - Phase preflight：先运行 `plan-graph`、`policy-preview`、`goal-packet`；task card 必须满足 lifecycle `active/approved`、质量字段完整、fresh execution 约束、write_set/read_set/test/evidence 完整，以及 `covered_requirement_ids` 覆盖所需 source `req_id`。
-- Phase 1 runtime model：把 baseline `BoardModel`、`PieceModel`、`RuleEngine`、`CandidateTray`、`SemanticTestBridge` 变成真实同项目运行时代码，完成 10x10 board、placement、line clear、candidate refresh、game-over、anti-stall trace。trace 必须来自模型/运行时，不得来自 DOM/canvas/browser event hook。
-- Phase 2 product-body binding：把 `BoardView`、`InputController`、`LevelGoalController`、`ShopSkinController`、`AudioFeedbackController`、HUD、level-goal panel、shop/skin panel、gallery/collection surface 和 audio controls 绑定到 Cocos scene/prefab/component evidence。
-- Phase 3 requirement/product-depth alignment：把 source `req_id` 映射到核心循环、关卡目标、商店/皮肤、画廊/收藏、音频、反馈、失败/复活、中文 UI 可读性；证据必须证明玩家可见行为，不接受 feature flag / event marker 替代。
-- Phase 4 downstream handoff：只有 same-project worker、gameplay semantic、product body、product depth 均通过后，才允许打开 build/playtest/human-review 后续 phase；机器证据通过但无人审接受时只能停在 `AWAITING_HUMAN_REVIEW`。
-- Push 成功后下一 active phase 固定为 `Commercial Game Core Content Implementation`，只生成该 phase 的 DB task cards，并从真实商业化游戏内容开发开始。
+- Next active phase：`Commercial Asset And Browser Runtime Proof Implementation`。该 phase 只生成当前 task cards，优先补齐 asset graph、browser playtest、audio runtime proof；若运行环境不能提供真实 browser/audio evidence，必须 blocked，不能降级为 headless success。
+- 后续 handoff：机器证据全过后只能进入 `AWAITING_HUMAN_REVIEW`；无人值守不得设置 `commercial_playable_go=true`。
 - Bug-first：workflow、receipt、lease、repo mutation、task-card worker、evidence contract、active truth 或 test matrix 任一路径出问题，先修 workflow bug 并补测试，再继续产品实现。
 
 ### Acceptable Detours
@@ -512,4 +526,5 @@ M109 验收标准：
 - Commercial `recompile_run` cannot replace active `commercial_game_production` DB task cards generated by the task-card generation agent.
 - The Cocos product-body baseline now contains actual runtime model code and model-transition traces for 10x10 board state, placement, line clear, candidate refresh, game-over, and anti-stall behavior. It still remains `baseline_only=true` and cannot pass commercial final GO.
 - QA and supervisor default to red-team blocking behavior for baseline-only, runtime-hook, canvas-only, event-only, feature-flag-only, missing fresh CLI, missing visible CLI, and requirement-omission evidence chains.
-- After this readiness slice is committed and pushed, the next active phase is `Commercial Game Core Content Implementation`. It should generate only three current-phase DB task cards: core loop/levels, shop-skin-gallery, and audio-feedback-polish.
+- `Commercial Machine Evidence And Player Visible Completion` completed its three visible-CLI DB cards and honestly stayed NO-GO: product depth/build are GO, but asset graph and browser/audio runtime proof remain blockers.
+- Next active phase is `Commercial Asset And Browser Runtime Proof Implementation`; it must not pre-generate future phase cards and must not downgrade missing browser/audio evidence to headless success.

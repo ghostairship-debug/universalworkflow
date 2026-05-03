@@ -987,6 +987,9 @@ def production_payload_from_worker(
         screenshots=list(playtest_payload.get("screenshots") or []),
         blockers=blockers,
     )
+    human_review_packet_path = project_dir / "player_visible_evidence" / "human_player_review_packet.json"
+    human_review_packet["evidence_path"] = human_review_packet_path.as_posix()
+    _write_json(human_review_packet_path, human_review_packet)
     human_player_review_go = bool(human_review_packet.get("human_player_review_go"))
     commercial_playable_go = (
         bool(runtime_evidence.get("commercial_playable_go"))
@@ -1801,6 +1804,10 @@ def _merge_runtime_evidence_artifacts(merged: dict[str, Any], project_dir: Path)
     if audio_polish:
         runtime_artifacts.append((evidence_root / "audio_feedback_polish_evidence.json").as_posix())
         _merge_audio_feedback_polish_evidence(merged, audio_polish)
+    chinese_ui = _read_json_dict(evidence_root / "chinese_ui_panels_evidence.json")
+    if chinese_ui:
+        runtime_artifacts.append((evidence_root / "chinese_ui_panels_evidence.json").as_posix())
+        _merge_chinese_ui_panels_evidence(merged, chinese_ui)
     if core_loop and shop_gallery and audio_polish:
         for key in ("gameplay_semantic_evidence", "product_body_evidence"):
             payload = merged.setdefault(key, {})
@@ -1856,6 +1863,23 @@ def _merge_shop_skin_gallery_evidence(merged: dict[str, Any], payload: dict[str,
         visible["skinEquippedVisualChange"] = True
     if _dict(payload.get("gallery_collection_state")):
         visible["galleryCollectionState"] = True
+
+
+def _merge_chinese_ui_panels_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    panels = [panel for panel in payload.get("chinese_ui_panels") or [] if isinstance(panel, dict)]
+    if not panels:
+        return
+    panel_ids = {str(panel.get("panel_id") or "").strip().lower() for panel in panels}
+    required = {"hud_panel", "shop_panel", "gallery_panel", "settings_panel", "failure_revive_panel"}
+    all_have_labels = all(bool(_dict(panel.get("chinese_labels"))) for panel in panels)
+    if required <= panel_ids and all_have_labels:
+        features = merged.setdefault("commercial_feature_coverage", {})
+        visible = merged.setdefault("player_visible_checks", {})
+        product_depth = merged.setdefault("product_depth_evidence", {})
+        features["chineseUiPanelsVisible"] = True
+        visible["chineseUiPanelsVisible"] = True
+        product_depth["chinese_ui_panels"] = panels
+        product_depth["open_panels"] = [str(panel.get("chinese_name") or panel.get("panel_id")) for panel in panels]
 
 
 def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:

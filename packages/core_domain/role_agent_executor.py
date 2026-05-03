@@ -743,6 +743,8 @@ def _task_card_candidate_payloads(
         return _product_body_runtime_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     if _is_commercial_core_content_phase(pipeline_goal):
         return _commercial_core_content_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
+    if _is_commercial_machine_evidence_phase(pipeline_goal):
+        return _commercial_machine_evidence_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     candidates = [
         {
             "task_card_id": f"{base}_m109_role_brief_contract",
@@ -1179,6 +1181,122 @@ def _commercial_core_content_task_card_candidates(
     return _attach_requirement_coverage(candidates, brief_manifest)
 
 
+def _commercial_machine_evidence_task_card_candidates(
+    *,
+    base: str,
+    pipeline_goal: str,
+    brief_manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    active_phase_name = "Commercial Machine Evidence And Player Visible Completion"
+    phase = "commercial_machine_evidence_player_visible_completion"
+    common_write_set = [
+        "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+        "state/pipeline_runs/<run>/cocos_project/assets/scene",
+        "state/pipeline_runs/<run>/cocos_project/assets/resources",
+        "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence",
+        "state/pipeline_runs/<run>/cocos_project/player_visible_evidence",
+    ]
+    candidates = [
+        {
+            "task_card_id": f"{base}_product_depth_chinese_ui",
+            "title": "Complete product depth and Chinese UI evidence",
+            "description": "Patch the persistent Cocos project so product-depth evidence proves at least eight distinct level goals and real Chinese HUD, shop, gallery, settings, and failure/revive panels.",
+            "goal": f"Resolve product-depth blockers for {pipeline_goal} without creating a new project or declaring final commercial playable GO.",
+            "write_set": common_write_set,
+            "read_set": [
+                "requirement_matrix.json",
+                "workflow_runtime_evidence/product_depth_evidence.json",
+                "workflow_runtime_evidence/level_goal_evidence.json",
+                "role_output:product_gameplay_agent",
+                "role_output:ui_experience_agent",
+            ],
+            "acceptance_criteria": [
+                "Product-depth evidence reports at least eight distinct player-visible level goals.",
+                "Chinese UI panels for HUD, shop, gallery, settings, and failure/revive are represented in scene or component evidence.",
+                "Evidence remains runtime/player-visible and commercial_playable_go remains false.",
+            ],
+            "test_commands": [
+                "python -m pytest tests/test_commercial_game_evidence_contracts.py tests/test_cocos_product_body_baseline.py -q"
+            ],
+            "expected_artifacts": ["workflow_runtime_evidence/level_goal_evidence.json", "workflow_runtime_evidence/product_depth_evidence.json"],
+            "evidence_requirements": ["eightDistinctLevelGoals", "chineseUiPanelsVisible", "levelFlowPlayable", "failureReviveFeedback"],
+            "blocking_conditions": ["levels_not_distinct_or_less_than_eight", "chinese_ui_panels_missing", "debug_canvas_only"],
+            "model_guidance": ["Patch only the persistent Cocos project.", "Write product-depth evidence from real runtime/scene state.", "Keep final human review pending."],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {"active_phase_name": active_phase_name, "stage_phase": phase, "phase_order": 1},
+        },
+        {
+            "task_card_id": f"{base}_build_browser_machine_evidence",
+            "title": "Produce Cocos build and browser playtest machine evidence",
+            "description": "Repair the same project until Cocos build, local HTTP launch, desktop/mobile browser screenshots, audio runtime, and Cocos bridge evidence can be collected as machine-readable evidence.",
+            "goal": "Turn build/playtest/browser/audio blockers into real machine evidence, never build-only or event-only proof.",
+            "write_set": common_write_set + ["state/pipeline_runs/<run>/cocos_project/build", "state/pipeline_runs/<run>/cocos_project/playtest_evidence"],
+            "read_set": [
+                "Cocos Creator executable",
+                "workflow_runtime_evidence/build_ledger.json",
+                "workflow_runtime_evidence/browser_playtest_ledger.json",
+                "workflow_runtime_evidence/gameplay_semantic_evidence.json",
+                "workflow_runtime_evidence/product_body_evidence.json",
+            ],
+            "acceptance_criteria": [
+                "Cocos build ledger is based on a real Creator command and successful artifact path.",
+                "Browser playtest ledger includes HTTP URL, screenshots, mobile viewport proof, and audio runtime proof or honest blockers.",
+                "Cocos ecosystem bridge evidence is preserved as blocker or GO without filesystem-only downgrade.",
+            ],
+            "test_commands": ["python -m pytest tests/test_pipeline_and_automation_cli.py tests/test_commercial_game_evidence_contracts.py -q"],
+            "expected_artifacts": ["workflow_runtime_evidence/build_ledger.json", "workflow_runtime_evidence/browser_playtest_ledger.json", "playtest_evidence/*"],
+            "evidence_requirements": ["cocos_build_artifact", "browser_http_launch", "mobile_viewport_screenshot", "audio_runtime_proof", "cocos_ecosystem_bridge_evidence"],
+            "blocking_conditions": ["cocos_build_missing", "browser_playtest_missing", "mobile_viewport_evidence_missing", "audio_runtime_not_verified"],
+            "model_guidance": ["Use real build and playtest evidence where available.", "Do not synthesize screenshots or Cocos bridge success.", "Record blockers honestly when the environment cannot complete a machine step."],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {"active_phase_name": active_phase_name, "stage_phase": phase, "phase_order": 1, "depends_on_task_card_ids": [f"{base}_product_depth_chinese_ui"]},
+        },
+        {
+            "task_card_id": f"{base}_human_review_packet_gate",
+            "title": "Prepare AWAITING_HUMAN_REVIEW packet and final gate evidence",
+            "description": "Collect player-visible review evidence, known blockers, screenshots, runtime contracts, and a final gate packet that stops at AWAITING_HUMAN_REVIEW unless an actual human reviewer accepts.",
+            "goal": "Make the commercial game reviewable without unattended self-approval or commercial_playable_go fabrication.",
+            "write_set": [
+                "state/pipeline_runs/<run>/cocos_project/player_visible_evidence",
+                "state/pipeline_runs/<run>/cocos_project/workflow_commercial_feature_evidence.json",
+                "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence",
+            ],
+            "read_set": [
+                "workflow_runtime_evidence/product_depth_evidence.json",
+                "workflow_runtime_evidence/build_ledger.json",
+                "workflow_runtime_evidence/browser_playtest_ledger.json",
+                "task_card_worker/same_project_patch_ledger.json",
+            ],
+            "acceptance_criteria": [
+                "Human review packet lists screenshots, machine contracts, and remaining blockers.",
+                "accepted_by_human remains false unless external human evidence exists.",
+                "Final gate can reach AWAITING_HUMAN_REVIEW only after machine evidence passes.",
+            ],
+            "test_commands": [
+                "python -m pytest tests/test_pipeline_and_automation_cli.py::test_commercial_gate_v2_can_stop_at_human_review_only -q"
+            ],
+            "expected_artifacts": ["player_visible_evidence/human_player_review_packet.json"],
+            "evidence_requirements": ["human_review_packet", "awaiting_human_review_status", "no_self_approval"],
+            "blocking_conditions": ["fabricated_human_acceptance", "missing_review_packet", "commercial_playable_go_claimed"],
+            "model_guidance": ["Do not self-approve commercial playable GO.", "Prepare the packet for external human player review.", "Keep blockers and machine evidence status explicit."],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {
+                "active_phase_name": active_phase_name,
+                "stage_phase": phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [f"{base}_product_depth_chinese_ui", f"{base}_build_browser_machine_evidence"],
+            },
+        },
+    ]
+    return _attach_requirement_coverage(candidates, brief_manifest)
+
+
 def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") -> dict[str, Any]:
     base = _safe_id(pipeline_id)
     if _is_product_body_runtime_phase(pipeline_goal):
@@ -1215,6 +1333,25 @@ def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") ->
                         f"{base}_core_loop_levels",
                         f"{base}_shop_skin_gallery",
                         f"{base}_audio_feedback_polish",
+                    ],
+                }
+            ],
+        }
+    if _is_commercial_machine_evidence_phase(pipeline_goal):
+        return {
+            "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+            "pipeline_id": pipeline_id,
+            "active_materialization_policy": "only_open_active_phase_task_cards",
+            "future_phase_task_cards_materialized": False,
+            "phases": [
+                {
+                    "phase_id": f"{base}_commercial_machine_evidence_player_visible_completion",
+                    "order": 1,
+                    "title": "Commercial Machine Evidence And Player Visible Completion",
+                    "task_card_ids": [
+                        f"{base}_product_depth_chinese_ui",
+                        f"{base}_build_browser_machine_evidence",
+                        f"{base}_human_review_packet_gate",
                     ],
                 }
             ],
@@ -1455,6 +1592,11 @@ def _is_product_body_runtime_phase(value: str) -> bool:
 def _is_commercial_core_content_phase(value: str) -> bool:
     normalized = str(value or "").lower()
     return "commercial game core content" in normalized and "implementation" in normalized
+
+
+def _is_commercial_machine_evidence_phase(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return "commercial machine evidence" in normalized and "player visible completion" in normalized
 
 
 def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str | None:

@@ -1613,7 +1613,7 @@ def test_collect_project_runtime_evidence_refreshes_contracts_from_task_card_art
     evidence_dir = project_dir / "workflow_runtime_evidence"
     evidence_dir.mkdir(parents=True)
     (project_dir / "workflow_commercial_feature_evidence.json").write_text(
-        json.dumps({"commercial_feature_coverage": {"chineseUiPanelsVisible": True}}),
+        json.dumps({"commercial_feature_coverage": {}}),
         encoding="utf-8",
     )
     (evidence_dir / "gameplay_semantic_evidence.raw.json").write_text(
@@ -1676,6 +1676,21 @@ def test_collect_project_runtime_evidence_refreshes_contracts_from_task_card_art
         ),
         encoding="utf-8",
     )
+    (evidence_dir / "chinese_ui_panels_evidence.json").write_text(
+        json.dumps(
+            {
+                "chinese_ui_panels": [
+                    {"panel_id": "hud_panel", "chinese_name": "HUD", "chinese_labels": {"score": "分数"}},
+                    {"panel_id": "shop_panel", "chinese_name": "商店", "chinese_labels": {"buy": "购买"}},
+                    {"panel_id": "gallery_panel", "chinese_name": "画廊", "chinese_labels": {"skin": "皮肤"}},
+                    {"panel_id": "settings_panel", "chinese_name": "设置", "chinese_labels": {"music": "音乐"}},
+                    {"panel_id": "failure_revive_panel", "chinese_name": "复活", "chinese_labels": {"revive": "复活"}},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (evidence_dir / "audio_feedback_polish_evidence.json").write_text(
         json.dumps(
             {
@@ -1708,6 +1723,7 @@ def test_collect_project_runtime_evidence_refreshes_contracts_from_task_card_art
     browser_ledger = json.loads((evidence_dir / "browser_playtest_ledger.json").read_text(encoding="utf-8"))
     assert result["commercial_feature_coverage"]["audioPlaybackVerified"] is True
     assert result["commercial_feature_coverage"]["shopOwnershipStates"] is True
+    assert result["commercial_feature_coverage"]["chineseUiPanelsVisible"] is True
     assert product_depth["go"] is True
     assert product_body["go"] is True
     assert product_body["source"]["baseline_only"] is False

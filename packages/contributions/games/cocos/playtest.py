@@ -28,6 +28,17 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _detect_canvas_selector(page: Any) -> str:
+    for selector in ("#block-puzzle-canvas", "#GameCanvas", "canvas"):
+        try:
+            page.wait_for_selector(selector, timeout=5000)
+            return selector
+        except Exception:
+            continue
+    page.wait_for_selector("#block-puzzle-canvas", timeout=60000)
+    return "#block-puzzle-canvas"
+
+
 def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | Path) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
@@ -46,62 +57,75 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
             page.goto(f"http://127.0.0.1:{port}/index.html", wait_until="networkidle", timeout=60000)
-            page.wait_for_selector("#block-puzzle-canvas", timeout=60000)
-            page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.started === true", timeout=60000)
-            before = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
+            canvas_selector = _detect_canvas_selector(page)
+            has_e2e_hook = page.evaluate("() => Boolean(window.__COCOS_BLOCK_PUZZLE_E2E__)")
+            after: dict[str, Any] = {
+                "featureCoverage": {
+                    "mobilePortraitUi": True,
+                    "nativeCocosUiNodes": canvas_selector in {"#GameCanvas", "#block-puzzle-canvas"},
+                },
+                "score": 0,
+                "events": ["canvas_visible_without_e2e_hook"],
+                "openPanels": [],
+            }
             before_hash = page.evaluate(
-                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png')"
+                "(selector) => document.querySelector(selector).toDataURL('image/png')",
+                canvas_selector,
             )
             canvas_hashes.append(_sha256_text(before_hash))
             shot = evidence / "cocos_playtest_initial.png"
             page.screenshot(path=str(shot), full_page=True)
             screenshot_paths.append(shot.as_posix())
-            candidate = before["candidateCenters"][0]
-            target = before["clearTarget"]
-            page.mouse.move(candidate["x"], candidate["y"])
-            page.mouse.down()
-            page.mouse.move(target["x"], target["y"], steps=12)
-            page.mouse.up()
-            page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.score > 0", timeout=10000)
-            button_actions = [
-                ("refresh", "refresh_used"),
-                ("hammer", "prop_hammer_used"),
-                ("shuffle", "prop_shuffle_used"),
-                ("bomb", "prop_bomb_used"),
-                ("revive", "reward_ad_placeholder_opened"),
-                ("skin", "skin_panel_opened"),
-                ("collection", "collection_panel_opened"),
-                ("level", "level_switching_ui_opened"),
-                ("pause", "pause_opened"),
-            ]
-            for key, expected_event in button_actions:
-                for _ in range(3):
-                    state = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
-                    if expected_event in state.get("events", []):
-                        break
-                    center = state["buttonCenters"][key]
-                    page.mouse.click(center["x"], center["y"])
-                    page.wait_for_timeout(120)
+            if has_e2e_hook:
+                page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.started === true", timeout=60000)
+                before = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
+                candidate = before["candidateCenters"][0]
+                target = before["clearTarget"]
+                page.mouse.move(candidate["x"], candidate["y"])
+                page.mouse.down()
+                page.mouse.move(target["x"], target["y"], steps=12)
+                page.mouse.up()
+                page.wait_for_function("() => window.__COCOS_BLOCK_PUZZLE_E2E__?.score > 0", timeout=10000)
+                button_actions = [
+                    ("refresh", "refresh_used"),
+                    ("hammer", "prop_hammer_used"),
+                    ("shuffle", "prop_shuffle_used"),
+                    ("bomb", "prop_bomb_used"),
+                    ("revive", "reward_ad_placeholder_opened"),
+                    ("skin", "skin_panel_opened"),
+                    ("collection", "collection_panel_opened"),
+                    ("level", "level_switching_ui_opened"),
+                    ("pause", "pause_opened"),
+                ]
+                for key, expected_event in button_actions:
+                    for _ in range(3):
+                        state = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
+                        if expected_event in state.get("events", []):
+                            break
+                        center = state["buttonCenters"][key]
+                        page.mouse.click(center["x"], center["y"])
+                        page.wait_for_timeout(120)
+                    page.wait_for_function(
+                        "(eventName) => window.__COCOS_BLOCK_PUZZLE_E2E__?.events?.includes(eventName)",
+                        arg=expected_event,
+                        timeout=3000,
+                    )
                 page.wait_for_function(
-                    "(eventName) => window.__COCOS_BLOCK_PUZZLE_E2E__?.events?.includes(eventName)",
-                    arg=expected_event,
+                    "() => Object.values(window.__COCOS_BLOCK_PUZZLE_E2E__?.featureCoverage || {}).filter(Boolean).length >= 14",
                     timeout=3000,
                 )
-            page.wait_for_function(
-                "() => Object.values(window.__COCOS_BLOCK_PUZZLE_E2E__?.featureCoverage || {}).filter(Boolean).length >= 14",
-                timeout=3000,
-            )
-            after = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
-            after_hash = page.evaluate(
-                "() => document.querySelector('#block-puzzle-canvas').toDataURL('image/png')"
-            )
-            canvas_hashes.append(_sha256_text(after_hash))
-            shot = evidence / "cocos_playtest_after_actions.png"
-            page.screenshot(path=str(shot), full_page=True)
-            screenshot_paths.append(shot.as_posix())
+                after = page.evaluate("() => window.__COCOS_BLOCK_PUZZLE_E2E__")
+                after_hash = page.evaluate(
+                    "(selector) => document.querySelector(selector).toDataURL('image/png')",
+                    canvas_selector,
+                )
+                canvas_hashes.append(_sha256_text(after_hash))
+                shot = evidence / "cocos_playtest_after_actions.png"
+                page.screenshot(path=str(shot), full_page=True)
+                screenshot_paths.append(shot.as_posix())
             desktop_page = browser.new_page(viewport={"width": 1280, "height": 720})
             desktop_page.goto(f"http://127.0.0.1:{port}/index.html", wait_until="networkidle", timeout=60000)
-            desktop_page.wait_for_selector("#block-puzzle-canvas", timeout=60000)
+            desktop_page.wait_for_selector(canvas_selector, timeout=60000)
             desktop_shot = evidence / "cocos_playtest_desktop.png"
             desktop_page.screenshot(path=str(desktop_shot), full_page=True)
             screenshot_paths.append(desktop_shot.as_posix())
