@@ -1,19 +1,21 @@
 # Post-M109 Long-Running Development Plan
 
 > Source basis: `codex_guidance_universalworkflow_refactor.md` and `universalworkflow_deep_evaluation_report.md`.
-> Current baseline: M109 accepted; latest strict commercial build is machine-ready and waiting for human player review.
+> Current baseline: M109 accepted; the latest user review rejected the launched commercial build as not playable, so a commercial playability repair loop is active.
 > Scope: repair the workflow truth chain, commercial-game final gate, same-project task-card execution, and product-body evidence path without auto-creating M110 task cards.
 
 ## Current Truth
 
-- `machine_evidence_go=true`
+2026-05-03 update: the user launched the current build and returned a real product-level `NO-GO` ("not playable"). That review supersedes the prior optimistic machine-ready handoff for product acceptance. The current repair loop may produce agent QA and browser evidence, but it must not convert unattended validation into human acceptance.
+
+- `agent_playtest_after_repair_go=true` for the current browser automation pass only
 - `commercial_game_development_readiness_go=true` for development-start control-plane readiness only
 - `human_player_review_go=false`
 - `commercial_playable_go=false`
-- The latest unattended commercial pipeline status is `AWAITING_HUMAN_REVIEW`; the only remaining blocker is real human player acceptance.
-- The latest reviewed build path was correct; the original failure was product-level, and the current repair loop has now supplied asset graph, browser interaction, audio/BGM/SFX/volume, runtime model, product-body, product-depth, build, and playtest machine evidence.
+- The latest human/user review status is `NO-GO`; the only valid next acceptance state is a new explicit human acceptance after repair.
+- The launched build path was correct; the failure was product-level. The first repair slice replaces the proof-like browser bridge with a player-visible 10x10 runtime, but this remains below final commercial playable acceptance until explicitly accepted by a human reviewer.
 - Runtime hooks, canvas presence, feature flags, browser events, screenshots, scaffold/build evidence, and Cocos bridge evidence cannot prove commercial playable completion.
-- The current success criterion is an honest machine-ready handoff to human review, not unattended commercial GO.
+- The current success criterion is an honest repair-and-review loop: playable runtime evidence, adversarial visual QA, and then explicit human acceptance.
 
 ## Development Discipline
 
@@ -30,6 +32,12 @@
 Current completed slices have hardened the false-positive gates, created a baseline-only Cocos product-body shell, added an independent `commercial_game_development_readiness_v1` evidence口径, completed real product-body/runtime, product-depth, machine-evidence, asset, browser, and audio-runtime proof phases, and preserved `commercial_playable_go=false`. The latest active phase `Commercial Asset And Browser Runtime Proof Implementation` materialized exactly three current-phase DB task cards under run `commercial_asset_browser_runtime_20260503`; all three completed through `human_visible_cli_enforced` execution, and the final commercial gate now stops at `AWAITING_HUMAN_REVIEW`.
 
 Phase sequence:
+
+0. Commercial playability repair loop.
+   - Treat the user rejection of the launched build as a real `NO-GO`.
+   - Replace proof-only browser/runtime surfaces with a player-visible 10x10 block puzzle runtime that can be inspected and played through boot, placement, line clear, candidate refresh, game-over/revive, props, shop, gallery, level, pause, and audio controls.
+   - Use Playwright screenshots and interaction scripts as agent QA evidence only; they cannot set `human_player_review_go=true`.
+   - Continue repair until the game is actually usable and visually acceptable, then request/record explicit human acceptance instead of self-approving.
 
 1. Active phase preflight and task-card materialization.
    - Run `plan-graph`, `policy-preview`, and `goal-packet` for the new phase.

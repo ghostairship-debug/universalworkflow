@@ -1,5 +1,20 @@
 # 当前开发工作流
 
+## 2026-05-03 Human Review NO-GO: Commercial Playability Repair Loop
+
+The current launched build was rejected by the user as not genuinely playable. This supersedes the previous optimistic machine-ready handoff for product acceptance.
+
+- Reviewed build: `state/pipeline_runs/commercial_game_core_content_20260503/cocos_project/build/web-mobile/index.html`
+- Local review URL used in this repair loop: `http://127.0.0.1:8765/index.html`
+- Human/user review result: `NO-GO`
+- Current truth remains: `human_player_review_go=false`, `commercial_playable_go=false`
+- The prior `machine_evidence_go=true` claim is treated as insufficient for product acceptance because the old browser bridge was still proof-like UI, not a polished playable game.
+- Active repair: `Commercial Playability Repair Loop`.
+- First repair slice replaced the proof-only `workflow-e2e-runtime-bridge.js` with a model-backed, player-visible 10x10 block puzzle runtime generated from `packages/contributions/games/cocos/browser_runtime_bridge.js`.
+- Agent QA evidence now covers boot, mobile/desktop screenshots, drag placement, line clear, score/combo, candidate refresh, hammer/shuffle/bomb/revive, skin shop, gallery, level panel, pause modal, audio toggle proof, and empty console/page errors.
+- Agent QA evidence paths: `output/playwright/current-game-before-mobile.png`, `output/playwright/current-game-after-v3-mobile.png`, `output/playwright/current_game_after_v3_playtest/cocos_playtest_result.json`.
+- This agent QA pass is not human acceptance. The final commercial gate must remain below commercial playable GO until an explicit human acceptance replaces this NO-GO.
+
 ## 2026-05-03 Closeout: Commercial Asset And Browser Runtime Proof Implementation
 
 `Commercial Asset And Browser Runtime Proof Implementation` 已按 active-phase-only 原则执行到机器证据完成后的 `AWAITING_HUMAN_REVIEW`；本阶段没有进入 M110，没有生成未来 phase task cards，也没有把无人值守结果转换为 `commercial_playable_go=true`。

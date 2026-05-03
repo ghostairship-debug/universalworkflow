@@ -419,8 +419,12 @@ def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path
     evidence = json.loads((tmp_path / "workflow_runtime_evidence" / "browser_runtime_bridge_injection.json").read_text(encoding="utf-8"))
     assert "workflow-e2e-runtime-bridge.js" in index_html
     assert "__COCOS_BLOCK_PUZZLE_E2E__" in bridge_script
+    assert "__COMMERCIAL_BLOCK_PUZZLE_RUNTIME__" in bridge_script
     assert "CommercialCoreLoopRuntime.getSnapshot" in bridge_script
+    assert "placementResult" in bridge_script
+    assert "lineClearResult" in bridge_script
     assert "commercialPlayableGo: false" in bridge_script
+    assert "1010 Commercial Runtime Proof" not in bridge_script
     assert evidence["runtime_source_policy"] == "model_state_view_only_not_dom_event_substitute"
 
 

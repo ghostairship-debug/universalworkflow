@@ -15,6 +15,9 @@
 
 当前商业游戏结论是 `NO-GO`。
 
+- 2026-05-03 additional user review: the launched `commercial_game_core_content_20260503` build was rejected as "not playable".
+- Current repair loop: replace the proof-like runtime bridge with a player-visible 10x10 block puzzle runtime, then continue agent QA and repair without self-approving human acceptance.
+- Current acceptance truth remains `human_player_review_go=false` and `commercial_playable_go=false`.
 - 人审结果：`state/trusted_cocos_build_browser_audio_runtime_20260502/human_review_result.json`
 - 最终管线：`pipeline_ecf26665254e`
 - 拉起 URL 指向当前 pipeline 的 `build/web-mobile`，不是路径错误。

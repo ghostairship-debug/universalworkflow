@@ -41,6 +41,7 @@
 - 2026-05-03 hardening completes the pre-commercial control-plane repair: high-risk commercial cards cannot pass headlessly, single-agent roles cannot omit or rewrite input requirements, ordinary compile/recompile cannot overwrite active commercial DB task cards, and runtime semantic/product-body evidence must come from model transitions and Cocos component bindings.
 - 2026-05-03 machine-evidence narrowing completed `Commercial Machine Evidence And Player Visible Completion` with exactly three visible-CLI DB task cards. Product-body, gameplay semantic, product-depth, and Cocos build evidence became GO.
 - 2026-05-03 asset/browser/audio proof completed `Commercial Asset And Browser Runtime Proof Implementation` with exactly three visible-CLI DB task cards. Non-placeholder asset graph, browser interaction playtest, and browser audio/BGM/SFX/volume runtime evidence are now GO; the only remaining blocker is `awaiting_human_player_review`.
+- 2026-05-03 user review then rejected the launched build as not genuinely playable. Current truth is again product-level `NO-GO` for acceptance: `human_player_review_go=false` and `commercial_playable_go=false`. The active repair loop replaces the proof-only browser bridge with `packages/contributions/games/cocos/browser_runtime_bridge.js`, a player-visible 10x10 runtime that is being verified with Playwright screenshots and interaction evidence, but agent QA is not human acceptance.
 
 ## 当前状态：M109 Pipeline / Technical-Smoke Baseline
 
