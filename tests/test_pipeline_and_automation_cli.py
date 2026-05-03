@@ -38,6 +38,27 @@ def _visible_cli_session(tmp_path: Path, task_card_id: str = "tc_visible") -> di
     }
 
 
+def _passing_ai_surrogate_evidence() -> dict[str, object]:
+    return {
+        "schema_version": "universal_ai_surrogate_playtest_quality_v1",
+        "ai_surrogate_playtest_go": True,
+        "blockers": [],
+        "quality_score": 0.92,
+        "coverage": {
+            "core_loop": True,
+            "input_responsiveness": True,
+            "ui_readability": True,
+            "audio_feedback": True,
+            "progression": True,
+        },
+        "execution": {
+            "packet_id": "ai-playtest-packet-001",
+            "fresh_execution": True,
+            "device_profiles": ["desktop_1080p", "mobile_portrait"],
+        },
+    }
+
+
 def _seed_child_workflow_state(
     db_path: Path,
     *,
@@ -699,6 +720,7 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
                 },
                 "gameplay_semantic_evidence": semantic_evidence,
                 "product_body_evidence": product_body_evidence,
+                "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
             },
             "commercial_game_assets": {
                 "commercial_assets_go": True,
@@ -806,6 +828,7 @@ def test_commercial_gate_treats_machine_ready_non_playable_as_human_review() -> 
             "scene_nodes": ["Canvas", "Board", "CandidateTray"],
             "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
         },
+        "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
     }
     payload = pipeline_registry.execute_contribution_validation(
         "commercial_game_production_go_no_go",

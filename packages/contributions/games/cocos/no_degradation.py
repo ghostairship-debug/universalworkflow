@@ -122,6 +122,8 @@ def evaluate_no_degradation_contract(
     product_feature_blockers = list(product_depth_evidence["blockers"])
     build_exit_go = bool(build_ledger["go"])
     browser_runtime_go = bool(browser_playtest_ledger["go"])
+    require_ai_surrogate_playtest = bool(require_commercial and not upstream_implementation_failed)
+    ai_surrogate_playtest_evidence = _ai_surrogate_playtest_evidence(shared_outputs, production_payload)
     final_gate_evidence = build_commercial_final_gate_evidence(
         technical_smoke_go=bool(production_payload.get("technical_smoke_go")),
         production_scaffold_go=bool(production_payload.get("production_scaffold_go")),
@@ -140,6 +142,8 @@ def evaluate_no_degradation_contract(
         human_player_review_go=human_player_review_go,
         gameplay_semantic_evidence=gameplay_semantic_evidence,
         product_body_evidence=product_body_evidence,
+        require_ai_surrogate_playtest=require_ai_surrogate_playtest,
+        ai_surrogate_playtest_evidence=ai_surrogate_playtest_evidence,
     )
 
     findings: list[dict[str, Any]] = []
@@ -163,6 +167,11 @@ def evaluate_no_degradation_contract(
                 findings.append({"finding": blocker, "severity": "high"})
             for blocker in product_body_evidence["blockers"]:
                 findings.append({"finding": blocker, "severity": "high"})
+            if require_ai_surrogate_playtest:
+                ai_contract = _dict_from(final_gate_evidence.get("contracts")).get("ai_surrogate_playtest_evidence")
+                if isinstance(ai_contract, dict) and not bool(ai_contract.get("ai_surrogate_playtest_go")):
+                    for blocker in ai_contract.get("blockers") or ["ai_surrogate_playtest_missing"]:
+                        findings.append({"finding": str(blocker), "severity": "high"})
         for blocker in asset_graph["blockers"]:
             findings.append({"finding": blocker, "severity": "high"})
     if require_cocos_ecosystem and not ecosystem_go:
@@ -248,6 +257,22 @@ def _live_role_provider_proof_go(shared_outputs: dict[str, Any]) -> bool:
 def _human_player_review_go(shared_outputs: dict[str, Any], production: dict[str, Any]) -> bool:
     manual = _dict_from(production.get("manual_player_evidence")) or _dict_from(shared_outputs.get("manual_player_evidence"))
     return bool(manual.get("accepted_by_human") and manual.get("reviewer") and manual.get("evidence_path"))
+
+
+def _ai_surrogate_playtest_evidence(shared_outputs: dict[str, Any], production: dict[str, Any]) -> dict[str, Any]:
+    candidates = [
+        production.get("ai_surrogate_playtest_evidence"),
+        production.get("ai_playtest_quality_report"),
+        _dict_from(production.get("ai_playtest_execution_report")).get("quality"),
+        shared_outputs.get("ai_surrogate_playtest_evidence"),
+        shared_outputs.get("ai_playtest_quality_report"),
+        _dict_from(shared_outputs.get("ai_playtest_execution_report")).get("quality"),
+    ]
+    for candidate in candidates:
+        payload = _dict_from(candidate)
+        if payload:
+            return payload
+    return {}
 
 
 def _append_if_false(findings: list[dict[str, Any]], passed: bool, finding: str) -> None:

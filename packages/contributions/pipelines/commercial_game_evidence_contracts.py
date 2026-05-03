@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from packages.contributions.games.ai_playtest_quality import AI_PLAYTEST_QUALITY_SCHEMA, evaluate_ai_surrogate_playtest
 from packages.contributions.games.cocos.e2e import COCOS_BUILD_SUCCESS_EXIT_CODES
 
 
@@ -375,12 +376,15 @@ def build_commercial_final_gate_evidence(
     human_player_review_go: bool,
     gameplay_semantic_evidence: dict[str, Any] | None = None,
     product_body_evidence: dict[str, Any] | None = None,
+    require_ai_surrogate_playtest: bool = False,
+    ai_surrogate_playtest_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     gameplay_semantic_contract = gameplay_semantic_evidence or build_gameplay_semantic_evidence(None)
     product_body_contract = product_body_evidence or build_product_body_evidence(
         None,
         gameplay_semantic_evidence=gameplay_semantic_contract,
     )
+    ai_surrogate_contract = _ai_surrogate_contract(ai_surrogate_playtest_evidence)
     machine_blockers: list[str] = []
     if require_commercial:
         for contract in [
@@ -395,6 +399,9 @@ def build_commercial_final_gate_evidence(
                 machine_blockers.extend(_strings(contract.get("blockers")))
             if _dict_from(contract.get("source")).get("baseline_only"):
                 machine_blockers.append("baseline_only_cannot_pass_commercial_final_gate")
+        if require_ai_surrogate_playtest:
+            if not ai_surrogate_contract.get("ai_surrogate_playtest_go"):
+                machine_blockers.extend(_strings(ai_surrogate_contract.get("blockers")) or ["ai_surrogate_playtest_missing"])
         if not product_feature_depth_go:
             machine_blockers.extend(product_feature_blockers or ["product_feature_depth_missing"])
     if require_cocos_ecosystem and not cocos_bridge_evidence.get("go"):
@@ -443,6 +450,7 @@ def build_commercial_final_gate_evidence(
             "browser_playtest_ledger": browser_playtest_ledger,
             "gameplay_semantic_evidence": gameplay_semantic_contract,
             "product_body_evidence": product_body_contract,
+            "ai_surrogate_playtest_evidence": ai_surrogate_contract,
         },
     }
 
@@ -565,6 +573,21 @@ def _contract(*, schema_version: str, status: str, go: bool, blockers: list[str]
         "blockers": _dedupe(blockers),
         "source": source,
     }
+
+
+def _ai_surrogate_contract(evidence: dict[str, Any] | None) -> dict[str, Any]:
+    payload = _dict_from(evidence)
+    if not payload:
+        return {
+            "schema_version": AI_PLAYTEST_QUALITY_SCHEMA,
+            "status": "blocked",
+            "ai_surrogate_playtest_go": False,
+            "production_vertical_slice_go": False,
+            "blockers": ["ai_surrogate_playtest_missing"],
+        }
+    if payload.get("schema_version") == AI_PLAYTEST_QUALITY_SCHEMA:
+        return payload
+    return evaluate_ai_surrogate_playtest(payload)
 
 
 def _blocked_downstream_stages(

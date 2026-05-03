@@ -1,6 +1,6 @@
 # Post-M109 Long-Running Development Plan
 
-> Source basis: `codex_guidance_universalworkflow_refactor.md` and `universalworkflow_deep_evaluation_report.md`.
+> Source basis: archived inputs `docs/archive/root_legacy_2026_05_03/codex_guidance_universalworkflow_refactor.md` and `docs/archive/root_legacy_2026_05_03/universalworkflow_deep_evaluation_report.md`.
 > Current baseline: M109 accepted; the latest user review rejected the launched commercial build as not playable, so a commercial playability repair loop is active.
 > Scope: repair the workflow truth chain, commercial-game final gate, same-project task-card execution, and product-body evidence path without auto-creating M110 task cards.
 

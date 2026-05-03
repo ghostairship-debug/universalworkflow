@@ -22,6 +22,50 @@ from packages.contributions.pipelines.commercial_game_evidence_contracts import 
 )
 
 
+def _passing_ai_surrogate_evidence() -> dict:
+    return {
+        "workflow_generated_product_go": True,
+        "core_loop_playable": True,
+        "first_session_flow_go": True,
+        "requirement_fidelity_go": True,
+        "ai_playtest_modes_run": [
+            "scripted_bot",
+            "exploratory_bot",
+            "persona_agent",
+            "vision_reviewer",
+            "design_red_team",
+            "performance_agent",
+            "device_matrix_agent",
+            "regression_agent",
+        ],
+        "area_scores": {
+            "requirement_fidelity": 12,
+            "core_gameplay_correctness": 14,
+            "player_experience": 12,
+            "ui_ux_polish": 10,
+            "art_direction": 10,
+            "audio": 8,
+            "input_feel": 10,
+            "content_depth": 8,
+            "performance": 8,
+            "robustness": 8,
+        },
+        "findings": [],
+        "screenshots": ["first.png"],
+        "replay_artifacts": ["replay.jsonl"],
+        "engine_native_product_body": {
+            "engine": "cocos",
+            "product_body_mode": "engine_native",
+            "required_components": ["GameModel"],
+            "component_bindings": ["GameModel"],
+            "scene_or_prefab_bindings": ["main.scene"],
+            "semantic_trace_source": "model_transition",
+            "runtime_state_authoritative": True,
+            "build_launch_evidence": {"go": True},
+        },
+    }
+
+
 def test_build_ledger_rejects_missing_artifact_and_build_output() -> None:
     ledger = build_build_ledger({"creator_exit_code": 0, "fatal_marker_detected": False})
 
@@ -226,6 +270,61 @@ def test_final_gate_reports_upstream_short_circuit_without_product_noise() -> No
     ]
 
 
+def test_final_gate_can_require_ai_surrogate_playtest_before_human_review() -> None:
+    complete = {"go": True, "blockers": [], "status": "completed", "schema_version": "test", "source": {}}
+
+    missing_ai = build_commercial_final_gate_evidence(
+        technical_smoke_go=True,
+        production_scaffold_go=False,
+        require_commercial=True,
+        require_cocos_ecosystem=False,
+        require_live_agent_roles=False,
+        require_human_player_review=True,
+        asset_graph=complete,
+        cocos_bridge_evidence=complete,
+        same_project_patch_ledger=complete,
+        build_ledger=complete,
+        browser_playtest_ledger=complete,
+        product_feature_depth_go=True,
+        product_feature_blockers=[],
+        live_role_provider_proof_go=True,
+        human_player_review_go=False,
+        gameplay_semantic_evidence=complete,
+        product_body_evidence=complete,
+        require_ai_surrogate_playtest=True,
+    )
+
+    assert missing_ai["go_no_go"] == "NO-GO"
+    assert "ai_surrogate_playtest_missing" in missing_ai["machine_blockers"]
+
+    passing_ai = build_commercial_final_gate_evidence(
+        technical_smoke_go=True,
+        production_scaffold_go=False,
+        require_commercial=True,
+        require_cocos_ecosystem=False,
+        require_live_agent_roles=False,
+        require_human_player_review=True,
+        asset_graph=complete,
+        cocos_bridge_evidence=complete,
+        same_project_patch_ledger=complete,
+        build_ledger=complete,
+        browser_playtest_ledger=complete,
+        product_feature_depth_go=True,
+        product_feature_blockers=[],
+        live_role_provider_proof_go=True,
+        human_player_review_go=False,
+        gameplay_semantic_evidence=complete,
+        product_body_evidence=complete,
+        require_ai_surrogate_playtest=True,
+        ai_surrogate_playtest_evidence=_passing_ai_surrogate_evidence(),
+    )
+
+    assert passing_ai["machine_evidence_go"] is True
+    assert passing_ai["go_no_go"] == "AWAITING_HUMAN_REVIEW"
+    assert passing_ai["contracts"]["ai_surrogate_playtest_evidence"]["ai_surrogate_playtest_go"] is True
+    assert passing_ai["commercial_playable_go"] is False
+
+
 def test_final_gate_stops_at_awaiting_human_review_when_machine_evidence_is_complete() -> None:
     complete = {"go": True, "blockers": [], "status": "completed", "schema_version": "test", "source": {}}
     evidence = build_commercial_final_gate_evidence(
@@ -330,6 +429,7 @@ def test_no_degradation_only_requires_live_roles_when_flagged() -> None:
             "scene_nodes": ["Canvas", "Board", "CandidateTray"],
             "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
         },
+        "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
     }
     no_degradation = evaluate_no_degradation_contract(
         shared_outputs={

@@ -11,6 +11,8 @@ from packages.core_domain.multimodal_route_plan import build_multimodal_route_pl
 from packages.core_domain.repositories import RunRepository, TaskRepository
 from packages.core_domain.task_card_store import export_task_cards_markdown, task_card_quality_report
 from packages.core_domain.unified_project_brief import build_unified_project_brief
+from packages.contributions.games.game_design_ir import build_game_design_spec
+from packages.contributions.games.game_task_card_generation import build_game_production_task_cards_from_design_spec
 
 
 SOURCE_MATERIAL_POLICY = "no_delete_no_merge_no_rename_only_augment"
@@ -493,6 +495,7 @@ def _structured_output_for_role(
             "stage_internal_phase_graph": _stage_internal_phase_graph(
                 pipeline_id or stage.stage_id,
                 pipeline_goal=pipeline_goal or stage.goal,
+                brief_manifest=brief_manifest,
             ),
             "task_card_candidates": _task_card_candidate_payloads(
                 pipeline_id=pipeline_id or stage.stage_id,
@@ -739,6 +742,12 @@ def _task_card_candidate_payloads(
     brief_manifest: dict[str, Any],
 ) -> list[dict[str, Any]]:
     base = _safe_id(pipeline_id)
+    if _is_universal_game_quality_phase(pipeline_goal):
+        return _universal_game_quality_task_card_candidates(
+            base=base,
+            pipeline_goal=pipeline_goal,
+            brief_manifest=brief_manifest,
+        )
     if _is_product_body_runtime_phase(pipeline_goal):
         return _product_body_runtime_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     if _is_commercial_core_content_phase(pipeline_goal):
@@ -959,6 +968,98 @@ def _task_card_candidate_payloads(
     ]
     candidates = _attach_requirement_coverage(candidates, brief_manifest)
     return _attach_stage_phase_metadata(candidates, base)
+
+
+def _universal_game_quality_task_card_candidates(
+    *,
+    base: str,
+    pipeline_goal: str,
+    brief_manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    active_phase_name = "Universal Game Production Quality And AI Playtest Architecture"
+    spec = _game_design_spec_from_brief_manifest(brief_manifest)
+    cards = build_game_production_task_cards_from_design_spec(
+        run_id=base,
+        phase_name=active_phase_name,
+        spec=spec,
+        status="active",
+    )
+    candidates = [_candidate_from_task_card(card) for card in cards]
+    for index, candidate in enumerate(candidates, start=1):
+        metadata = dict(candidate.get("metadata") or {})
+        metadata.update(
+            {
+                "active_phase_name": active_phase_name,
+                "stage_phase": "universal_game_quality_ai_playtest",
+                "phase_order": 1,
+                "depends_on_task_card_ids": [candidates[index - 2]["task_card_id"]] if index > 1 else [],
+                "game_design_spec_schema": spec.get("schema_version"),
+                "pipeline_goal": pipeline_goal,
+            }
+        )
+        candidate["metadata"] = metadata
+    return _attach_requirement_coverage(candidates, brief_manifest)
+
+
+def _game_design_spec_from_brief_manifest(brief_manifest: dict[str, Any]) -> dict[str, Any]:
+    requirements = _load_requirement_entries(brief_manifest)
+    if requirements:
+        requirement_texts = [
+            str(item.get("normalized_requirement") or item.get("original_quote") or item.get("req_id"))
+            for item in requirements
+        ]
+        spec = build_game_design_spec(
+            title="Commercial Game Brief",
+            genre="brief_defined",
+            sources=[
+                {
+                    "source_id": "requirement_matrix",
+                    "original_path": str(brief_manifest.get("requirement_matrix_path") or ""),
+                    "requirements": requirement_texts,
+                    "raw_text": "\n".join(requirement_texts),
+                }
+            ],
+        ).to_dict()
+        original_ids = _requirement_ids(requirements)
+        for item, original in zip(spec.get("requirements") or [], requirements):
+            item["req_id"] = str(original.get("req_id"))
+            item["source_id"] = str(original.get("source_id") or item.get("source_id") or "requirement_matrix")
+            item["original_text"] = str(original.get("original_quote") or item.get("original_text") or "")
+            item["normalized_requirement"] = str(
+                original.get("normalized_requirement") or item.get("normalized_requirement") or ""
+            )
+        spec["input_requirement_ids"] = original_ids
+        spec["preserved_requirement_ids"] = list(original_ids)
+        spec["omitted_requirement_ids"] = []
+        spec["requirement_count"] = len(original_ids)
+        return spec
+    brief_text = _read_brief_text(brief_manifest, limit=20_000)
+    return build_game_design_spec(
+        title="Commercial Game Brief",
+        genre="brief_defined",
+        sources=[{"source_id": "project_brief", "raw_text": brief_text or "Game brief missing source text."}],
+    ).to_dict()
+
+
+def _candidate_from_task_card(card: TaskCard) -> dict[str, Any]:
+    return {
+        "task_card_id": card.task_card_id,
+        "title": card.title,
+        "description": card.description,
+        "goal": card.goal or card.description,
+        "write_set": list(card.write_set),
+        "read_set": list(card.read_set),
+        "acceptance_criteria": list(card.acceptance_criteria),
+        "test_commands": list(card.test_commands),
+        "expected_artifacts": list(card.expected_artifacts),
+        "evidence_requirements": list(card.evidence_requirements),
+        "blocking_conditions": list(card.blocking_conditions),
+        "model_guidance": list(card.model_guidance),
+        "risk_level": card.risk_level,
+        "provider_lane": card.provider_lane or "codex_or_configured_strong_model",
+        "execution_mode": card.execution_mode or "same_project_patch",
+        "metadata": dict(card.metadata or {}),
+    }
 
 
 def _product_body_runtime_task_card_candidates(
@@ -1428,8 +1529,36 @@ def _commercial_asset_browser_runtime_task_card_candidates(
     return _attach_requirement_coverage(candidates, brief_manifest)
 
 
-def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") -> dict[str, Any]:
+def _stage_internal_phase_graph(
+    pipeline_id: str,
+    *,
+    pipeline_goal: str = "",
+    brief_manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     base = _safe_id(pipeline_id)
+    if _is_universal_game_quality_phase(pipeline_goal):
+        spec = _game_design_spec_from_brief_manifest(brief_manifest or {})
+        cards = build_game_production_task_cards_from_design_spec(
+            run_id=base,
+            phase_name="Universal Game Production Quality And AI Playtest Architecture",
+            spec=spec,
+            status="active",
+        )
+        return {
+            "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+            "pipeline_id": pipeline_id,
+            "active_materialization_policy": "only_open_active_phase_task_cards",
+            "task_card_materialization": "dynamic_by_source_requirement_category",
+            "future_phase_task_cards_materialized": False,
+            "phases": [
+                {
+                    "phase_id": f"{base}_universal_game_production_quality_ai_playtest",
+                    "order": 1,
+                    "title": "Universal Game Production Quality And AI Playtest Architecture",
+                    "task_card_ids": [card.task_card_id for card in cards],
+                }
+            ],
+        }
     if _is_product_body_runtime_phase(pipeline_goal):
         return {
             "schema_version": "commercial_game_stage_internal_phase_graph_v1",
@@ -1732,6 +1861,11 @@ def _persist_task_card_candidates(
 
 def _safe_id(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in value).strip("_") or "pipeline"
+
+
+def _is_universal_game_quality_phase(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return "universal game production quality" in normalized and "ai playtest" in normalized
 
 
 def _is_product_body_runtime_phase(value: str) -> bool:

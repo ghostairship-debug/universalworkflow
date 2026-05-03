@@ -268,6 +268,55 @@ def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp
     assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
 
 
+def test_universal_game_quality_goal_materializes_current_phase_ai_playtest_cards(tmp_path: Path) -> None:
+    source = tmp_path / "brief.md"
+    source.write_text(
+        "# Runner Brief\n\nPlayer jumps over hazards, collects coins, sees Chinese UI, and hears BGM/SFX.\n",
+        encoding="utf-8",
+    )
+    result = _invoke(
+        tmp_path,
+        "pipeline",
+        "run",
+        "--template",
+        "commercial_game_production",
+        "--goal",
+        "Universal Game Production Quality And AI Playtest Architecture",
+        "--pipeline-id",
+        "universal_game_quality_phase",
+        "--pdf-path",
+        source.as_posix(),
+        "--execute-agent-roles",
+        "--evidence-dir",
+        (tmp_path / "pipeline_evidence").as_posix(),
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    task_card_output = payload["stage_results"][5]["output"]
+    phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
+    assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert [phase["title"] for phase in phase_graph["phases"]] == [
+        "Universal Game Production Quality And AI Playtest Architecture"
+    ]
+    assert "universal_game_quality_phase_runtime_state_core_loop" in phase_graph["phases"][0]["task_card_ids"]
+    assert "universal_game_quality_phase_ai_surrogate_playtest_quality_gate" in phase_graph["phases"][0]["task_card_ids"]
+    assert len(phase_graph["phases"][0]["task_card_ids"]) >= 3
+
+    cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("universal_game_quality_phase")
+    assert len(cards) >= 3
+    assert {card.phase_name for card in cards} == {"Universal Game Production Quality And AI Playtest Architecture"}
+    assert {card.task_card_id for card in cards} == set(phase_graph["phases"][0]["task_card_ids"])
+    assert all(card.metadata.get("generated_by") == "task_card_generation_agent" for card in cards)
+    assert all(card.metadata.get("game_design_spec_schema") == "universal_game_design_spec_v1" for card in cards)
+    assert all(card.metadata.get("source_material_policy") == "no_delete_no_merge_no_rename_only_augment" for card in cards)
+    assert all(card.metadata.get("requirement_coverage_required") is True for card in cards)
+    assert all(card.metadata.get("covered_requirement_ids") for card in cards)
+    assert all(card.metadata.get("omitted_requirement_ids") == [] for card in cards)
+    assert all(card.execution_mode == "same_project_patch" for card in cards)
+    assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
+
+
 def test_commercial_core_content_goal_materializes_exact_three_visible_cli_cards(tmp_path: Path) -> None:
     source = tmp_path / "brief.md"
     source.write_text(

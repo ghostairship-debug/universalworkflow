@@ -1,6 +1,6 @@
 # Commercial Game Production Next Development Sequence - 2026-04-29
 
-本文档吸收根目录 `universalworkflow_deep_evaluation_report.md` 和 2026-04-29 复核结论，给出下一轮开发顺序。它是 milestone / phase 级开发方案，不是 task-card 导出，不自动开启 M110，也不生成 M110 task cards。
+本文档吸收归档评估 `docs/archive/root_legacy_2026_05_03/universalworkflow_deep_evaluation_report.md` 和 2026-04-29 复核结论，给出下一轮开发顺序。它是 milestone / phase 级开发方案，不是 task-card 导出，不自动开启 M110，也不生成 M110 task cards。
 
 实际执行前必须先打开新的 active phase，并按现有 workflow 规则运行 `plan-graph`、`policy-preview`、`goal-packet`，然后只为 active phase 生成 DB-backed task cards。
 

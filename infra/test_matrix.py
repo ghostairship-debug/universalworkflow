@@ -50,6 +50,17 @@ SLOW_TARGETS = [
 COMMERCIAL_FAST_TARGETS = [
     "tests/test_active_truth_check.py",
     "tests/test_commercial_game_evidence_contracts.py",
+    "tests/test_game_design_ir.py",
+    "tests/test_engine_native_product_body_contract.py",
+    "tests/test_ai_playtest_quality_gate.py",
+    "tests/test_game_quality_scorecard.py",
+    "tests/test_ai_playtest_lab.py",
+    "tests/test_ai_playtest_execution_packet.py",
+    "tests/test_ai_playtest_runner.py",
+    "tests/test_game_repair_loop_from_ai_findings.py",
+    "tests/test_game_task_card_generation.py",
+    "tests/test_universal_game_generality_pilot.py",
+    "tests/test_universal_game_cli.py",
 ]
 
 COMMERCIAL_INTEGRATION_TARGETS = [
@@ -64,6 +75,17 @@ COMMERCIAL_COCOS_BROWSER_TARGETS = [
 COMMERCIAL_PROVIDER_CONTRACT_TARGETS = [
     "tests/test_capability_probe.py",
     "tests/test_capability_control_plane.py",
+]
+
+COMMERCIAL_FULL_TARGETS = [
+    *COMMERCIAL_FAST_TARGETS,
+    *COMMERCIAL_INTEGRATION_TARGETS,
+    *COMMERCIAL_PROVIDER_CONTRACT_TARGETS,
+]
+
+COMMERCIAL_FULL_WITH_BROWSER_TARGETS = [
+    *COMMERCIAL_FULL_TARGETS,
+    *COMMERCIAL_COCOS_BROWSER_TARGETS,
 ]
 
 PYTEST_TEMP_ROOT_NAME = ".pytest-tmp-workflow"
@@ -267,8 +289,12 @@ def select_matrix(suite: str, shard: str | None = None) -> MatrixSelection:
         )
     if suite == "commercial_provider_contract":
         return MatrixSelection(suite=suite, targets=_apply_shard(COMMERCIAL_PROVIDER_CONTRACT_TARGETS, parsed_shard))
+    if suite == "commercial_full":
+        return MatrixSelection(suite=suite, targets=_apply_shard(COMMERCIAL_FULL_TARGETS, parsed_shard))
+    if suite == "commercial_full_with_browser":
+        return MatrixSelection(suite=suite, targets=_apply_shard(COMMERCIAL_FULL_WITH_BROWSER_TARGETS, parsed_shard), run_slow=True)
     if suite == "full":
-        targets = [*CORE_TARGETS, *INTEGRATION_TARGETS]
+        targets = [*CORE_TARGETS, *INTEGRATION_TARGETS, *COMMERCIAL_FAST_TARGETS]
         return MatrixSelection(suite=suite, targets=_apply_shard(targets, parsed_shard))
     raise ValueError(f"unsupported suite: {suite}")
 
