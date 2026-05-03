@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from infra.scripts.validate_animation_artifact_integrity import validate_animation_artifact_integrity
+from packages.contributions.games.cocos.no_degradation import evaluate_no_degradation_contract
 from packages.contributions.pipelines.commercial_game_development_readiness import (
     build_commercial_game_development_readiness_evidence,
 )
@@ -252,6 +253,103 @@ def test_final_gate_stops_at_awaiting_human_review_when_machine_evidence_is_comp
     assert evidence["machine_evidence_go"] is True
     assert evidence["commercial_playable_go"] is False
     assert evidence["blockers"] == ["awaiting_human_player_review"]
+
+
+def test_no_degradation_only_requires_live_roles_when_flagged() -> None:
+    product_features = {
+        "eightDistinctLevelGoals": True,
+        "skinEquippedVisualChange": True,
+        "shopOwnershipStates": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+        "animationFeedbackVerified": True,
+        "mobilePortraitUi": True,
+    }
+    production = {
+        "technical_smoke_go": True,
+        "production_scaffold_go": True,
+        "commercial_playable_go": False,
+        "same_project_patch_ledger": {
+            "same_project_worker_patch_go": True,
+            "task_card_count": 1,
+            "completed_count": 1,
+            "entries": [
+                {
+                    "status": "completed",
+                    "worker_adapter": "codex",
+                    "receipt_id": "receipt",
+                    "child_run_id": "run",
+                    "child_attempt_id": "attempt",
+                    "changed_files": ["state/project/assets/scripts/Game.ts"],
+                    "mutation_result": {
+                        "changed_files": ["state/project/assets/scripts/Game.ts"],
+                        "final_test_status": "passed",
+                    },
+                    "attempts": [{"attempt_index": 1, "receipt_id": "receipt"}],
+                }
+            ],
+            "blockers": [],
+        },
+        "build": {
+            "creator_exit_code": 0,
+            "artifact_success": True,
+            "fatal_marker_detected": False,
+            "build_output_path": "build/web-mobile",
+        },
+        "playtest": {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png"],
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": product_features,
+        },
+        "commercial_feature_coverage": product_features,
+        "product_depth_evidence": {
+            "level_goals": [f"goal-{index}" for index in range(8)],
+            "feature_coverage": product_features,
+        },
+        "gameplay_semantic_evidence": {
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+        },
+        "product_body_evidence": {
+            "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+            "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
+        },
+    }
+    no_degradation = evaluate_no_degradation_contract(
+        shared_outputs={
+            "commercial_game_production": production,
+            "commercial_game_assets": {
+                "commercial_assets_go": True,
+                "asset_manifest": {"go_no_go": "GO", "manifest_path": "assets/manifest.json"},
+                "commercial_asset_blockers": [],
+            },
+        },
+        production=production,
+        require_commercial=True,
+        require_live_agent_roles=False,
+        require_human_player_review=True,
+    )
+
+    assert no_degradation["go_no_go"] == "AWAITING_HUMAN_REVIEW"
+    assert no_degradation["machine_evidence_go"] is True
+    assert "live_role_provider_proof_missing" not in no_degradation["blockers"]
+    assert no_degradation["blockers"] == ["awaiting_human_player_review"]
 
 
 def test_development_readiness_go_is_separate_from_commercial_playable_go() -> None:

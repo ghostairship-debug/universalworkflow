@@ -387,6 +387,43 @@ def test_cocos_build_copies_commercial_runtime_assets_for_web_playtest(tmp_path:
     assert (copied_root / "audio" / "sfx_clear.mp3").read_bytes() == b"mp3"
 
 
+def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path, monkeypatch) -> None:
+    build_output = tmp_path / "build" / "web-mobile"
+    (build_output / "assets").mkdir(parents=True)
+    (build_output / "index.html").write_text("<body><canvas id=\"GameCanvas\"></canvas></body>", encoding="utf-8")
+    runtime_sources = [
+        tmp_path / "assets" / "scripts" / "gameplay" / "CommercialCoreLoopRuntime.ts",
+        tmp_path / "assets" / "scripts" / "gameplay" / "CommercialGameplaySemanticBridge.ts",
+        tmp_path / "assets" / "scripts" / "AudioFeedbackController.ts",
+    ]
+    for source in runtime_sources:
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("export const runtimeSource = true;\n", encoding="utf-8")
+
+    def _fake_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build Task (web-mobile) Finished")
+        return subprocess.CompletedProcess(command, 36)
+
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _fake_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+    )
+
+    bridge = build["browser_runtime_bridge"]
+    assert bridge["installed"] is True
+    assert bridge["runtime_source_count"] == 3
+    index_html = (build_output / "index.html").read_text(encoding="utf-8")
+    bridge_script = (build_output / "workflow-e2e-runtime-bridge.js").read_text(encoding="utf-8")
+    evidence = json.loads((tmp_path / "workflow_runtime_evidence" / "browser_runtime_bridge_injection.json").read_text(encoding="utf-8"))
+    assert "workflow-e2e-runtime-bridge.js" in index_html
+    assert "__COCOS_BLOCK_PUZZLE_E2E__" in bridge_script
+    assert "CommercialCoreLoopRuntime.getSnapshot" in bridge_script
+    assert "commercialPlayableGo: false" in bridge_script
+    assert evidence["runtime_source_policy"] == "model_state_view_only_not_dom_event_substitute"
+
+
 def test_cocos_build_stops_new_creator_child_processes(tmp_path: Path, monkeypatch) -> None:
     build_output = tmp_path / "build" / "web-mobile"
     (build_output / "assets").mkdir(parents=True)

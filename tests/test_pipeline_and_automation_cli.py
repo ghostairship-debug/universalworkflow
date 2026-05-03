@@ -729,6 +729,107 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
     assert gate["output"]["commercial_final_gate_evidence"]["commercial_playable_go"] is False
 
 
+def test_commercial_gate_treats_machine_ready_non_playable_as_human_review() -> None:
+    import packages.contributions.pipelines.registry as pipeline_registry
+
+    product_features = {
+        "eightDistinctLevelGoals": True,
+        "skinEquippedVisualChange": True,
+        "shopOwnershipStates": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+        "animationFeedbackVerified": True,
+        "mobilePortraitUi": True,
+    }
+    production = {
+        "commercial_playable_go": False,
+        "technical_smoke_go": True,
+        "production_scaffold_go": True,
+        "same_project_patch_ledger": {
+            "same_project_worker_patch_go": True,
+            "task_card_count": 1,
+            "completed_count": 1,
+            "entries": [
+                {
+                    "status": "completed",
+                    "worker_adapter": "codex",
+                    "receipt_id": "receipt",
+                    "child_run_id": "run",
+                    "child_attempt_id": "attempt",
+                    "changed_files": ["state/project/assets/scripts/Game.ts"],
+                    "mutation_result": {
+                        "changed_files": ["state/project/assets/scripts/Game.ts"],
+                        "final_test_status": "passed",
+                    },
+                    "attempts": [{"attempt_index": 1, "receipt_id": "receipt"}],
+                }
+            ],
+            "blockers": [],
+        },
+        "build": {
+            "creator_exit_code": 0,
+            "fatal_marker_detected": False,
+            "artifact_success": True,
+            "build_output_path": "build/web-mobile",
+        },
+        "playtest": {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png"],
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": product_features,
+        },
+        "commercial_feature_coverage": product_features,
+        "product_depth_evidence": {
+            "level_goals": [f"goal-{index}" for index in range(8)],
+            "feature_coverage": product_features,
+        },
+        "gameplay_semantic_evidence": {
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+        },
+        "product_body_evidence": {
+            "scene_nodes": ["Canvas", "Board", "CandidateTray"],
+            "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
+        },
+    }
+    payload = pipeline_registry.execute_contribution_validation(
+        "commercial_game_production_go_no_go",
+        shared_outputs={
+            "commercial_game_production": production,
+            "commercial_game_assets": {
+                "commercial_assets_go": True,
+                "asset_manifest": {"go_no_go": "GO", "manifest_path": "assets/manifest.json"},
+                "commercial_asset_blockers": [],
+            },
+        },
+        require_commercial=True,
+        require_cocos_ecosystem=False,
+        require_live_agent_roles=False,
+        require_human_player_review=False,
+    )
+
+    assert payload["pipeline_status"] == "blocked"
+    assert payload["stop_reason"] == "awaiting_human_player_review"
+    assert payload["result"]["output"]["go_no_go"] == "AWAITING_HUMAN_REVIEW"
+    assert payload["result"]["output"]["blockers"] == ["awaiting_human_player_review"]
+    assert payload["result"]["output"]["machine_evidence_go"] is True
+
+
 def test_real_commercial_game_pipeline_runs_registered_stages_and_blocks_on_missing_task_cards(tmp_path: Path) -> None:
     import packages.contributions.pipelines.workflow_runtime as pipeline_module
 

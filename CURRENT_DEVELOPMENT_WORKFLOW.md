@@ -1,5 +1,19 @@
 # 当前开发工作流
 
+## 2026-05-03 Closeout: Commercial Asset And Browser Runtime Proof Implementation
+
+`Commercial Asset And Browser Runtime Proof Implementation` 已按 active-phase-only 原则执行到机器证据完成后的 `AWAITING_HUMAN_REVIEW`；本阶段没有进入 M110，没有生成未来 phase task cards，也没有把无人值守结果转换为 `commercial_playable_go=true`。
+
+- DB task-card run id: `commercial_asset_browser_runtime_20260503`
+- Cocos project: `state/pipeline_runs/commercial_game_core_content_20260503/cocos_project`
+- Pipeline evidence: `state/commercial_asset_browser_runtime_20260503/pipeline_evidence/`
+- 当前 phase 只生成 3 张 DB-backed task cards：`commercial_asset_browser_runtime_20260503_non_placeholder_asset_graph`、`commercial_asset_browser_runtime_20260503_browser_interaction_runtime_proof`、`commercial_asset_browser_runtime_20260503_browser_audio_volume_runtime_proof`。
+- 三张卡均通过 `human_visible_cli_enforced` 执行链完成；失败尝试保留在 ledger 中，最终通过 fresh receipt、child run/attempt、changed files、测试通过、mirrored logs 和 visible session metadata 收口。
+- 已修复控制面问题：repo mutation snapshot 现在能保留二进制资产目录，不再因 PNG/MP3 UTF-8 解码失败阻断 same-project worker；commercial final gate 现在会把机器证据全过但无人审接受的状态判为 `AWAITING_HUMAN_REVIEW`，而不是误报 `commercial_playable_no_go`。
+- 已补齐浏览器运行证明：真实 Cocos Web Mobile build 后安装 model-backed browser runtime bridge，playtest 通过 HTTP、移动/桌面截图、拖拽交互、按钮面板、BGM/SFX/audio/volume runtime state 和无 console/page error 证据。
+- 当前证据结论：`machine_evidence_go=true`，`commercial_game_development_readiness_go=true`，`human_player_review_go=false`，`commercial_playable_go=false`。
+- 当前最终 gate：`AWAITING_HUMAN_REVIEW`，唯一 blocker 是 `awaiting_human_player_review`。无人值守阶段到此停止商业成品声明；下一步必须是真实人工玩家验收或基于人工 NO-GO 的新 repair phase。
+
 ## 2026-05-03 Closeout: Commercial Machine Evidence And Player Visible Completion
 
 `Commercial Machine Evidence And Player Visible Completion` 已按 active-phase-only 原则执行到诚实 NO-GO；本阶段没有进入 M110，没有生成未来 phase task cards，也没有把机器证据或无人值守结果转换为商业可玩 GO。
@@ -396,13 +410,13 @@ python -m pytest -q
 ## 下一阶段开发计划
 
 - 当前基线：M109 已接受为 pipeline / technical-smoke baseline；2026-05-02/2026-05-03 post-review hardening 已完成 DB lifecycle/fresh execution gate、reference-only evidence reuse、gameplay semantic/product-body gate、source requirement matrix、task-card req_id coverage gate、visible CLI 强制执行、lossless single-agent v2 preservation，以及非商业成品 Cocos product-body baseline bootstrap。
-- 当前新增真相：`commercial_game_development_readiness_go=true` 只表示可以安全开始真实商业游戏内容开发；`machine_evidence_go=false`、`human_player_review_go=false`、`commercial_playable_go=false` 仍保持不变。baseline 组件、Cocos bridge、build、playtest、runtime hooks 或 feature coverage 均不能单独证明商业游戏完成。
-- 已完成 active phases：`Product Body Runtime And Semantic Trace Implementation`、`Commercial Game Core Content Implementation`、`Commercial Machine Evidence And Player Visible Completion` 均只生成当前 phase DB cards，并保留 `commercial_playable_go=false`。
-- 当前完成证据：runtime model / semantic trace / scene-component binding / product-depth / Cocos build 已达到机器证据 GO；中文 UI panel evidence 已纳入 product-depth；human review packet 文件保持 blocked 而非自批。
-- 当前剩余 blocker：非 placeholder 资产证明、浏览器可交互 playtest GO、BGM/SFX/audio playback 与 volume toggle 的真实浏览器运行证明。
+- 当前新增真相：`commercial_game_development_readiness_go=true` 仍表示可以安全开始真实商业游戏内容开发；`machine_evidence_go=true` 表示机器证据已完成；`human_player_review_go=false`、`commercial_playable_go=false` 仍保持不变。baseline 组件、Cocos bridge、build、playtest、runtime hooks、feature coverage 或机器证据均不能单独证明商业游戏已被人审接受。
+- 已完成 active phases：`Product Body Runtime And Semantic Trace Implementation`、`Commercial Game Core Content Implementation`、`Commercial Machine Evidence And Player Visible Completion`、`Commercial Asset And Browser Runtime Proof Implementation` 均只生成当前 phase DB cards，并保留 `commercial_playable_go=false`。
+- 当前完成证据：runtime model / semantic trace / scene-component binding / product-depth / Cocos build / non-placeholder asset graph / browser interaction playtest / BGM/SFX/audio playback / volume toggle runtime proof 已达到机器证据 GO；中文 UI panel evidence 已纳入 product-depth；human review packet 保持 `AWAITING_HUMAN_REVIEW` 而非自批。
+- 当前剩余 blocker：`awaiting_human_player_review`。无人值守阶段不得继续把机器证据转换为 `commercial_playable_go=true`；若人工玩家验收 NO-GO，则以该反馈新开 repair phase。
 - Phase preflight：先运行 `plan-graph`、`policy-preview`、`goal-packet`；task card 必须满足 lifecycle `active/approved`、质量字段完整、fresh execution 约束、write_set/read_set/test/evidence 完整，以及 `covered_requirement_ids` 覆盖所需 source `req_id`。
-- Next active phase：`Commercial Asset And Browser Runtime Proof Implementation`。该 phase 只生成当前 task cards，优先补齐 asset graph、browser playtest、audio runtime proof；若运行环境不能提供真实 browser/audio evidence，必须 blocked，不能降级为 headless success。
-- 后续 handoff：机器证据全过后只能进入 `AWAITING_HUMAN_REVIEW`；无人值守不得设置 `commercial_playable_go=true`。
+- Next active phase：无新的自动产品实现 phase。当前 handoff 是真实人工玩家验收；只有人工 NO-GO 或新产品 brief 才能开启下一 repair/content phase，并且仍只生成当前 phase DB task cards。
+- 后续 handoff：当前最终 gate 已是 `AWAITING_HUMAN_REVIEW`；无人值守不得设置 `commercial_playable_go=true`。
 - Bug-first：workflow、receipt、lease、repo mutation、task-card worker、evidence contract、active truth 或 test matrix 任一路径出问题，先修 workflow bug 并补测试，再继续产品实现。
 
 ### Acceptable Detours
@@ -519,12 +533,12 @@ M109 验收标准：
 
 ## 2026-05-03 Post-M109 Hardening Update
 
-- Current control-plane readiness remains `commercial_game_development_readiness_go=true`; current commercial delivery truth remains `machine_evidence_go=false`, `human_player_review_go=false`, and `commercial_playable_go=false`.
+- Current control-plane readiness remains `commercial_game_development_readiness_go=true`; current commercial machine evidence is `machine_evidence_go=true`; current commercial delivery truth remains `human_player_review_go=false` and `commercial_playable_go=false`.
 - High-risk commercial `same_project_patch` DB task cards now require `execution_visibility_mode=human_visible_cli_enforced`. A headless run cannot complete those cards unless it records visible CLI metadata and mirrored machine logs.
 - Single-agent role outputs now use lossless v2 preservation: roles may preserve and augment source requirements, but they may not delete, merge, rename, or rewrite input requirements. Any `omitted_requirement_ids` blocks execution.
 - Unified intake preserves raw source receipts and hashes by default; source count, chunk count, and media count mismatches fail fast.
 - Commercial `recompile_run` cannot replace active `commercial_game_production` DB task cards generated by the task-card generation agent.
 - The Cocos product-body baseline now contains actual runtime model code and model-transition traces for 10x10 board state, placement, line clear, candidate refresh, game-over, and anti-stall behavior. It still remains `baseline_only=true` and cannot pass commercial final GO.
 - QA and supervisor default to red-team blocking behavior for baseline-only, runtime-hook, canvas-only, event-only, feature-flag-only, missing fresh CLI, missing visible CLI, and requirement-omission evidence chains.
-- `Commercial Machine Evidence And Player Visible Completion` completed its three visible-CLI DB cards and honestly stayed NO-GO: product depth/build are GO, but asset graph and browser/audio runtime proof remain blockers.
-- Next active phase is `Commercial Asset And Browser Runtime Proof Implementation`; it must not pre-generate future phase cards and must not downgrade missing browser/audio evidence to headless success.
+- `Commercial Machine Evidence And Player Visible Completion` completed its three visible-CLI DB cards and honestly stayed NO-GO while asset graph and browser/audio runtime proof remained blockers.
+- `Commercial Asset And Browser Runtime Proof Implementation` completed its three visible-CLI DB cards and moved the final gate to `AWAITING_HUMAN_REVIEW`: asset graph, browser interaction, audio runtime, BGM/SFX, volume toggle, build, and playtest evidence are GO; only human player acceptance can set `commercial_playable_go=true`.

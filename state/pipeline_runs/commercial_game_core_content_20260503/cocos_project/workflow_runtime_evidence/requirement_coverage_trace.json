@@ -1,0 +1,79 @@
+{
+  "schema_version": "commercial_requirement_coverage_trace_v1",
+  "task_card_id": "commercial_game_core_content_20260503_core_loop_levels",
+  "created_at": "2026-05-03T09:00:00+08:00",
+  "covered_requirement_ids": [
+    "REQ-S001-C0002-004",
+    "REQ-S001-C0002-006",
+    "REQ-S001-C0002-007",
+    "REQ-S001-C0003-001",
+    "REQ-S001-C0003-006",
+    "REQ-S001-C0004-007",
+    "REQ-S001-C0004-008"
+  ],
+  "acceptance_trace": [
+    {
+      "criterion": "Core loop uses BoardModel, RuleEngine, and CandidateTray state transitions.",
+      "status": "implemented",
+      "evidence_refs": [
+        "core_loop_runtime_evidence",
+        "gameplay_semantic_evidence"
+      ],
+      "requirement_ids": [
+        "REQ-S001-C0003-001",
+        "REQ-S001-C0004-007",
+        "REQ-S001-C0004-008"
+      ]
+    },
+    {
+      "criterion": "Level goals, scoring, revive/failure, and progression are player-visible.",
+      "status": "implemented",
+      "evidence_refs": [
+        "level_goal_evidence",
+        "gameplay_semantic_evidence",
+        "human_visible_cli_session"
+      ],
+      "requirement_ids": [
+        "REQ-S001-C0002-007",
+        "REQ-S001-C0004-007",
+        "REQ-S001-C0004-008"
+      ]
+    },
+    {
+      "criterion": "Semantic evidence remains model-sourced and commercial_playable_go stays false.",
+      "status": "implemented",
+      "evidence_refs": [
+        "gameplay_semantic_evidence",
+        "core_loop_runtime_evidence"
+      ],
+      "requirement_ids": [
+        "REQ-S001-C0002-004",
+        "REQ-S001-C0002-006",
+        "REQ-S001-C0002-007"
+      ]
+    }
+  ],
+  "blocking_condition_trace": [
+    {
+      "condition": "event_only_gameplay_evidence",
+      "status": "not_triggered",
+      "reason": "Evidence is sourced from CommercialCoreLoopRuntime snapshots and SemanticTestBridge payload structure."
+    },
+    {
+      "condition": "baseline_only",
+      "status": "not_triggered",
+      "reason": "CommercialCoreLoopRuntime adds playable level state, scoring, revive, and progression logic beyond the baseline shell."
+    },
+    {
+      "condition": "commercial_playable_go_claimed",
+      "status": "not_triggered",
+      "reason": "All evidence artifacts keep commercial_playable_go, machine_evidence_go, and human_player_review_go false."
+    }
+  ],
+  "evidence_requirements": [
+    "core_loop_runtime_evidence",
+    "level_goal_evidence",
+    "human_visible_cli_session",
+    "requirement_coverage_trace"
+  ]
+}

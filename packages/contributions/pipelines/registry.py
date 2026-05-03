@@ -362,9 +362,18 @@ def execute_contribution_validation(
             and bool(production.get("commercial_playable_go"))
             and no_degradation["go_no_go"] == "GO"
         )
+        machine_ready_awaiting_human_review = (
+            isinstance(production, dict)
+            and not bool(production.get("commercial_playable_go"))
+            and bool(no_degradation.get("machine_evidence_go"))
+            and no_degradation.get("go_no_go") == "GO"
+            and not bool(no_degradation.get("human_player_review_go"))
+        )
         blockers = []
         if not isinstance(production, dict):
             blockers.append("missing_real_game_production_evidence")
+        elif machine_ready_awaiting_human_review:
+            blockers.append("awaiting_human_player_review")
         elif not production.get("commercial_playable_go"):
             blockers.extend(production.get("commercial_playable_blockers") or ["commercial_playable_no_go"])
         blockers.extend(no_degradation["blockers"])

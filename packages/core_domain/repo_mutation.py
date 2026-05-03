@@ -26,6 +26,8 @@ class SnapshotEntry:
     path: str
     exists: bool
     content: str | None
+    content_bytes: bytes | None = None
+    binary: bool = False
 
 
 @dataclass(slots=True)
@@ -94,18 +96,21 @@ def capture_workspace_snapshot(workspace_root: str | Path, write_set: list[str])
                 if child.is_dir():
                     continue
                 child_rel = child.resolve().relative_to(root).as_posix()
-                snapshot[child_rel] = SnapshotEntry(
-                    path=child_rel,
-                    exists=True,
-                    content=child.read_text(encoding="utf-8"),
-                )
+                snapshot[child_rel] = _snapshot_file(child, child_rel)
             continue
-        snapshot[rel_path] = SnapshotEntry(
-            path=rel_path,
-            exists=absolute.exists(),
-            content=absolute.read_text(encoding="utf-8") if absolute.exists() else None,
-        )
+        snapshot[rel_path] = _snapshot_file(absolute, rel_path) if absolute.exists() else SnapshotEntry(path=rel_path, exists=False, content=None)
     return snapshot
+
+
+def _snapshot_file(path: Path, rel_path: str) -> SnapshotEntry:
+    content_bytes = path.read_bytes()
+    try:
+        content = content_bytes.decode("utf-8")
+        binary = False
+    except UnicodeDecodeError:
+        content = None
+        binary = True
+    return SnapshotEntry(path=rel_path, exists=True, content=content, content_bytes=content_bytes, binary=binary)
 
 
 def restore_workspace_snapshot(
@@ -120,7 +125,10 @@ def restore_workspace_snapshot(
         absolute = root / entry.path
         if entry.exists:
             absolute.parent.mkdir(parents=True, exist_ok=True)
-            absolute.write_text(entry.content or "", encoding="utf-8", newline="\n")
+            if entry.content_bytes is not None:
+                absolute.write_bytes(entry.content_bytes)
+            else:
+                absolute.write_text(entry.content or "", encoding="utf-8", newline="\n")
             continue
         if absolute.exists():
             absolute.unlink()

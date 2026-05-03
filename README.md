@@ -5,7 +5,7 @@
 - Accepted baseline: `M109`.
 - Completed: unified project brief, single-agent role pipeline, design/planning outputs, multimodal route truth table, DB-backed task-card gate, bounded Cocos technical-smoke trial, and cluster-upgrade review.
 - Cocos trial result: `technical_smoke_go=true`, `production_scaffold_go=true`, `commercial_playable_go=false`.
-- Current claim: pipeline technical trial completed; commercial playable game is still not proven.
+- Current claim: pipeline technical trial completed; machine evidence for the current commercial build is ready for human review, but commercial playable game acceptance is still not proven.
 - Cluster decision: keep single-agent roles for now; no automatic M110 task cards.
 
 ## Real Game Pipeline Correction (2026-04-28)
@@ -30,22 +30,23 @@
 - Current evaluation report: [docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md](docs/evaluations/commercial_game_pipeline_evaluation_2026_04_28.md).
 - Commercial production v2 design blueprint: [COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md](COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md). It describes the stage-internal phase graph, asset graph, Cocos bridge workers, supervisor repair loops, and final gate contract; it is not an active task-card export.
 - Post-M109 long-running repair plan: [POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md](POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md). It consolidates the latest root guidance/evaluation documents into milestone/phase-level work only; it does not create M110 or future task-card exports. Current hardening now includes DB lifecycle/fresh execution gates, `human_visible_cli_enforced` for high-risk commercial task cards, lossless single-agent role v2 preservation, compile/recompile protection for active commercial DB cards, gameplay semantic/product-body contracts, source requirement matrix plus task-card req_id coverage gating, an independent `commercial_game_development_readiness_go` evidence口径, and a non-commercial Cocos product-body runtime baseline for future same-project work.
-- Development readiness status: `commercial_game_development_readiness_go=true` means the control plane can safely start real commercial game content task cards; it is not a commercial playable claim. `commercial_playable_go=false` remains the current truth until machine contracts and human review both pass.
+- Development readiness status: `commercial_game_development_readiness_go=true` means the control plane can safely start real commercial game content task cards; it is not a commercial playable claim. As of the 2026-05-03 asset/browser/audio proof phase, `machine_evidence_go=true` and the final gate is `AWAITING_HUMAN_REVIEW`, while `commercial_playable_go=false` remains the current truth until human review accepts the build.
 
 ## Commercial Runtime Evidence Closeout (2026-05-02)
 
 - Strict pipeline `pipeline_ecf26665254e` produced real asset generation, same-project implementation evidence, trusted Cocos bridge evidence, Cocos Creator 3.8.8 Web Mobile build ledger, HTTP/browser playtest ledger, screenshots, and audio/BGM/SFX/volume runtime proof, but the subsequent real human review rejected the launched build.
-- Current final gate is `NO-GO`: `machine_evidence_go=false`, `human_player_review_go=false`, and `commercial_playable_go=false`.
-- The reviewed URL did point at the current pipeline `build/web-mobile`; the failure is product-level, not a wrong launch path. The machine gate over-accepted runtime hook / canvas / event coverage as if it proved a completed game body.
-- Next commercial-game work must use the DB-backed active phase `Product Body Runtime And Semantic Trace Implementation` as the development-readiness bridge, then open `Commercial Game Core Content Implementation` after the readiness commit is pushed. Unattended automation must not convert event-only, canvas-only, scaffold, build-only, baseline-only, or browser-event evidence into commercial GO.
+- Current final gate is `AWAITING_HUMAN_REVIEW`: `machine_evidence_go=true`, `human_player_review_go=false`, and `commercial_playable_go=false`.
+- The 2026-05-02 reviewed URL did point at the then-current pipeline `build/web-mobile`; that failure was product-level, not a wrong launch path. The repaired machine gate now rejects runtime hook / canvas / event coverage as completed game-body proof.
+- Next commercial-game handoff is real human player review of the machine-ready build. Unattended automation must not convert event-only, canvas-only, scaffold, build-only, baseline-only, browser-event, or machine-only evidence into commercial GO.
 - 2026-05-03 hardening completes the pre-commercial control-plane repair: high-risk commercial cards cannot pass headlessly, single-agent roles cannot omit or rewrite input requirements, ordinary compile/recompile cannot overwrite active commercial DB task cards, and runtime semantic/product-body evidence must come from model transitions and Cocos component bindings.
-- 2026-05-03 machine-evidence narrowing completed `Commercial Machine Evidence And Player Visible Completion` with exactly three visible-CLI DB task cards. Product-body, gameplay semantic, product-depth, and Cocos build evidence are now GO; asset graph and browser/audio runtime proof remain NO-GO blockers. The next active phase is `Commercial Asset And Browser Runtime Proof Implementation`.
+- 2026-05-03 machine-evidence narrowing completed `Commercial Machine Evidence And Player Visible Completion` with exactly three visible-CLI DB task cards. Product-body, gameplay semantic, product-depth, and Cocos build evidence became GO.
+- 2026-05-03 asset/browser/audio proof completed `Commercial Asset And Browser Runtime Proof Implementation` with exactly three visible-CLI DB task cards. Non-placeholder asset graph, browser interaction playtest, and browser audio/BGM/SFX/volume runtime evidence are now GO; the only remaining blocker is `awaiting_human_player_review`.
 
 ## 当前状态：M109 Pipeline / Technical-Smoke Baseline
 
 - 包版本：`0.66.0`。
 - 当前接受实现基线：M109 已完成统一资料包、单 agent 角色管线、设计/方案输出、多模态路由真相表、DB task-card quality gate、有限 Cocos technical-smoke trial 和 cluster-upgrade review。
-- 当前质量结论：M108 Cocos 小目标样机闭环是历史基线；M109 只证明 pipeline / technical-smoke，`commercial_playable_go` 仍为 NO-GO，不能宣称商业化可玩成品。
+- 当前质量结论：M108 Cocos 小目标样机闭环是历史基线；M109 只证明 pipeline / technical-smoke；当前商业构建的机器证据已到 `AWAITING_HUMAN_REVIEW`，但 `commercial_playable_go` 仍为 false，不能宣称商业化可玩成品。
 - 当前工作重点：M109 后 `commercial_game_production` 无降级修复；不自动进入 M110，不提前生成未来 phase task card。
 - task card 规则：数据库是权威来源，Markdown 只是自动导出的人工快照；每张卡必须包含目标、读写范围、测试、证据、阻塞条件和模型执行提示。
 - M108.5 决策记录：[docs/evaluations/m108_5_review_decision.md](docs/evaluations/m108_5_review_decision.md)。

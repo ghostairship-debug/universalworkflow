@@ -359,6 +359,53 @@ def test_commercial_machine_evidence_goal_materializes_exact_current_phase_cards
     assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
 
 
+def test_commercial_asset_browser_runtime_goal_materializes_exact_current_phase_cards(tmp_path: Path) -> None:
+    source = tmp_path / "brief.md"
+    source.write_text(
+        "# Commercial Asset Browser Runtime\n\nnon-placeholder assets, browser runtime interaction, and audio volume proof are the active phase.\n",
+        encoding="utf-8",
+    )
+    result = _invoke(
+        tmp_path,
+        "pipeline",
+        "run",
+        "--template",
+        "commercial_game_production",
+        "--goal",
+        "Commercial Asset And Browser Runtime Proof Implementation",
+        "--pipeline-id",
+        "commercial_asset_browser_runtime_phase",
+        "--pdf-path",
+        source.as_posix(),
+        "--execute-agent-roles",
+        "--evidence-dir",
+        (tmp_path / "pipeline_evidence").as_posix(),
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    task_card_output = payload["stage_results"][5]["output"]
+    phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
+    assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert [phase["title"] for phase in phase_graph["phases"]] == [
+        "Commercial Asset And Browser Runtime Proof Implementation"
+    ]
+
+    cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("commercial_asset_browser_runtime_phase")
+    assert len(cards) == 3
+    assert {card.task_card_id for card in cards} == {
+        "commercial_asset_browser_runtime_phase_non_placeholder_asset_graph",
+        "commercial_asset_browser_runtime_phase_browser_interaction_runtime_proof",
+        "commercial_asset_browser_runtime_phase_browser_audio_volume_runtime_proof",
+    }
+    assert {card.phase_name for card in cards} == {"Commercial Asset And Browser Runtime Proof Implementation"}
+    assert all(card.execution_mode == "same_project_patch" for card in cards)
+    assert all(card.metadata.get("generated_by") == "task_card_generation_agent" for card in cards)
+    assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
+    assert all(card.metadata.get("omitted_requirement_ids") == [] for card in cards)
+    assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
+
+
 def test_m109_role_outputs_are_role_specific(tmp_path: Path) -> None:
     source = tmp_path / "brief.md"
     source.write_text("# 闇€姹俓n\nUI銆侀煶棰戙€佸叧鍗°€佽祫浜ч兘闇€瑕佽淇濈暀銆俓n", encoding="utf-8")

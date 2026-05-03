@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "updated_at": "2026-05-03T04:00:00Z",
-  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. Current commercial game truth is NO-GO: machine_evidence_go=false, human_player_review_go=false, and commercial_playable_go=false. The failure was product-level, not a wrong launch path: the reviewed URL pointed at the current pipeline build/web-mobile, but the gate over-accepted runtime hook / canvas / event coverage as product-body completion. Post-review hardening now adds DB lifecycle execution eligibility, fresh same-project implementation proof, reference-only evidence reuse, gameplay semantic evidence, product-body evidence gates, source requirement matrix output, task-card req_id coverage gating, an independent commercial_game_development_readiness_go evidence contract, active-phase-only product-body/runtime and machine-evidence task cards, human_visible_cli_enforced for high-risk commercial implementation cards, lossless single-agent role v2 preservation, raw source receipts, commercial compile/recompile active-card protection, and red-team QA/supervisor NO-GO defaults. commercial_game_development_readiness_go=true means development-start readiness only; product-body, gameplay semantic, product-depth, and Cocos build evidence are now GO, while asset graph and browser/audio runtime proof remain open blockers. No unattended run may convert event-only, canvas-only, scaffold, build-only, browser-event, requirement-untraced, baseline-only, placeholder-asset, missing-visible-CLI, or requirement-omission evidence into commercial GO.",
+  "updated_at": "2026-05-03T05:30:00Z",
+  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. The failure was product-level, not a wrong launch path: the reviewed URL pointed at the current pipeline build/web-mobile, but the gate over-accepted runtime hook / canvas / event coverage as product-body completion. Post-review hardening now adds DB lifecycle execution eligibility, fresh same-project implementation proof, reference-only evidence reuse, gameplay semantic evidence, product-body evidence gates, source requirement matrix output, task-card req_id coverage gating, an independent commercial_game_development_readiness_go evidence contract, active-phase-only product-body/runtime and machine-evidence task cards, human_visible_cli_enforced for high-risk commercial implementation cards, lossless single-agent role v2 preservation, raw source receipts, commercial compile/recompile active-card protection, and red-team QA/supervisor NO-GO defaults. The latest Commercial Asset And Browser Runtime Proof Implementation phase completed non-placeholder asset graph, browser interaction proof, and browser audio/volume runtime proof with visible CLI metadata, fresh receipts, changed files, tests, Cocos build, and browser playtest evidence. Current commercial game truth is machine-ready but not human-accepted: commercial_game_development_readiness_go=true, machine_evidence_go=true, human_player_review_go=false, commercial_playable_go=false, and the final gate is AWAITING_HUMAN_REVIEW with blocker awaiting_human_player_review. No unattended run may convert event-only, canvas-only, scaffold, build-only, browser-event, requirement-untraced, baseline-only, placeholder-asset, missing-visible-CLI, requirement-omission, or machine-only evidence into commercial GO.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -200,30 +200,30 @@
   "open_items": [
     {
       "debt_id": "M77-COCOS-001",
-      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, product-body/runtime evidence, visible-CLI execution enforcement, and a development-readiness contract, but the latest machine-evidence narrowing still blocks commercial delivery on asset graph and browser/audio runtime proof.",
+      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, product-body/runtime evidence, visible-CLI execution enforcement, a development-readiness contract, non-placeholder asset graph proof, browser interaction proof, and browser audio/volume runtime proof.",
       "introduced_in": "M76-M84 commercial game evaluation",
       "planned_repayment_phase": "Commercial Asset And Browser Runtime Proof Implementation",
-      "current_status": "machine_evidence_narrowed_remaining_asset_browser_audio_blockers",
-      "blocking_impact": "Blocks claiming commercial_playable_go=true and blocks machine_evidence_go=true for product delivery. The final gate now requires gameplay semantic, product-body, product-depth, asset graph, browser playtest, audio runtime, visible CLI, and human review contracts.",
-      "repayment_note": "2026-05-02/2026-05-03 hardening added lifecycle/fresh-execution/reference-only/semantic/product-body/requirement-coverage gates, human_visible_cli_enforced, single-agent v2 requirement preservation, compile/recompile active-card protection, a separate development-readiness contract, active product-body runtime task cards, machine-evidence current-phase task cards, and regression tests. Product-body/product-depth/build evidence is GO; placeholder assets and browser/audio runtime proof remain blockers."
+      "current_status": "machine_evidence_go_awaiting_human_review",
+      "blocking_impact": "Blocks claiming commercial_playable_go=true until real human player review accepts the machine-ready build. It no longer blocks machine_evidence_go=true.",
+      "repayment_note": "2026-05-02/2026-05-03 hardening added lifecycle/fresh-execution/reference-only/semantic/product-body/requirement-coverage gates, human_visible_cli_enforced, single-agent v2 requirement preservation, compile/recompile active-card protection, a separate development-readiness contract, active product-body runtime task cards, machine-evidence current-phase task cards, non-placeholder asset graph proof, browser interaction proof, browser audio/volume runtime proof, and regression tests. Product-body/product-depth/build/asset/browser/audio machine evidence is GO; final delivery remains AWAITING_HUMAN_REVIEW."
     },
     {
       "debt_id": "M84-GAME-QA-001",
-      "description": "Commercial readiness gate still over-accepts runtime hook / canvas / event coverage. The latest human review proved gate v2 did not reject a non-game-body machine false positive.",
+      "description": "Commercial readiness gate previously over-accepted runtime hook / canvas / event coverage. The latest hardening repaired that false-positive path and now separates machine-ready evidence from human player acceptance.",
       "introduced_in": "M84 real generated game review",
       "planned_repayment_phase": "New active phase for player-visible gate hardening before any new commercial GO attempt",
-      "current_status": "red_team_gate_repaired_commercial_go_still_blocked",
-      "blocking_impact": "Blocks commercial GO and machine-evidence-complete claims unless source requirements are traceable and gameplay semantic, product-body, product-depth, build/playtest, visible CLI, and human review contracts all pass.",
-      "repayment_note": "2026-05-02/2026-05-03 hardening added blockers for runtime-hook, canvas-only, feature-flag-only, event-only, baseline-only final gate evidence, missing semantic trace, missing model-transition trace, missing Cocos component binding, missing fresh task-card execution, missing visible CLI metadata, and missing task-card req_id coverage. QA and supervisor now default to red-team NO-GO findings."
+      "current_status": "machine_gate_false_positive_repaired_awaiting_human_review",
+      "blocking_impact": "Blocks commercial GO until human review accepts the machine-ready build. Machine-evidence-complete claims require source requirements, gameplay semantic, product-body, product-depth, build/playtest, asset graph, browser/audio runtime, visible CLI, and no-degradation contracts to pass.",
+      "repayment_note": "2026-05-02/2026-05-03 hardening added blockers for runtime-hook, canvas-only, feature-flag-only, event-only, baseline-only final gate evidence, missing semantic trace, missing model-transition trace, missing Cocos component binding, missing fresh task-card execution, missing visible CLI metadata, missing task-card req_id coverage, placeholder assets, and missing browser/audio runtime proof. QA and supervisor now default to red-team NO-GO findings; the current machine-ready build is AWAITING_HUMAN_REVIEW."
     },
     {
       "debt_id": "M109-NO-DEGRADATION-COMMERCIAL-001",
-      "description": "Strict pipeline pipeline_ecf26665254e was accepted by machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation and product-depth evidence have been repaired; playtest and audio evidence still require player-visible, non-runtime-hook proof.",
+      "description": "Strict pipeline pipeline_ecf26665254e was accepted by older machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation, product-depth evidence, asset graph, browser interaction, and audio/volume runtime proof have since been repaired with player-visible, non-runtime-hook evidence.",
       "introduced_in": "2026-04-29 no-degradation Cocos/worker rerun",
       "planned_repayment_phase": "Commercial Asset And Browser Runtime Proof Implementation",
-      "current_status": "browser_audio_asset_blockers_remaining",
-      "blocking_impact": "Directly blocks commercial_playable_go=true and product delivery. Development readiness is GO and product-body/product-depth/build evidence is GO, but machine_evidence_go remains false until asset graph and browser/audio runtime proof pass.",
-      "repayment_note": "2026-05-02/2026-05-03 hardening prevents attempts-zero, historical-evidence, event-only, feature-flag-only, canvas-only, runtime-hook, baseline-only, placeholder-asset, headless-visible-required, requirement-omitted, and requirement-untraced evidence from satisfying commercial final gate."
+      "current_status": "machine_evidence_go_awaiting_human_review",
+      "blocking_impact": "Directly blocks commercial_playable_go=true and product delivery until real human player review accepts the machine-ready build. It no longer blocks machine_evidence_go=true.",
+      "repayment_note": "2026-05-02/2026-05-03 hardening prevents attempts-zero, historical-evidence, event-only, feature-flag-only, canvas-only, runtime-hook, baseline-only, placeholder-asset, headless-visible-required, requirement-omitted, requirement-untraced, and missing browser/audio runtime evidence from satisfying commercial final gate. The current machine evidence is GO and the final gate is AWAITING_HUMAN_REVIEW."
     },
     {
       "debt_id": "M109-PROVIDER-WATCHDOG-001",
@@ -243,13 +243,13 @@
     },
     {
       "debt_id": "M109-SAME-PROJECT-PRODUCT-001",
-      "description": "Same-project commercial gameplay implementation was previously marked complete by machine evidence, but real human review confirmed the build was not a completed game body. The product-body/product-depth path has since been rebuilt with model/runtime and Cocos component evidence; final delivery remains blocked by asset and browser/audio proof.",
+      "description": "Same-project commercial gameplay implementation was previously marked complete by machine evidence, but real human review confirmed the build was not a completed game body. The product-body/product-depth path has since been rebuilt with model/runtime, Cocos component evidence, non-placeholder asset proof, browser interaction proof, and audio/volume runtime proof.",
       "introduced_in": "2026-04-29 same-project product implementation resume",
       "planned_repayment_phase": "New active phase for commercial game body reconstruction",
-      "current_status": "product_body_rebuilt_asset_browser_audio_remaining",
-      "blocking_impact": "Blocks machine evidence and commercial GO until non-placeholder assets, browser playtest, and audio runtime behavior are verified without event-marker substitution.",
+      "current_status": "machine_evidence_complete_awaiting_human_review",
+      "blocking_impact": "Blocks commercial GO until real human player review accepts the machine-ready build. Machine evidence is no longer blocked by asset/browser/audio proof.",
       "closure_evidence": "state/trusted_cocos_build_browser_audio_runtime_20260502/phase_closeout.json",
-      "repayment_note": "Prior machine-evidence completion is superseded by 2026-05-02 human review NO-GO. 2026-05-03 machine-evidence narrowing restored product-depth GO through source/runtime/component evidence, but it still must not be treated as commercial playable proof without asset, browser/audio, and human-review gates."
+      "repayment_note": "Prior machine-evidence completion is superseded by 2026-05-02 human review NO-GO. 2026-05-03 machine-evidence narrowing restored product-depth GO through source/runtime/component evidence, and the follow-up asset/browser/audio phase completed non-placeholder assets, browser interaction, audio/volume runtime, build, and playtest proof. It still must not be treated as commercial playable proof without human-review acceptance."
     },
     {
       "debt_id": "M109-CODEX-PATCH-APPLY-TURN-STALL-001",

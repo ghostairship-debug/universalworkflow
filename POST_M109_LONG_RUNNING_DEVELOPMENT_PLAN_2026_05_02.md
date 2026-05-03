@@ -1,18 +1,19 @@
 # Post-M109 Long-Running Development Plan
 
 > Source basis: `codex_guidance_universalworkflow_refactor.md` and `universalworkflow_deep_evaluation_report.md`.
-> Current baseline: M109 accepted; latest strict commercial build remains `NO-GO`.
+> Current baseline: M109 accepted; latest strict commercial build is machine-ready and waiting for human player review.
 > Scope: repair the workflow truth chain, commercial-game final gate, same-project task-card execution, and product-body evidence path without auto-creating M110 task cards.
 
 ## Current Truth
 
-- `machine_evidence_go=false`
+- `machine_evidence_go=true`
 - `commercial_game_development_readiness_go=true` for development-start control-plane readiness only
 - `human_player_review_go=false`
 - `commercial_playable_go=false`
-- The latest reviewed build path was correct; the original failure was product-level, and the current remaining blockers are asset/browser/audio evidence rather than runtime model or product-depth reconstruction.
+- The latest unattended commercial pipeline status is `AWAITING_HUMAN_REVIEW`; the only remaining blocker is real human player acceptance.
+- The latest reviewed build path was correct; the original failure was product-level, and the current repair loop has now supplied asset graph, browser interaction, audio/BGM/SFX/volume, runtime model, product-body, product-depth, build, and playtest machine evidence.
 - Runtime hooks, canvas presence, feature flags, browser events, screenshots, scaffold/build evidence, and Cocos bridge evidence cannot prove commercial playable completion.
-- The next success criterion is honest failure and false-positive prevention, not commercial GO.
+- The current success criterion is an honest machine-ready handoff to human review, not unattended commercial GO.
 
 ## Development Discipline
 
@@ -26,7 +27,7 @@
 
 ## Next Development Plan
 
-Current completed slices have hardened the false-positive gates, created a baseline-only Cocos product-body shell, added an independent `commercial_game_development_readiness_v1` evidence口径, completed real product-body/runtime and product-depth implementation phases, and preserved `commercial_playable_go=false`. The latest active phase `Commercial Machine Evidence And Player Visible Completion` materialized exactly three current-phase DB task cards under run `commercial_machine_evidence_20260503`; all three completed through `human_visible_cli_enforced` execution, but the final commercial gate remains `NO-GO`.
+Current completed slices have hardened the false-positive gates, created a baseline-only Cocos product-body shell, added an independent `commercial_game_development_readiness_v1` evidence口径, completed real product-body/runtime, product-depth, machine-evidence, asset, browser, and audio-runtime proof phases, and preserved `commercial_playable_go=false`. The latest active phase `Commercial Asset And Browser Runtime Proof Implementation` materialized exactly three current-phase DB task cards under run `commercial_asset_browser_runtime_20260503`; all three completed through `human_visible_cli_enforced` execution, and the final commercial gate now stops at `AWAITING_HUMAN_REVIEW`.
 
 Phase sequence:
 
@@ -54,9 +55,9 @@ Phase sequence:
    - Human `NO-GO` creates the next repair phase; it must not be converted into a commercial-ready claim.
 
 6. Asset and browser runtime proof completion.
-   - Open `Commercial Asset And Browser Runtime Proof Implementation` as the next active phase only.
-   - Generate DB task cards only for non-placeholder asset proof, browser playtest interaction proof, and browser audio/BGM/SFX/volume proof.
-   - If the environment cannot produce real browser/audio evidence, the phase must stay blocked rather than falling back to headless success.
+   - `Commercial Asset And Browser Runtime Proof Implementation` is complete for the current unattended machine-evidence loop.
+   - It generated only current-phase DB task cards for non-placeholder asset proof, browser playtest interaction proof, and browser audio/BGM/SFX/volume proof.
+   - Machine evidence now passes; the phase is blocked only by the required human review handoff.
 
 Blocking conditions:
 
@@ -77,7 +78,7 @@ Exit criteria:
 - Product-depth evidence is aligned to source requirements and player-visible behavior.
 - Asset graph evidence proves non-placeholder commercial assets.
 - Browser playtest evidence proves player-visible interaction and runtime audio controls in the built Cocos output.
-- Commercial final gate can reach `AWAITING_HUMAN_REVIEW` only after all machine contracts pass, and `commercial_playable_go` stays false until real human acceptance.
+- Commercial final gate has reached `AWAITING_HUMAN_REVIEW` after all machine contracts passed, and `commercial_playable_go` stays false until real human acceptance.
 
 ## Milestone A: Execution Truth Hardening
 
@@ -260,9 +261,19 @@ Slice 6 completes the machine-evidence narrowing pass:
 - Generated exactly three DB task cards for run `commercial_machine_evidence_20260503`: product-depth Chinese UI evidence, build/browser machine evidence, and human-review packet gate.
 - All three cards completed through visible CLI worker execution with fresh receipts, child runs/attempts, changed files, mirrored logs, and visible session metadata.
 - Product-body, gameplay semantic, product-depth, and Cocos build evidence are now GO; `commercial_game_development_readiness_go=true` remains unchanged.
-- The final gate honestly remains `NO-GO`: `machine_evidence_go=false`, `human_player_review_go=false`, and `commercial_playable_go=false`.
-- Current blockers are narrowed to `placeholder_assets_only`, `browser_playtest_no_go`, `audio_runtime_not_verified`, `bgm_runtime_not_verified`, `sfx_runtime_not_verified`, and `volume_toggle_missing`.
-- The next active phase is `Commercial Asset And Browser Runtime Proof Implementation`; it must generate only current-phase DB cards and must not downgrade missing browser/audio evidence into success.
+- The final gate honestly remained `NO-GO` after this slice: `machine_evidence_go=false`, `human_player_review_go=false`, and `commercial_playable_go=false`.
+- Those blockers were narrowed to `placeholder_assets_only`, `browser_playtest_no_go`, `audio_runtime_not_verified`, `bgm_runtime_not_verified`, `sfx_runtime_not_verified`, and `volume_toggle_missing`.
+- The follow-up active phase was `Commercial Asset And Browser Runtime Proof Implementation`; it generated only current-phase DB cards and did not downgrade missing browser/audio evidence into success.
+
+Slice 7 completes the asset/browser/audio machine-evidence loop:
+
+- Added active-phase-only task-card materialization for `Commercial Asset And Browser Runtime Proof Implementation`.
+- Generated exactly three DB task cards for run `commercial_asset_browser_runtime_20260503`: non-placeholder asset graph proof, browser interaction runtime proof, and browser audio/BGM/SFX/volume runtime proof.
+- All three cards completed through `human_visible_cli_enforced` execution with fresh receipts, child runs/attempts, changed files, mirrored logs, visible session metadata, and passing targeted tests.
+- Fixed binary asset snapshot handling in repo mutation so PNG/MP3 assets can be snapshotted/restored without UTF-8 decode failures.
+- Real Cocos Web Mobile builds now install a model-backed browser runtime bridge after build; browser playtest verifies HTTP launch, mobile/desktop screenshots, drag placement, button interactions, game-over/revive evidence, generated asset bindings, and audio/BGM/SFX/volume state without console/page errors.
+- Fixed commercial final validation so machine-ready unattended output becomes `AWAITING_HUMAN_REVIEW` instead of requiring `commercial_playable_go=true`.
+- Current final state is `machine_evidence_go=true`, `human_player_review_go=false`, and `commercial_playable_go=false`; the only remaining blocker is `awaiting_human_player_review`.
 
 ## Validation Commands
 

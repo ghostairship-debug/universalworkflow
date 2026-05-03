@@ -94,3 +94,18 @@ def test_restore_workspace_snapshot_preserves_lf_line_endings(tmp_path: Path) ->
     restore_workspace_snapshot(tmp_path, snapshot)
 
     assert target.read_bytes() == b"alpha\nbeta\n"
+
+
+def test_workspace_snapshot_preserves_binary_files_in_write_set_directory(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    binary = assets / "background.png"
+    binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
+
+    snapshot = capture_workspace_snapshot(tmp_path, ["assets"])
+
+    assert snapshot["assets/background.png"].binary is True
+    binary.write_bytes(b"changed")
+    restore_workspace_snapshot(tmp_path, snapshot)
+
+    assert binary.read_bytes() == b"\x89PNG\r\n\x1a\n\x00\x00"

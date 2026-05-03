@@ -145,7 +145,8 @@ def evaluate_no_degradation_contract(
     findings: list[dict[str, Any]] = []
     if require_commercial:
         _append_if_false(findings, same_project_worker_patch_go, "same_project_worker_patch_missing")
-        _append_if_false(findings, live_role_go, "live_role_provider_proof_missing")
+        if require_live_agent_roles:
+            _append_if_false(findings, live_role_go, "live_role_provider_proof_missing")
         if upstream_implementation_failed:
             for blocker in patch_ledger["blockers"]:
                 findings.append({"finding": blocker, "severity": "high"})

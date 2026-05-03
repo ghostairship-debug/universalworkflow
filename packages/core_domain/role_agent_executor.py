@@ -745,6 +745,12 @@ def _task_card_candidate_payloads(
         return _commercial_core_content_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     if _is_commercial_machine_evidence_phase(pipeline_goal):
         return _commercial_machine_evidence_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
+    if _is_commercial_asset_browser_runtime_phase(pipeline_goal):
+        return _commercial_asset_browser_runtime_task_card_candidates(
+            base=base,
+            pipeline_goal=pipeline_goal,
+            brief_manifest=brief_manifest,
+        )
     candidates = [
         {
             "task_card_id": f"{base}_m109_role_brief_contract",
@@ -1297,6 +1303,131 @@ def _commercial_machine_evidence_task_card_candidates(
     return _attach_requirement_coverage(candidates, brief_manifest)
 
 
+def _commercial_asset_browser_runtime_task_card_candidates(
+    *,
+    base: str,
+    pipeline_goal: str,
+    brief_manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    active_phase_name = "Commercial Asset And Browser Runtime Proof Implementation"
+    phase = "commercial_asset_browser_runtime_proof"
+    common_write_set = [
+        "state/pipeline_runs/<run>/cocos_project/assets/scripts",
+        "state/pipeline_runs/<run>/cocos_project/assets/resources",
+        "state/pipeline_runs/<run>/cocos_project/workflow_runtime_evidence",
+        "state/pipeline_runs/<run>/cocos_project/playtest_evidence",
+        "state/pipeline_runs/<run>/cocos_project/player_visible_evidence",
+    ]
+    candidates = [
+        {
+            "task_card_id": f"{base}_non_placeholder_asset_graph",
+            "title": "Prove non-placeholder commercial asset graph",
+            "description": "Generate, import, or bind non-placeholder commercial art/audio assets and write machine-readable provenance that blocks placeholder-only packs from commercial GO.",
+            "goal": f"Resolve placeholder asset blockers for {pipeline_goal} without accepting local placeholder packs as commercial assets.",
+            "write_set": common_write_set + ["state/pipeline_runs/<run>/assets"],
+            "read_set": [
+                "commercial_game_assets",
+                "workflow_runtime_evidence/product_body_evidence.json",
+                "role_output:multimodal_generation_agent",
+            ],
+            "acceptance_criteria": [
+                "Asset manifest is not placeholder_only and lists required art/audio assets.",
+                "Each required asset has provider or generation provenance, artifact paths, and binding evidence.",
+                "Asset graph blockers are recorded honestly when real providers or imports are unavailable.",
+            ],
+            "test_commands": ["python -m pytest tests/test_commercial_game_evidence_contracts.py tests/test_pipeline_and_automation_cli.py -q"],
+            "expected_artifacts": ["assets/commercial_game_asset_stage.json", "workflow_runtime_evidence/asset_binding_evidence.json"],
+            "evidence_requirements": ["non_placeholder_asset_manifest", "asset_binding_evidence", "provider_or_import_provenance"],
+            "blocking_conditions": ["placeholder_assets_only", "required_asset_missing", "provider_or_import_provenance_missing"],
+            "model_guidance": [
+                "Do not relabel local stable placeholders as commercial assets.",
+                "Bind assets into the persistent Cocos project when available.",
+                "Keep commercial_playable_go false without human acceptance.",
+            ],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {"active_phase_name": active_phase_name, "stage_phase": phase, "phase_order": 1},
+        },
+        {
+            "task_card_id": f"{base}_browser_interaction_runtime_proof",
+            "title": "Prove browser player interaction runtime",
+            "description": "Make the built Cocos output expose player-visible interaction proof from runtime/model state and screenshots, not DOM-only or canvas-only evidence.",
+            "goal": "Turn browser playtest into real player-visible runtime evidence with interaction screenshots and model-backed state changes.",
+            "write_set": common_write_set + ["state/pipeline_runs/<run>/cocos_project/build"],
+            "read_set": [
+                "workflow_runtime_evidence/build_ledger.json",
+                "workflow_runtime_evidence/browser_playtest_ledger.json",
+                "workflow_runtime_evidence/gameplay_semantic_evidence.json",
+                "workflow_runtime_evidence/product_depth_evidence.json",
+            ],
+            "acceptance_criteria": [
+                "Browser playtest records HTTP URL, mobile and desktop screenshots, and runtime state before/after interaction.",
+                "Interaction proof is model/runtime backed and not only canvas presence or DOM event logs.",
+                "Browser blockers remain explicit when the built output cannot be interacted with.",
+            ],
+            "test_commands": ["python -m pytest tests/test_cocos_e2e.py tests/test_commercial_game_evidence_contracts.py -q"],
+            "expected_artifacts": ["playtest_evidence/cocos_playtest_result.json", "workflow_runtime_evidence/browser_playtest_ledger.json"],
+            "evidence_requirements": ["browser_http_launch", "mobile_viewport_screenshot", "runtime_interaction_state", "model_backed_browser_trace"],
+            "blocking_conditions": ["browser_playtest_no_go", "canvas_only_browser_evidence", "runtime_interaction_state_missing"],
+            "model_guidance": [
+                "Expose a test bridge only as a view into runtime/model state.",
+                "Do not treat canvas visibility or click events as product completion.",
+                "Preserve screenshots and blockers for human review.",
+            ],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {
+                "active_phase_name": active_phase_name,
+                "stage_phase": phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [f"{base}_non_placeholder_asset_graph"],
+            },
+        },
+        {
+            "task_card_id": f"{base}_browser_audio_volume_runtime_proof",
+            "title": "Prove browser audio BGM SFX and volume runtime",
+            "description": "Bind BGM, SFX, and volume controls into the Cocos runtime and browser playtest evidence without replacing proof with feature flags.",
+            "goal": "Resolve browser audio, BGM, SFX, and volume-toggle blockers using runtime audio state and player-visible controls.",
+            "write_set": common_write_set,
+            "read_set": [
+                "workflow_runtime_evidence/audio_feedback_polish_evidence.json",
+                "workflow_runtime_evidence/browser_playtest_ledger.json",
+                "role_output:multimodal_generation_agent",
+                "playtest_evidence/cocos_playtest_result.json",
+            ],
+            "acceptance_criteria": [
+                "BGM start, SFX playback, and volume toggle are proven in browser runtime evidence.",
+                "Audio proof is tied to runtime controls and no console/page audio errors are present.",
+                "If browser audio is blocked by autoplay or environment policy, the blocker is preserved rather than downgraded.",
+            ],
+            "test_commands": ["python -m pytest tests/test_pipeline_and_automation_cli.py tests/test_commercial_game_evidence_contracts.py tests/test_cocos_e2e.py -q"],
+            "expected_artifacts": ["workflow_runtime_evidence/audio_feedback_polish_evidence.json", "playtest_evidence/cocos_playtest_result.json"],
+            "evidence_requirements": ["audio_runtime_proof", "bgm_runtime_proof", "sfx_runtime_proof", "volume_toggle_runtime_proof"],
+            "blocking_conditions": ["audio_runtime_not_verified", "bgm_runtime_not_verified", "sfx_runtime_not_verified", "volume_toggle_missing"],
+            "model_guidance": [
+                "Use real browser runtime state and player-visible controls.",
+                "Do not satisfy audio proof with metadata-only flags.",
+                "Stop at AWAITING_HUMAN_REVIEW if all machine evidence passes.",
+            ],
+            "risk_level": "high",
+            "provider_lane": "codex_cli",
+            "execution_mode": "same_project_patch",
+            "metadata": {
+                "active_phase_name": active_phase_name,
+                "stage_phase": phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [
+                    f"{base}_non_placeholder_asset_graph",
+                    f"{base}_browser_interaction_runtime_proof",
+                ],
+            },
+        },
+    ]
+    return _attach_requirement_coverage(candidates, brief_manifest)
+
+
 def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") -> dict[str, Any]:
     base = _safe_id(pipeline_id)
     if _is_product_body_runtime_phase(pipeline_goal):
@@ -1352,6 +1483,25 @@ def _stage_internal_phase_graph(pipeline_id: str, *, pipeline_goal: str = "") ->
                         f"{base}_product_depth_chinese_ui",
                         f"{base}_build_browser_machine_evidence",
                         f"{base}_human_review_packet_gate",
+                    ],
+                }
+            ],
+        }
+    if _is_commercial_asset_browser_runtime_phase(pipeline_goal):
+        return {
+            "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+            "pipeline_id": pipeline_id,
+            "active_materialization_policy": "only_open_active_phase_task_cards",
+            "future_phase_task_cards_materialized": False,
+            "phases": [
+                {
+                    "phase_id": f"{base}_commercial_asset_browser_runtime_proof",
+                    "order": 1,
+                    "title": "Commercial Asset And Browser Runtime Proof Implementation",
+                    "task_card_ids": [
+                        f"{base}_non_placeholder_asset_graph",
+                        f"{base}_browser_interaction_runtime_proof",
+                        f"{base}_browser_audio_volume_runtime_proof",
                     ],
                 }
             ],
@@ -1597,6 +1747,11 @@ def _is_commercial_core_content_phase(value: str) -> bool:
 def _is_commercial_machine_evidence_phase(value: str) -> bool:
     normalized = str(value or "").lower()
     return "commercial machine evidence" in normalized and "player visible completion" in normalized
+
+
+def _is_commercial_asset_browser_runtime_phase(value: str) -> bool:
+    normalized = str(value or "").lower()
+    return "commercial asset" in normalized and "browser runtime proof" in normalized
 
 
 def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str | None:
