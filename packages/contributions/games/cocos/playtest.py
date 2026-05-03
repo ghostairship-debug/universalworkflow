@@ -8,6 +8,56 @@ from threading import Thread
 from typing import Any
 
 
+REQUIRED_PLAYTEST_FEATURES = [
+    "board10x10",
+    "threeCandidates",
+    "dragPlacement",
+    "lineClear",
+    "refresh",
+    "gameOver",
+    "antiStall",
+    "classicMode",
+    "campaignFirstSevenLevels",
+    "comboStreak",
+    "rewardAdPlaceholder",
+    "interstitialAdPoint",
+    "threeProps",
+    "propUse",
+    "skinBackgroundCollection",
+    "mobilePortraitUi",
+    "modalUi",
+    "audioPlaybackVerified",
+    "bgmStarted",
+    "sfxPlaybackVerified",
+    "chineseUi",
+    "smoothDragPreview",
+    "dragCoordinateAligned",
+    "galleryPuzzleCollection",
+    "failureReviveFeedback",
+]
+
+COMMERCIAL_PLAYTEST_FEATURES = [
+    "nativeCocosUiNodes",
+    "animationTimeline",
+    "particleEffects",
+    "levelSwitchingUi",
+    "generatedArtAssets",
+    "generatedAudioAssets",
+    "cocosAssetBindings",
+    "editorVisibleSceneHierarchy",
+    "productionComponentScripts",
+    "spriteframeAssetBindings",
+    "audioclipAssetBindings",
+    "audioPlaybackVerified",
+    "bgmStarted",
+    "sfxPlaybackVerified",
+    "volumeToggleUsable",
+    "chineseUi",
+    "smoothDragPreview",
+    "dragCoordinateAligned",
+]
+
+
 class _QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -135,47 +185,15 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         server.shutdown()
         server.server_close()
     feature_coverage = dict(after.get("featureCoverage") or {})
-    required_playtest_features = [
-        "board10x10",
-        "threeCandidates",
-        "dragPlacement",
-        "lineClear",
-        "refresh",
-        "gameOver",
-        "antiStall",
-        "classicMode",
-        "campaignFirstSevenLevels",
-        "comboStreak",
-        "rewardAdPlaceholder",
-        "interstitialAdPoint",
-        "threeProps",
-        "propUse",
-        "skinBackgroundCollection",
-        "mobilePortraitUi",
-        "modalUi",
-    ]
-    commercial_playtest_features = [
-        "nativeCocosUiNodes",
-        "animationTimeline",
-        "particleEffects",
-        "levelSwitchingUi",
-        "generatedArtAssets",
-        "generatedAudioAssets",
-        "cocosAssetBindings",
-        "editorVisibleSceneHierarchy",
-        "productionComponentScripts",
-        "spriteframeAssetBindings",
-        "audioclipAssetBindings",
-    ]
     result = {
-        "passed": all(bool(feature_coverage.get(key)) for key in required_playtest_features),
-        "commercial_passed": all(bool(feature_coverage.get(key)) for key in commercial_playtest_features),
+        "passed": all(bool(feature_coverage.get(key)) for key in REQUIRED_PLAYTEST_FEATURES),
+        "commercial_passed": all(bool(feature_coverage.get(key)) for key in COMMERCIAL_PLAYTEST_FEATURES),
         "url": f"http://127.0.0.1:{port}/index.html",
         "screenshots": screenshot_paths,
         "canvas_hashes": canvas_hashes,
         "feature_coverage": feature_coverage,
-        "required_playtest_features": required_playtest_features,
-        "commercial_playtest_features": commercial_playtest_features,
+        "required_playtest_features": REQUIRED_PLAYTEST_FEATURES,
+        "commercial_playtest_features": COMMERCIAL_PLAYTEST_FEATURES,
         "score": after.get("score"),
         "events": after.get("events", []),
         "open_panels": after.get("openPanels", []),

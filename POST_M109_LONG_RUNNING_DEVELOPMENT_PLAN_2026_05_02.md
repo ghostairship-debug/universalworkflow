@@ -6,14 +6,14 @@
 
 ## Current Truth
 
-2026-05-03 update: the user launched the current build and returned a real product-level `NO-GO` ("not playable"). That review supersedes the prior optimistic machine-ready handoff for product acceptance. The current repair loop may produce agent QA and browser evidence, but it must not convert unattended validation into human acceptance.
+2026-05-03 update: the user launched the current build and returned a real product-level `NO-GO` ("not playable"). A second review of the first repair slice also returned `NO-GO` with concrete defects: missing BGM, incomplete functions, missing Chinese UI, drag stutter, and drag coordinate mismatch. These reviews supersede the prior optimistic machine-ready handoff for product acceptance. The current repair loop may produce agent QA and browser evidence, but it must not convert unattended validation into human acceptance.
 
 - `agent_playtest_after_repair_go=true` for the current browser automation pass only
 - `commercial_game_development_readiness_go=true` for development-start control-plane readiness only
 - `human_player_review_go=false`
 - `commercial_playable_go=false`
 - The latest human/user review status is `NO-GO`; the only valid next acceptance state is a new explicit human acceptance after repair.
-- The launched build path was correct; the failure was product-level. The first repair slice replaces the proof-like browser bridge with a player-visible 10x10 runtime, but this remains below final commercial playable acceptance until explicitly accepted by a human reviewer.
+- The launched build path was correct; the failure was product-level. The current repair slices replace the proof-like browser bridge with a player-visible 10x10 runtime, Chinese UI, procedural BGM/SFX, aligned drag preview, and player-visible function panels, but this remains below final commercial playable acceptance until explicitly accepted by a human reviewer.
 - Runtime hooks, canvas presence, feature flags, browser events, screenshots, scaffold/build evidence, and Cocos bridge evidence cannot prove commercial playable completion.
 - The current success criterion is an honest repair-and-review loop: playable runtime evidence, adversarial visual QA, and then explicit human acceptance.
 
@@ -36,6 +36,7 @@ Phase sequence:
 0. Commercial playability repair loop.
    - Treat the user rejection of the launched build as a real `NO-GO`.
    - Replace proof-only browser/runtime surfaces with a player-visible 10x10 block puzzle runtime that can be inspected and played through boot, placement, line clear, candidate refresh, game-over/revive, props, shop, gallery, level, pause, and audio controls.
+   - Repair the second-review defects explicitly: BGM must start from real browser audio after user gesture, first-screen and panels must be Chinese, drag preview must follow the pointer without stutter, and board coordinate targeting must align with the visual piece.
    - Use Playwright screenshots and interaction scripts as agent QA evidence only; they cannot set `human_player_review_go=true`.
    - Continue repair until the game is actually usable and visually acceptable, then request/record explicit human acceptance instead of self-approving.
 

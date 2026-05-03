@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "updated_at": "2026-05-03T06:30:00Z",
-  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. On 2026-05-03 the user also rejected the current commercial_game_core_content_20260503 launched build as not genuinely playable, so product acceptance is reopened as NO-GO. The active Commercial Playability Repair Loop replaces the proof-like browser bridge with packages/contributions/games/cocos/browser_runtime_bridge.js, a player-visible 10x10 block puzzle runtime verified by Playwright boot, screenshot, drag-placement, line-clear, candidate refresh, props, revive, shop, gallery, level, pause, audio-toggle, and console/page-error checks. This agent QA evidence can support repair but cannot set human_player_review_go or commercial_playable_go. Current acceptance truth is commercial_game_development_readiness_go=true, human_player_review_go=false, commercial_playable_go=false, and final delivery remains blocked until explicit human acceptance after repair. No unattended run may convert event-only, canvas-only, scaffold, build-only, browser-event, requirement-untraced, baseline-only, placeholder-asset, missing-visible-CLI, requirement-omission, machine-only, or agent-QA-only evidence into commercial GO.",
+  "updated_at": "2026-05-03T07:25:00Z",
+  "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. On 2026-05-03 the user also rejected the current commercial_game_core_content_20260503 launched build as not genuinely playable, then rejected the first repair slice for missing BGM, incomplete functions, missing Chinese UI, drag stutter, and coordinate mismatch. The active Commercial Playability Repair Loop now replaces the proof-like browser bridge with packages/contributions/games/cocos/browser_runtime_bridge.js, a player-visible 10x10 block puzzle runtime with Chinese UI, procedural Web Audio BGM/SFX, immediate drag-follow placement preview, aligned board targeting, shop/gallery/level/revive/pause panels, and visible BGM state. Playwright evidence covers boot, screenshots, drag-preview, drag-placement, line-clear, candidate refresh, props, revive, shop, gallery, level, pause, audio/BGM/SFX, and console/page-error checks. This agent QA evidence can support repair but cannot set human_player_review_go or commercial_playable_go. Current acceptance truth is commercial_game_development_readiness_go=true, human_player_review_go=false, commercial_playable_go=false, and final delivery remains blocked until explicit human acceptance after repair. No unattended run may convert event-only, canvas-only, scaffold, build-only, browser-event, requirement-untraced, baseline-only, placeholder-asset, missing-visible-CLI, requirement-omission, machine-only, or agent-QA-only evidence into commercial GO.",
   "repaid_items": [
     {
       "debt_id": "TD-STRUCT-001",
@@ -203,27 +203,27 @@
       "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, product-body/runtime evidence, visible-CLI execution enforcement, a development-readiness contract, non-placeholder asset graph proof, browser interaction proof, and browser audio/volume runtime proof.",
       "introduced_in": "M76-M84 commercial game evaluation",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "reopened_by_user_no_go_agent_playtest_repairing",
-      "blocking_impact": "Blocks claiming commercial_playable_go=true until explicit human player acceptance after the playability repair loop. Agent QA can verify repair evidence but cannot replace acceptance.",
-      "repayment_note": "2026-05-03 user review rejected the current launched build as not playable. The first repair slice replaced the proof-only browser bridge with a model-backed, player-visible 10x10 runtime and Playwright passed boot/interaction/audio/panel checks, but final delivery remains below human acceptance."
+      "current_status": "agent_qa_repaired_awaiting_human_acceptance",
+      "blocking_impact": "Blocks claiming commercial_playable_go=true until explicit human player acceptance after the playability repair loop. Agent QA can verify Chinese UI, BGM, drag alignment, feature panels, and runtime evidence but cannot replace acceptance.",
+      "repayment_note": "2026-05-03 second user review rejected missing BGM, incomplete functions, missing Chinese UI, drag stutter, and coordinate mismatch. The latest repair slice adds Chinese UI, procedural Web Audio BGM/SFX, immediate drag-follow preview, aligned placement targeting, and Playwright screenshots for shop/gallery/level/revive/pause panels. Final delivery remains below human acceptance."
     },
     {
       "debt_id": "M84-GAME-QA-001",
       "description": "Commercial readiness gate previously over-accepted runtime hook / canvas / event coverage. The latest hardening repaired that false-positive path and now separates machine-ready evidence from human player acceptance.",
       "introduced_in": "M84 real generated game review",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "red_team_reopened_by_user_no_go",
-      "blocking_impact": "Blocks commercial GO until the repaired build survives adversarial visual QA and explicit human acceptance. Prior machine evidence is treated as insufficient for product acceptance.",
-      "repayment_note": "QA now treats the user not-playable report as the controlling NO-GO. Playwright evidence is used to find and repair defects, not to self-approve commercial_playable_go."
+      "current_status": "agent_qa_passed_but_human_gate_open",
+      "blocking_impact": "Blocks commercial GO until the repaired build survives adversarial visual QA and explicit human acceptance. Agent QA and screenshots can support the repair packet but cannot self-approve commercial_playable_go.",
+      "repayment_note": "QA now treats both user NO-GO reports as controlling product blockers. The latest Playwright v3 evidence passes required and commercial checks plus panel screenshots, but remains repair evidence only."
     },
     {
       "debt_id": "M109-NO-DEGRADATION-COMMERCIAL-001",
       "description": "Strict pipeline pipeline_ecf26665254e was accepted by older machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation, product-depth evidence, asset graph, browser interaction, and audio/volume runtime proof have since been repaired with player-visible, non-runtime-hook evidence.",
       "introduced_in": "2026-04-29 no-degradation Cocos/worker rerun",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "reopened_by_user_no_go_agent_repair_in_progress",
+      "current_status": "agent_qa_repaired_awaiting_human_acceptance",
       "blocking_impact": "Directly blocks commercial_playable_go=true until explicit human review accepts the repaired game.",
-      "repayment_note": "The old proof-like bridge has been replaced in source and current build by browser_runtime_bridge.js. Playwright v3 evidence passes, but this is still agent QA only and does not clear human review."
+      "repayment_note": "The proof-like bridge has been replaced in source and current build by browser_runtime_bridge.js. Latest v3 repair covers Chinese UI, BGM/SFX, drag alignment, board placement, panels, and screenshots; this is still agent QA only and does not clear human review."
     },
     {
       "debt_id": "M109-PROVIDER-WATCHDOG-001",
@@ -246,10 +246,10 @@
       "description": "Same-project commercial gameplay implementation was previously marked complete by machine evidence, but real human review confirmed the build was not a completed game body. The product-body/product-depth path has since been rebuilt with model/runtime, Cocos component evidence, non-placeholder asset proof, browser interaction proof, and audio/volume runtime proof.",
       "introduced_in": "2026-04-29 same-project product implementation resume",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "reopened_by_user_no_go_agent_playtest_passed",
-      "blocking_impact": "Blocks commercial GO until product-body playability and visual polish are accepted by a real human review.",
+      "current_status": "agent_qa_repaired_awaiting_human_acceptance",
+      "blocking_impact": "Blocks final commercial GO until human acceptance verifies the repaired game body. It no longer blocks continuing the current repair-review loop.",
       "closure_evidence": "state/trusted_cocos_build_browser_audio_runtime_20260502/phase_closeout.json",
-      "repayment_note": "2026-05-03 repair replaced the browser evidence shell with a real 10x10 runtime and passed agent playtest, but human review remains false."
+      "repayment_note": "Latest source and build runtime exposes player-visible Chinese UI, Web Audio BGM/SFX, immediate drag preview, aligned placement, 10x10 gameplay, line clear, refresh, props, revive, shop, gallery, level, pause, and panel screenshots."
     },
     {
       "debt_id": "M109-CODEX-PATCH-APPLY-TURN-STALL-001",

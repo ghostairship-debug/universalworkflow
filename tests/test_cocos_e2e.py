@@ -24,6 +24,10 @@ from packages.contributions.games.cocos.e2e import run_cocos_game_e2e
 from packages.contributions.games.cocos.graph_bridge import build_cocos_graph_evidence_bridge
 from packages.contributions.games.cocos.inspector import describe_cocos_delivery_modes, inspect_cocos_project_v2
 from packages.contributions.games.cocos.player_validation import validate_cocos_player_visible_evidence
+from packages.contributions.games.cocos.playtest import (
+    COMMERCIAL_PLAYTEST_FEATURES,
+    REQUIRED_PLAYTEST_FEATURES,
+)
 from packages.contributions.games.cocos.sample_closeout import run_cocos_small_goal_sample_closeout
 from infra.scripts.validate_cocos_browser_runtime_hook import validate_cocos_browser_runtime_hook
 from infra.scripts.validate_cocos_start_scene import validate_cocos_start_scene
@@ -423,9 +427,45 @@ def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path
     assert "CommercialCoreLoopRuntime.getSnapshot" in bridge_script
     assert "placementResult" in bridge_script
     assert "lineClearResult" in bridge_script
+    assert "uiLanguage: 'zh-CN'" in bridge_script
+    assert "方块花园" in bridge_script
+    assert "startBgm" in bridge_script
+    assert "bgmStarted" in bridge_script
+    assert "smoothDragPreview" in bridge_script
+    assert "dragCoordinateAligned" in bridge_script
+    assert "failureReviveFeedback" in bridge_script
+    assert "interstitialAdPoint" in bridge_script
     assert "commercialPlayableGo: false" in bridge_script
     assert "1010 Commercial Runtime Proof" not in bridge_script
     assert evidence["runtime_source_policy"] == "model_state_view_only_not_dom_event_substitute"
+
+
+def test_cocos_browser_playtest_requires_chinese_audio_and_drag_quality() -> None:
+    required = set(REQUIRED_PLAYTEST_FEATURES)
+    commercial = set(COMMERCIAL_PLAYTEST_FEATURES)
+
+    for feature in {
+        "audioPlaybackVerified",
+        "bgmStarted",
+        "sfxPlaybackVerified",
+        "chineseUi",
+        "smoothDragPreview",
+        "dragCoordinateAligned",
+        "galleryPuzzleCollection",
+        "failureReviveFeedback",
+    }:
+        assert feature in required
+
+    for feature in {
+        "audioPlaybackVerified",
+        "bgmStarted",
+        "sfxPlaybackVerified",
+        "volumeToggleUsable",
+        "chineseUi",
+        "smoothDragPreview",
+        "dragCoordinateAligned",
+    }:
+        assert feature in commercial
 
 
 def test_cocos_build_stops_new_creator_child_processes(tmp_path: Path, monkeypatch) -> None:

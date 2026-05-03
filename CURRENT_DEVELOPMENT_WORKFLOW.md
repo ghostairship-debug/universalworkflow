@@ -9,10 +9,13 @@ The current launched build was rejected by the user as not genuinely playable. T
 - Human/user review result: `NO-GO`
 - Current truth remains: `human_player_review_go=false`, `commercial_playable_go=false`
 - The prior `machine_evidence_go=true` claim is treated as insufficient for product acceptance because the old browser bridge was still proof-like UI, not a polished playable game.
+- Second human/user review result on the first repair slice: still `NO-GO`, with explicit defects `missing_bgm`, `incomplete_functions`, `missing_chinese_ui`, `drag_stutter`, and `drag_coordinate_mismatch`.
 - Active repair: `Commercial Playability Repair Loop`.
 - First repair slice replaced the proof-only `workflow-e2e-runtime-bridge.js` with a model-backed, player-visible 10x10 block puzzle runtime generated from `packages/contributions/games/cocos/browser_runtime_bridge.js`.
-- Agent QA evidence now covers boot, mobile/desktop screenshots, drag placement, line clear, score/combo, candidate refresh, hammer/shuffle/bomb/revive, skin shop, gallery, level panel, pause modal, audio toggle proof, and empty console/page errors.
-- Agent QA evidence paths: `output/playwright/current-game-before-mobile.png`, `output/playwright/current-game-after-v3-mobile.png`, `output/playwright/current_game_after_v3_playtest/cocos_playtest_result.json`.
+- Second repair slice adds Chinese first-screen UI, procedural Web Audio BGM/SFX, immediate drag-follow placement preview, aligned board coordinate targeting, top-button spacing fixes, player-visible shop/gallery/level/revive/pause panels, and visible BGM state.
+- Browser playtest gate is ratcheted: Chinese UI, BGM/SFX runtime proof, smooth drag preview, coordinate alignment, gallery collection, and revive feedback are now required/commercial playtest features, not optional screenshots.
+- Agent QA evidence now covers boot, mobile/desktop screenshots, drag placement/preview, line clear, score/combo, candidate refresh, hammer/shuffle/bomb/revive, skin shop, gallery, level panel, pause modal, BGM/SFX/audio state, and empty console/page errors.
+- Agent QA evidence paths: `output/playwright/current_game_commercial_v3_playtest/cocos_playtest_result.json`, `output/playwright/current_game_commercial_v3_playtest/cocos_playtest_initial.png`, `output/playwright/current_game_commercial_v3_playtest/cocos_playtest_after_actions.png`, `output/playwright/current_game_commercial_v3_review/commercial_review_report.json`, and panel screenshots under `output/playwright/current_game_commercial_v3_review/`.
 - This agent QA pass is not human acceptance. The final commercial gate must remain below commercial playable GO until an explicit human acceptance replaces this NO-GO.
 
 ## 2026-05-03 Closeout: Commercial Asset And Browser Runtime Proof Implementation
