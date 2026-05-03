@@ -29,6 +29,15 @@ TASK_CARD_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS = 900
 TASK_CARD_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS = 1
 TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS = 1800
 PREVIEW_LIMIT = 2000
+HUMAN_VISIBLE_CLI_MODE = "human_visible_cli_enforced"
+RESIDENT_CONTROL_PLANE_PROVIDER_VISIBLE_MODE = "resident_control_plane_provider_visible_enforced"
+VISIBLE_CLI_ENFORCED_MODES = {HUMAN_VISIBLE_CLI_MODE, RESIDENT_CONTROL_PLANE_PROVIDER_VISIBLE_MODE}
+
+
+def _provider_direct_visible_required(*, execution_visibility_mode: str | None, adapter_name: str | None) -> bool:
+    mode = str(execution_visibility_mode or "").strip()
+    adapter = str(adapter_name or "").strip().lower()
+    return mode in VISIBLE_CLI_ENFORCED_MODES and adapter in {"codex", "opencode"}
 
 
 def run_task_card_patch_via_workflowctl(
@@ -129,22 +138,61 @@ def run_task_card_patch_via_workflowctl(
     for item in test_commands:
         run_cmd.extend(["--test-command", item])
     provider_idle_budget_seconds = max(TASK_CARD_IDLE_TIMEOUT_SECONDS, TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS)
+    visible_session_dir = task_card_path.parent / "visible_cli_sessions" / _safe_name(task_card.task_card_id)
+    env_overrides = {
+        "WORKFLOW_CODEX_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
+        "WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
+        "WORKFLOW_OPENCODE_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
+        "WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
+        "WORKFLOW_PROVIDER_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
+        "WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
+        "WORKFLOW_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS": str(TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS),
+        "WORKFLOW_PROVIDER_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS": str(TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS),
+        "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_INITIAL_SECONDS": str(TASK_CARD_WALL_TIMEOUT_SECONDS),
+        "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS),
+        "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS),
+        "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
+        "WORKFLOW_MUTATION_EXTERNAL_ROOTS": json.dumps([project_dir.resolve().as_posix()], ensure_ascii=False),
+    }
+    provider_visible_cli_required = _provider_direct_visible_required(
+        execution_visibility_mode=execution_visibility_mode,
+        adapter_name=resolved_adapter,
+    )
+    if provider_visible_cli_required:
+        env_overrides.update(
+            {
+                "WORKFLOW_CONTROL_PLANE_VISIBILITY": "resident",
+                "WORKFLOW_PROVIDER_VISIBILITY": "direct_visible",
+                "WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI": "1",
+                "WORKFLOW_PROVIDER_VISIBLE_CLI_REQUIRED": "1",
+                "WORKFLOW_PROVIDER_VISIBLE_SESSION_ROOT": (visible_session_dir / "provider_subprocesses").as_posix(),
+                "WORKFLOW_PROVIDER_VISIBLE_PARENT_TASK_CARD_ID": task_card.task_card_id,
+                "WORKFLOW_PROVIDER_VISIBLE_PARENT_RECEIPT_ID": str(receipt_id),
+            }
+        )
+    material_progress_idle_timeout = None if provider_visible_cli_required else TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS
+    adaptive_progress_window = (
+        TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS
+        if provider_visible_cli_required
+        else TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS
+    )
     executed = _run_json_command(
         run_cmd,
         cwd=root,
         timeout_seconds=TASK_CARD_WALL_TIMEOUT_SECONDS,
         idle_timeout_seconds=TASK_CARD_IDLE_TIMEOUT_SECONDS,
         provider_output_idle_timeout_seconds=TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS,
-        material_progress_idle_timeout_seconds=TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS,
+        material_progress_idle_timeout_seconds=material_progress_idle_timeout,
         adaptive_wall_timeout_extension_seconds=TASK_CARD_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS,
         adaptive_wall_timeout_max_extensions=TASK_CARD_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS,
         adaptive_wall_timeout_absolute_max_seconds=TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS,
-        adaptive_wall_timeout_progress_window_seconds=TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS,
+        adaptive_wall_timeout_progress_window_seconds=adaptive_progress_window,
+        adaptive_wall_timeout_requires_material_progress=not provider_visible_cli_required,
         db_path=db_path,
         task_goal=_task_card_goal(task_card_path),
         receipt_id=str(receipt_id),
         execution_visibility_mode=execution_visibility_mode,
-        visible_session_dir=task_card_path.parent / "visible_cli_sessions" / _safe_name(task_card.task_card_id),
+        visible_session_dir=visible_session_dir,
         visible_session_metadata={
             "receipt_id": str(receipt_id),
             "task_card_id": task_card.task_card_id,
@@ -152,20 +200,7 @@ def run_task_card_patch_via_workflowctl(
             "project_dir": project_dir.as_posix(),
             "window_title": f"workflowctl {task_card.task_card_id}",
         },
-        env_overrides={
-            "WORKFLOW_CODEX_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
-            "WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
-            "WORKFLOW_OPENCODE_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
-            "WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
-            "WORKFLOW_PROVIDER_TIMEOUT_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
-            "WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS": str(provider_idle_budget_seconds),
-            "WORKFLOW_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS": str(TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS),
-            "WORKFLOW_PROVIDER_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS": str(TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS),
-            "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_INITIAL_SECONDS": str(TASK_CARD_WALL_TIMEOUT_SECONDS),
-            "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS),
-            "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS),
-            "WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS": str(TASK_CARD_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS),
-        },
+        env_overrides=env_overrides,
     )
     payload = executed.get("payload") if isinstance(executed.get("payload"), dict) else {}
     mutation_result = _mutation_result_from_payload(payload)
@@ -197,6 +232,11 @@ def run_task_card_patch_via_workflowctl(
         "stderr_preview": executed.get("stderr_preview"),
         "watchdog": executed.get("watchdog"),
         "execution_visibility_mode": execution_visibility_mode,
+        "control_plane_visibility": executed.get("control_plane_visibility"),
+        "provider_visibility": executed.get("provider_visibility"),
+        "provider_visible_cli_required": provider_visible_cli_required,
+        "provider_visible_cli_session": executed.get("provider_visible_cli_session"),
+        "provider_visible_cli_log_paths": executed.get("provider_visible_cli_log_paths"),
         "visible_cli_session": executed.get("visible_cli_session"),
         "visible_cli_log_paths": executed.get("visible_cli_log_paths"),
         "timeout_seconds": executed.get("timeout_seconds"),
@@ -414,6 +454,7 @@ def _run_json_command(
     adaptive_wall_timeout_max_extensions: int | None = None,
     adaptive_wall_timeout_absolute_max_seconds: int | None = None,
     adaptive_wall_timeout_progress_window_seconds: int | None = None,
+    adaptive_wall_timeout_requires_material_progress: bool = True,
     db_path: Path | None = None,
     task_goal: str | None = None,
     receipt_id: str | None = None,
@@ -422,7 +463,7 @@ def _run_json_command(
     visible_session_metadata: dict[str, Any] | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    if execution_visibility_mode == "human_visible_cli_enforced":
+    if execution_visibility_mode == HUMAN_VISIBLE_CLI_MODE and not _resident_control_plane_provider_visible_requested(env_overrides):
         return _run_visible_json_command(
             command,
             cwd=cwd,
@@ -441,6 +482,18 @@ def _run_json_command(
             visible_session_metadata=visible_session_metadata,
             env_overrides=env_overrides,
         )
+    resident_session = None
+    resident_output_callback = None
+    if execution_visibility_mode in VISIBLE_CLI_ENFORCED_MODES and _resident_control_plane_provider_visible_requested(env_overrides):
+        resident_session = _start_resident_control_plane_session(
+            command=command,
+            cwd=cwd,
+            visible_session_dir=visible_session_dir,
+            receipt_id=receipt_id,
+            execution_visibility_mode=execution_visibility_mode,
+            visible_session_metadata=visible_session_metadata,
+        )
+        resident_output_callback = resident_session["on_output"]
     run_kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "capture_output": True,
@@ -449,6 +502,8 @@ def _run_json_command(
         "idle_timeout": idle_timeout_seconds,
         "check": False,
     }
+    if resident_output_callback is not None:
+        run_kwargs["on_output"] = resident_output_callback
     if provider_output_idle_timeout_seconds is not None:
         run_kwargs["provider_output_idle_timeout"] = provider_output_idle_timeout_seconds
     if material_progress_idle_timeout_seconds is not None:
@@ -463,7 +518,7 @@ def _run_json_command(
             run_kwargs["adaptive_wall_timeout_absolute_max"] = adaptive_wall_timeout_absolute_max_seconds
         if adaptive_wall_timeout_progress_window_seconds is not None:
             run_kwargs["adaptive_wall_timeout_progress_window"] = adaptive_wall_timeout_progress_window_seconds
-        run_kwargs["adaptive_wall_timeout_requires_material_progress"] = True
+        run_kwargs["adaptive_wall_timeout_requires_material_progress"] = adaptive_wall_timeout_requires_material_progress
     if (
         db_path is not None
         and task_goal
@@ -481,6 +536,14 @@ def _run_json_command(
     proc = run_subprocess_with_tree_timeout(command, **run_kwargs)
     stdout = proc.stdout or ""
     stderr = proc.stderr or ""
+    if resident_session is not None:
+        _finish_resident_control_plane_session(
+            session_context=resident_session,
+            return_code=proc.returncode,
+            watchdog=completed_process_watchdog_metadata(proc),
+            stdout=stdout,
+            stderr=stderr,
+        )
     payload = _parse_json_from_stdout(stdout)
     watchdog = completed_process_watchdog_metadata(proc)
     common = {
@@ -497,6 +560,20 @@ def _run_json_command(
         "adaptive_wall_timeout_absolute_max_seconds": adaptive_wall_timeout_absolute_max_seconds,
         "adaptive_wall_timeout_progress_window_seconds": adaptive_wall_timeout_progress_window_seconds,
     }
+    if resident_session is not None:
+        session_payload = resident_session["session"]
+        log_paths = resident_session["log_paths"]
+        common.update(
+            {
+                "control_plane_visibility": "resident",
+                "provider_visibility": "direct_visible",
+                "watchdog_source": "resident_control_plane_db_runtime_state",
+                "visible_cli_session": session_payload,
+                "visible_cli_log_paths": log_paths,
+                "resident_control_plane_session": session_payload,
+                "resident_control_plane_log_paths": log_paths,
+            }
+        )
     if proc.returncode != 0:
         child_state = (
             _inspect_child_workflow_state(db_path=db_path, task_goal=task_goal, receipt_id=receipt_id)
@@ -540,7 +617,9 @@ def _run_json_command(
             "child_workflow_state": child_state,
             "child_run_id": child_state.get("run_id"),
             "child_attempt_id": child_state.get("attempt_id"),
-            "watchdog_source": "db_runtime_state" if child_state else "process_stream",
+            "watchdog_source": common.get("watchdog_source") or ("db_runtime_state" if child_state else "process_stream"),
+            "provider_visible_cli_session": child_state.get("provider_visible_cli_session"),
+            "provider_visible_cli_log_paths": child_state.get("provider_visible_cli_log_paths"),
             "recoverable_suggestion": _recoverable_suggestion_for_failure(failure_class, watchdog),
         }
     if not isinstance(payload, dict):
@@ -549,13 +628,168 @@ def _run_json_command(
             "status": "failed",
             "failure_class": "workflowctl_child_json_parse_failed",
         }
+    child_state = (
+        _inspect_child_workflow_state(db_path=db_path, task_goal=task_goal, receipt_id=receipt_id)
+        if db_path is not None and task_goal
+        else {}
+    )
     return {
         **common,
         "status": "completed",
         "payload": payload,
-        "child_run_id": payload.get("run", {}).get("run_id") if isinstance(payload, dict) else None,
-        "watchdog_source": "workflowctl_payload",
+        "child_workflow_state": child_state,
+        "child_run_id": (payload.get("run", {}).get("run_id") if isinstance(payload, dict) else None) or child_state.get("run_id"),
+        "child_attempt_id": child_state.get("attempt_id"),
+        "provider_visible_cli_session": child_state.get("provider_visible_cli_session"),
+        "provider_visible_cli_log_paths": child_state.get("provider_visible_cli_log_paths"),
+        "watchdog_source": common.get("watchdog_source") or "workflowctl_payload",
     }
+
+
+def _truthy_value(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resident_control_plane_provider_visible_requested(env_overrides: dict[str, str] | None) -> bool:
+    env = env_overrides or {}
+    return str(env.get("WORKFLOW_CONTROL_PLANE_VISIBILITY") or "").strip().lower() == "resident" and (
+        _truthy_value(env.get("WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI"))
+        or str(env.get("WORKFLOW_PROVIDER_VISIBILITY") or "").strip().lower() == "direct_visible"
+    )
+
+
+def _start_resident_control_plane_session(
+    *,
+    command: list[str],
+    cwd: Path,
+    visible_session_dir: Path | None,
+    receipt_id: str | None,
+    execution_visibility_mode: str | None,
+    visible_session_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    session_dir = visible_session_dir or cwd / "state" / "visible_cli_sessions" / f"resident_{uuid4().hex[:12]}"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = session_dir / "stdout.log"
+    stderr_path = session_dir / "stderr.log"
+    stream_path = session_dir / "stream.jsonl"
+    session_path = session_dir / "visible_cli_session.json"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    stream_path.write_text("", encoding="utf-8")
+    metadata = dict(visible_session_metadata or {})
+    now = datetime.now(UTC).isoformat()
+    session = {
+        "schema_version": "resident_control_plane_session_v1",
+        "mode": RESIDENT_CONTROL_PLANE_PROVIDER_VISIBLE_MODE,
+        "logical_execution_visibility_mode": execution_visibility_mode,
+        "status": "running",
+        "pid": os.getpid(),
+        "control_plane_pid": os.getpid(),
+        "window_title": metadata.get("window_title") or "resident workflowctl control plane",
+        "argv": command,
+        "cwd": cwd.as_posix(),
+        "receipt_id": receipt_id,
+        "task_card_id": metadata.get("task_card_id"),
+        "pipeline_id": metadata.get("pipeline_id"),
+        "stdout_log_path": stdout_path.as_posix(),
+        "stderr_log_path": stderr_path.as_posix(),
+        "stream_log_path": stream_path.as_posix(),
+        "session_path": session_path.as_posix(),
+        "started_at": now,
+        "ended_at": None,
+    }
+    _write_json(session_path, session)
+    _append_stream_event(
+        stream_path,
+        {
+            "event": "resident_control_plane_started",
+            "created_at": now,
+            "argv": command,
+            "pid": os.getpid(),
+        },
+    )
+
+    def _on_output(event: dict[str, Any]) -> None:
+        text = str(event.get("text") or "")
+        if not text:
+            return
+        stream = str(event.get("stream") or "stdout")
+        target = stderr_path if stream == "stderr" else stdout_path
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(text)
+        _append_stream_event(
+            stream_path,
+            {
+                "event": f"resident_control_plane_{stream}",
+                "created_at": str(event.get("observed_at") or datetime.now(UTC).isoformat()),
+                "stream": stream,
+                "byte_count": event.get("byte_count"),
+                "is_control": bool(event.get("is_control")),
+                "is_material_progress": bool(event.get("is_material_progress")),
+                "text": text.rstrip("\r\n"),
+            },
+        )
+
+    log_paths = {
+        "stdout_log_path": stdout_path.as_posix(),
+        "stderr_log_path": stderr_path.as_posix(),
+        "stream_log_path": stream_path.as_posix(),
+        "session_path": session_path.as_posix(),
+    }
+    return {
+        "session": session,
+        "session_path": session_path,
+        "stdout_path": stdout_path,
+        "stderr_path": stderr_path,
+        "stream_path": stream_path,
+        "log_paths": log_paths,
+        "on_output": _on_output,
+    }
+
+
+def _finish_resident_control_plane_session(
+    *,
+    session_context: dict[str, Any],
+    return_code: int,
+    watchdog: dict[str, Any],
+    stdout: str,
+    stderr: str,
+) -> None:
+    stdout_path = session_context["stdout_path"]
+    stderr_path = session_context["stderr_path"]
+    stream_path = session_context["stream_path"]
+    session_path = session_context["session_path"]
+    if stdout and not stdout_path.read_text(encoding="utf-8"):
+        stdout_path.write_text(stdout, encoding="utf-8")
+    if stderr and not stderr_path.read_text(encoding="utf-8"):
+        stderr_path.write_text(stderr, encoding="utf-8")
+    ended = datetime.now(UTC).isoformat()
+    timeout_type = watchdog.get("timeout_type")
+    if timeout_type:
+        status = "timeout"
+    else:
+        status = "completed" if return_code == 0 else "failed"
+    session = dict(session_context["session"])
+    session.update(
+        {
+            "status": status,
+            "return_code": return_code,
+            "ended_at": ended,
+            "timeout_type": timeout_type,
+        }
+    )
+    session_context["session"].clear()
+    session_context["session"].update(session)
+    _write_json(session_path, session)
+    _append_stream_event(
+        stream_path,
+        {
+            "event": "resident_control_plane_completed",
+            "created_at": ended,
+            "return_code": return_code,
+            "timeout_type": timeout_type,
+        },
+    )
 
 
 def _run_visible_json_command(
@@ -1282,6 +1516,35 @@ def _workflow_state_for_run(connection: sqlite3.Connection, run: sqlite3.Row) ->
         if payload.get("is_material_progress"):
             material_events.append(provider_row)
     heartbeat_at = lease["heartbeat_at"] if lease is not None else event["created_at"] if event is not None else None
+    provider_visible_session: dict[str, Any] | None = None
+    provider_visible_log_paths: dict[str, Any] | None = None
+    latest_evidence = (
+        connection.execute(
+            """
+            SELECT raw_execution_json
+            FROM evidence
+            WHERE run_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        if _sqlite_table_exists(connection, "evidence")
+        else None
+    )
+    if latest_evidence is not None:
+        try:
+            raw_execution = json.loads(latest_evidence["raw_execution_json"])
+        except (TypeError, json.JSONDecodeError):
+            raw_execution = {}
+        metadata = raw_execution.get("metadata") if isinstance(raw_execution, dict) else {}
+        if isinstance(metadata, dict):
+            session = metadata.get("direct_visible_cli_session")
+            log_paths = metadata.get("direct_visible_cli_log_paths")
+            if isinstance(session, dict):
+                provider_visible_session = session
+            if isinstance(log_paths, dict):
+                provider_visible_log_paths = log_paths
     return {
         "run_id": run_id,
         "run_status": run["status"],
@@ -1299,6 +1562,8 @@ def _workflow_state_for_run(connection: sqlite3.Connection, run: sqlite3.Row) ->
         "material_progress_event_count": len(material_events),
         "last_provider_output_at": provider_events[-1]["created_at"] if provider_events else None,
         "last_material_progress_at": material_events[-1]["created_at"] if material_events else None,
+        "provider_visible_cli_session": provider_visible_session,
+        "provider_visible_cli_log_paths": provider_visible_log_paths,
     }
 
 

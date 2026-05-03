@@ -538,7 +538,12 @@ def run_workflow_pipeline(
     )
     output = target_dir / f"{pipeline.pipeline_id}.json"
     payload["evidence_path"] = output.as_posix()
-    retention_manifest = build_pipeline_retention_manifest(payload, workspace_root=root, target_dir=target_dir)
+    retention_manifest = build_pipeline_retention_manifest(
+        payload,
+        workspace_root=root,
+        target_dir=target_dir,
+        allow_external_target=evidence_dir is not None,
+    )
     retention_output = target_dir / f"{pipeline.pipeline_id}.retention.json"
     retention_manifest["manifest_path"] = retention_output.as_posix()
     payload["retention_manifest_path"] = retention_output.as_posix()

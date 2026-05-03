@@ -78,6 +78,7 @@ def build_repair_task_cards_from_ai_findings(
                     "screenshots_or_video_for_repaired_path",
                     "state_snapshot_after_repair",
                     "fresh_worker_receipt",
+                    *(["human_visible_cli_session", "direct_provider_visible_cli_session"] if severity in {"P0", "P1"} else []),
                 ],
                 blocking_conditions=[
                     "missing_replay_evidence",
@@ -102,6 +103,9 @@ def build_repair_task_cards_from_ai_findings(
                     "covered_requirement_ids": requirement_ids,
                     "human_visible_cli_required": severity in {"P0", "P1"},
                     "execution_visibility_mode": "human_visible_cli_enforced" if severity in {"P0", "P1"} else "headless_allowed",
+                    "control_plane_visibility": "resident" if severity in {"P0", "P1"} else "headless",
+                    "provider_visibility": "direct_visible" if severity in {"P0", "P1"} else "headless",
+                    "provider_output_mode": "human_readable" if severity in {"P0", "P1"} else "machine_readable",
                     "replay_artifact_paths": _string_list(finding.get("replay_artifact_paths")),
                     "evidence_paths": evidence_paths,
                 },

@@ -1692,13 +1692,20 @@ def _attach_requirement_coverage(candidates: list[dict[str, Any]], brief_manifes
         if str(candidate.get("execution_mode") or "") == "same_project_patch":
             metadata["human_visible_cli_required"] = True
             metadata["execution_visibility_mode"] = "human_visible_cli_enforced"
+            metadata["control_plane_visibility"] = "resident"
+            metadata["provider_visibility"] = "direct_visible"
+            metadata["provider_output_mode"] = "human_readable"
             candidate["evidence_requirements"] = _append_unique(
                 candidate.get("evidence_requirements", []),
                 "human_visible_cli_session",
             )
+            candidate["evidence_requirements"] = _append_unique(
+                candidate.get("evidence_requirements", []),
+                "direct_provider_visible_cli_session",
+            )
             candidate["model_guidance"] = _append_unique(
                 candidate.get("model_guidance", []),
-                "Run through human_visible_cli_enforced for high-risk commercial implementation.",
+                "Run through human_visible_cli_enforced with resident control plane and direct visible provider CLI for high-risk commercial implementation.",
             )
             if requirements:
                 metadata["requirement_coverage_required"] = True

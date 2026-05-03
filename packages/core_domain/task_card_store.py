@@ -106,13 +106,13 @@ def task_card_visibility_issues(task_card: TaskCard) -> list[dict[str, Any]]:
     if not visibility_required:
         return []
     mode = str(metadata.get("execution_visibility_mode") or "").strip()
-    if mode == "human_visible_cli_enforced":
+    if mode in {"human_visible_cli_enforced", "resident_control_plane_provider_visible_enforced"}:
         return []
     return [
         {
             "code": "human_visible_cli_required",
             "field": "metadata.execution_visibility_mode",
-            "required": "human_visible_cli_enforced",
+            "required": "human_visible_cli_enforced or resident_control_plane_provider_visible_enforced",
             "value": mode or None,
         }
     ]

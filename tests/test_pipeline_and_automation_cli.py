@@ -2935,10 +2935,108 @@ def test_task_card_worker_cli_passes_human_visible_cli_mode_and_metadata(
     assert result["visible_cli_session"]["pid"] == 1234
     assert result["visible_cli_log_paths"]["stream_log_path"].endswith("stream.jsonl")
     assert run_kwargs["execution_visibility_mode"] == "human_visible_cli_enforced"
+    assert run_kwargs["material_progress_idle_timeout_seconds"] is None
+    assert run_kwargs["adaptive_wall_timeout_requires_material_progress"] is False
+    assert run_kwargs["adaptive_wall_timeout_progress_window_seconds"] == 900
     assert run_kwargs["visible_session_dir"].as_posix().endswith("visible_cli_sessions/tc_visible")
     assert run_kwargs["visible_session_metadata"]["receipt_id"] == "receipt_visible"
     assert run_kwargs["visible_session_metadata"]["task_card_id"] == "tc_visible"
+    assert run_kwargs["env_overrides"]["WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI"] == "1"
+    assert run_kwargs["env_overrides"]["WORKFLOW_PROVIDER_VISIBLE_CLI_REQUIRED"] == "1"
+    assert run_kwargs["env_overrides"]["WORKFLOW_PROVIDER_VISIBLE_PARENT_TASK_CARD_ID"] == "tc_visible"
+    assert run_kwargs["env_overrides"]["WORKFLOW_PROVIDER_VISIBLE_PARENT_RECEIPT_ID"] == "receipt_visible"
+    assert run_kwargs["env_overrides"]["WORKFLOW_PROVIDER_VISIBLE_SESSION_ROOT"].endswith(
+        "visible_cli_sessions/tc_visible/provider_subprocesses"
+    )
+    assert run_kwargs["env_overrides"]["WORKFLOW_CONTROL_PLANE_VISIBILITY"] == "resident"
+    assert run_kwargs["env_overrides"]["WORKFLOW_PROVIDER_VISIBILITY"] == "direct_visible"
+    assert json.loads(run_kwargs["env_overrides"]["WORKFLOW_MUTATION_EXTERNAL_ROOTS"]) == [
+        (tmp_path / "project").resolve().as_posix()
+    ]
     assert worker_cli._powershell_quote_arg("D:\\Universal Agentic workflow\\python.exe") == "'D:\\Universal Agentic workflow\\python.exe'"
+
+
+def test_resident_control_plane_mode_records_provider_visible_cli_without_outer_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    def _unexpected_outer_visible(*_args, **_kwargs):
+        raise AssertionError("resident provider-visible mode must not launch an outer visible workflowctl window")
+
+    def _fake_run_subprocess(command, **kwargs):
+        callback = kwargs.get("on_output")
+        assert callable(callback)
+        assert kwargs["env"]["WORKFLOW_CONTROL_PLANE_VISIBILITY"] == "resident"
+        callback(
+            {
+                "stream": "stderr",
+                "text": "workflow_progress {\"event\":\"workflow_progress\"}\n",
+                "byte_count": 48,
+                "observed_at": "2026-05-04T00:00:00+00:00",
+                "is_control": True,
+                "is_material_progress": False,
+            }
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"run": {"run_id": "child_run_001"}, "pr_ready_summary": {"readiness": "ready"}}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(worker_cli, "_run_visible_json_command", _unexpected_outer_visible)
+    monkeypatch.setattr(worker_cli, "run_subprocess_with_tree_timeout", _fake_run_subprocess)
+    monkeypatch.setattr(
+        worker_cli,
+        "_inspect_child_workflow_state",
+        lambda **_kwargs: {
+            "run_id": "child_run_001",
+            "attempt_id": "attempt_001",
+            "provider_visible_cli_session": {
+                "status": "completed",
+                "provider": "codex",
+                "provider_pid": 5678,
+                "argv": ["codex", "exec", "-"],
+                "cwd": tmp_path.as_posix(),
+                "stdout_log_path": (tmp_path / "provider_stdout.log").as_posix(),
+                "stderr_log_path": (tmp_path / "provider_stderr.log").as_posix(),
+                "stream_log_path": (tmp_path / "provider_stream.jsonl").as_posix(),
+                "started_at": "2026-05-04T00:00:00+00:00",
+            },
+            "provider_visible_cli_log_paths": {"session_path": (tmp_path / "provider_session.json").as_posix()},
+        },
+    )
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        provider_output_idle_timeout_seconds=480,
+        material_progress_idle_timeout_seconds=720,
+        db_path=tmp_path / "workflow.db",
+        task_goal="Patch same project from task card: tc_visible",
+        receipt_id="receipt_visible",
+        execution_visibility_mode="human_visible_cli_enforced",
+        visible_session_dir=tmp_path / "visible_cli_sessions" / "tc_visible",
+        visible_session_metadata={"task_card_id": "tc_visible"},
+        env_overrides={
+            "WORKFLOW_CONTROL_PLANE_VISIBILITY": "resident",
+            "WORKFLOW_PROVIDER_VISIBILITY": "direct_visible",
+            "WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI": "1",
+        },
+    )
+
+    assert result["status"] == "completed"
+    assert result["control_plane_visibility"] == "resident"
+    assert result["provider_visibility"] == "direct_visible"
+    assert result["visible_cli_session"]["mode"] == "resident_control_plane_provider_visible_enforced"
+    assert result["provider_visible_cli_session"]["provider"] == "codex"
+    assert result["child_attempt_id"] == "attempt_001"
+    stream_log = Path(result["visible_cli_log_paths"]["stream_log_path"])
+    assert stream_log.exists()
+    assert "resident_control_plane_stderr" in stream_log.read_text(encoding="utf-8")
 
 
 def test_task_card_worker_cli_normalizes_patch_adapter_aliases() -> None:

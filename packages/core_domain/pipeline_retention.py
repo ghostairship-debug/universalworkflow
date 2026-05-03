@@ -13,10 +13,12 @@ def build_pipeline_retention_manifest(
     *,
     workspace_root: str | Path,
     target_dir: str | Path,
+    allow_external_target: bool = False,
 ) -> dict[str, Any]:
     root = Path(workspace_root).resolve()
     target = Path(target_dir).resolve()
-    if not _is_within(target, root):
+    workspace_bound = _is_within(target, root)
+    if not workspace_bound and not allow_external_target:
         raise ValueError(f"pipeline retention target must stay inside workspace: {target}")
 
     status = str(payload.get("status") or "unknown")
@@ -37,9 +39,10 @@ def build_pipeline_retention_manifest(
         "workspace_root": root.as_posix(),
         "target_dir": target.as_posix(),
         "cleanup_safety": {
-            "workspace_bound": True,
+            "workspace_bound": workspace_bound,
+            "external_target_allowed": bool(allow_external_target and not workspace_bound),
             "cleanup_performed": False,
-            "cleanup_allowed_after_boundary_check": True,
+            "cleanup_allowed_after_boundary_check": workspace_bound,
             "reason": "manifest_only_retention_no_artifact_deletion",
         },
         "retained_artifacts": {

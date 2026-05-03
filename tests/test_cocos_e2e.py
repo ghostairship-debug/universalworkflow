@@ -115,6 +115,10 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     assert payload["technical_smoke_go"] is True
     assert payload["production_scaffold_go"] is False
     assert (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts").exists()
+    assert (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts.meta").exists()
+    assert (output_dir / "assets" / "scripts" / "AudioFeedbackController.ts").exists()
+    assert (output_dir / "assets" / "scripts" / "gameplay" / "CommercialCoreLoopRuntime.ts").exists()
+    assert (output_dir / "assets" / "scripts" / "gameplay" / "CommercialGameplaySemanticBridge.ts").exists()
     assert (output_dir / "assets" / "scene" / "main.scene").exists()
     assert (output_dir / "design_mapping.json").exists()
     assert not (output_dir / "assets" / "model" / "helloWorld").exists()
@@ -124,7 +128,8 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     assert (output_dir / "gameplay_interaction_contract.json").exists()
     script = (output_dir / "assets" / "scripts" / "BlockPuzzleGame.ts").read_text(encoding="utf-8")
     assert "__COCOS_BLOCK_PUZZLE_E2E__" in script
-    assert "bootBlockPuzzleStandalone()" in script
+    assert "__WORKFLOW_BLOCK_PUZZLE_COMPONENT__" in script
+    assert "bootBlockPuzzleStandalone();" not in script
     assert "campaignFirstSevenLevels" in script
     assert "Math.floor(this.score / 10 + offset)" in script
     assert "fillRoundedPanel" in script
@@ -148,6 +153,9 @@ def test_cocos_e2e_generates_real_creator_project_without_build(tmp_path: Path) 
     globals_data = scene_data[globals_ref]
     assert globals_data["__type__"] == "cc.SceneGlobals"
     assert "_skybox" in globals_data
+    runtime_hook = validate_cocos_browser_runtime_hook(output_dir)
+    assert runtime_hook["status"] == "passed"
+    assert runtime_hook["browser_runtime_source_backed"] is True
 
 
 def test_validate_cocos_start_scene_requires_scene_meta_settings_and_nodes(tmp_path: Path) -> None:
@@ -430,6 +438,12 @@ def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path
     assert "uiLanguage: 'zh-CN'" in bridge_script
     assert "方块花园" in bridge_script
     assert "startBgm" in bridge_script
+    assert "audio_manifest.json" in bridge_script
+    assert "commercial_asset_bindings.json" in bridge_script
+    assert "generatedVisualAssetNames" in bridge_script
+    assert "drawGeneratedBackground" in bridge_script
+    assert "generatedBgmAssetPath" in bridge_script
+    assert "generated_audio_runtime_verified" in bridge_script
     assert "bgmStarted" in bridge_script
     assert "smoothDragPreview" in bridge_script
     assert "dragCoordinateAligned" in bridge_script
@@ -438,6 +452,32 @@ def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path
     assert "commercialPlayableGo: false" in bridge_script
     assert "1010 Commercial Runtime Proof" not in bridge_script
     assert evidence["runtime_source_policy"] == "model_state_view_only_not_dom_event_substitute"
+
+
+def test_cocos_build_installs_bridge_from_task_card_product_runtime_sources(tmp_path: Path, monkeypatch) -> None:
+    build_output = tmp_path / "build" / "web-mobile"
+    (build_output / "assets").mkdir(parents=True)
+    (build_output / "index.html").write_text("<body><canvas id=\"GameCanvas\"></canvas></body>", encoding="utf-8")
+    for filename in ["BoardModel.ts", "RuleEngine.ts", "SemanticTestBridge.ts", "AudioFeedbackController.ts"]:
+        path = tmp_path / "assets" / "scripts" / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("export const runtimeSource = true;\n", encoding="utf-8")
+
+    def _fake_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build Task (web-mobile) Finished")
+        return subprocess.CompletedProcess(command, 36)
+
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _fake_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+    )
+
+    bridge = build["browser_runtime_bridge"]
+    assert bridge["installed"] is True
+    assert bridge["runtime_source_count"] == 4
+    assert "assets/scripts/SemanticTestBridge.ts" in "\n".join(bridge["runtime_sources"])
 
 
 def test_cocos_browser_playtest_requires_chinese_audio_and_drag_quality() -> None:
@@ -1435,6 +1475,11 @@ def test_cocos_local_stable_assets_can_feed_commercial_scaffold(tmp_path: Path) 
     assert payload["manifest"]["go_no_go"] == "NO-GO"
     assert payload["commercial_body"]["feature_coverage"]["audio_runtime_hooks"] is True
     bindings = json.loads(Path(payload["commercial_body"]["asset_binding_manifest_path"]).read_text(encoding="utf-8"))
+    audio_manifest = json.loads(
+        (Path(payload["project"]["project_path"]) / "assets" / "resources" / "commercial_assets" / "audio_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
     binding_map = {item["asset_name"]: item for item in bindings["bindings"]}
     assert binding_map["sfx_place"]["modality"] == "sfx"
     assert binding_map["sfx_clear"]["modality"] == "sfx"
@@ -1444,6 +1489,10 @@ def test_cocos_local_stable_assets_can_feed_commercial_scaffold(tmp_path: Path) 
         binding_map[name]["binding_type"] == "AudioClip"
         for name in ["sfx_place", "sfx_clear", "bgm_loop", "voice_reward"]
     )
+    assert audio_manifest["feature_coverage"]["audioPlaybackVerified"] is True
+    assert audio_manifest["feature_coverage"]["bgmStarted"] is True
+    assert audio_manifest["feature_coverage"]["sfxPlaybackVerified"] is True
+    assert audio_manifest["feature_coverage"]["volumeToggleUsable"] is True
     script = (Path(payload["project"]["project_path"]) / "assets" / "scripts" / "BlockPuzzleGame.ts").read_text(encoding="utf-8")
     assert 'new Set<string>(["audio", "music", "sfx", "voice"])' in script
     assert "this.playSound('voice_reward');" in script

@@ -123,6 +123,8 @@ def build_same_project_patch_ledger_contract(patch_ledger: dict[str, Any] | None
             blockers.append("fresh_cli_execution_missing")
         if str(entry.get("execution_visibility_mode") or "") == "human_visible_cli_enforced" and not _visible_cli_session_valid(entry):
             blockers.append("human_visible_cli_metadata_missing")
+        if _provider_visible_cli_required(entry) and not _provider_visible_cli_session_valid(entry):
+            blockers.append("direct_provider_visible_cli_metadata_missing")
         if entry.get("fallback_only"):
             blockers.append("fallback_provider_unavailable")
         if entry.get("fallback_provider") and not entry.get("fallback_provider_live_proof"):
@@ -763,6 +765,25 @@ def _visible_cli_session_valid(entry: dict[str, Any]) -> bool:
     session = _dict_from(entry.get("visible_cli_session"))
     required = ["pid", "argv", "cwd", "stdout_log_path", "stderr_log_path", "stream_log_path", "started_at"]
     if any(not session.get(key) for key in required):
+        return False
+    return str(session.get("status") or "") not in {"blocked", "unavailable"}
+
+
+def _provider_visible_cli_required(entry: dict[str, Any]) -> bool:
+    if bool(entry.get("provider_visible_cli_required")):
+        return True
+    return (
+        str(entry.get("control_plane_visibility") or "").strip().lower() == "resident"
+        and str(entry.get("provider_visibility") or "").strip().lower() == "direct_visible"
+    )
+
+
+def _provider_visible_cli_session_valid(entry: dict[str, Any]) -> bool:
+    session = _dict_from(entry.get("provider_visible_cli_session"))
+    required = ["argv", "cwd", "stdout_log_path", "stderr_log_path", "stream_log_path", "started_at"]
+    if any(not session.get(key) for key in required):
+        return False
+    if not (session.get("provider_pid") or session.get("wrapper_pid")):
         return False
     return str(session.get("status") or "") not in {"blocked", "unavailable"}
 

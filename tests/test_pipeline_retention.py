@@ -58,6 +58,23 @@ def test_retention_manifest_rejects_target_outside_workspace(tmp_path: Path) -> 
         build_pipeline_retention_manifest({"status": "completed"}, workspace_root=workspace, target_dir=outside_target)
 
 
+def test_retention_manifest_allows_explicit_external_evidence_target_without_cleanup(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside_target = tmp_path / "outside"
+
+    manifest = build_pipeline_retention_manifest(
+        {"status": "completed"},
+        workspace_root=workspace,
+        target_dir=outside_target,
+        allow_external_target=True,
+    )
+
+    assert manifest["target_dir"] == outside_target.resolve().as_posix()
+    assert manifest["cleanup_safety"]["workspace_bound"] is False
+    assert manifest["cleanup_safety"]["external_target_allowed"] is True
+    assert manifest["cleanup_safety"]["cleanup_allowed_after_boundary_check"] is False
+
+
 def test_pipeline_run_writes_retention_manifest_with_failure_recovery_pointer(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
 

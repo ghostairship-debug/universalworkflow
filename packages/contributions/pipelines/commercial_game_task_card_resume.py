@@ -8,6 +8,8 @@ from pathlib import Path
 from packages.contracts import TaskCard
 from packages.contributions.pipelines.commercial_game_task_worker_cli import run_task_card_patch_via_workflowctl
 
+VISIBLE_CLI_ENFORCED_MODES = {"human_visible_cli_enforced", "resident_control_plane_provider_visible_enforced"}
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resume one commercial game same-project task card with a fresh receipt.")
@@ -44,7 +46,13 @@ def main(argv: list[str] | None = None) -> int:
         risk_level="high",
         metadata={
             "execution_visibility_mode": args.execution_visibility_mode,
-            "human_visible_cli_required": args.execution_visibility_mode == "human_visible_cli_enforced",
+            "human_visible_cli_required": args.execution_visibility_mode in VISIBLE_CLI_ENFORCED_MODES,
+            "control_plane_visibility": "resident"
+            if args.execution_visibility_mode in VISIBLE_CLI_ENFORCED_MODES
+            else "headless",
+            "provider_visibility": "direct_visible"
+            if args.execution_visibility_mode in VISIBLE_CLI_ENFORCED_MODES
+            else "headless",
         }
         if args.execution_visibility_mode
         else {},

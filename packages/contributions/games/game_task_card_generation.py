@@ -138,6 +138,7 @@ def _task_card(
             "changed_files",
             "passing_tests",
             *(["human_visible_cli_session"] if risk_level == "high" else []),
+            *(["direct_provider_visible_cli_session"] if risk_level == "high" else []),
         ],
         blocking_conditions=[
             "requirement_coverage_missing",
@@ -159,6 +160,9 @@ def _task_card(
             "covered_requirement_ids": requirement_ids,
             "human_visible_cli_required": risk_level == "high",
             "execution_visibility_mode": "human_visible_cli_enforced" if risk_level == "high" else "headless_allowed",
+            "control_plane_visibility": "resident" if risk_level == "high" else "headless",
+            "provider_visibility": "direct_visible" if risk_level == "high" else "headless",
+            "provider_output_mode": "human_readable" if risk_level == "high" else "machine_readable",
             "workflow_generated_product_required": True,
             "codex_local_patch_repair_counts_as_product": False,
         },

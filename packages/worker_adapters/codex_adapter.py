@@ -22,6 +22,7 @@ from packages.worker_adapters.subprocess_support import (
     build_subprocess_env,
     completed_process_watchdog_metadata,
     completed_process_from_timeout,
+    run_subprocess_with_direct_visible_cli,
     run_subprocess_with_tree_timeout,
 )
 
@@ -92,6 +93,10 @@ def _safe_codex_event_metadata(text: str) -> tuple[str | None, list[str]]:
 def _safe_path_segment(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value.strip())
     return cleaned[:96] or "unknown"
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class CodexAdapter(CliAdapterBase):
@@ -232,6 +237,34 @@ class CodexAdapter(CliAdapterBase):
         prompt_workspace.mkdir(parents=True, exist_ok=True)
         return prompt_workspace.resolve()
 
+    def _direct_visible_cli_enabled(self, packet: TaskPacket) -> bool:
+        return _truthy(packet.env.get("WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI")) or _truthy(
+            packet.env.get("WORKFLOW_CODEX_DIRECT_VISIBLE_CLI")
+        )
+
+    def _direct_visible_session_dir_for(self, packet: TaskPacket) -> Path:
+        root = packet.env.get("WORKFLOW_PROVIDER_VISIBLE_SESSION_ROOT")
+        if root:
+            base = Path(root)
+        else:
+            base = Path(packet.working_directory) / "state" / "provider_visible_cli_sessions"
+        return (
+            base
+            / _safe_path_segment(packet.run_id or "run")
+            / _safe_path_segment(packet.runtime_task_id or "task")
+            / self.normalized_name()
+        ).resolve()
+
+    def _direct_visible_session_metadata_for(self, packet: TaskPacket) -> dict[str, str | None]:
+        task_card_ref = packet.mutation_contract.task_card_ref if packet.mutation_contract is not None else None
+        return {
+            "run_id": packet.run_id,
+            "runtime_task_id": packet.runtime_task_id,
+            "task_card_ref": task_card_ref,
+            "adapter_name": self.normalized_name(),
+            "window_title": f"codex direct provider {task_card_ref or packet.runtime_task_id}",
+        }
+
     def _mutation_mode_for(self, packet: TaskPacket) -> MutationMode:
         if packet.mutation_contract is not None:
             return MutationMode(packet.mutation_contract.mutation_mode)
@@ -341,6 +374,7 @@ class CodexAdapter(CliAdapterBase):
             failure_feedback = packet.env.get("WORKFLOW_MUTATION_FAILURE_FEEDBACK", "").strip()
             provider_command_policy = packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY", "patch_only_no_shell")
             read_set_context = self._env_value_or_file(packet, "WORKFLOW_MUTATION_READ_SET_CONTEXT", "[]")
+            write_set_context = self._env_value_or_file(packet, "WORKFLOW_MUTATION_WRITE_SET_CONTEXT", "[]")
             task_card_ref = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_REF", "").strip()
             task_card_content = self._env_value_or_file(packet, "WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
             failure_block = (
@@ -359,13 +393,14 @@ class CodexAdapter(CliAdapterBase):
                 f"Patch target working directory: {Path(packet.working_directory).resolve().as_posix()}\n"
                 f"Attempt index: {attempt_index}\n"
                 f"Allowed write_set JSON: {write_set}\n"
+                f"Embedded write-set context JSON: {write_set_context}\n"
                 f"Read-only context paths JSON: {read_set}\n"
                 f"Embedded read-set context JSON: {read_set_context}\n"
                 f"Explicit test commands JSON: {test_commands}\n"
                 f"Provider command policy: {provider_command_policy}.\n"
                 "Patch-only mode: do not run shell, PowerShell, cmd, Python, Node, npm, package-manager, "
                 "file-inspection, or other tool commands. Do not ask for command output. Use only the "
-                "embedded task-card content, read-set context, failure feedback, and paths already provided here.\n"
+                "embedded task-card content, write-set context, read-set context, failure feedback, and paths already provided here.\n"
                 "The CLI working directory is an isolated prompt-only broker directory; do not inspect it.\n"
                 f"{task_card_block}"
                 f"{failure_block}"
@@ -386,13 +421,18 @@ class CodexAdapter(CliAdapterBase):
             "<<<END_WORKFLOW_FILE>>>\n"
         )
 
-    def build_command(self, packet: TaskPacket, *, prompt_via_stdin: bool = False) -> list[str]:
+    def build_command(
+        self,
+        packet: TaskPacket,
+        *,
+        prompt_via_stdin: bool = False,
+        human_readable_output: bool = False,
+    ) -> list[str]:
         artifact_path = self._artifact_path_for(packet)
         command_cwd = self._prompt_workspace_for(packet)
         command = [
             self._resolved_executable(),
             "exec",
-            "--json",
             "--output-last-message",
             artifact_path,
             "--cd",
@@ -403,6 +443,8 @@ class CodexAdapter(CliAdapterBase):
             "--color",
             "never",
         ]
+        if not human_readable_output:
+            command.append("--json")
         if self._mutation_mode_for(packet) == MutationMode.patch_apply:
             command.append("--ignore-user-config")
             command.append("--ignore-rules")
@@ -421,8 +463,13 @@ class CodexAdapter(CliAdapterBase):
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
-        use_stdin_prompt = self._runner is subprocess.run
-        command = self.build_command(packet, prompt_via_stdin=use_stdin_prompt)
+        direct_visible_cli = self._direct_visible_cli_enabled(packet) and self._runner is subprocess.run
+        use_stdin_prompt = self._runner is subprocess.run or direct_visible_cli
+        command = self.build_command(
+            packet,
+            prompt_via_stdin=use_stdin_prompt,
+            human_readable_output=direct_visible_cli,
+        )
         command_cwd = self._prompt_workspace_for(packet)
         env = build_subprocess_env(packet.env)
         timeout_seconds = self._timeout_seconds_for_packet(packet)
@@ -440,7 +487,19 @@ class CodexAdapter(CliAdapterBase):
             run_kwargs["encoding"] = "utf-8"
             run_kwargs["errors"] = "replace"
         try:
-            if use_stdin_prompt:
+            if direct_visible_cli:
+                stream_callback = self._provider_stream_callback_for(packet)
+                if stream_callback is not None:
+                    run_kwargs["on_output"] = stream_callback
+                run_kwargs["idle_timeout"] = idle_timeout_seconds
+                completed = run_subprocess_with_direct_visible_cli(
+                    command,
+                    provider_name=self.normalized_name(),
+                    visible_session_dir=self._direct_visible_session_dir_for(packet),
+                    visible_session_metadata=self._direct_visible_session_metadata_for(packet),
+                    **run_kwargs,
+                )
+            elif use_stdin_prompt:
                 stream_callback = self._provider_stream_callback_for(packet)
                 if stream_callback is not None:
                     run_kwargs["on_output"] = stream_callback
@@ -469,11 +528,16 @@ class CodexAdapter(CliAdapterBase):
             if self._mutation_mode_for(packet) == MutationMode.patch_apply
             else [],
             "prompt_transport": "stdin" if use_stdin_prompt else "argv",
+            "provider_output_mode": "human_readable" if direct_visible_cli else "jsonl",
             "prompt_workspace": command_cwd.as_posix(),
             "project_working_directory": Path(packet.working_directory).resolve().as_posix(),
             "project_rules_ignored": self._mutation_mode_for(packet) == MutationMode.patch_apply,
             **completed_process_watchdog_metadata(completed),
         }
+        if getattr(completed, "direct_visible_cli_session", None) is not None:
+            metadata["direct_visible_cli_session"] = getattr(completed, "direct_visible_cli_session")
+            metadata["direct_visible_cli_log_paths"] = getattr(completed, "direct_visible_cli_log_paths", None)
+            metadata["direct_visible_provider_cli"] = True
         if failure_class is not None:
             metadata.update(
                 {

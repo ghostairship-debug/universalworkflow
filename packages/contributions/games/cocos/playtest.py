@@ -62,6 +62,12 @@ class _QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+
 
 def _serve_directory(directory: Path) -> tuple[ThreadingHTTPServer, int]:
     class Handler(_QuietHandler):
@@ -89,6 +95,14 @@ def _detect_canvas_selector(page: Any) -> str:
     return "#block-puzzle-canvas"
 
 
+def _wait_for_e2e_hook(page: Any, *, timeout_ms: int = 12000) -> bool:
+    try:
+        page.wait_for_function("() => Boolean(window.__COCOS_BLOCK_PUZZLE_E2E__)", timeout=timeout_ms)
+        return True
+    except Exception:
+        return False
+
+
 def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | Path) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
@@ -108,7 +122,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
             page.goto(f"http://127.0.0.1:{port}/index.html", wait_until="networkidle", timeout=60000)
             canvas_selector = _detect_canvas_selector(page)
-            has_e2e_hook = page.evaluate("() => Boolean(window.__COCOS_BLOCK_PUZZLE_E2E__)")
+            has_e2e_hook = _wait_for_e2e_hook(page)
             after: dict[str, Any] = {
                 "featureCoverage": {
                     "mobilePortraitUi": True,

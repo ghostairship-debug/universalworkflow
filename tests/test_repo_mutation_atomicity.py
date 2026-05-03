@@ -57,6 +57,45 @@ def test_apply_unified_diff_can_recover_from_inaccurate_hunk_line_numbers(tmp_pa
     assert target.read_text(encoding="utf-8") == "alpha\nbravo\ngamma\n"
 
 
+def test_apply_unified_diff_accepts_codex_apply_patch_update(tmp_path: Path) -> None:
+    target = tmp_path / "target.txt"
+    target.write_text("before\n", encoding="utf-8")
+    patch = "\n".join(
+        [
+            "*** Begin Patch",
+            "*** Update File: target.txt",
+            "@@",
+            "-before",
+            "+after",
+            "*** End Patch",
+            "",
+        ]
+    )
+
+    changed = apply_unified_diff(tmp_path, patch, allowed_paths=["target.txt"])
+
+    assert changed == ["target.txt"]
+    assert target.read_text(encoding="utf-8") == "after\n"
+
+
+def test_apply_unified_diff_accepts_codex_apply_patch_add_file(tmp_path: Path) -> None:
+    patch = "\n".join(
+        [
+            "*** Begin Patch",
+            "*** Add File: created.txt",
+            "+hello",
+            "+world",
+            "*** End Patch",
+            "",
+        ]
+    )
+
+    changed = apply_unified_diff(tmp_path, patch, allowed_paths=["created.txt"])
+
+    assert changed == ["created.txt"]
+    assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+
+
 def test_apply_unified_diff_failure_restore_preserves_lf_line_endings(tmp_path: Path) -> None:
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"

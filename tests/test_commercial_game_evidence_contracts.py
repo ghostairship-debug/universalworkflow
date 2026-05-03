@@ -237,6 +237,48 @@ def test_same_project_contract_rejects_visible_cli_required_without_session() ->
     assert "human_visible_cli_metadata_missing" in contract["blockers"]
 
 
+def test_same_project_contract_rejects_resident_mode_without_direct_provider_session() -> None:
+    contract = build_same_project_patch_ledger_contract(
+        {
+            "same_project_worker_patch_go": True,
+            "task_card_count": 1,
+            "completed_count": 1,
+            "entries": [
+                {
+                    "status": "completed",
+                    "worker_adapter": "codex",
+                    "receipt_id": "receipt_visible",
+                    "child_run_id": "run_visible",
+                    "child_attempt_id": "attempt_visible",
+                    "execution_visibility_mode": "human_visible_cli_enforced",
+                    "control_plane_visibility": "resident",
+                    "provider_visibility": "direct_visible",
+                    "provider_visible_cli_required": True,
+                    "visible_cli_session": {
+                        "pid": 1234,
+                        "argv": ["workflowctl", "run", "from-task-card"],
+                        "cwd": "D:/Universal Agentic workflow",
+                        "stdout_log_path": "stdout.log",
+                        "stderr_log_path": "stderr.log",
+                        "stream_log_path": "stream.jsonl",
+                        "started_at": "2026-05-04T00:00:00+00:00",
+                        "status": "completed",
+                    },
+                    "changed_files": ["state/project/assets/scripts/Game.ts"],
+                    "mutation_result": {
+                        "changed_files": ["state/project/assets/scripts/Game.ts"],
+                        "final_test_status": "passed",
+                    },
+                    "attempts": [{"attempt_index": 1, "receipt_id": "receipt_visible"}],
+                }
+            ],
+        }
+    )
+
+    assert contract["go"] is False
+    assert "direct_provider_visible_cli_metadata_missing" in contract["blockers"]
+
+
 def test_final_gate_reports_upstream_short_circuit_without_product_noise() -> None:
     complete = {"go": True, "blockers": [], "status": "completed", "schema_version": "test", "source": {}}
     patch = {

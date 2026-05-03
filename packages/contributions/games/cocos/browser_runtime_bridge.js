@@ -55,6 +55,11 @@
   let audioCtx = null;
   let bgmTimer = 0;
   let bgmStep = 0;
+  let bgmAudio = null;
+  let generatedAudioPromise = null;
+  let generatedVisualPromise = null;
+  const generatedAudioClips = {};
+  const generatedImages = {};
 
   function loadSave() {
     try {
@@ -150,7 +155,7 @@
       mobilePortraitUi: true,
       modalUi: true,
       nativeCocosUiNodes: true,
-      generatedArtAssets: true,
+      generatedArtAssets: false,
       generatedAudioAssets: true,
       cocosAssetBindings: true,
       editorVisibleSceneHierarchy: true,
@@ -168,6 +173,7 @@
       dragCoordinateAligned: true,
       galleryPuzzleCollection: true,
     },
+    generatedVisualAssetNames: [],
   };
 
   function makeBoard() {
@@ -197,6 +203,109 @@
       shuffle: state.propCounts.shuffle,
       bomb: state.propCounts.bomb,
     }));
+  }
+
+  function loadGeneratedAudioAssets() {
+    if (generatedAudioPromise) return generatedAudioPromise;
+    generatedAudioPromise = fetch('assets/resources/commercial_assets/audio_manifest.json', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((manifest) => {
+        if (!manifest || !Array.isArray(manifest.clips)) return false;
+        for (const clip of manifest.clips) {
+          const name = clip.asset_name;
+          const path = normalizeAudioPath(clip);
+          if (!name || !path) continue;
+          const audio = new Audio(path);
+          audio.preload = name === 'bgm_loop' ? 'auto' : 'metadata';
+          audio.dataset.generatedAsset = 'true';
+          audio.dataset.assetName = name;
+          generatedAudioClips[name] = audio;
+        }
+        const hasGeneratedAudio = Object.keys(generatedAudioClips).length > 0;
+        if (hasGeneratedAudio) {
+          state.audioManifestPath = 'assets/resources/commercial_assets/audio_manifest.json';
+          state.generatedAudioClipNames = Object.keys(generatedAudioClips);
+          setFeature('generatedAudioAssets');
+        }
+        return hasGeneratedAudio;
+      })
+      .catch(() => false);
+    return generatedAudioPromise;
+  }
+
+  function normalizeAudioPath(clip) {
+    const raw = String(clip.relative_path || clip.cocos_resource_path || '');
+    if (!raw) return '';
+    const normalized = raw.replace(/\\/g, '/');
+    const marker = 'assets/resources/commercial_assets/';
+    const index = normalized.indexOf(marker);
+    if (index >= 0) return normalized.slice(index);
+    return normalized;
+  }
+
+  function loadGeneratedVisualAssets() {
+    if (generatedVisualPromise) return generatedVisualPromise;
+    generatedVisualPromise = fetch('assets/resources/commercial_assets/commercial_asset_bindings.json', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((manifest) => {
+        if (!manifest || !Array.isArray(manifest.bindings)) return false;
+        const imageBindings = manifest.bindings.filter((item) => {
+          const type = String(item.binding_type || item.bindingType || '');
+          const modality = String(item.modality || '');
+          return type === 'SpriteFrame' || modality === 'image';
+        });
+        if (!imageBindings.length) return false;
+        const loads = [];
+        for (const binding of imageBindings) {
+          const name = binding.asset_name || binding.name;
+          const path = normalizeAssetPath(binding);
+          if (!name || !path) continue;
+          const image = new Image();
+          image.decoding = 'async';
+          image.dataset.generatedAsset = 'true';
+          image.dataset.assetName = name;
+          generatedImages[name] = image;
+          loads.push(new Promise((resolve) => {
+            image.onload = () => {
+              image.workflowLoaded = true;
+              resolve(true);
+            };
+            image.onerror = () => resolve(false);
+            image.src = path;
+          }));
+        }
+        return Promise.allSettled(loads).then(() => {
+          const loadedNames = Object.entries(generatedImages)
+            .filter(([, image]) => image.workflowLoaded)
+            .map(([name]) => name);
+          if (!loadedNames.length) return false;
+          state.assetBindingManifestPath = 'assets/resources/commercial_assets/commercial_asset_bindings.json';
+          state.generatedVisualAssetNames = loadedNames;
+          setFeature('generatedArtAssets');
+          setFeature('cocosAssetBindings');
+          setFeature('spriteframeAssetBindings');
+          publish('generated_visual_assets_loaded', { assetNames: loadedNames });
+          requestDraw();
+          return true;
+        });
+      })
+      .catch(() => false);
+    return generatedVisualPromise;
+  }
+
+  function normalizeAssetPath(binding) {
+    const raw = String(binding.relative_path || binding.relativePath || binding.cocos_resource_path || '');
+    if (!raw) return '';
+    const normalized = raw.replace(/\\/g, '/');
+    const marker = 'assets/resources/commercial_assets/';
+    const index = normalized.indexOf(marker);
+    if (index >= 0) return normalized.slice(index);
+    return normalized;
+  }
+
+  function imageReady(name) {
+    const image = generatedImages[name];
+    return image && image.workflowLoaded && image.naturalWidth > 0 && image.naturalHeight > 0 ? image : null;
   }
 
   function skin() {
@@ -753,6 +862,7 @@
       state.bgmState = 'muted';
       return;
     }
+    loadGeneratedAudioAssets();
     try {
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -769,6 +879,17 @@
   }
 
   function startBgm() {
+    const generatedBgm = generatedAudioClips.bgm_loop;
+    if (generatedBgm) {
+      bgmAudio = generatedBgm;
+      bgmAudio.loop = true;
+      bgmAudio.volume = 0.36;
+      bgmAudio.currentTime = bgmAudio.currentTime || 0;
+      void bgmAudio.play();
+      bgmTimer = -1;
+      state.generatedBgmAssetPath = bgmAudio.currentSrc || bgmAudio.src;
+      return;
+    }
     playBgmNote();
     bgmTimer = window.setInterval(playBgmNote, 360);
   }
@@ -797,6 +918,11 @@
 
   function playSfx(kind) {
     if (state.muted) return;
+    if (playGeneratedSfx(kind)) {
+      setFeature('sfxPlaybackVerified');
+      publish('generated_audio_runtime_verified', { kind });
+      return;
+    }
     try {
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
       const freq = kind === 'clear' ? 840 : kind === 'bad' ? 120 : kind === 'tap' ? 520 : 420;
@@ -815,6 +941,26 @@
       publish('browser_audio_runtime_verified', { kind });
     } catch (_error) {
       setFeature('sfxPlaybackVerified');
+    }
+  }
+
+  function playGeneratedSfx(kind) {
+    const nameByKind = {
+      clear: 'sfx_clear',
+      place: 'sfx_place',
+      tap: 'sfx_place',
+      bad: 'sfx_place',
+      reward: 'voice_reward',
+    };
+    const clip = generatedAudioClips[nameByKind[kind] || 'sfx_place'];
+    if (!clip) return false;
+    try {
+      const player = clip.cloneNode(true);
+      player.volume = kind === 'bad' ? 0.22 : 0.48;
+      void player.play();
+      return true;
+    } catch (_error) {
+      return false;
     }
   }
 
@@ -881,22 +1027,45 @@
 
   function drawBackground() {
     const s = skin();
-    const gradient = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
-    gradient.addColorStop(0, s.bgA);
-    gradient.addColorStop(0.55, '#11172a');
-    gradient.addColorStop(1, s.bgB);
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    ctx.globalAlpha = 0.2;
+    const hasGeneratedBackground = drawGeneratedBackground();
+    if (hasGeneratedBackground) {
+      const overlay = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      overlay.addColorStop(0, 'rgba(8,17,32,0.62)');
+      overlay.addColorStop(0.55, 'rgba(11,17,31,0.72)');
+      overlay.addColorStop(1, 'rgba(7,10,19,0.82)');
+      ctx.fillStyle = overlay;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    } else {
+      const gradient = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      gradient.addColorStop(0, s.bgA);
+      gradient.addColorStop(0.55, '#11172a');
+      gradient.addColorStop(1, s.bgB);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    }
+    ctx.globalAlpha = hasGeneratedBackground ? 0.12 : 0.2;
     ctx.fillStyle = s.accent;
     ctx.beginPath();
     ctx.ellipse(95, 166, 134, 82, -0.2, 0, Math.PI * 2);
     ctx.fill();
+    ctx.globalAlpha = hasGeneratedBackground ? 0.06 : 0.12;
     ctx.fillStyle = COLORS.coral;
     ctx.beginPath();
-    ctx.ellipse(346, 772, 86, 54, 0.18, 0, Math.PI * 2);
+    ctx.ellipse(374, 823, 70, 42, 0.18, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+  }
+
+  function drawGeneratedBackground() {
+    const image = imageReady('background');
+    if (!image) return false;
+    const scale = Math.max(WIDTH / image.naturalWidth, HEIGHT / image.naturalHeight);
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    const x = (WIDTH - width) / 2;
+    const y = (HEIGHT - height) / 2;
+    ctx.drawImage(image, x, y, width, height);
+    return true;
   }
 
   function drawHud() {
@@ -960,6 +1129,15 @@
     g.addColorStop(0.09, color);
     g.addColorStop(1, '#142033');
     fillRound(x + 1, y + 1, size - 2, size - 2, 6, g, 'rgba(255,255,255,0.25)');
+    const blockImage = imageReady('block_skin_neon');
+    if (blockImage) {
+      ctx.save();
+      roundedRect(x + 2, y + 2, size - 4, size - 4, 6);
+      ctx.clip();
+      ctx.globalAlpha = 0.42;
+      ctx.drawImage(blockImage, x + 2, y + 2, size - 4, size - 4);
+      ctx.restore();
+    }
     ctx.globalAlpha = 0.2;
     fillRound(x + 6, y + 5, size - 12, 5, 3, '#ffffff', null);
     ctx.globalAlpha = 1;
@@ -1017,9 +1195,15 @@
   }
 
   function drawParticles() {
+    const particleImage = imageReady('particle_clear');
     for (const p of state.particles) {
       ctx.globalAlpha = Math.max(0, p.life / 50);
-      fillRound(p.x, p.y, 5, 5, 2, p.color, null);
+      if (particleImage) {
+        const size = 9 + Math.max(0, p.life / 8);
+        ctx.drawImage(particleImage, p.x - size / 2, p.y - size / 2, size, size);
+      } else {
+        fillRound(p.x, p.y, 5, 5, 2, p.color, null);
+      }
       p.x += p.vx;
       p.y += p.vy;
       p.vy += 0.08;
@@ -1167,6 +1351,8 @@
       window.setTimeout(install, 100);
       return;
     }
+    loadGeneratedAudioAssets();
+    loadGeneratedVisualAssets();
     canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
     canvas.addEventListener('pointermove', onPointerMove, { passive: false });
     canvas.addEventListener('pointerup', onPointerUp, { passive: false });

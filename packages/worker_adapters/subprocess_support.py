@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import os
+import json
 import signal
 import subprocess
 import locale
+import sys
 import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 
 TIMEOUT_EXIT_CODE = 124
@@ -277,6 +281,575 @@ def terminate_process_tree(pid: int) -> None:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
         return
+
+
+def run_subprocess_with_direct_visible_cli(command: list[str], **run_kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Run a provider CLI in a real Windows console while mirroring logs.
+
+    This is intentionally separate from ``run_subprocess_with_tree_timeout``: the
+    provider process should be human-visible, but the workflow still needs
+    machine-readable stdout/stderr/session evidence and watchdog metadata.
+    """
+
+    if os.name != "nt" or not hasattr(subprocess, "CREATE_NEW_CONSOLE"):
+        raise RuntimeError("direct_visible_cli_unavailable")
+    timeout_seconds = int(run_kwargs.pop("timeout"))
+    raw_idle_timeout = run_kwargs.pop("idle_timeout", None)
+    raw_provider_output_idle_timeout = run_kwargs.pop("provider_output_idle_timeout", None)
+    raw_material_progress_idle_timeout = run_kwargs.pop("material_progress_idle_timeout", None)
+    on_output = run_kwargs.pop("on_output", None)
+    provider_name = str(run_kwargs.pop("provider_name", "provider"))
+    visible_session_dir = Path(
+        str(run_kwargs.pop("visible_session_dir", "") or Path.cwd() / "state" / "provider_visible_cli_sessions" / f"session_{uuid4().hex[:12]}")
+    )
+    visible_session_metadata = run_kwargs.pop("visible_session_metadata", None)
+    stdin_value = run_kwargs.pop("input", None)
+    run_kwargs.pop("capture_output", None)
+    text = bool(run_kwargs.pop("text", False))
+    run_kwargs.pop("check", None)
+    run_kwargs.pop("encoding", None)
+    run_kwargs.pop("errors", None)
+    run_kwargs.pop("universal_newlines", None)
+    cwd = Path(str(run_kwargs.pop("cwd", None) or Path.cwd())).resolve()
+    env = run_kwargs.pop("env", None)
+    idle_timeout_seconds = float(raw_idle_timeout) if raw_idle_timeout is not None else None
+    provider_output_idle_timeout_seconds = (
+        float(raw_provider_output_idle_timeout) if raw_provider_output_idle_timeout is not None else None
+    )
+    material_progress_idle_timeout_seconds = (
+        float(raw_material_progress_idle_timeout) if raw_material_progress_idle_timeout is not None else None
+    )
+    if text and isinstance(stdin_value, bytes):
+        stdin_text = decode_subprocess_stream(stdin_value)
+    elif stdin_value is None:
+        stdin_text = None
+    else:
+        stdin_text = str(stdin_value)
+
+    visible_session_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = visible_session_dir / "stdout.log"
+    stderr_path = visible_session_dir / "stderr.log"
+    stream_path = visible_session_dir / "stream.jsonl"
+    session_path = visible_session_dir / "visible_cli_session.json"
+    script_path = visible_session_dir / "run_provider_visible.py"
+    stdin_path = visible_session_dir / "stdin.txt"
+    pid_path = visible_session_dir / "provider_pid.json"
+    exit_path = visible_session_dir / "exit_code.json"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    stream_path.write_text("", encoding="utf-8")
+    if stdin_text is not None:
+        stdin_path.write_text(stdin_text, encoding="utf-8", newline="\n")
+
+    metadata = dict(visible_session_metadata or {})
+    started_wall_at = datetime.now(UTC)
+    session: dict[str, Any] = {
+        "schema_version": "direct_provider_visible_cli_session_v1",
+        "mode": "direct_provider_visible_cli_enforced",
+        "status": "starting",
+        "provider": provider_name,
+        "wrapper_pid": None,
+        "provider_pid": None,
+        "window_title": metadata.get("window_title") or f"{provider_name} direct visible CLI",
+        "argv": command,
+        "cwd": cwd.as_posix(),
+        "stdout_log_path": stdout_path.as_posix(),
+        "stderr_log_path": stderr_path.as_posix(),
+        "stream_log_path": stream_path.as_posix(),
+        "session_path": session_path.as_posix(),
+        "script_path": script_path.as_posix(),
+        "stdin_path": stdin_path.as_posix() if stdin_text is not None else None,
+        "started_at": started_wall_at.isoformat(),
+        "ended_at": None,
+        **metadata,
+    }
+    _write_json_file(session_path, session)
+    _append_jsonl(stream_path, {"event": "direct_provider_visible_cli_starting", "created_at": started_wall_at.isoformat(), "argv": command})
+    script_path.write_text(
+        _direct_visible_provider_python_script(
+            command=command,
+            cwd=cwd,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stream_path=stream_path,
+            pid_path=pid_path,
+            exit_path=exit_path,
+            stdin_path=stdin_path if stdin_text is not None else None,
+        ),
+        encoding="utf-8",
+    )
+    launch_cmd = [
+        sys.executable,
+        str(script_path),
+    ]
+    wrapper = subprocess.Popen(
+        launch_cmd,
+        cwd=str(cwd),
+        env=env,
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+    )
+    session.update({"status": "running", "wrapper_pid": wrapper.pid})
+    _write_json_file(session_path, session)
+    _append_jsonl(
+        stream_path,
+        {"event": "direct_provider_visible_cli_started", "created_at": datetime.now(UTC).isoformat(), "wrapper_pid": wrapper.pid},
+    )
+
+    started = time.monotonic()
+    last_output_at = started
+    last_provider_output_at = started
+    last_material_progress_at = started
+    last_stdout_pos = 0
+    last_stderr_pos = 0
+    stdout_event_count = 0
+    stderr_event_count = 0
+    material_progress_event_count = 0
+    timeout_type: str | None = None
+
+    def _consume_new(path: Path, start: int, stream_name: str) -> tuple[int, int, int]:
+        if not path.exists():
+            return start, 0, 0
+        data = path.read_bytes()
+        if len(data) <= start:
+            return start, 0, 0
+        chunk = data[start:]
+        text_chunk = decode_subprocess_stream(chunk)
+        event_count = 0
+        material_count = 0
+        for line in text_chunk.splitlines():
+            if not line.strip():
+                continue
+            event_count += 1
+            is_material = _is_material_progress_output(line.encode("utf-8", errors="replace"))
+            if is_material:
+                material_count += 1
+            if callable(on_output):
+                try:
+                    on_output(
+                        {
+                            "stream": stream_name,
+                            "text": line + "\n",
+                            "byte_count": len(line.encode("utf-8", errors="replace")),
+                            "observed_at": datetime.now(UTC).isoformat(),
+                            "is_control": False,
+                            "is_material_progress": is_material,
+                        }
+                    )
+                except Exception:
+                    pass
+        return len(data), event_count, material_count
+
+    while wrapper.poll() is None:
+        now = time.monotonic()
+        last_stdout_pos, new_stdout_events, new_stdout_material = _consume_new(stdout_path, last_stdout_pos, "stdout")
+        last_stderr_pos, new_stderr_events, new_stderr_material = _consume_new(stderr_path, last_stderr_pos, "stderr")
+        new_events = new_stdout_events + new_stderr_events
+        if new_events:
+            stdout_event_count += new_stdout_events
+            stderr_event_count += new_stderr_events
+            material_progress_event_count += new_stdout_material + new_stderr_material
+            last_output_at = now
+            last_provider_output_at = now
+            if new_stdout_material or new_stderr_material:
+                last_material_progress_at = now
+        if session.get("provider_pid") is None and pid_path.exists():
+            pid_payload = _read_json_file(pid_path)
+            provider_pid = pid_payload.get("provider_pid") if isinstance(pid_payload, dict) else None
+            if provider_pid:
+                session["provider_pid"] = provider_pid
+                _write_json_file(session_path, session)
+        if provider_output_idle_timeout_seconds is not None and now - last_provider_output_at > provider_output_idle_timeout_seconds:
+            timeout_type = "provider_output_idle_timeout"
+            break
+        if (
+            material_progress_idle_timeout_seconds is not None
+            and now - last_material_progress_at > material_progress_idle_timeout_seconds
+            and now - last_provider_output_at > material_progress_idle_timeout_seconds
+        ):
+            timeout_type = "provider_no_material_progress_timeout"
+            break
+        if idle_timeout_seconds is not None and now - last_output_at > idle_timeout_seconds:
+            timeout_type = "idle_timeout"
+            break
+        if now - started > timeout_seconds:
+            timeout_type = "wall_timeout"
+            break
+        time.sleep(1.0)
+    if timeout_type:
+        terminate_process_tree(wrapper.pid)
+    return_code = wrapper.wait()
+    last_stdout_pos, new_stdout_events, new_stdout_material = _consume_new(stdout_path, last_stdout_pos, "stdout")
+    last_stderr_pos, new_stderr_events, new_stderr_material = _consume_new(stderr_path, last_stderr_pos, "stderr")
+    stdout_event_count += new_stdout_events
+    stderr_event_count += new_stderr_events
+    material_progress_event_count += new_stdout_material + new_stderr_material
+    ended = datetime.now(UTC)
+    if timeout_type:
+        return_code = TIMEOUT_EXIT_CODE
+    exit_payload = _read_json_file(exit_path)
+    if not timeout_type and isinstance(exit_payload.get("exit_code"), int):
+        return_code = int(exit_payload["exit_code"])
+    session.update(
+        {
+            "status": "timeout" if timeout_type else "completed",
+            "return_code": return_code,
+            "ended_at": ended.isoformat(),
+            "timeout_type": timeout_type,
+        }
+    )
+    if session.get("provider_pid") is None and pid_path.exists():
+        pid_payload = _read_json_file(pid_path)
+        if isinstance(pid_payload.get("provider_pid"), int):
+            session["provider_pid"] = pid_payload["provider_pid"]
+    _write_json_file(session_path, session)
+    _append_jsonl(
+        stream_path,
+        {
+            "event": "direct_provider_visible_cli_completed",
+            "created_at": ended.isoformat(),
+            "return_code": return_code,
+            "timeout_type": timeout_type,
+        },
+    )
+    completed = subprocess.CompletedProcess(
+        command,
+        return_code,
+        stdout=decode_subprocess_stream(stdout_path.read_bytes() if stdout_path.exists() else b""),
+        stderr=decode_subprocess_stream(stderr_path.read_bytes() if stderr_path.exists() else b""),
+    )
+    _attach_watchdog_metadata(
+        completed,
+        timeout_type=timeout_type,
+        stdout_event_count=stdout_event_count,
+        stderr_event_count=stderr_event_count,
+        last_output_age_seconds=max(0.0, time.monotonic() - last_output_at),
+        provider_output_event_count=stdout_event_count + stderr_event_count,
+        control_output_event_count=0,
+        material_progress_event_count=material_progress_event_count,
+        last_provider_output_age_seconds=max(0.0, time.monotonic() - last_provider_output_at),
+        last_material_progress_age_seconds=max(0.0, time.monotonic() - last_material_progress_at),
+    )
+    setattr(completed, "direct_visible_cli_session", session)
+    setattr(
+        completed,
+        "direct_visible_cli_log_paths",
+        {
+            "stdout_log_path": stdout_path.as_posix(),
+            "stderr_log_path": stderr_path.as_posix(),
+            "stream_log_path": stream_path.as_posix(),
+            "session_path": session_path.as_posix(),
+            "script_path": script_path.as_posix(),
+        },
+    )
+    return completed
+
+
+def _direct_visible_provider_python_script(
+    *,
+    command: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    stream_path: Path,
+    pid_path: Path,
+    exit_path: Path,
+    stdin_path: Path | None,
+) -> str:
+    command_json = json.dumps([str(item) for item in command], ensure_ascii=False)
+    stdin_literal = "None" if stdin_path is None else repr(stdin_path.as_posix())
+    return f"""
+from __future__ import annotations
+
+import ctypes
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+COMMAND = json.loads({command_json!r})
+CWD = {cwd.as_posix()!r}
+STDOUT_PATH = Path({stdout_path.as_posix()!r})
+STDERR_PATH = Path({stderr_path.as_posix()!r})
+STREAM_PATH = Path({stream_path.as_posix()!r})
+PID_PATH = Path({pid_path.as_posix()!r})
+EXIT_PATH = Path({exit_path.as_posix()!r})
+STDIN_PATH = {stdin_literal}
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def append_jsonl(payload: dict) -> None:
+    with STREAM_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\\n")
+
+
+def write_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+
+
+def resolve_executable(executable: str) -> str:
+    if os.path.isabs(executable) or "/" in executable or "\\\\" in executable:
+        return executable
+    resolved = shutil.which(executable)
+    if not resolved:
+        raise FileNotFoundError(f"provider executable not found on PATH: {{executable}}")
+    return resolved
+
+
+def set_console_title() -> None:
+    if os.name != "nt":
+        return
+    title = "direct provider visible CLI"
+    try:
+        ctypes.windll.kernel32.SetConsoleTitleW(title)
+    except Exception:
+        return
+
+
+def pump_stream(pipe, log_path: Path, stream_name: str, console_stream) -> None:
+    try:
+        for line in iter(pipe.readline, ""):
+            if line == "":
+                break
+            console_stream.write(line)
+            console_stream.flush()
+            text = line.rstrip("\\r\\n")
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(text + "\\n")
+            append_jsonl({{"event": f"provider_{{stream_name}}", "created_at": now(), "text": text}})
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
+def fail(message: str) -> int:
+    sys.stderr.write(message + "\\n")
+    sys.stderr.flush()
+    with STDERR_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(message + "\\n")
+    append_jsonl({{"event": "provider_wrapper_exception", "created_at": now(), "text": message}})
+    write_json(EXIT_PATH, {{"exit_code": 1, "ended_at": now(), "wrapper_exception": message}})
+    return 1
+
+
+def main() -> int:
+    set_console_title()
+    try:
+        argv = [str(item) for item in COMMAND]
+        argv[0] = resolve_executable(argv[0])
+        stdin_text = None
+        if STDIN_PATH is not None:
+            stdin_text = Path(STDIN_PATH).read_text(encoding="utf-8")
+        proc = subprocess.Popen(
+            argv,
+            cwd=CWD,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        write_json(PID_PATH, {{"provider_pid": proc.pid, "started_at": now()}})
+        threads = [
+            threading.Thread(target=pump_stream, args=(proc.stdout, STDOUT_PATH, "stdout", sys.stdout), daemon=True),
+            threading.Thread(target=pump_stream, args=(proc.stderr, STDERR_PATH, "stderr", sys.stderr), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        if stdin_text is not None and proc.stdin is not None:
+            try:
+                proc.stdin.write(stdin_text)
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                append_jsonl({{"event": "provider_stdin_closed_early", "created_at": now(), "text": str(exc)}})
+            finally:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+        return_code = proc.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+        write_json(EXIT_PATH, {{"exit_code": int(return_code), "ended_at": now()}})
+        return 0 if return_code == 0 else 1
+    except Exception as exc:
+        return fail(str(exc))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""".lstrip()
+
+
+def _direct_visible_provider_powershell_script(
+    *,
+    command: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    stream_path: Path,
+    pid_path: Path,
+    exit_path: Path,
+    stdin_path: Path | None,
+) -> str:
+    command_json = json.dumps([str(item) for item in command], ensure_ascii=False)
+    stdin_literal = "$null" if stdin_path is None else _ps_quote(stdin_path.as_posix())
+    return f"""
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+$argvJson = @'
+{command_json}
+'@
+$stdoutPath = {_ps_quote(stdout_path.as_posix())}
+$stderrPath = {_ps_quote(stderr_path.as_posix())}
+$streamPath = {_ps_quote(stream_path.as_posix())}
+$pidPath = {_ps_quote(pid_path.as_posix())}
+$exitPath = {_ps_quote(exit_path.as_posix())}
+$stdinPath = {stdin_literal}
+try {{
+$parsedProviderArgv = ConvertFrom-Json -InputObject $argvJson
+if ($parsedProviderArgv -is [System.Array]) {{
+  $providerArgv = [object[]]$parsedProviderArgv
+}} else {{
+  $providerArgv = @($parsedProviderArgv)
+}}
+function ConvertTo-ProcessArgument {{
+  param([AllowNull()][string]$Arg)
+  if ($null -eq $Arg) {{
+    return '""'
+  }}
+  if ($Arg.Length -eq 0) {{
+    return '""'
+  }}
+  if ($Arg -notmatch '[\\s"]') {{
+    return $Arg
+  }}
+  $builder = [System.Text.StringBuilder]::new()
+  [void]$builder.Append('"')
+  $backslashes = 0
+  foreach ($ch in $Arg.ToCharArray()) {{
+    if ($ch -eq '\\') {{
+      $backslashes += 1
+      continue
+    }}
+    if ($ch -eq '"') {{
+      if ($backslashes -gt 0) {{
+        [void]$builder.Append(('\\' * ($backslashes * 2)))
+        $backslashes = 0
+      }}
+      [void]$builder.Append('\\"')
+      continue
+    }}
+    if ($backslashes -gt 0) {{
+      [void]$builder.Append(('\\' * $backslashes))
+      $backslashes = 0
+    }}
+    [void]$builder.Append($ch)
+  }}
+  if ($backslashes -gt 0) {{
+    [void]$builder.Append(('\\' * ($backslashes * 2)))
+  }}
+  [void]$builder.Append('"')
+  return $builder.ToString()
+}}
+function Resolve-ProviderExecutable {{
+  param([string]$Executable)
+  if ([System.IO.Path]::IsPathRooted($Executable) -or $Executable.Contains('\\') -or $Executable.Contains('/')) {{
+    return $Executable
+  }}
+  $commandInfo = Get-Command -CommandType Application -Name $Executable -ErrorAction Stop
+  return [string]$commandInfo.Source
+}}
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = Resolve-ProviderExecutable ([string]$providerArgv[0])
+$argumentParts = @()
+for ($i = 1; $i -lt $providerArgv.Count; $i++) {{
+  $argumentParts += ConvertTo-ProcessArgument ([string]$providerArgv[$i])
+}}
+$psi.Arguments = ($argumentParts -join ' ')
+$psi.WorkingDirectory = {_ps_quote(cwd.as_posix())}
+$psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.RedirectStandardInput = $true
+$proc = [System.Diagnostics.Process]::new()
+$proc.StartInfo = $psi
+$outHandler = {{
+  param($sender, $eventArgs)
+  if ($null -ne $eventArgs.Data) {{
+    $line = [string]$eventArgs.Data
+    Write-Host $line
+    Add-Content -LiteralPath $stdoutPath -Value $line -Encoding UTF8
+    (@{{ event = "provider_stdout"; created_at = [DateTime]::UtcNow.ToString("o"); text = $line }} | ConvertTo-Json -Compress) | Add-Content -LiteralPath $streamPath -Encoding UTF8
+  }}
+}}
+$errHandler = {{
+  param($sender, $eventArgs)
+  if ($null -ne $eventArgs.Data) {{
+    $line = [string]$eventArgs.Data
+    Write-Host $line -ForegroundColor Red
+    Add-Content -LiteralPath $stderrPath -Value $line -Encoding UTF8
+    (@{{ event = "provider_stderr"; created_at = [DateTime]::UtcNow.ToString("o"); text = $line }} | ConvertTo-Json -Compress) | Add-Content -LiteralPath $streamPath -Encoding UTF8
+  }}
+}}
+$proc.add_OutputDataReceived($outHandler)
+$proc.add_ErrorDataReceived($errHandler)
+[void]$proc.Start()
+(@{{ provider_pid = $proc.Id; started_at = [DateTime]::UtcNow.ToString("o") }} | ConvertTo-Json -Compress) | Set-Content -LiteralPath $pidPath -Encoding UTF8
+$proc.BeginOutputReadLine()
+$proc.BeginErrorReadLine()
+if ($null -ne $stdinPath) {{
+  $inputText = Get-Content -LiteralPath $stdinPath -Raw -Encoding UTF8
+  $proc.StandardInput.Write($inputText)
+}}
+$proc.StandardInput.Close()
+$proc.WaitForExit()
+$proc.WaitForExit()
+(@{{ exit_code = $proc.ExitCode; ended_at = [DateTime]::UtcNow.ToString("o") }} | ConvertTo-Json -Compress) | Set-Content -LiteralPath $exitPath -Encoding UTF8
+exit $proc.ExitCode
+}} catch {{
+  $message = $_ | Out-String
+  Write-Host $message -ForegroundColor Red
+  Add-Content -LiteralPath $stderrPath -Value $message -Encoding UTF8
+  (@{{ event = "provider_wrapper_exception"; created_at = [DateTime]::UtcNow.ToString("o"); text = $message }} | ConvertTo-Json -Compress) | Add-Content -LiteralPath $streamPath -Encoding UTF8
+  (@{{ exit_code = 1; ended_at = [DateTime]::UtcNow.ToString("o"); wrapper_exception = $message }} | ConvertTo-Json -Compress) | Set-Content -LiteralPath $exitPath -Encoding UTF8
+  exit 1
+}}
+""".lstrip()
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def run_subprocess_with_tree_timeout(command: list[str], **run_kwargs: Any) -> subprocess.CompletedProcess[str]:

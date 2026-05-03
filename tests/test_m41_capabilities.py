@@ -31,6 +31,7 @@ from packages.worker_adapters.router import WorkerRouter
 from packages.worker_adapters.shell_adapter import ShellAdapter
 from packages.worker_adapters.subprocess_support import build_subprocess_env
 from packages.worker_adapters.subprocess_support import completed_process_watchdog_metadata
+from packages.worker_adapters.subprocess_support import _direct_visible_provider_python_script
 from packages.worker_adapters.subprocess_support import run_subprocess_with_tree_timeout
 
 
@@ -628,6 +629,43 @@ def test_opencode_adapter_timeout_can_be_overridden_per_packet(tmp_path: Path, m
     assert result.metadata["timeout_seconds"] == 12
 
 
+def test_opencode_adapter_can_launch_direct_visible_provider_cli(tmp_path: Path, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_visible(command, **kwargs):
+        calls.append({"command": command, "kwargs": kwargs})
+        completed = subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        setattr(
+            completed,
+            "direct_visible_cli_session",
+            {"mode": "direct_provider_visible_cli_enforced", "provider": "opencode", "provider_pid": 5678},
+        )
+        setattr(completed, "direct_visible_cli_log_paths", {"session_path": (tmp_path / "session.json").as_posix()})
+        return completed
+
+    monkeypatch.setattr("packages.worker_adapters.opencode_adapter.run_subprocess_with_direct_visible_cli", _fake_visible)
+    packet = _packet(
+        tmp_path,
+        env={
+            "WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI": "1",
+            "WORKFLOW_PROVIDER_VISIBLE_SESSION_ROOT": (tmp_path / "visible").as_posix(),
+        },
+        artifact="opencode_visible.md",
+    )
+
+    result = OpenCodeAdapter(executable=sys.executable).launch(packet)
+
+    assert result.return_code == 0
+    assert calls
+    assert calls[0]["kwargs"]["provider_name"] == "opencode"
+    assert Path(str(calls[0]["kwargs"]["visible_session_dir"])).as_posix().endswith("/run_m41/task_m41/opencode")
+    command = calls[0]["command"]
+    assert command[command.index("--format") + 1] == "default"
+    assert result.metadata["direct_visible_provider_cli"] is True
+    assert result.metadata["provider_output_mode"] == "human_readable"
+    assert result.metadata["direct_visible_cli_session"]["provider"] == "opencode"
+
+
 def test_codex_adapter_timeout_can_be_overridden_for_local_dogfood(monkeypatch) -> None:
     monkeypatch.setenv("WORKFLOW_CODEX_TIMEOUT_SECONDS", "45")
 
@@ -655,6 +693,70 @@ def test_codex_adapter_timeout_can_be_overridden_per_packet(tmp_path: Path, monk
 
     assert observed["timeout"] == 12
     assert result.metadata["timeout_seconds"] == 12
+
+
+def test_codex_adapter_can_launch_direct_visible_provider_cli(tmp_path: Path, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_visible(command, **kwargs):
+        calls.append({"command": command, "kwargs": kwargs})
+        completed = subprocess.CompletedProcess(command, 0, stdout='{"type":"turn.completed"}\n', stderr="")
+        setattr(
+            completed,
+            "direct_visible_cli_session",
+            {"mode": "direct_provider_visible_cli_enforced", "provider": "codex", "provider_pid": 1234},
+        )
+        setattr(completed, "direct_visible_cli_log_paths", {"session_path": (tmp_path / "session.json").as_posix()})
+        return completed
+
+    monkeypatch.setattr("packages.worker_adapters.codex_adapter.run_subprocess_with_direct_visible_cli", _fake_visible)
+    packet = _packet(
+        tmp_path,
+        env={
+            "WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI": "1",
+            "WORKFLOW_PROVIDER_VISIBLE_SESSION_ROOT": (tmp_path / "visible").as_posix(),
+        },
+        artifact="codex_visible.md",
+    )
+
+    result = CodexAdapter(executable=sys.executable).launch(packet)
+
+    assert result.return_code == 0
+    assert calls
+    assert calls[0]["kwargs"]["provider_name"] == "codex"
+    assert Path(str(calls[0]["kwargs"]["visible_session_dir"])).as_posix().endswith("/run_m41/task_m41/codex")
+    assert calls[0]["command"][-1] == "-"
+    assert "--json" not in calls[0]["command"]
+    assert result.metadata["direct_visible_provider_cli"] is True
+    assert result.metadata["provider_output_mode"] == "human_readable"
+    assert result.metadata["direct_visible_cli_session"]["provider"] == "codex"
+
+
+def test_direct_visible_provider_script_uses_python_mirror_wrapper(tmp_path: Path) -> None:
+    script = _direct_visible_provider_python_script(
+        command=[
+            "C:/Tools/codex.CMD",
+            "exec",
+            "--output-last-message",
+            "D:/Universal Agentic workflow/state/artifacts/patch.diff",
+            "-c",
+            'model_reasoning_effort="xhigh"',
+            "-",
+        ],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        stream_path=tmp_path / "stream.jsonl",
+        pid_path=tmp_path / "provider_pid.json",
+        exit_path=tmp_path / "exit_code.json",
+        stdin_path=tmp_path / "stdin.txt",
+    )
+
+    assert "$psi.ArgumentList.Add" not in script
+    assert "provider_wrapper_exception" in script
+    assert "subprocess.Popen(" in script
+    assert "shutil.which" in script
+    assert "provider_pid" in script
 
 
 def test_codex_adapter_timeout_records_failure_class_and_stream_previews(tmp_path: Path) -> None:

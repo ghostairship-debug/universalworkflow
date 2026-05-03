@@ -37,6 +37,24 @@ def validate_cocos_browser_runtime_hook(project_dir: str | Path) -> dict[str, An
     script_path = project / "assets" / "scripts" / "BlockPuzzleGame.ts"
     script_meta_path = project / "assets" / "scripts" / "BlockPuzzleGame.ts.meta"
     scene_path = project / "assets" / "scene" / "main.scene"
+    runtime_source_sets = [
+        [
+            project / "assets" / "scripts" / "gameplay" / "CommercialCoreLoopRuntime.ts",
+            project / "assets" / "scripts" / "gameplay" / "CommercialGameplaySemanticBridge.ts",
+            project / "assets" / "scripts" / "AudioFeedbackController.ts",
+        ],
+        [
+            project / "assets" / "scripts" / "BoardModel.ts",
+            project / "assets" / "scripts" / "RuleEngine.ts",
+            project / "assets" / "scripts" / "SemanticTestBridge.ts",
+            project / "assets" / "scripts" / "AudioFeedbackController.ts",
+        ],
+    ]
+    runtime_sources = next(
+        (source_set for source_set in runtime_source_sets if all(path.exists() for path in source_set)),
+        [],
+    )
+    source_backed_bridge = bool(runtime_sources)
     issues: list[str] = []
     script_text = ""
 
@@ -77,7 +95,8 @@ def validate_cocos_browser_runtime_hook(project_dir: str | Path) -> dict[str, An
             attached = True
             break
     if not component_refs:
-        issues.append("block_puzzle_scene_component_missing")
+        if not source_backed_bridge:
+            issues.append("block_puzzle_scene_component_missing")
     if component_refs and not attached:
         issues.append("block_puzzle_scene_component_not_attached")
 
@@ -92,6 +111,8 @@ def validate_cocos_browser_runtime_hook(project_dir: str | Path) -> dict[str, An
         "missing_script_markers": missing_markers,
         "component_ref_count": len(component_refs),
         "component_attached": attached,
+        "browser_runtime_source_backed": source_backed_bridge,
+        "runtime_sources": [path.as_posix() for path in runtime_sources],
         "issues": issues,
     }
 

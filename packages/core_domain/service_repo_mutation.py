@@ -13,6 +13,7 @@ from packages.core_domain.errors import (
 from packages.core_domain.repo_mutation import (
     apply_unified_diff,
     capture_workspace_snapshot,
+    extract_deleted_paths,
     extract_touched_paths,
     hash_patch_text,
     is_path_allowed,
@@ -27,6 +28,10 @@ MUTATION_CONTEXT_FILE_PREVIEW_LIMIT = 20000
 MUTATION_CONTEXT_TOTAL_PREVIEW_LIMIT = 60000
 MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT = 80
 MUTATION_CONTEXT_INLINE_ENV_LIMIT = 12000
+
+
+def _truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class RepoMutationCoordinator:
@@ -51,13 +56,50 @@ def task_card_content_for_mutation(contract: MutationContract | None, *, working
     return resolved.read_text(encoding="utf-8")
 
 
-def read_set_context_for_mutation(contract: MutationContract | None, *, working_directory: str) -> list[dict[str, Any]]:
+def read_set_context_for_mutation(
+    contract: MutationContract | None,
+    *,
+    working_directory: str,
+    external_roots: list[str] | None = None,
+) -> list[dict[str, Any]]:
     if contract is None:
         return []
+    return _paths_context_for_mutation(
+        contract.read_set,
+        working_directory=working_directory,
+        external_roots=external_roots,
+        include_directory_file_previews=False,
+    )
+
+
+def write_set_context_for_mutation(
+    contract: MutationContract | None,
+    *,
+    working_directory: str,
+    external_roots: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if contract is None:
+        return []
+    return _paths_context_for_mutation(
+        contract.write_set,
+        working_directory=working_directory,
+        external_roots=external_roots,
+        include_directory_file_previews=True,
+    )
+
+
+def _paths_context_for_mutation(
+    paths: list[str],
+    *,
+    working_directory: str,
+    external_roots: list[str] | None,
+    include_directory_file_previews: bool,
+) -> list[dict[str, Any]]:
     root = Path(working_directory).resolve()
+    external = [Path(item).resolve() for item in external_roots or []]
     remaining = MUTATION_CONTEXT_TOTAL_PREVIEW_LIMIT
     context: list[dict[str, Any]] = []
-    for item in contract.read_set:
+    for item in paths:
         if remaining <= 0:
             context.append({"path": item, "kind": "truncated", "exists": None})
             continue
@@ -68,7 +110,10 @@ def read_set_context_for_mutation(contract: MutationContract | None, *, working_
         except OSError:
             context.append({"path": item, "kind": "unknown", "exists": False})
             continue
-        if not _is_relative_to(resolved, root):
+        in_workspace = _is_relative_to(resolved, root)
+        in_external = any(_is_relative_to(resolved, external_root) for external_root in external)
+        explicit_absolute_file = raw_path.is_absolute() and resolved.exists() and resolved.is_file()
+        if not in_workspace and not in_external and not explicit_absolute_file:
             context.append({"path": item, "kind": "outside_workspace", "exists": resolved.exists()})
             continue
         if not resolved.exists():
@@ -76,15 +121,22 @@ def read_set_context_for_mutation(contract: MutationContract | None, *, working_
             continue
         if resolved.is_dir():
             children = _directory_children_preview(resolved, root=root)
-            context.append(
-                {
-                    "path": item,
-                    "kind": "directory",
-                    "exists": True,
-                    "children": children,
-                    "truncated": len(children) >= MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT,
-                }
-            )
+            entry: dict[str, Any] = {
+                "path": item,
+                "kind": "directory",
+                "exists": True,
+                "children": children,
+                "source_scope": "workspace"
+                if in_workspace
+                else "external_root"
+                if in_external
+                else "explicit_absolute_read_set",
+                "truncated": len(children) >= MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT,
+            }
+            if include_directory_file_previews:
+                file_previews, remaining = _directory_file_previews(resolved, root=root, remaining=remaining)
+                entry["file_previews"] = file_previews
+            context.append(entry)
             continue
         if not resolved.is_file():
             context.append({"path": item, "kind": "other", "exists": True})
@@ -102,7 +154,12 @@ def read_set_context_for_mutation(contract: MutationContract | None, *, working_
                 "path": item,
                 "kind": "file",
                 "exists": True,
-                "relative_path": resolved.relative_to(root).as_posix(),
+                "relative_path": resolved.relative_to(root).as_posix() if in_workspace else resolved.as_posix(),
+                "source_scope": "workspace"
+                if in_workspace
+                else "external_root"
+                if in_external
+                else "explicit_absolute_read_set",
                 "content_preview": preview,
                 "truncated": len(content) > len(preview),
             }
@@ -125,10 +182,50 @@ def _directory_children_preview(path: Path, *, root: Path) -> list[str]:
             if len(children) >= MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT:
                 break
             if child.is_file():
-                children.append(child.resolve().relative_to(root).as_posix())
+                resolved = child.resolve()
+                children.append(resolved.relative_to(root).as_posix() if _is_relative_to(resolved, root) else resolved.as_posix())
     except OSError:
         return children
     return children
+
+
+def _directory_file_previews(path: Path, *, root: Path, remaining: int) -> tuple[list[dict[str, Any]], int]:
+    previews: list[dict[str, Any]] = []
+    try:
+        children = [child for child in path.rglob("*") if child.is_file()]
+    except OSError:
+        return previews, remaining
+    for child in children[:MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT]:
+        if remaining <= 0:
+            break
+        resolved = child.resolve()
+        preview_limit = min(MUTATION_CONTEXT_FILE_PREVIEW_LIMIT, remaining)
+        try:
+            content = child.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            previews.append(
+                {
+                    "path": child.as_posix(),
+                    "relative_path": resolved.relative_to(root).as_posix()
+                    if _is_relative_to(resolved, root)
+                    else resolved.as_posix(),
+                    "read_error": str(exc),
+                }
+            )
+            continue
+        preview = content[:preview_limit]
+        remaining -= len(preview)
+        previews.append(
+            {
+                "path": child.as_posix(),
+                "relative_path": resolved.relative_to(root).as_posix()
+                if _is_relative_to(resolved, root)
+                else resolved.as_posix(),
+                "content_preview": preview,
+                "truncated": len(content) > len(preview),
+            }
+        )
+    return previews, remaining
 
 
 def packet_for_mutation_attempt(
@@ -138,8 +235,18 @@ def packet_for_mutation_attempt(
     attempt_index: int,
     failure_feedback: str | None,
 ) -> TaskPacket:
+    external_roots = _mutation_external_roots(packet)
     task_card_content = task_card_content_for_mutation(contract, working_directory=packet.working_directory)
-    read_set_context = read_set_context_for_mutation(contract, working_directory=packet.working_directory)
+    read_set_context = read_set_context_for_mutation(
+        contract,
+        working_directory=packet.working_directory,
+        external_roots=external_roots,
+    )
+    write_set_context = write_set_context_for_mutation(
+        contract,
+        working_directory=packet.working_directory,
+        external_roots=external_roots,
+    )
     task_card_env = _inline_or_file_env(
         packet=packet,
         name="task_card_content",
@@ -150,6 +257,12 @@ def packet_for_mutation_attempt(
         packet=packet,
         name="read_set_context",
         content=json.dumps(read_set_context, ensure_ascii=False),
+        attempt_index=attempt_index,
+    )
+    write_set_context_env = _inline_or_file_env(
+        packet=packet,
+        name="write_set_context",
+        content=json.dumps(write_set_context, ensure_ascii=False),
         attempt_index=attempt_index,
     )
     return TaskPacket.model_validate(
@@ -169,6 +282,8 @@ def packet_for_mutation_attempt(
                 "WORKFLOW_MUTATION_TASK_CARD_CONTENT_FILE": task_card_env["file"],
                 "WORKFLOW_MUTATION_READ_SET_CONTEXT": read_set_context_env["inline"],
                 "WORKFLOW_MUTATION_READ_SET_CONTEXT_FILE": read_set_context_env["file"],
+                "WORKFLOW_MUTATION_WRITE_SET_CONTEXT": write_set_context_env["inline"],
+                "WORKFLOW_MUTATION_WRITE_SET_CONTEXT_FILE": write_set_context_env["file"],
             },
         }
     )
@@ -198,6 +313,27 @@ def _safe_context_name(value: str) -> str:
     return cleaned[:96] or "unknown"
 
 
+def _mutation_external_roots(packet: TaskPacket) -> list[str]:
+    raw = packet.env.get("WORKFLOW_MUTATION_EXTERNAL_ROOTS") or "[]"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = [raw]
+    values = payload if isinstance(payload, list) else [payload]
+    roots: list[str] = []
+    workspace_root = Path(packet.working_directory).resolve()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        resolved = Path(text).resolve()
+        if resolved == workspace_root:
+            continue
+        if resolved.as_posix() not in roots:
+            roots.append(resolved.as_posix())
+    return roots
+
+
 def merge_test_feedback(attempts: list[dict[str, Any]]) -> str:
     if not attempts:
         return ""
@@ -225,8 +361,9 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
             "repo mutation execution requires a patch-capable adapter",
             {"adapter_name": adapter.normalized_name()},
         )
-    allowed_paths = normalize_allowed_paths(packet.working_directory, contract.write_set)
-    baseline_snapshot = capture_workspace_snapshot(packet.working_directory, contract.write_set)
+    external_roots = _mutation_external_roots(packet)
+    allowed_paths = normalize_allowed_paths(packet.working_directory, contract.write_set, external_roots=external_roots)
+    baseline_snapshot = capture_workspace_snapshot(packet.working_directory, contract.write_set, external_roots=external_roots)
     attempt_limit = max(contract.max_fix_iterations, 0)
     failure_feedback: str | None = None
     aggregated_test_attempts: list[dict[str, Any]] = []
@@ -242,6 +379,7 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
                 packet.working_directory,
                 baseline_snapshot,
                 extra_paths=last_touched_paths,
+                external_roots=external_roots,
             )
             last_touched_paths = []
         attempt_packet = packet_for_mutation_attempt(
@@ -265,10 +403,25 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
             break
         patch_text = _rewrite_patch_paths_to_allowed_scope(patch_text, allowed_paths)
         try:
-            touched_paths = extract_touched_paths(patch_text, workspace_root=packet.working_directory)
+            touched_paths = extract_touched_paths(
+                patch_text,
+                workspace_root=packet.working_directory,
+                external_roots=external_roots,
+            )
+            deleted_paths = extract_deleted_paths(
+                patch_text,
+                workspace_root=packet.working_directory,
+                external_roots=external_roots,
+            )
         except ValueError as exc:
             failure_feedback = str(exc)
             final_test_status = "patch_parse_failed"
+            if attempt_index < attempt_limit:
+                continue
+            break
+        if deleted_paths and not _truthy_env(packet.env.get("WORKFLOW_MUTATION_ALLOW_DELETES")):
+            failure_feedback = f"patch attempted to delete files without deletion approval: {', '.join(deleted_paths)}"
+            final_test_status = "patch_delete_rejected"
             if attempt_index < attempt_limit:
                 continue
             break
@@ -292,12 +445,14 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
                 packet.working_directory,
                 patch_text,
                 allowed_paths=allowed_paths,
+                external_roots=external_roots,
             )
         except ValueError as exc:
             restore_workspace_snapshot(
                 packet.working_directory,
                 baseline_snapshot,
                 extra_paths=last_touched_paths,
+                external_roots=external_roots,
             )
             last_touched_paths = []
             failure_feedback = str(exc)
@@ -319,6 +474,7 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
                 packet.working_directory,
                 baseline_snapshot,
                 extra_paths=last_touched_paths,
+                external_roots=external_roots,
             )
             break
         final_test_status = "passed" if contract.test_commands else "not_requested"

@@ -19,6 +19,7 @@ from packages.runtime_security.safe_command_runner import (
 _HUNK_HEADER_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
+_APPLY_PATCH_FILE_HEADER_RE = re.compile(r"^\*\*\* (?P<action>Update|Add|Delete) File: (?P<path>.+)$", re.MULTILINE)
 
 
 @dataclass(slots=True)
@@ -54,7 +55,36 @@ def _workspace_root(path: str | Path) -> Path:
     return Path(path).resolve()
 
 
-def _normalize_rel_path(workspace_root: Path, raw_path: str | Path) -> str:
+def _normalize_external_roots(external_roots: list[str | Path] | None) -> list[Path]:
+    roots: list[Path] = []
+    for raw_root in external_roots or []:
+        root = Path(raw_root).resolve()
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _absolute_for_normalized_path(workspace_root: Path, path: str) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (workspace_root / candidate).resolve()
+
+
+def _normalize_rel_path(
+    workspace_root: Path,
+    raw_path: str | Path,
+    *,
+    external_roots: list[Path] | None = None,
+) -> str:
     candidate = Path(raw_path)
     if candidate.is_absolute():
         resolved = candidate.resolve()
@@ -63,14 +93,26 @@ def _normalize_rel_path(workspace_root: Path, raw_path: str | Path) -> str:
     try:
         return resolved.relative_to(workspace_root).as_posix()
     except ValueError as exc:
+        for external_root in external_roots or []:
+            try:
+                resolved.relative_to(external_root)
+            except ValueError:
+                continue
+            return resolved.as_posix()
         raise ValueError(f"path `{raw_path}` is outside the workspace root") from exc
 
 
-def normalize_allowed_paths(workspace_root: str | Path, write_set: list[str]) -> list[str]:
+def normalize_allowed_paths(
+    workspace_root: str | Path,
+    write_set: list[str],
+    *,
+    external_roots: list[str | Path] | None = None,
+) -> list[str]:
     root = _workspace_root(workspace_root)
+    external = _normalize_external_roots(external_roots)
     normalized: list[str] = []
     for item in write_set:
-        rel_path = _normalize_rel_path(root, item)
+        rel_path = _normalize_rel_path(root, item, external_roots=external)
         if rel_path not in normalized:
             normalized.append(rel_path)
     return normalized
@@ -85,17 +127,28 @@ def is_path_allowed(path: str, allowed_paths: list[str]) -> bool:
     return False
 
 
-def capture_workspace_snapshot(workspace_root: str | Path, write_set: list[str]) -> dict[str, SnapshotEntry]:
+def capture_workspace_snapshot(
+    workspace_root: str | Path,
+    write_set: list[str],
+    *,
+    external_roots: list[str | Path] | None = None,
+) -> dict[str, SnapshotEntry]:
     root = _workspace_root(workspace_root)
+    external = _normalize_external_roots(external_roots)
     snapshot: dict[str, SnapshotEntry] = {}
     for raw_path in write_set:
-        rel_path = _normalize_rel_path(root, raw_path)
-        absolute = root / rel_path
+        rel_path = _normalize_rel_path(root, raw_path, external_roots=external)
+        absolute = _absolute_for_normalized_path(root, rel_path)
         if absolute.exists() and absolute.is_dir():
             for child in absolute.rglob("*"):
                 if child.is_dir():
                     continue
-                child_rel = child.resolve().relative_to(root).as_posix()
+                child_resolved = child.resolve()
+                child_rel = (
+                    child_resolved.relative_to(root).as_posix()
+                    if _path_is_under(child_resolved, root)
+                    else child_resolved.as_posix()
+                )
                 snapshot[child_rel] = _snapshot_file(child, child_rel)
             continue
         snapshot[rel_path] = _snapshot_file(absolute, rel_path) if absolute.exists() else SnapshotEntry(path=rel_path, exists=False, content=None)
@@ -118,11 +171,13 @@ def restore_workspace_snapshot(
     snapshot: dict[str, SnapshotEntry],
     *,
     extra_paths: list[str] | None = None,
+    external_roots: list[str | Path] | None = None,
 ) -> None:
     root = _workspace_root(workspace_root)
+    external = _normalize_external_roots(external_roots)
     restored_paths = set(snapshot)
     for entry in snapshot.values():
-        absolute = root / entry.path
+        absolute = _absolute_for_normalized_path(root, entry.path)
         if entry.exists:
             absolute.parent.mkdir(parents=True, exist_ok=True)
             if entry.content_bytes is not None:
@@ -133,10 +188,10 @@ def restore_workspace_snapshot(
         if absolute.exists():
             absolute.unlink()
     for raw_path in extra_paths or []:
-        rel_path = _normalize_rel_path(root, raw_path)
+        rel_path = _normalize_rel_path(root, raw_path, external_roots=external)
         if rel_path in restored_paths:
             continue
-        absolute = root / rel_path
+        absolute = _absolute_for_normalized_path(root, rel_path)
         if absolute.exists():
             absolute.unlink()
 
@@ -154,7 +209,78 @@ def _normalize_diff_path(raw_path: str) -> str | None:
     return path.strip()
 
 
+def _parse_apply_patch_blocks(patch_text: str) -> list[FilePatch]:
+    def flush_hunk() -> None:
+        nonlocal current_hunk_lines
+        if current_file is None or not current_hunk_lines:
+            current_hunk_lines = []
+            return
+        old_count = sum(1 for line in current_hunk_lines if not line.startswith("+"))
+        new_count = sum(1 for line in current_hunk_lines if not line.startswith("-"))
+        current_file.hunks.append(
+            DiffHunk(
+                old_start=1,
+                old_count=old_count,
+                new_start=1,
+                new_count=new_count,
+                lines=current_hunk_lines,
+            )
+        )
+        current_hunk_lines = []
+
+    def flush_file() -> None:
+        nonlocal current_file
+        flush_hunk()
+        if current_file is None:
+            return
+        if current_file.new_path is not None and not current_file.hunks:
+            raise ValueError("apply_patch file update contained no hunks")
+        patches.append(current_file)
+        current_file = None
+
+    patches: list[FilePatch] = []
+    current_file: FilePatch | None = None
+    current_hunk_lines: list[str] = []
+    in_patch = False
+    for line in patch_text.splitlines():
+        if line == "*** Begin Patch":
+            in_patch = True
+            continue
+        if line == "*** End Patch":
+            flush_file()
+            in_patch = False
+            continue
+        if not in_patch:
+            continue
+        header_match = _APPLY_PATCH_FILE_HEADER_RE.match(line)
+        if header_match is not None:
+            flush_file()
+            action = header_match.group("action")
+            path = header_match.group("path").strip()
+            old_path = None if action == "Add" else path
+            new_path = None if action == "Delete" else path
+            current_file = FilePatch(old_path=old_path, new_path=new_path, hunks=[])
+            continue
+        if current_file is None:
+            continue
+        if line.startswith("*** Move to: "):
+            current_file.new_path = line.removeprefix("*** Move to: ").strip()
+            continue
+        if line.startswith("@@"):
+            flush_hunk()
+            continue
+        if line[:1] in {" ", "+", "-"}:
+            current_hunk_lines.append(line)
+    if current_file is not None:
+        flush_file()
+    if not patches:
+        raise ValueError("no file patches were found in the apply_patch block")
+    return patches
+
+
 def parse_unified_diff(patch_text: str) -> list[FilePatch]:
+    if "*** Begin Patch" in patch_text and _APPLY_PATCH_FILE_HEADER_RE.search(patch_text):
+        return _parse_apply_patch_blocks(patch_text)
     lines = patch_text.splitlines()
     patches: list[FilePatch] = []
     index = 0
@@ -217,12 +343,33 @@ def parse_unified_diff(patch_text: str) -> list[FilePatch]:
     return patches
 
 
-def extract_touched_paths(patch_text: str, *, workspace_root: str | Path) -> list[str]:
+def extract_touched_paths(
+    patch_text: str,
+    *,
+    workspace_root: str | Path,
+    external_roots: list[str | Path] | None = None,
+) -> list[str]:
     root = _workspace_root(workspace_root)
+    external = _normalize_external_roots(external_roots)
     return [
-        _normalize_rel_path(root, file_patch.touched_path)
+        _normalize_rel_path(root, file_patch.touched_path, external_roots=external)
         for file_patch in parse_unified_diff(patch_text)
         if file_patch.touched_path
+    ]
+
+
+def extract_deleted_paths(
+    patch_text: str,
+    *,
+    workspace_root: str | Path,
+    external_roots: list[str | Path] | None = None,
+) -> list[str]:
+    root = _workspace_root(workspace_root)
+    external = _normalize_external_roots(external_roots)
+    return [
+        _normalize_rel_path(root, file_patch.touched_path, external_roots=external)
+        for file_patch in parse_unified_diff(patch_text)
+        if file_patch.touched_path and file_patch.new_path is None
     ]
 
 
@@ -292,17 +439,19 @@ def apply_unified_diff(
     patch_text: str,
     *,
     allowed_paths: list[str],
+    external_roots: list[str | Path] | None = None,
 ) -> list[str]:
     root = _workspace_root(workspace_root)
+    external = _normalize_external_roots(external_roots)
     touched_paths: list[str] = []
     planned_writes: list[tuple[Path, str | None]] = []
     for file_patch in parse_unified_diff(patch_text):
         if not file_patch.touched_path:
             raise ValueError("patch is missing a target path")
-        rel_path = _normalize_rel_path(root, file_patch.touched_path)
+        rel_path = _normalize_rel_path(root, file_patch.touched_path, external_roots=external)
         if not is_path_allowed(rel_path, allowed_paths):
             raise ValueError(f"patch attempted to modify out-of-scope path `{rel_path}`")
-        target = root / rel_path
+        target = _absolute_for_normalized_path(root, rel_path)
         touched_paths.append(rel_path)
         if file_patch.new_path is None:
             planned_writes.append((target, None))

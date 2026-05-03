@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -23,6 +24,12 @@ from packages.contracts import (
     TaskPacket,
     ToolProjectionManifest,
 )
+
+ENV_PASSTHROUGH_PREFIXES = ("WORKFLOW_PROVIDER_", "WORKFLOW_CODEX_", "WORKFLOW_OPENCODE_")
+ENV_PASSTHROUGH_KEYS = {
+    "WORKFLOW_CONTROL_PLANE_VISIBILITY",
+    "WORKFLOW_MUTATION_EXTERNAL_ROOTS",
+}
 from packages.core_domain.capability_plane import TOOL_PROJECTION_MANIFEST_ENV_KEY, dump_tool_projection_manifest
 from packages.core_domain.domain_packs import DOMAIN_PACK_RESOLUTION_ENV_KEY, dump_domain_pack_resolution
 from packages.runtime_integrations.local_game_artifacts import local_artifacts_for_goal
@@ -141,6 +148,14 @@ def _python_command_for(
         "print(path.as_posix())\n"
     )
     return [sys.executable, "-c", body]
+
+
+def _execution_env_passthrough(env: dict[str, str]) -> dict[str, str]:
+    payload: dict[str, str] = {}
+    for key, value in env.items():
+        if key in ENV_PASSTHROUGH_KEYS or any(key.startswith(prefix) for prefix in ENV_PASSTHROUGH_PREFIXES):
+            payload[str(key)] = str(value)
+    return payload
 
 
 @dataclass(slots=True)
@@ -507,6 +522,9 @@ def compile_run(
         expected_artifacts=[artifact_path.as_posix(), *[path.as_posix() for path, _content in local_artifacts]],
         mutation_contract=mutation_contract,
     )
+    env_passthrough = _execution_env_passthrough(os.environ)
+    if env_passthrough:
+        task_packet = task_packet.model_copy(update={"env": {**task_packet.env, **env_passthrough}})
     handoff = HandoffLite(
         run_id=run_id,
         from_phase_id=compile_phase.phase_id,

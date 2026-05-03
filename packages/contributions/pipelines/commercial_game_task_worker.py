@@ -508,6 +508,18 @@ def _run_task_card_with_retry_policy(
                 "final_failure_class": "human_visible_cli_metadata_missing",
                 "recoverable_suggestion": "rerun_task_card_in_human_visible_cli_enforced_mode_with_mirrored_logs",
             }
+        if (
+            str(last_entry.get("status") or "") == "completed"
+            and _provider_visible_cli_required(last_entry)
+            and not _provider_visible_cli_session_valid(last_entry)
+        ):
+            last_entry = {
+                **last_entry,
+                "status": "failed",
+                "failure_class": "direct_provider_visible_cli_metadata_missing",
+                "final_failure_class": "direct_provider_visible_cli_metadata_missing",
+                "recoverable_suggestion": "rerun_task_card_with_resident_control_plane_and_direct_visible_provider_cli",
+            }
         last_entry["execution_visibility_mode"] = execution_visibility_mode
         attempts.append(
             _patch_attempt_record(
@@ -580,6 +592,11 @@ def _patch_attempt_record(
         "child_attempt_id": entry.get("child_attempt_id"),
         "worker_adapter": entry.get("worker_adapter"),
         "execution_visibility_mode": entry.get("execution_visibility_mode"),
+        "control_plane_visibility": entry.get("control_plane_visibility"),
+        "provider_visibility": entry.get("provider_visibility"),
+        "provider_visible_cli_required": bool(entry.get("provider_visible_cli_required")),
+        "provider_visible_cli_session": entry.get("provider_visible_cli_session"),
+        "provider_visible_cli_log_paths": entry.get("provider_visible_cli_log_paths"),
         "visible_cli_session": entry.get("visible_cli_session"),
         "visible_cli_log_paths": entry.get("visible_cli_log_paths") or _visible_cli_log_paths(entry),
         "watchdog_source": entry.get("watchdog_source"),
@@ -686,6 +703,29 @@ def _visible_cli_session_valid(entry: dict[str, Any]) -> bool:
         return False
     required = ["pid", "argv", "cwd", "stdout_log_path", "stderr_log_path", "stream_log_path", "started_at"]
     if any(not session.get(key) for key in required):
+        return False
+    if session.get("status") in {"unavailable", "blocked"}:
+        return False
+    return True
+
+
+def _provider_visible_cli_required(entry: dict[str, Any]) -> bool:
+    if bool(entry.get("provider_visible_cli_required")):
+        return True
+    return (
+        str(entry.get("control_plane_visibility") or "").strip().lower() == "resident"
+        and str(entry.get("provider_visibility") or "").strip().lower() == "direct_visible"
+    )
+
+
+def _provider_visible_cli_session_valid(entry: dict[str, Any]) -> bool:
+    session = entry.get("provider_visible_cli_session")
+    if not isinstance(session, dict):
+        return False
+    required = ["argv", "cwd", "stdout_log_path", "stderr_log_path", "stream_log_path", "started_at"]
+    if any(not session.get(key) for key in required):
+        return False
+    if not (session.get("provider_pid") or session.get("wrapper_pid")):
         return False
     if session.get("status") in {"unavailable", "blocked"}:
         return False

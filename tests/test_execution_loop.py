@@ -25,6 +25,7 @@ from packages.contracts import (
     RuntimeStateRef,
     TaskKind,
     TaskPacket,
+    MutationContract,
     WorkerLease,
     WorkerLeaseStatus,
 )
@@ -50,6 +51,7 @@ from packages.core_domain.repo_mutation import (
     TEST_COMMAND_TIMEOUT_EXIT_CODE,
     run_test_commands,
 )
+from packages.core_domain.service_repo_mutation import read_set_context_for_mutation, write_set_context_for_mutation
 from packages.core_domain.repositories import PresetRepository
 from packages.core_domain.services import OrchestratorService
 from packages.runtime_langgraph.durable_pilot import DurableRuntimePilot, LangGraphDurableRuntimePilot
@@ -168,6 +170,21 @@ def _fake_patch_apply_failure_runner(command, cwd, env, capture_output, text, ch
         stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
         stderr="",
     )
+
+
+def _fake_delete_patch_runner(command, cwd, env, capture_output, text, check, timeout):
+    write_set = json.loads(env.get("WORKFLOW_MUTATION_WRITE_SET", "[]"))
+    assert write_set
+    target = write_set[0].replace("\\", "/")
+    patch_text = "\n".join(
+        [
+            "*** Begin Patch",
+            f"*** Delete File: {target}",
+            "*** End Patch",
+            "",
+        ]
+    )
+    return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"type": "text", "part": {"text": patch_text}}), stderr="")
 
 
 def _patch_apply_receipt_id(service: OrchestratorService, run_id: str, write_set: list[str]) -> str:
@@ -1993,6 +2010,47 @@ def test_repo_mutation_patch_apply_failure_projects_mutation_result(
     assert payload["readiness"] == "blocked"
 
 
+def test_repo_mutation_rejects_delete_patch_without_explicit_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_fake_delete_patch_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "mutated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+    task_card = tmp_path / "task_card.md"
+    task_card.write_text("# Must preserve file\n", encoding="utf-8")
+
+    run = service.create_run("Reject accidental delete patch", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        task_card_ref="delete-rejected",
+        task_card_path=task_card.as_posix(),
+        write_set=["mutated.txt"],
+        read_set=["task_card.md"],
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    bundle = service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["mutated.txt"]),
+    )
+    detail_after = service.get_status_detail(run.run_id)
+
+    assert bundle.run.status == "failed"
+    assert target_file.read_text(encoding="utf-8") == "before\n"
+    assert detail_after["mutation_result"]["final_test_status"] == "patch_delete_rejected"
+    assert "without deletion approval" in detail_after["mutation_result"]["failure_reason"]
+
+
 def test_compile_run_defaults_patch_apply_to_codex_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(tmp_path)
@@ -2467,6 +2525,58 @@ def test_repo_mutation_accepts_unique_project_relative_paths_in_write_set(
         "export const audioRuntimeHooksConfigured = true;\n"
     )
     assert (project_dir / "workflow_commercial_feature_evidence.json").read_text(encoding="utf-8") == '{"audio": true}\n'
+    assert not (tmp_path / "assets" / "scripts" / "AudioRuntimeState.ts").exists()
+
+
+def test_repo_mutation_accepts_explicit_external_project_root_write_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    external_project = tmp_path.parent / f"{tmp_path.name}_external_project"
+    external_project.mkdir(parents=True)
+    monkeypatch.setenv("WORKFLOW_MUTATION_EXTERNAL_ROOTS", json.dumps([external_project.as_posix()]))
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    def _project_relative_runner(command, cwd, env, capture_output, text, check, timeout):
+        assert json.loads(env["WORKFLOW_MUTATION_EXTERNAL_ROOTS"]) == [external_project.as_posix()]
+        patch_text = (
+            "diff --git a/assets/scripts/AudioRuntimeState.ts b/assets/scripts/AudioRuntimeState.ts\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/assets/scripts/AudioRuntimeState.ts\n"
+            "@@ -0,0 +1 @@\n"
+            "+export const externalProjectPatch = true;\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_project_relative_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+    write_set = [(external_project / "assets" / "scripts").as_posix()]
+    run = service.create_run("Accept external project mutation", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=write_set,
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, write_set),
+    )
+
+    assert (external_project / "assets" / "scripts" / "AudioRuntimeState.ts").read_text(encoding="utf-8") == (
+        "export const externalProjectPatch = true;\n"
+    )
     assert not (tmp_path / "assets" / "scripts" / "AudioRuntimeState.ts").exists()
 
 
@@ -3731,6 +3841,51 @@ def test_commercial_recompile_preserves_active_task_generation_cards(tmp_path: P
     assert "active DB task cards are authoritative" in str(exc_info.value)
     assert exc_info.value.details["active_task_card_ids"] == ["tc_commercial_runtime"]
     assert TaskRepository(db_path).get_task_card("tc_commercial_runtime") is not None
+
+
+def test_mutation_read_set_embeds_explicit_absolute_file_outside_workspace(tmp_path: Path) -> None:
+    source_root = tmp_path / "pdf_only_source"
+    source_root.mkdir()
+    requirement_matrix = source_root / "requirement_matrix.json"
+    requirement_matrix.write_text('{"requirements":[{"id":"REQ-1","text":"Chinese UI"}]}', encoding="utf-8")
+    contract = MutationContract(
+        mutation_mode=MutationMode.patch_apply,
+        write_set=["project/assets/scripts"],
+        read_set=[requirement_matrix.as_posix()],
+        test_commands=[],
+        task_card_ref="tc_pdf_only",
+    )
+
+    context = read_set_context_for_mutation(contract, working_directory=(tmp_path / "workspace").as_posix())
+
+    assert context[0]["kind"] == "file"
+    assert context[0]["source_scope"] == "explicit_absolute_read_set"
+    assert "REQ-1" in context[0]["content_preview"]
+
+
+def test_mutation_write_set_embeds_directory_file_previews(tmp_path: Path) -> None:
+    external_project = tmp_path / "fresh_game" / "assets" / "scripts"
+    external_project.mkdir(parents=True)
+    (external_project / "LevelGoalController.ts").write_text(
+        "export const LEVELS = [];\n", encoding="utf-8"
+    )
+    contract = MutationContract(
+        mutation_mode=MutationMode.patch_apply,
+        write_set=[external_project.as_posix()],
+        read_set=[],
+        test_commands=[],
+        task_card_ref="tc_levels",
+    )
+
+    context = write_set_context_for_mutation(
+        contract,
+        working_directory=(tmp_path / "workspace").as_posix(),
+        external_roots=[(tmp_path / "fresh_game").as_posix()],
+    )
+
+    assert context[0]["kind"] == "directory"
+    assert context[0]["source_scope"] == "external_root"
+    assert "LEVELS" in context[0]["file_previews"][0]["content_preview"]
 
 
 def test_inspection_can_create_repair_runtime_attempt(tmp_path: Path) -> None:

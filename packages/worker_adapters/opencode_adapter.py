@@ -4,8 +4,12 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
+import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from packages.contracts import MutationMode, TaskKind, TaskPacket
 from packages.core_domain.compile import build_artifact_content
@@ -19,12 +23,14 @@ from packages.worker_adapters.subprocess_support import (
     completed_process_watchdog_metadata,
     completed_process_from_timeout,
     decode_subprocess_stream,
+    run_subprocess_with_direct_visible_cli,
     run_subprocess_with_tree_timeout,
 )
 
 
 DEFAULT_OPENCODE_MODEL = "minimax/MiniMax-M2.7"
 OPENCODE_INLINE_PROMPT_LIMIT = 12000
+PROVIDER_STREAM_EVENT_TYPE = "provider_stream_observed"
 
 
 def _coerce_opencode_timeout_seconds(raw_value: str | None, default: int) -> int:
@@ -41,6 +47,15 @@ def _resolve_opencode_timeout_seconds(default: int) -> int:
         os.getenv("WORKFLOW_OPENCODE_TIMEOUT_SECONDS") or os.getenv("WORKFLOW_PROVIDER_TIMEOUT_SECONDS"),
         default,
     )
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_path_segment(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value.strip())
+    return cleaned[:96] or "unknown"
 
 
 class OpenCodeAdapter(CliAdapterBase):
@@ -94,6 +109,100 @@ class OpenCodeAdapter(CliAdapterBase):
             if node_executable and script_path.exists():
                 return [node_executable, str(script_path)]
         return [resolved]
+
+    def _provider_stream_callback_for(self, packet: TaskPacket):
+        db_path = packet.env.get("WORKFLOW_DB_PATH")
+        if not db_path:
+            return None
+        runtime_task_id = packet.runtime_task_id
+        run_id = packet.run_id
+        adapter_name = self.normalized_name()
+        task_card_ref = packet.mutation_contract.task_card_ref if packet.mutation_contract is not None else None
+        counter = {"line_index": 0}
+
+        def _record(event: dict[str, object]) -> None:
+            text = str(event.get("text") or "")
+            if not text:
+                return
+            counter["line_index"] += 1
+            is_control = bool(event.get("is_control"))
+            is_material_progress = bool(event.get("is_material_progress"))
+            classification = "control" if is_control else "provider_output"
+            observed_at = str(event.get("observed_at") or datetime.now(UTC).isoformat())
+            payload = {
+                "trace_context": {
+                    "run_id": run_id,
+                    "runtime_task_id": runtime_task_id,
+                },
+                "run_id": run_id,
+                "runtime_task_id": runtime_task_id,
+                "adapter_name": adapter_name,
+                "stream": str(event.get("stream") or "stdout"),
+                "classification": classification,
+                "observed_at": observed_at,
+                "byte_count": int(event.get("byte_count") or len(text.encode("utf-8", errors="replace"))),
+                "line_index": counter["line_index"],
+                "line_sha256": hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest(),
+                "provider_event_type": None,
+                "parsed_keys": [],
+                "is_material_progress": is_material_progress,
+                "task_card_ref": task_card_ref,
+            }
+            try:
+                with sqlite3.connect(db_path) as connection:
+                    connection.execute(
+                        """
+                        INSERT INTO run_events (
+                          event_id, run_id, event_type, object_type, object_id, summary,
+                          payload_json, schema_version, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"event_{uuid4().hex[:12]}",
+                            run_id,
+                            PROVIDER_STREAM_EVENT_TYPE,
+                            "runtime_task",
+                            runtime_task_id,
+                            "Provider stream observed from OpenCode adapter",
+                            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                            "v1",
+                            observed_at,
+                        ),
+                    )
+                    connection.commit()
+            except sqlite3.Error:
+                return
+
+        return _record
+
+    def _direct_visible_cli_enabled(self, packet: TaskPacket) -> bool:
+        return _truthy(packet.env.get("WORKFLOW_PROVIDER_DIRECT_VISIBLE_CLI")) or _truthy(
+            packet.env.get("WORKFLOW_OPENCODE_DIRECT_VISIBLE_CLI")
+        )
+
+    def _direct_visible_session_dir_for(self, packet: TaskPacket) -> Path:
+        root = packet.env.get("WORKFLOW_PROVIDER_VISIBLE_SESSION_ROOT")
+        if root:
+            base = Path(root)
+        else:
+            base = Path(packet.working_directory) / "state" / "provider_visible_cli_sessions"
+        return (
+            base
+            / _safe_path_segment(packet.run_id or "run")
+            / _safe_path_segment(packet.runtime_task_id or "task")
+            / self.normalized_name()
+        ).resolve()
+
+    def _direct_visible_session_metadata_for(self, packet: TaskPacket) -> dict[str, str | None]:
+        task_card_ref = packet.mutation_contract.task_card_ref if packet.mutation_contract is not None else None
+        return {
+            "run_id": packet.run_id,
+            "runtime_task_id": packet.runtime_task_id,
+            "task_card_ref": task_card_ref,
+            "adapter_name": self.normalized_name(),
+            "window_title": f"opencode direct provider {task_card_ref or packet.runtime_task_id}",
+        }
 
     def _artifact_path_for(self, packet: TaskPacket) -> str:
         artifact = packet.expected_artifacts[0] if packet.expected_artifacts else "state/artifacts/opencode_output.md"
@@ -168,6 +277,7 @@ class OpenCodeAdapter(CliAdapterBase):
             failure_feedback = packet.env.get("WORKFLOW_MUTATION_FAILURE_FEEDBACK", "").strip()
             provider_command_policy = packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY", "patch_only_no_shell")
             read_set_context = self._env_value_or_file(packet, "WORKFLOW_MUTATION_READ_SET_CONTEXT", "[]")
+            write_set_context = self._env_value_or_file(packet, "WORKFLOW_MUTATION_WRITE_SET_CONTEXT", "[]")
             task_card_ref = packet.env.get("WORKFLOW_MUTATION_TASK_CARD_REF", "").strip()
             task_card_content = self._env_value_or_file(packet, "WORKFLOW_MUTATION_TASK_CARD_CONTENT", "").strip()
             failure_block = (
@@ -186,13 +296,14 @@ class OpenCodeAdapter(CliAdapterBase):
                 f"Working directory: {Path(packet.working_directory).resolve().as_posix()}\n"
                 f"Attempt index: {attempt_index}\n"
                 f"Allowed write_set JSON: {write_set}\n"
+                f"Embedded write-set context JSON: {write_set_context}\n"
                 f"Read-only context paths JSON: {read_set}\n"
                 f"Embedded read-set context JSON: {read_set_context}\n"
                 f"Explicit test commands JSON: {test_commands}\n"
                 f"Provider command policy: {provider_command_policy}.\n"
                 "Patch-only mode: do not run shell, PowerShell, cmd, Python, Node, npm, package-manager, "
                 "file-inspection, or other tool commands. Do not ask for command output. Use only the "
-                "embedded task-card content, read-set context, failure feedback, and paths already provided here.\n"
+                "embedded task-card content, write-set context, read-set context, failure feedback, and paths already provided here.\n"
                 f"{task_card_block}"
                 f"{failure_block}"
                 "Return exactly one valid unified diff patch that modifies files inside write_set.\n"
@@ -262,13 +373,13 @@ class OpenCodeAdapter(CliAdapterBase):
         prompt = self._prompt_for(packet)
         return "file_attachment" if len(prompt.encode("utf-8")) > OPENCODE_INLINE_PROMPT_LIMIT else "argv"
 
-    def build_command(self, packet: TaskPacket) -> list[str]:
+    def build_command(self, packet: TaskPacket, *, human_readable_output: bool = False) -> list[str]:
         prompt = self._prompt_for(packet)
         command = [
             *self._resolved_command_prefix(),
             "run",
             "--format",
-            "json",
+            "default" if human_readable_output else "json",
             "--dir",
             str(Path(packet.working_directory).resolve()),
         ]
@@ -291,11 +402,12 @@ class OpenCodeAdapter(CliAdapterBase):
 
     def launch(self, packet: TaskPacket) -> ExecutionResult:
         started_at = utc_now()
-        command = self.build_command(packet)
         env = build_subprocess_env(packet.env)
         timeout_seconds = self._timeout_seconds_for_packet(packet)
         idle_timeout_seconds = self._idle_timeout_seconds_for_packet(packet, timeout_seconds)
         try:
+            direct_visible_cli = self._direct_visible_cli_enabled(packet) and not self._uses_custom_runner
+            command = self.build_command(packet, human_readable_output=direct_visible_cli)
             runner = self._runner if self._uses_custom_runner else run_subprocess_with_tree_timeout
             run_kwargs = {
                 "cwd": packet.working_directory,
@@ -305,12 +417,25 @@ class OpenCodeAdapter(CliAdapterBase):
                 "check": False,
                 "timeout": timeout_seconds,
             }
-            if not self._uses_custom_runner:
+            if direct_visible_cli:
                 run_kwargs["idle_timeout"] = idle_timeout_seconds
-            completed = runner(
-                command,
-                **run_kwargs,
-            )
+                stream_callback = self._provider_stream_callback_for(packet)
+                if stream_callback is not None:
+                    run_kwargs["on_output"] = stream_callback
+                completed = run_subprocess_with_direct_visible_cli(
+                    command,
+                    provider_name=self.normalized_name(),
+                    visible_session_dir=self._direct_visible_session_dir_for(packet),
+                    visible_session_metadata=self._direct_visible_session_metadata_for(packet),
+                    **run_kwargs,
+                )
+            else:
+                if not self._uses_custom_runner:
+                    run_kwargs["idle_timeout"] = idle_timeout_seconds
+                completed = runner(
+                    command,
+                    **run_kwargs,
+                )
         except subprocess.TimeoutExpired as exc:
             completed = completed_process_from_timeout(exc, command=command, timeout_seconds=timeout_seconds)
         stdout = decode_subprocess_stream(completed.stdout)
@@ -340,8 +465,13 @@ class OpenCodeAdapter(CliAdapterBase):
             "idle_timeout_seconds": idle_timeout_seconds,
             "provider_command_policy": packet.env.get("WORKFLOW_MUTATION_PROVIDER_COMMAND_POLICY"),
             "prompt_transport": self._prompt_transport_for(packet),
+            "provider_output_mode": "human_readable" if getattr(completed, "direct_visible_cli_session", None) is not None else "json",
             **completed_process_watchdog_metadata(completed),
         }
+        if getattr(completed, "direct_visible_cli_session", None) is not None:
+            metadata["direct_visible_cli_session"] = getattr(completed, "direct_visible_cli_session")
+            metadata["direct_visible_cli_log_paths"] = getattr(completed, "direct_visible_cli_log_paths", None)
+            metadata["direct_visible_provider_cli"] = True
         if return_code == TIMEOUT_EXIT_CODE:
             failure_class = "provider_timeout"
         if failure_class is not None:
