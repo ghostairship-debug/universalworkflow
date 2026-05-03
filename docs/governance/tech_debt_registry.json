@@ -200,30 +200,30 @@
   "open_items": [
     {
       "debt_id": "M77-COCOS-001",
-      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, product-body/runtime evidence, visible-CLI execution enforcement, a development-readiness contract, non-placeholder asset graph proof, browser interaction proof, and browser audio/volume runtime proof.",
+      "description": "Cocos pipeline has CLI/E2E/build/playtest, trusted Editor bridge, same-project task-card worker, product-body/runtime evidence, visible-CLI execution enforcement, a development-readiness contract, non-placeholder asset graph proof, browser interaction proof, browser audio/volume runtime proof, and the latest PDF-only workflow repair for Chinese UI, BGM, drag alignment, panels, and runtime feature coverage.",
       "introduced_in": "M76-M84 commercial game evaluation",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "agent_qa_repaired_awaiting_human_acceptance",
-      "blocking_impact": "Blocks claiming commercial_playable_go=true until explicit human player acceptance after the playability repair loop. Agent QA can verify Chinese UI, BGM, drag alignment, feature panels, and runtime evidence but cannot replace acceptance.",
-      "repayment_note": "2026-05-03 second user review rejected missing BGM, incomplete functions, missing Chinese UI, drag stutter, and coordinate mismatch. The latest repair slice adds Chinese UI, procedural Web Audio BGM/SFX, immediate drag-follow preview, aligned placement targeting, and Playwright screenshots for shop/gallery/level/revive/pause panels. Final delivery remains below human acceptance."
+      "current_status": "machine_passed_awaiting_human_acceptance",
+      "blocking_impact": "Blocks claiming commercial_playable_go=true until explicit human player acceptance. Machine evidence and agent QA can support the review packet but cannot replace acceptance.",
+      "repayment_note": "2026-05-04 PDF-only workflow run commercial_game_pdf_only_20260503 uses C:\\Users\\74755\\Desktop\\俄罗斯方块消除策划文档4.2.pdf as the sole product input, executes product repairs through visible-CLI DB task cards, and now reports build_ledger.go=true, browser_playtest_ledger.go=true, product_depth_evidence.go=true, readable Chinese labels, and no machine commercial blockers. Final delivery remains below human acceptance."
     },
     {
       "debt_id": "M84-GAME-QA-001",
-      "description": "Commercial readiness gate previously over-accepted runtime hook / canvas / event coverage. The latest hardening repaired that false-positive path and now separates machine-ready evidence from human player acceptance.",
+      "description": "Commercial readiness gate previously over-accepted runtime hook / canvas / event coverage. The latest hardening repaired that false-positive path, blocks missing browser runtime feature coverage, blocks mojibake level-goal labels, and separates machine-ready evidence from human player acceptance.",
       "introduced_in": "M84 real generated game review",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "agent_qa_passed_but_human_gate_open",
-      "blocking_impact": "Blocks commercial GO until the repaired build survives adversarial visual QA and explicit human acceptance. Agent QA and screenshots can support the repair packet but cannot self-approve commercial_playable_go.",
-      "repayment_note": "QA now treats both user NO-GO reports as controlling product blockers. The latest Playwright v3 evidence passes required and commercial checks plus panel screenshots, but remains repair evidence only."
+      "current_status": "machine_passed_but_human_gate_open",
+      "blocking_impact": "Blocks commercial GO until the repaired build survives explicit human acceptance. Machine evidence, agent QA, and screenshots can support the repair packet but cannot self-approve commercial_playable_go.",
+      "repayment_note": "QA now treats both user NO-GO reports as controlling product blockers. The latest PDF-only workflow evidence passes build, browser playtest, product-depth, required/commercial browser feature coverage, audio, and Chinese readability checks, but remains machine evidence only."
     },
     {
       "debt_id": "M109-NO-DEGRADATION-COMMERCIAL-001",
-      "description": "Strict pipeline pipeline_ecf26665254e was accepted by older machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation, product-depth evidence, asset graph, browser interaction, and audio/volume runtime proof have since been repaired with player-visible, non-runtime-hook evidence.",
+      "description": "Strict pipeline pipeline_ecf26665254e was accepted by older machine evidence, but real human review rejected the launched build as not being a completed game body. Same-project implementation, product-depth evidence, asset graph, browser interaction, audio/volume runtime proof, and PDF-only product repairs have since been rerun with player-visible, non-runtime-hook evidence.",
       "introduced_in": "2026-04-29 no-degradation Cocos/worker rerun",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "agent_qa_repaired_awaiting_human_acceptance",
+      "current_status": "machine_passed_awaiting_human_acceptance",
       "blocking_impact": "Directly blocks commercial_playable_go=true until explicit human review accepts the repaired game.",
-      "repayment_note": "The proof-like bridge has been replaced in source and current build by browser_runtime_bridge.js. Latest v3 repair covers Chinese UI, BGM/SFX, drag alignment, board placement, panels, and screenshots; this is still agent QA only and does not clear human review."
+      "repayment_note": "The proof-like bridge has been replaced by same-project runtime and semantic bridge sources. Latest PDF-only workflow repair covers Chinese UI, BGM/SFX, drag alignment, board placement, panels, browser feature coverage, Cocos build, and screenshots; this is still machine evidence only and does not clear human review."
     },
     {
       "debt_id": "M109-PROVIDER-WATCHDOG-001",
@@ -243,13 +243,13 @@
     },
     {
       "debt_id": "M109-SAME-PROJECT-PRODUCT-001",
-      "description": "Same-project commercial gameplay implementation was previously marked complete by machine evidence, but real human review confirmed the build was not a completed game body. The product-body/product-depth path has since been rebuilt with model/runtime, Cocos component evidence, non-placeholder asset proof, browser interaction proof, and audio/volume runtime proof.",
+      "description": "Same-project commercial gameplay implementation was previously marked complete by machine evidence, but real human review confirmed the build was not a completed game body. The product-body/product-depth path has since been rebuilt with model/runtime, Cocos component evidence, non-placeholder asset proof, browser interaction proof, audio/volume runtime proof, and PDF-only workflow runtime bridge repairs.",
       "introduced_in": "2026-04-29 same-project product implementation resume",
       "planned_repayment_phase": "Commercial Playability Repair Loop",
-      "current_status": "agent_qa_repaired_awaiting_human_acceptance",
+      "current_status": "workflow_repaired_machine_passed_awaiting_human_acceptance",
       "blocking_impact": "Blocks final commercial GO until human acceptance verifies the repaired game body. It no longer blocks continuing the current repair-review loop.",
-      "closure_evidence": "state/trusted_cocos_build_browser_audio_runtime_20260502/phase_closeout.json",
-      "repayment_note": "Latest source and build runtime exposes player-visible Chinese UI, Web Audio BGM/SFX, immediate drag preview, aligned placement, 10x10 gameplay, line clear, refresh, props, revive, shop, gallery, level, pause, and panel screenshots."
+      "closure_evidence": "state/commercial_game_pdf_only_20260503/cocos_project/workflow_runtime_evidence/hard_evidence_report.json",
+      "repayment_note": "Latest source and build runtime exposes player-visible Chinese UI, Web Audio BGM/SFX, immediate drag preview, aligned placement, 10x10 gameplay, line clear, refresh, props, revive, shop, gallery, level, pause, panel screenshots, and no missing browser runtime feature coverage."
     },
     {
       "debt_id": "M109-CODEX-PATCH-APPLY-TURN-STALL-001",

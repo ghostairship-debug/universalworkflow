@@ -1531,6 +1531,16 @@ def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
 def _patch_ledger_blockers(entries: list[dict[str, Any]], *, expected_count: int) -> list[str]:
     blockers: list[str] = []
     for entry in entries:
@@ -1797,12 +1807,38 @@ def _merge_runtime_evidence_artifacts(merged: dict[str, Any], project_dir: Path)
         runtime_artifacts.append((evidence_root / "core_loop_runtime_evidence.json").as_posix())
         _merge_core_loop_evidence(merged, core_loop)
     shop_gallery = _read_json_dict(evidence_root / "commercial_shop_skin_gallery_evidence.json")
+    shop_ownership = _read_json_dict(evidence_root / "shop_ownership_state.json")
+    skin_equipped = _read_json_dict(evidence_root / "skin_equipped_visual_change.json")
+    gallery_collection = _read_json_dict(evidence_root / "gallery_collection_state.json")
+    shop_gallery = _combined_shop_skin_gallery_evidence(
+        shop_gallery=shop_gallery,
+        shop_ownership=shop_ownership,
+        skin_equipped=skin_equipped,
+        gallery_collection=gallery_collection,
+    )
     if shop_gallery:
         runtime_artifacts.append((evidence_root / "commercial_shop_skin_gallery_evidence.json").as_posix())
+        if shop_ownership:
+            runtime_artifacts.append((evidence_root / "shop_ownership_state.json").as_posix())
+        if skin_equipped:
+            runtime_artifacts.append((evidence_root / "skin_equipped_visual_change.json").as_posix())
+        if gallery_collection:
+            runtime_artifacts.append((evidence_root / "gallery_collection_state.json").as_posix())
         _merge_shop_skin_gallery_evidence(merged, shop_gallery)
     audio_polish = _read_json_dict(evidence_root / "audio_feedback_polish_evidence.json")
+    feedback_animation = _read_json_dict(evidence_root / "feedback_animation_evidence.json")
+    input_polish = _read_json_dict(evidence_root / "input_polish_evidence.json")
+    audio_polish = _combined_audio_feedback_polish_evidence(
+        audio_polish=audio_polish,
+        feedback_animation=feedback_animation,
+        input_polish=input_polish,
+    )
     if audio_polish:
         runtime_artifacts.append((evidence_root / "audio_feedback_polish_evidence.json").as_posix())
+        if feedback_animation:
+            runtime_artifacts.append((evidence_root / "feedback_animation_evidence.json").as_posix())
+        if input_polish:
+            runtime_artifacts.append((evidence_root / "input_polish_evidence.json").as_posix())
         _merge_audio_feedback_polish_evidence(merged, audio_polish)
     chinese_ui = _read_json_dict(evidence_root / "chinese_ui_panels_evidence.json")
     if chinese_ui:
@@ -1830,6 +1866,16 @@ def _merge_level_goal_evidence(merged: dict[str, Any], payload: dict[str, Any]) 
                         "id": goal.get("id"),
                         "goal": goal.get("visible_label") or goal.get("label") or goal.get("id"),
                         "level_id": level.get("level_id") or level.get("id"),
+                    }
+                )
+    if not goals:
+        for goal in payload.get("level_goals") or []:
+            if isinstance(goal, dict):
+                goals.append(
+                    {
+                        "id": goal.get("goal_id") or goal.get("id"),
+                        "goal": goal.get("visible_label") or goal.get("label") or goal.get("description") or goal.get("goal_id"),
+                        "level_id": goal.get("level_id") or "level_goal_set",
                     }
                 )
     if goals:
@@ -1865,6 +1911,31 @@ def _merge_shop_skin_gallery_evidence(merged: dict[str, Any], payload: dict[str,
         visible["galleryCollectionState"] = True
 
 
+def _combined_shop_skin_gallery_evidence(
+    *,
+    shop_gallery: dict[str, Any],
+    shop_ownership: dict[str, Any],
+    skin_equipped: dict[str, Any],
+    gallery_collection: dict[str, Any],
+) -> dict[str, Any]:
+    combined = dict(shop_gallery) if isinstance(shop_gallery, dict) else {}
+    if shop_ownership:
+        combined.setdefault("shop_ownership_state", _dict(shop_ownership.get("shop_ownership_state")) or shop_ownership)
+        if not combined.get("gallery_collection_state") and _dict(shop_ownership.get("gallery_collection_state")):
+            combined["gallery_collection_state"] = shop_ownership["gallery_collection_state"]
+    if skin_equipped:
+        combined.setdefault(
+            "skin_equipped_visual_change",
+            _dict(skin_equipped.get("skin_equipped_visual_change")) or skin_equipped,
+        )
+    if gallery_collection:
+        combined.setdefault(
+            "gallery_collection_state",
+            _dict(gallery_collection.get("gallery_collection_state")) or gallery_collection,
+        )
+    return combined
+
+
 def _merge_chinese_ui_panels_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
     panels = [panel for panel in payload.get("chinese_ui_panels") or [] if isinstance(panel, dict)]
     if not panels:
@@ -1872,7 +1943,8 @@ def _merge_chinese_ui_panels_evidence(merged: dict[str, Any], payload: dict[str,
     panel_ids = {str(panel.get("panel_id") or "").strip().lower() for panel in panels}
     required = {"hud_panel", "shop_panel", "gallery_panel", "settings_panel", "failure_revive_panel"}
     all_have_labels = all(bool(_dict(panel.get("chinese_labels"))) for panel in panels)
-    if required <= panel_ids and all_have_labels:
+    labels_are_readable = all(_labels_are_readable_chinese(_dict(panel.get("chinese_labels"))) for panel in panels)
+    if required <= panel_ids and all_have_labels and labels_are_readable:
         features = merged.setdefault("commercial_feature_coverage", {})
         visible = merged.setdefault("player_visible_checks", {})
         product_depth = merged.setdefault("product_depth_evidence", {})
@@ -1882,6 +1954,23 @@ def _merge_chinese_ui_panels_evidence(merged: dict[str, Any], payload: dict[str,
         product_depth["open_panels"] = [str(panel.get("chinese_name") or panel.get("panel_id")) for panel in panels]
 
 
+def _labels_are_readable_chinese(labels: dict[str, Any]) -> bool:
+    values = [str(value) for value in labels.values() if str(value).strip()]
+    if not values:
+        return False
+    return all(not _looks_like_mojibake(value) for value in values)
+
+
+def _looks_like_mojibake(value: str) -> bool:
+    text = str(value)
+    if "�" in text or "€" in text:
+        return True
+    markers = set("鍒嗆暟鐨偆鍟簵閲竵瀹濈煶鍏抽棴璐拱瑁裝澶垂绋鏈闊頻")
+    marker_count = sum(1 for char in text if char in markers)
+    cjk_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    return cjk_count >= 2 and marker_count / max(cjk_count, 1) >= 0.45
+
+
 def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
     features = merged.setdefault("commercial_feature_coverage", {})
     visible = merged.setdefault("player_visible_checks", {})
@@ -1889,7 +1978,11 @@ def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[
     feedback = _dict(payload.get("feedback_animation_evidence"))
     polish = _dict(payload.get("polish_runtime_evidence"))
     session = _dict(payload.get("human_visible_cli_session"))
-    audio_runtime_verified = bool(audio.get("runtime_bound") and audio.get("event_bindings_count")) or bool(session.get("audio_triggered"))
+    audio_runtime_verified = (
+        bool(audio.get("runtime_bound") and audio.get("event_bindings_count"))
+        or any(bool(value) for key, value in audio.items() if str(key).endswith("_runtime_bound"))
+        or bool(session.get("audio_triggered"))
+    )
     feedback_verified = bool(feedback.get("runtime_bound") and feedback.get("binding_count")) or bool(session.get("feedback_animation_triggered"))
     polish_verified = bool(polish.get("runtime_bound") and polish.get("effects_count")) or bool(session.get("polish_effects_applied"))
     if audio_runtime_verified:
@@ -1907,6 +2000,63 @@ def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[
     feedback_types = {str(item).lower() for item in feedback.get("feedback_types") or []}
     if {"failure", "success"} & feedback_types:
         features["failureReviveFeedback"] = True
+
+
+def _combined_audio_feedback_polish_evidence(
+    *,
+    audio_polish: dict[str, Any],
+    feedback_animation: dict[str, Any],
+    input_polish: dict[str, Any],
+) -> dict[str, Any]:
+    combined = dict(audio_polish) if isinstance(audio_polish, dict) else {}
+    if feedback_animation:
+        combined["feedback_animation_evidence"] = _normalize_feedback_animation_evidence(feedback_animation)
+    if input_polish:
+        combined["polish_runtime_evidence"] = _normalize_input_polish_evidence(input_polish)
+    return combined
+
+
+def _normalize_feedback_animation_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    evidence = _dict(payload.get("feedback_animation_evidence")) or payload
+    bindings = evidence.get("runtime_event_bindings") if isinstance(evidence.get("runtime_event_bindings"), list) else []
+    feedback_types = []
+    for binding in bindings:
+        text = str(binding).lower()
+        if "placement" in text:
+            feedback_types.append("placement")
+        if "line" in text or "clear" in text:
+            feedback_types.append("line_clear")
+        if "invalid" in text:
+            feedback_types.append("invalid")
+        if "success" in text:
+            feedback_types.append("success")
+        if "failure" in text:
+            feedback_types.append("failure")
+        if "revive" in text:
+            feedback_types.append("revive")
+    binding_count = int(evidence.get("binding_count") or len(bindings) or 0)
+    runtime_bound = bool(evidence.get("runtime_bound")) or any(
+        bool(value) for key, value in evidence.items() if str(key).endswith("_runtime_bound")
+    )
+    return {
+        **evidence,
+        "runtime_bound": runtime_bound,
+        "binding_count": binding_count,
+        "feedback_types": _dedupe_strings(feedback_types or _strings(evidence.get("feedback_types"))),
+    }
+
+
+def _normalize_input_polish_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    controller_features = payload.get("input_controller_features") if isinstance(payload.get("input_controller_features"), list) else []
+    board_features = payload.get("board_view_features") if isinstance(payload.get("board_view_features"), list) else []
+    resolved = _dict(payload.get("defect_reproduction_prevention"))
+    verified_count = sum(1 for item in resolved.values() if isinstance(item, dict) and item.get("verified"))
+    effects_count = len(controller_features) + len(board_features) + verified_count
+    return {
+        **payload,
+        "runtime_bound": bool(controller_features or board_features or verified_count),
+        "effects_count": effects_count,
+    }
 
 
 def _failed_browser_playtest_evidence(*, build_output_path: str | Path, evidence_dir: str | Path, exc: Exception) -> dict[str, Any]:

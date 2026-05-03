@@ -1857,6 +1857,86 @@ def test_collect_project_runtime_evidence_refreshes_contracts_from_task_card_art
     assert "blocked_by_same_project_worker" not in browser_ledger["blockers"]
 
 
+def test_split_audio_feedback_polish_evidence_merges_for_feature_coverage() -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _combined_audio_feedback_polish_evidence,
+        _merge_audio_feedback_polish_evidence,
+    )
+
+    merged: dict[str, object] = {}
+    combined = _combined_audio_feedback_polish_evidence(
+        audio_polish={"audio_runtime_evidence": {"runtime_bound": True, "event_bindings_count": 5}},
+        feedback_animation={
+            "feedback_animation_evidence": {
+                "placement_animation_runtime_bound": True,
+                "line_clear_animation_runtime_bound": True,
+                "failure_animation_runtime_bound": True,
+                "success_animation_runtime_bound": True,
+                "runtime_event_bindings": ["onPiecePlaced", "onLinesCleared", "onFailure", "onSuccess"],
+            }
+        },
+        input_polish={
+            "input_controller_features": [{"feature": "snap_preview_tracking"}],
+            "board_view_features": [{"feature": "invalid_target_feedback"}],
+            "defect_reproduction_prevention": {"drag_lag": {"verified": True}},
+        },
+    )
+
+    _merge_audio_feedback_polish_evidence(merged, combined)
+
+    assert merged["commercial_feature_coverage"]["audioPlaybackVerified"] is True
+    assert merged["commercial_feature_coverage"]["animationFeedbackVerified"] is True
+    assert merged["commercial_feature_coverage"]["failureReviveFeedback"] is True
+    assert merged["player_visible_checks"]["polishEffectsApplied"] is True
+
+
+def test_level_goal_fallback_and_chinese_ui_mojibake_gate() -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _merge_chinese_ui_panels_evidence,
+        _merge_level_goal_evidence,
+    )
+
+    merged: dict[str, object] = {}
+    _merge_level_goal_evidence(
+        merged,
+        {
+            "level_goals": [
+                {"goal_id": f"goal_{index}", "label": f"目标{index}"}
+                for index in range(1, 9)
+            ]
+        },
+    )
+    assert merged["product_depth_evidence"]["distinctLevelGoalCount"] == 8
+
+    _merge_chinese_ui_panels_evidence(
+        merged,
+        {
+            "chinese_ui_panels": [
+                {"panel_id": "hud_panel", "chinese_name": "HUD", "chinese_labels": {"score": "鍒嗘暟"}},
+                {"panel_id": "shop_panel", "chinese_name": "商店", "chinese_labels": {"buy": "购买"}},
+                {"panel_id": "gallery_panel", "chinese_name": "画廊", "chinese_labels": {"skin": "皮肤"}},
+                {"panel_id": "settings_panel", "chinese_name": "设置", "chinese_labels": {"music": "音乐"}},
+                {"panel_id": "failure_revive_panel", "chinese_name": "复活", "chinese_labels": {"revive": "复活"}},
+            ]
+        },
+    )
+    assert merged.get("commercial_feature_coverage", {}).get("chineseUiPanelsVisible") is not True
+
+    _merge_chinese_ui_panels_evidence(
+        merged,
+        {
+            "chinese_ui_panels": [
+                {"panel_id": "hud_panel", "chinese_name": "HUD", "chinese_labels": {"score": "分数"}},
+                {"panel_id": "shop_panel", "chinese_name": "商店", "chinese_labels": {"buy": "购买"}},
+                {"panel_id": "gallery_panel", "chinese_name": "画廊", "chinese_labels": {"skin": "皮肤"}},
+                {"panel_id": "settings_panel", "chinese_name": "设置", "chinese_labels": {"music": "音乐"}},
+                {"panel_id": "failure_revive_panel", "chinese_name": "复活", "chinese_labels": {"revive": "复活"}},
+            ]
+        },
+    )
+    assert merged["commercial_feature_coverage"]["chineseUiPanelsVisible"] is True
+
+
 def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_path: Path) -> None:
     from packages.contracts import TaskCard
     from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
@@ -2549,18 +2629,18 @@ def test_task_card_worker_cli_invokes_from_task_card_with_codex_patch_adapter(
     assert "--preset" in run_command
     assert run_command[run_command.index("--preset") + 1] == "feature_delivery"
     assert env_overrides["WORKFLOW_CODEX_TIMEOUT_SECONDS"] == "1800"
-    assert env_overrides["WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_CODEX_IDLE_TIMEOUT_SECONDS"] == "900"
     assert env_overrides["WORKFLOW_OPENCODE_TIMEOUT_SECONDS"] == "1800"
-    assert env_overrides["WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_OPENCODE_IDLE_TIMEOUT_SECONDS"] == "900"
     assert env_overrides["WORKFLOW_PROVIDER_TIMEOUT_SECONDS"] == "1800"
-    assert env_overrides["WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS"] == "480"
-    assert env_overrides["WORKFLOW_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS"] == "480"
+    assert env_overrides["WORKFLOW_PROVIDER_IDLE_TIMEOUT_SECONDS"] == "900"
+    assert env_overrides["WORKFLOW_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS"] == "900"
     assert env_overrides["WORKFLOW_PROVIDER_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS"] == "720"
     assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_INITIAL_SECONDS"] == "900"
     assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS"] == "900"
     assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS"] == "1"
     assert env_overrides["WORKFLOW_PROVIDER_ADAPTIVE_WALL_TIMEOUT_ABSOLUTE_MAX_SECONDS"] == "1800"
-    assert calls[1]["kwargs"]["provider_output_idle_timeout_seconds"] == 480
+    assert calls[1]["kwargs"]["provider_output_idle_timeout_seconds"] == 900
     assert calls[1]["kwargs"]["material_progress_idle_timeout_seconds"] == 720
     assert calls[1]["kwargs"]["adaptive_wall_timeout_extension_seconds"] == 900
     assert calls[1]["kwargs"]["adaptive_wall_timeout_max_extensions"] == 1
@@ -2569,6 +2649,205 @@ def test_task_card_worker_cli_invokes_from_task_card_with_codex_patch_adapter(
     assert calls[1]["kwargs"]["execution_visibility_mode"] is None
     assert "shell" not in run_command
     assert "noop" not in run_command
+
+
+def test_task_card_worker_cli_finalizes_existing_evidence_repair_after_worker_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    calls: list[list[str]] = []
+
+    def _fake_run_json_command(command, **_kwargs):
+        calls.append(command)
+        if "issue-receipt" in command:
+            return {"status": "completed", "payload": {"receipt_id": "receipt_finalize"}}
+        return {
+            "status": "failed",
+            "failure_class": "provider_execution_failed",
+            "visible_cli_session": {"status": "completed", "mode": "human_visible_cli_enforced"},
+            "payload": {},
+        }
+
+    monkeypatch.setattr(worker_cli, "_run_json_command", _fake_run_json_command)
+    monkeypatch.setattr(
+        worker_cli,
+        "run_safe_commands",
+        lambda commands, working_directory: [
+            {
+                "command": str(commands[0].command),
+                "argv": ["python", "-m", "pytest"],
+                "return_code": 0,
+                "passed": True,
+                "status": "passed",
+            }
+        ],
+    )
+    project_dir = tmp_path / "project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    evidence_dir.mkdir(parents=True)
+    evidence_path = evidence_dir / "shop_ownership_state.json"
+    evidence_path.write_text('{"go": true}', encoding="utf-8")
+    task_card_path = tmp_path / "tc_shop_finalize.md"
+    task_card_path.write_text(
+        "\n".join(
+            [
+                "# Finalize shop evidence",
+                "",
+                "## Metadata",
+                "```json",
+                json.dumps(
+                    {
+                        "ai_finding_id": "shop_skin_finalize",
+                        "execution_visibility_mode": "human_visible_cli_enforced",
+                        "evidence_paths": [evidence_path.as_posix()],
+                        "covered_requirement_ids": ["REQ-1"],
+                    }
+                ),
+                "```",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="run_finalize",
+        task_card_id="tc_shop_finalize",
+        title="Finalize shop evidence",
+        description="Finalize existing workflow evidence after a worker failure.",
+        goal="Finalize existing workflow evidence after a worker failure.",
+        write_set=[evidence_dir.as_posix()],
+        read_set=[evidence_path.as_posix()],
+        test_commands=["python -m pytest tests/test_ai_playtest_quality_gate.py -q"],
+        acceptance_criteria=["evidence exists", "tests pass"],
+        evidence_requirements=["fresh_worker_receipt", "state_snapshot_after_repair"],
+        blocking_conditions=["missing_replay_evidence", "requirement_coverage_missing"],
+        model_guidance=["Only finalize existing evidence when it is present."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced"},
+    )
+
+    result = worker_cli.run_task_card_patch_via_workflowctl(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=project_dir,
+        pipeline_id="run_finalize",
+        task_card=card,
+        task_card_path=task_card_path,
+        write_set=card.write_set,
+        read_set=card.read_set,
+        test_commands=card.test_commands,
+        max_fix_iterations=1,
+        adapter_name="opencode",
+        execution_visibility_mode="human_visible_cli_enforced",
+    )
+
+    assert result["status"] == "completed"
+    assert result["failure_class"] is None
+    assert result["mutation_result"]["finalized_existing_evidence"] is True
+    assert result["changed_files"]
+    assert Path(result["changed_files"][0]).exists()
+    assert "--ttl-seconds" in calls[0]
+    assert calls[0][calls[0].index("--ttl-seconds") + 1] == "7200"
+
+
+def test_task_card_worker_cli_does_not_finalize_without_runtime_evidence_json(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    def _fake_run_json_command(command, **_kwargs):
+        if "issue-receipt" in command:
+            return {"status": "completed", "payload": {"receipt_id": "receipt_finalize"}}
+        return {
+            "status": "failed",
+            "failure_class": "provider_execution_failed",
+            "visible_cli_session": {"status": "completed", "mode": "human_visible_cli_enforced"},
+            "payload": {},
+        }
+
+    monkeypatch.setattr(worker_cli, "_run_json_command", _fake_run_json_command)
+    monkeypatch.setattr(
+        worker_cli,
+        "run_safe_commands",
+        lambda commands, working_directory: [
+            {
+                "command": str(commands[0].command),
+                "argv": ["python", "-m", "pytest"],
+                "return_code": 0,
+                "passed": True,
+                "status": "passed",
+            }
+        ],
+    )
+    project_dir = tmp_path / "project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    source_dir = project_dir / "assets" / "scripts"
+    evidence_dir.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    source_path = source_dir / "AudioFeedbackController.ts"
+    coverage_path = evidence_dir / "requirement_coverage_trace.json"
+    source_path.write_text("export class AudioFeedbackController {}", encoding="utf-8")
+    coverage_path.write_text('{"covered_requirement_ids": ["REQ-1"]}', encoding="utf-8")
+    task_card_path = tmp_path / "tc_audio_finalize.md"
+    task_card_path.write_text(
+        "\n".join(
+            [
+                "# Finalize audio evidence",
+                "",
+                "## Metadata",
+                "```json",
+                json.dumps(
+                    {
+                        "ai_finding_id": "audio_runtime_finalize",
+                        "execution_visibility_mode": "human_visible_cli_enforced",
+                        "evidence_paths": [source_path.as_posix(), coverage_path.as_posix()],
+                        "covered_requirement_ids": ["REQ-1"],
+                    }
+                ),
+                "```",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="run_finalize",
+        task_card_id="tc_audio_finalize",
+        title="Finalize audio evidence",
+        description="Finalize existing workflow evidence after a worker failure.",
+        goal="Finalize existing workflow evidence after a worker failure.",
+        write_set=[evidence_dir.as_posix(), source_dir.as_posix()],
+        read_set=[source_path.as_posix(), coverage_path.as_posix()],
+        test_commands=["python -m pytest tests/test_ai_playtest_quality_gate.py -q"],
+        acceptance_criteria=["evidence exists", "tests pass"],
+        evidence_requirements=["fresh_worker_receipt", "state_snapshot_after_repair"],
+        blocking_conditions=["missing_replay_evidence", "requirement_coverage_missing"],
+        model_guidance=["Only finalize existing evidence when it is present."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced"},
+    )
+
+    result = worker_cli.run_task_card_patch_via_workflowctl(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=project_dir,
+        pipeline_id="run_finalize",
+        task_card=card,
+        task_card_path=task_card_path,
+        write_set=card.write_set,
+        read_set=card.read_set,
+        test_commands=card.test_commands,
+        max_fix_iterations=1,
+        adapter_name="opencode",
+        execution_visibility_mode="human_visible_cli_enforced",
+    )
+
+    assert result["status"] == "failed"
+    assert result["failure_class"] == "provider_execution_failed"
+    assert "finalized_existing_evidence" not in result.get("mutation_result", {})
 
 
 def test_task_card_worker_cli_passes_human_visible_cli_mode_and_metadata(
@@ -3304,6 +3583,76 @@ def test_commercial_task_worker_cli_visible_no_material_progress_timeout(
     assert run_status == "failed"
     assert (attempt_status, close_reason) == ("closed", "provider_no_material_progress_timeout")
     assert (lease_status, release_reason) == ("released", "provider_no_material_progress_timeout")
+
+
+def test_commercial_task_worker_cli_visible_provider_output_defers_material_progress_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    class _FakeVisibleProcess:
+        pid = 4321
+        returncode = 0
+
+        def __init__(self, *args, **kwargs):
+            self._poll_count = 0
+
+        def poll(self):
+            self._poll_count += 1
+            return None if self._poll_count <= 2 else self.returncode
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_shop"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_visible", heartbeat_age_seconds=5)
+    ticks = iter([0.0, 0.0, 13.0, 20.0, 20.0, 20.0])
+    probe_payloads = iter(
+        [
+            {"provider_output_event_count": 0, "material_progress_event_count": 0},
+            {"provider_output_event_count": 1, "material_progress_event_count": 0},
+        ]
+    )
+
+    monkeypatch.setattr(worker_cli.subprocess, "CREATE_NEW_CONSOLE", 0, raising=False)
+    monkeypatch.setattr(worker_cli.subprocess, "Popen", _FakeVisibleProcess)
+    monkeypatch.setattr(worker_cli.time, "monotonic", lambda: next(ticks, 20.0))
+    monkeypatch.setattr(worker_cli.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(worker_cli, "_parse_json_from_stdout", lambda _stdout: {"run": {"run_id": "child_run_001"}})
+    monkeypatch.setattr(
+        worker_cli,
+        "_child_provider_activity_probe",
+        lambda **_kwargs: lambda: next(
+            probe_payloads, {"provider_output_event_count": 1, "material_progress_event_count": 0}
+        ),
+    )
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        provider_output_idle_timeout_seconds=480,
+        material_progress_idle_timeout_seconds=12,
+        adaptive_wall_timeout_extension_seconds=900,
+        adaptive_wall_timeout_max_extensions=1,
+        adaptive_wall_timeout_absolute_max_seconds=1800,
+        adaptive_wall_timeout_progress_window_seconds=720,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_visible",
+        execution_visibility_mode="human_visible_cli_enforced",
+        visible_session_dir=tmp_path / "visible",
+        visible_session_metadata={"task_card_id": "tc_shop"},
+    )
+
+    assert result["status"] == "completed"
+    assert result["failure_class"] is None
+    assert result["watchdog"]["timeout_type"] is None
+    assert result["watchdog"]["provider_output_event_count"] == 1
+    assert result["watchdog"]["material_progress_event_count"] == 0
+    assert result["visible_cli_session"]["status"] == "completed"
 
 
 def test_commercial_task_worker_recovers_completed_visible_attempt_after_parser_repair(tmp_path: Path) -> None:

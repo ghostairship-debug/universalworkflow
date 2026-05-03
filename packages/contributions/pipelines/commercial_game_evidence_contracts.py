@@ -222,6 +222,16 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
     if runtime_errors:
         blockers.append("browser_or_audio_runtime_error")
     feature_coverage = _dict_from(payload.get("feature_coverage"))
+    required_features = _strings(payload.get("required_playtest_features"))
+    commercial_features = _strings(payload.get("commercial_playtest_features"))
+    missing_required_features = [key for key in required_features if not feature_coverage.get(key)]
+    missing_commercial_features = [key for key in commercial_features if not feature_coverage.get(key)]
+    if missing_required_features:
+        blockers.append("browser_required_playtest_features_missing")
+        blockers.extend(f"missing_playtest_feature_{key}" for key in missing_required_features)
+    if missing_commercial_features:
+        blockers.append("browser_commercial_playtest_features_missing")
+        blockers.extend(f"missing_commercial_feature_{key}" for key in missing_commercial_features)
     if not feature_coverage.get("mobilePortraitUi"):
         blockers.append("mobile_viewport_evidence_missing")
     audio_runtime_proof = {
@@ -251,6 +261,8 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
             "runtime_error_markers": runtime_errors,
             "audio_runtime_proof": audio_runtime_proof,
             "feature_coverage_keys": sorted(feature_coverage),
+            "missing_required_features": missing_required_features,
+            "missing_commercial_features": missing_commercial_features,
         },
     )
 
@@ -480,6 +492,8 @@ def build_product_depth_evidence(
         blockers.append("product_depth_not_real_execution")
     if distinct_level_goal_count < 8:
         blockers.append("levels_not_distinct_or_less_than_eight")
+    if _contains_mojibake_text(level_goals):
+        blockers.append("level_goal_labels_mojibake")
     proof_map = {"eightDistinctLevelGoals": distinct_level_goal_count >= 8}
     for feature_name, blocker in _PRODUCT_DEPTH_REQUIREMENTS.items():
         proof_map[feature_name] = _feature_proven(feature_name, features, visible, payload)
@@ -497,6 +511,7 @@ def build_product_depth_evidence(
         source={
             "distinct_level_goal_count": distinct_level_goal_count,
             "level_goals": level_goals,
+            "level_goal_labels_readable": not _contains_mojibake_text(level_goals),
             "proof_map": proof_map,
             "feature_coverage_keys": sorted(features),
             "player_visible_check_keys": sorted(visible),
@@ -772,6 +787,30 @@ def _feature_proven(feature_name: str, *payloads: dict[str, Any]) -> bool:
         if bool(payload.get(feature_name)):
             return True
     return False
+
+
+def _contains_mojibake_text(values: list[Any]) -> bool:
+    text = "\n".join(str(value) for value in values)
+    if not text:
+        return False
+    markers = [
+        "鏂",
+        "涓",
+        "鐨",
+        "寰",
+        "杈",
+        "娑",
+        "闄",
+        "褰",
+        "绗",
+        "鍏",
+        "櫙",
+        "棌",
+        "姝",
+        "€",
+        "�",
+    ]
+    return any(marker in text for marker in markers)
 
 
 def _strings(value: Any) -> list[str]:

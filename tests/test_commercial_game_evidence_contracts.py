@@ -111,6 +111,45 @@ def test_browser_playtest_ledger_requires_http_screenshots_mobile_and_no_audio_e
     assert "volume_toggle_missing" in ledger["blockers"]
 
 
+def test_browser_playtest_ledger_exposes_missing_runtime_feature_coverage() -> None:
+    ledger = build_browser_playtest_ledger(
+        {
+            "passed": False,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png", "desktop.png"],
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": {
+                "mobilePortraitUi": True,
+                "nativeCocosUiNodes": True,
+            },
+            "required_playtest_features": [
+                "board10x10",
+                "dragPlacement",
+                "audioPlaybackVerified",
+            ],
+            "commercial_playtest_features": [
+                "nativeCocosUiNodes",
+                "volumeToggleUsable",
+            ],
+        }
+    )
+
+    assert ledger["go"] is False
+    assert "browser_required_playtest_features_missing" in ledger["blockers"]
+    assert "missing_playtest_feature_board10x10" in ledger["blockers"]
+    assert "missing_playtest_feature_dragPlacement" in ledger["blockers"]
+    assert "missing_playtest_feature_audioPlaybackVerified" in ledger["blockers"]
+    assert "browser_commercial_playtest_features_missing" in ledger["blockers"]
+    assert "missing_commercial_feature_volumeToggleUsable" in ledger["blockers"]
+    assert ledger["source"]["missing_required_features"] == [
+        "board10x10",
+        "dragPlacement",
+        "audioPlaybackVerified",
+    ]
+    assert ledger["source"]["missing_commercial_features"] == ["volumeToggleUsable"]
+
+
 def test_contracts_reject_skipped_stubbed_simulated_and_placeholder_dependencies() -> None:
     assert build_asset_graph_contract({"status": "skipped", "commercial_assets_go": True})["go"] is False
     assert build_same_project_patch_ledger_contract({"status": "simulated", "same_project_worker_patch_go": True, "entries": [{"status": "completed"}]})["go"] is False
@@ -710,6 +749,41 @@ def test_product_depth_contract_accepts_machine_visible_depth() -> None:
     assert evidence["go"] is True
     assert evidence["blockers"] == []
     assert evidence["source"]["distinct_level_goal_count"] == 8
+
+
+def test_product_depth_contract_rejects_mojibake_level_goal_labels() -> None:
+    features = {
+        "shopOwnershipStates": True,
+        "skinEquippedVisualChange": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+        "animationFeedbackVerified": True,
+    }
+    evidence = build_product_depth_evidence(
+        product_depth={
+            "level_goals": [
+                "寰楀垎杈炬爣",
+                "娑堣杈炬爣",
+                "杩炲嚮娆℃暟",
+                "闄愭椂鎸戞垬",
+                "鏃犲け璇€氬叧",
+                "褰㈢姸澶氭牱鎬",
+                "鏁堢巼鍔犳垚",
+                "鐢熷瓨濂栧姳",
+            ]
+        },
+        feature_coverage=features,
+        player_visible_checks={},
+    )
+
+    assert evidence["go"] is False
+    assert "level_goal_labels_mojibake" in evidence["blockers"]
+    assert evidence["source"]["level_goal_labels_readable"] is False
 
 
 def test_animation_artifact_integrity_validator_rejects_duplicate_state_and_commercial_go(tmp_path) -> None:

@@ -1,5 +1,18 @@
 # 当前开发工作流
 
+## 2026-05-04 Closeout: PDF-Only Workflow Commercial Game Repair Loop
+
+本轮以桌面 PDF `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` 作为唯一产品输入，产品实现和返修均通过 `commercial_game_production`/DB task card/`human_visible_cli_enforced` workflow worker 执行；Codex 只直接修改控制面、测试、文档和卫生清理项。
+
+- Current run id: `commercial_game_pdf_only_20260503`
+- Current project/evidence root: `state/commercial_game_pdf_only_20260503/cocos_project`
+- Current machine evidence: `build_ledger.go=true`, `browser_playtest_ledger.go=true`, `product_depth_evidence.go=true`, `commercial_playable_blockers=[]`.
+- Current screenshots: `playtest_evidence/cocos_playtest_initial.png`, `playtest_evidence/cocos_playtest_after_actions.png`, `playtest_evidence/cocos_playtest_desktop.png`.
+- Current player-visible state: Chinese mobile-first UI, BGM/SFX/volume proof, 10x10 board, three candidates, drag placement, line clear, refresh, props, shop/skin/gallery, level switching, failure/revive/pause feedback and desktop/mobile screenshots all pass the browser playtest feature gate.
+- Governance state remains conservative: `commercial_playable_go=false` until explicit human acceptance is recorded. Agent/Playwright QA can support review and repair, but it does not by itself set `human_player_review_go=true`.
+- Workflow bugs fixed in this loop: visible CLI timeout handling for active provider output, deterministic finalizer safety, split evidence merging, browser playtest missing-feature blockers, product-depth mojibake label blocking, and Cocos build syntax/import repair through workflow task cards.
+- Hygiene cleanup removed stale tracked/ignored legacy run artifacts under old `state/pipeline_runs/commercial_game_core_content_20260503` and earlier `state/` commercial repair runs; future work should use the current PDF-only run or DB task-card truth, not old pipeline-run snapshots.
+
 ## 2026-05-03 Human Review NO-GO: Commercial Playability Repair Loop
 
 The current launched build was rejected by the user as not genuinely playable. This supersedes the previous optimistic machine-ready handoff for product acceptance.

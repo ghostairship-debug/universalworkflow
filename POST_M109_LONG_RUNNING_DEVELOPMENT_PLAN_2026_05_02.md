@@ -8,11 +8,13 @@
 
 2026-05-03 update: the user launched the current build and returned a real product-level `NO-GO` ("not playable"). A second review of the first repair slice also returned `NO-GO` with concrete defects: missing BGM, incomplete functions, missing Chinese UI, drag stutter, and drag coordinate mismatch. These reviews supersede the prior optimistic machine-ready handoff for product acceptance. The current repair loop may produce agent QA and browser evidence, but it must not convert unattended validation into human acceptance.
 
+2026-05-04 update: the PDF-only workflow run `commercial_game_pdf_only_20260503`, using `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` as the sole product input, has completed the current unattended repair/evaluation loop. Product implementation and repairs were executed through DB task cards with `human_visible_cli_enforced`; Codex/local edits were limited to workflow bugs, evidence contracts, tests, hygiene, and documentation. The latest machine evidence reports `build_ledger.go=true`, `browser_playtest_ledger.go=true`, `product_depth_evidence.go=true`, and no machine commercial blockers. This supersedes the older stale `state/pipeline_runs/commercial_game_core_content_20260503` snapshot for current truth, but it still does not set human acceptance.
+
 - `agent_playtest_after_repair_go=true` for the current browser automation pass only
 - `commercial_game_development_readiness_go=true` for development-start control-plane readiness only
 - `human_player_review_go=false`
 - `commercial_playable_go=false`
-- The latest human/user review status is `NO-GO`; the only valid next acceptance state is a new explicit human acceptance after repair.
+- The historical human/user review status remains `NO-GO`; the only valid next acceptance state is a new explicit human acceptance after this PDF-only repair build is reviewed.
 - The launched build path was correct; the failure was product-level. The current repair slices replace the proof-like browser bridge with a player-visible 10x10 runtime, Chinese UI, procedural BGM/SFX, aligned drag preview, and player-visible function panels, but this remains below final commercial playable acceptance until explicitly accepted by a human reviewer.
 - Runtime hooks, canvas presence, feature flags, browser events, screenshots, scaffold/build evidence, and Cocos bridge evidence cannot prove commercial playable completion.
 - The current success criterion is an honest repair-and-review loop: playable runtime evidence, adversarial visual QA, and then explicit human acceptance.
@@ -29,7 +31,7 @@
 
 ## Next Development Plan
 
-Current completed slices have hardened the false-positive gates, created a baseline-only Cocos product-body shell, added an independent `commercial_game_development_readiness_v1` evidence口径, completed real product-body/runtime, product-depth, machine-evidence, asset, browser, and audio-runtime proof phases, and preserved `commercial_playable_go=false`. The latest active phase `Commercial Asset And Browser Runtime Proof Implementation` materialized exactly three current-phase DB task cards under run `commercial_asset_browser_runtime_20260503`; all three completed through `human_visible_cli_enforced` execution, and the final commercial gate now stops at `AWAITING_HUMAN_REVIEW`.
+Current completed slices have hardened the false-positive gates, created a baseline-only Cocos product-body shell, added an independent `commercial_game_development_readiness_v1` evidence口径, completed real product-body/runtime, product-depth, machine-evidence, asset, browser, and audio-runtime proof phases, and preserved `commercial_playable_go=false`. The latest PDF-only repair loop `commercial_game_pdf_only_20260503` materialized and executed only current-scope DB repair cards for the active product blockers; its latest machine gate has build, browser playtest, product-depth, readable Chinese UI labels, BGM/SFX/volume proof, and runtime feature coverage all passing. The final commercial gate still stops before `commercial_playable_go=true` because human acceptance is absent.
 
 Phase sequence:
 
@@ -67,6 +69,11 @@ Phase sequence:
    - `Commercial Asset And Browser Runtime Proof Implementation` is complete for the current unattended machine-evidence loop.
    - It generated only current-phase DB task cards for non-placeholder asset proof, browser playtest interaction proof, and browser audio/BGM/SFX/volume proof.
    - Machine evidence now passes; the phase is blocked only by the required human review handoff.
+
+7. PDF-only commercial repair closeout.
+   - `commercial_game_pdf_only_20260503` is the current truth-bearing run for the desktop PDF input.
+   - Old generated-state evidence from `state/pipeline_runs/commercial_game_core_content_20260503` is legacy evidence only and must not be reused as the active product truth.
+   - Current validation may support a human review packet, but any human `NO-GO` must generate the next workflow repair phase instead of being overridden by agent QA.
 
 Blocking conditions:
 

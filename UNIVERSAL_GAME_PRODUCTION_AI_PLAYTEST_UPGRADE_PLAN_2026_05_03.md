@@ -401,3 +401,28 @@ Evaluation:
 
 - Targeted tests passed in `tests/test_m109_unified_brief.py` and `tests/test_game_task_card_generation.py`.
 - The universal game-quality architecture is no longer only a standalone CLI/library path; it is now reachable from the normal `commercial_game_production` task-card generation agent for the current active phase.
+
+### 2026-05-04 Round 9: PDF-Only Workflow Repair And Gate Ratchet
+
+Status: completed for machine evidence; awaiting explicit human acceptance.
+
+Implemented:
+
+- `commercial_game_pdf_only_20260503`
+  - Uses `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` as the sole product input for the current commercial game repair loop.
+  - Executes product repairs through DB task cards and `human_visible_cli_enforced` visible worker sessions.
+  - Keeps Codex/local patches scoped to workflow bugs, evidence contracts, tests, hygiene, and documentation.
+
+- `packages/contributions/pipelines/commercial_game_evidence_contracts.py`
+  - Browser playtest evidence now blocks when required runtime feature coverage is missing, instead of allowing screenshots/audio to mask absent gameplay hooks.
+  - Product-depth evidence now blocks mojibake level-goal labels so Chinese UI readability cannot be silently downgraded.
+
+- Current Cocos evidence under `state/commercial_game_pdf_only_20260503`
+  - Latest machine evidence reports `build_ledger.go=true`, `browser_playtest_ledger.go=true`, and `product_depth_evidence.go=true`.
+  - Browser playtest feature coverage includes core loop, level flow, shop/skin/gallery, BGM/SFX/volume, Chinese UI, drag preview, coordinate alignment, revive/failure feedback, and panel interactions.
+  - Stale legacy evidence from `state/pipeline_runs/commercial_game_core_content_20260503` is no longer treated as the active truth source.
+
+Evaluation:
+
+- The PDF-only workflow run now exceeds the earlier local emergency patch as a machine-evidence artifact because the product repairs came through workflow task cards and the evidence gates were ratcheted during the loop.
+- This is still not a final commercial playable acceptance: `human_player_review_go=false` and `commercial_playable_go=false` remain correct until a human reviewer explicitly accepts the launched build.

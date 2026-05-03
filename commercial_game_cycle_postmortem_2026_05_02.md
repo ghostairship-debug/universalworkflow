@@ -13,7 +13,15 @@
 
 ## Current Truth
 
-当前商业游戏结论是 `NO-GO`。
+本复盘覆盖的原周期商业游戏结论是 `NO-GO`；该结论仍是解释历史失败的依据，但不再是当前机器证据的最新状态。
+
+2026-05-04 superseding update:
+
+- Current truth-bearing run: `commercial_game_pdf_only_20260503`.
+- Sole product input: `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf`.
+- Product repairs were executed through workflow DB task cards with `human_visible_cli_enforced`; Codex/local work remained limited to workflow bug fixes, evidence contracts, tests, hygiene, and documentation.
+- Current machine evidence is now `build_ledger.go=true`, `browser_playtest_ledger.go=true`, and `product_depth_evidence.go=true`, with no missing required/commercial browser feature coverage and readable Chinese level-goal labels.
+- This supersedes stale evidence under `state/pipeline_runs/commercial_game_core_content_20260503` for current truth, but it still does not set `human_player_review_go=true` or `commercial_playable_go=true`.
 
 - 2026-05-03 additional user review: the launched `commercial_game_core_content_20260503` build was rejected as "not playable".
 - Current repair loop: replace the proof-like runtime bridge with a player-visible 10x10 block puzzle runtime, then continue agent QA and repair without self-approving human acceptance.
@@ -22,8 +30,12 @@
 - 最终管线：`pipeline_ecf26665254e`
 - 拉起 URL 指向当前 pipeline 的 `build/web-mobile`，不是路径错误。
 - 失败性质是产品级失败：当前 build 本身不是合格商业游戏本体。
-- 当前状态必须保持：
+- 原周期状态必须保持：
   - `machine_evidence_go=false`
+  - `human_player_review_go=false`
+  - `commercial_playable_go=false`
+- 当前 PDF-only 修复周期状态：
+  - `machine_evidence_go=true`
   - `human_player_review_go=false`
   - `commercial_playable_go=false`
 
@@ -44,6 +56,8 @@
 - `state/pipeline_runs/same_project_commercial_gameplay_resume_20260429/cocos_project/playtest_evidence/cocos_playtest_result.json`
 - `state/pipeline_runs/same_project_commercial_gameplay_resume_20260429/cocos_project/workflow_commercial_feature_evidence.json`
 - `state/workflow.db`
+- `state/commercial_game_pdf_only_20260503/cocos_project/workflow_runtime_evidence/hard_evidence_report.json`
+- `state/commercial_game_pdf_only_20260503/cocos_project/playtest_evidence/cocos_playtest_result.json`
 
 ## Main Findings
 

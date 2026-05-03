@@ -17,12 +17,13 @@ from packages.worker_adapters.subprocess_support import (
     completed_process_watchdog_metadata,
     run_subprocess_with_tree_timeout,
 )
+from packages.runtime_security.safe_command_runner import SafeCommandSpec, run_safe_commands
 
 
 ISSUE_RECEIPT_IDLE_TIMEOUT_SECONDS = 60
 TASK_CARD_WALL_TIMEOUT_SECONDS = 900
 TASK_CARD_IDLE_TIMEOUT_SECONDS = 240
-TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS = 480
+TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS = 900
 TASK_CARD_MATERIAL_PROGRESS_IDLE_TIMEOUT_SECONDS = 720
 TASK_CARD_ADAPTIVE_WALL_TIMEOUT_EXTENSION_SECONDS = 900
 TASK_CARD_ADAPTIVE_WALL_TIMEOUT_MAX_EXTENSIONS = 1
@@ -176,7 +177,7 @@ def run_task_card_patch_via_workflowctl(
     summary = payload.get("pr_ready_summary") if isinstance(payload, dict) and isinstance(payload.get("pr_ready_summary"), dict) else {}
     changed_files = _changed_files_from_summary(mutation_result=mutation_result, summary=summary)
     tests_status = _summary_tests_status(summary, mutation_result)
-    return {
+    result = {
         "status": implementation_status["status"],
         "failure_class": implementation_status["failure_class"],
         "requested_adapter": resolved_adapter,
@@ -203,6 +204,189 @@ def run_task_card_patch_via_workflowctl(
         "recoverable_suggestion": executed.get("recoverable_suggestion"),
         "command": run_cmd,
     }
+    finalized = _maybe_complete_evidence_finalization(
+        root=root,
+        project_dir=project_dir,
+        task_card=task_card,
+        task_card_path=task_card_path,
+        write_set=write_set,
+        read_set=read_set,
+        test_commands=test_commands,
+        receipt_id=str(receipt_id),
+        execution_result=result,
+    )
+    return finalized or result
+
+
+def _maybe_complete_evidence_finalization(
+    *,
+    root: Path,
+    project_dir: Path,
+    task_card: Any,
+    task_card_path: Path,
+    write_set: list[str],
+    read_set: list[str],
+    test_commands: list[str],
+    receipt_id: str,
+    execution_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    if execution_result.get("status") == "completed":
+        return None
+    metadata = _task_card_markdown_metadata(task_card_path)
+    finding_id = str(metadata.get("ai_finding_id") or "").strip()
+    if not finding_id.endswith("_finalize"):
+        return None
+    if str(metadata.get("execution_visibility_mode") or "") != "human_visible_cli_enforced":
+        return None
+    evidence_paths = _dedupe_strings(
+        [
+            *_string_list(metadata.get("evidence_paths")),
+            *[item for item in read_set if str(item).lower().endswith(".json")],
+        ]
+    )
+    required_evidence_paths = _dedupe_strings(_string_list(metadata.get("finalizer_required_evidence_paths")))
+    resolved_evidence = [_resolve_evidence_path(root, item) for item in evidence_paths]
+    resolved_required_evidence = [_resolve_evidence_path(root, item) for item in required_evidence_paths]
+    missing = [path.as_posix() for path in [*resolved_evidence, *resolved_required_evidence] if not path.exists()]
+    if missing:
+        return None
+    runtime_evidence = _runtime_evidence_json_paths(
+        project_dir=project_dir,
+        evidence_paths=resolved_required_evidence or resolved_evidence,
+    )
+    if not runtime_evidence:
+        return None
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    if not _path_is_in_write_set(evidence_dir, write_set):
+        return None
+    tests = run_safe_commands(
+        [SafeCommandSpec(command=command, timeout_seconds=180) for command in test_commands],
+        working_directory=root,
+    )
+    tests_passed = bool(tests) and all(bool(item.get("passed")) for item in tests)
+    finalization_path = evidence_dir / f"{_safe_name(getattr(task_card, 'task_card_id', task_card_path.stem))}_evidence_finalization.json"
+    finalization_payload = {
+        "schema_version": "commercial_game_evidence_finalization_v1",
+        "created_at": datetime.now(UTC).isoformat(),
+        "task_card_id": getattr(task_card, "task_card_id", task_card_path.stem),
+        "task_card_path": task_card_path.as_posix(),
+        "finalization_mode": "deterministic_existing_evidence_validation",
+        "source_failure_class": execution_result.get("failure_class"),
+        "receipt_id": receipt_id,
+        "visible_cli_session": execution_result.get("visible_cli_session"),
+        "evidence_paths": [path.as_posix() for path in resolved_evidence],
+        "runtime_evidence_paths": [path.as_posix() for path in runtime_evidence],
+        "covered_requirement_ids": _string_list(metadata.get("covered_requirement_ids")),
+        "tests": tests,
+        "go": tests_passed,
+        "blockers": [] if tests_passed else ["evidence_finalization_tests_failed"],
+    }
+    _write_json(finalization_path, finalization_payload)
+    changed_files = [finalization_path.as_posix()]
+    return {
+        **execution_result,
+        "status": "completed" if tests_passed else "failed",
+        "failure_class": None if tests_passed else "evidence_finalization_tests_failed",
+        "implementation_readiness": "ready" if tests_passed else "blocked",
+        "mutation_result": {
+            "evidence_finalization": finalization_payload,
+            "changed_files": changed_files,
+            "applied_patch_hash": _hash_file(finalization_path),
+            "finalized_existing_evidence": True,
+        },
+        "changed_files": changed_files,
+        "final_test_status": "passed" if tests_passed else "failed",
+        "evidence_id": execution_result.get("evidence_id") or f"evidence_finalization_{_safe_name(str(getattr(task_card, 'task_card_id', task_card_path.stem)))}",
+        "review_decision": "pass" if tests_passed else "fail",
+        "recoverable_suggestion": None if tests_passed else "inspect_evidence_finalization_tests",
+    }
+
+
+def _task_card_markdown_metadata(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    marker = "## Metadata"
+    marker_index = text.find(marker)
+    if marker_index < 0:
+        return {}
+    fenced_index = text.find("```json", marker_index)
+    if fenced_index < 0:
+        return {}
+    start = text.find("\n", fenced_index)
+    end = text.find("```", start + 1)
+    if start < 0 or end < 0:
+        return {}
+    try:
+        payload = json.loads(text[start:end].strip())
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_evidence_path(root: Path, value: str) -> Path:
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def _runtime_evidence_json_paths(*, project_dir: Path, evidence_paths: list[Path]) -> list[Path]:
+    evidence_dir = (project_dir / "workflow_runtime_evidence").resolve()
+    runtime_paths: list[Path] = []
+    for path in evidence_paths:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(evidence_dir)
+        except ValueError:
+            continue
+        if resolved.suffix.lower() != ".json":
+            continue
+        if resolved.name == "requirement_coverage_trace.json":
+            continue
+        runtime_paths.append(resolved)
+    return runtime_paths
+
+
+def _path_is_in_write_set(path: Path, write_set: list[str]) -> bool:
+    resolved = path.resolve()
+    for item in write_set:
+        candidate = Path(item)
+        base = candidate.resolve() if candidate.is_absolute() else candidate.resolve()
+        try:
+            resolved.relative_to(base)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _hash_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if text and text not in seen:
+            seen.add(text)
+            output.append(text)
+    return output
 
 
 def _resolve_task_card_adapter(task_card: Any, adapter_name: str | None) -> str:
@@ -508,6 +692,26 @@ def _run_visible_json_command(
         else None
     )
     last_probe_counts = {"provider_output_event_count": 0, "material_progress_event_count": 0}
+
+    def _refresh_probe_activity(now_mono: float) -> None:
+        nonlocal last_activity, last_material_progress, last_provider_output, last_probe_counts
+        if probe is None:
+            return
+        probe_payload = probe()
+        provider_count_changed = probe_payload.get("provider_output_event_count") != last_probe_counts.get(
+            "provider_output_event_count"
+        )
+        material_count_changed = probe_payload.get("material_progress_event_count") != last_probe_counts.get(
+            "material_progress_event_count"
+        )
+        if provider_count_changed:
+            last_provider_output = now_mono
+        if material_count_changed:
+            last_material_progress = now_mono
+        if provider_count_changed or material_count_changed:
+            last_probe_counts = dict(probe_payload)
+            last_activity = now_mono
+
     while proc.poll() is None:
         now_mono = time.monotonic()
         stdout_size = stdout_path.stat().st_size if stdout_path.exists() else 0
@@ -516,28 +720,29 @@ def _run_visible_json_command(
             last_stdout_size = stdout_size
             last_stderr_size = stderr_size
             last_activity = now_mono
-        if probe is not None:
-            probe_payload = probe()
-            if (
-                probe_payload.get("provider_output_event_count") != last_probe_counts.get("provider_output_event_count")
-                or probe_payload.get("material_progress_event_count") != last_probe_counts.get("material_progress_event_count")
-            ):
-                if probe_payload.get("provider_output_event_count") != last_probe_counts.get("provider_output_event_count"):
-                    last_provider_output = now_mono
-                if probe_payload.get("material_progress_event_count") != last_probe_counts.get("material_progress_event_count"):
-                    last_material_progress = now_mono
-                last_probe_counts = dict(probe_payload)
-                last_activity = now_mono
+        _refresh_probe_activity(now_mono)
         if (
             provider_output_idle_timeout_seconds is not None
             and now_mono - last_provider_output > provider_output_idle_timeout_seconds
         ):
+            _refresh_probe_activity(now_mono)
+            if now_mono - last_provider_output <= provider_output_idle_timeout_seconds:
+                time.sleep(1.0)
+                continue
             timeout_type = "provider_output_idle_timeout"
             break
         if (
             material_progress_idle_timeout_seconds is not None
             and now_mono - last_material_progress > material_progress_idle_timeout_seconds
+            and now_mono - last_provider_output > material_progress_idle_timeout_seconds
         ):
+            _refresh_probe_activity(now_mono)
+            if (
+                now_mono - last_material_progress <= material_progress_idle_timeout_seconds
+                or now_mono - last_provider_output <= material_progress_idle_timeout_seconds
+            ):
+                time.sleep(1.0)
+                continue
             timeout_type = "provider_no_material_progress_timeout"
             break
         if now_mono - started > effective_wall_timeout:
@@ -549,8 +754,16 @@ def _run_visible_json_command(
             can_extend = (
                 adaptive_wall_timeout_extension_seconds is not None
                 and extension_count < (adaptive_wall_timeout_max_extensions or 0)
-                and last_probe_counts.get("material_progress_event_count", 0) > 0
-                and now_mono - last_material_progress <= progress_window
+                and (
+                    (
+                        last_probe_counts.get("material_progress_event_count", 0) > 0
+                        and now_mono - last_material_progress <= progress_window
+                    )
+                    or (
+                        last_probe_counts.get("provider_output_event_count", 0) > 0
+                        and now_mono - last_provider_output <= progress_window
+                    )
+                )
             )
             next_effective = effective_wall_timeout + (adaptive_wall_timeout_extension_seconds or 0)
             within_absolute_max = (
