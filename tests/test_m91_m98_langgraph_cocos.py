@@ -182,7 +182,9 @@ def test_m96_m98_cocos_contracts_and_player_visible_gate(tmp_path: Path) -> None
     )
     assert missing_player["commercial_playable_go"] is False
     assert "player_visible_evidence" in missing_player["commercial_playable_blockers"]
-    assert accepted["commercial_playable_go"] is True
+    assert accepted["machine_player_visible_go"] is True
+    assert accepted["commercial_playable_go"] is False
+    assert accepted["commercial_playable_blockers"] == ["awaiting_human_player_review"]
 
 
 def test_m104_cocos_graph_pressure_preserves_commercial_no_go_without_player_evidence(tmp_path: Path) -> None:
@@ -222,5 +224,7 @@ def test_m104_cocos_graph_pressure_cli_can_record_player_visible_go(tmp_path: Pa
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["status"] == "completed"
-    assert payload["readiness"]["commercial_playable_go"] is True
+    assert payload["status"] == "blocked"
+    assert payload["readiness"]["machine_player_visible_go"] is True
+    assert payload["readiness"]["commercial_playable_go"] is False
+    assert payload["readiness"]["commercial_playable_blockers"] == ["awaiting_human_player_review"]

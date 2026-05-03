@@ -64,7 +64,8 @@ def judge_commercial_readiness_layers(
         if not _valid_player_evidence(checks.get(check_name))
     ]
     automatic_go = not missing_required
-    commercial_playable_go = bool(technical_smoke and production_scaffold and (automatic_go or manual_go))
+    machine_player_visible_go = bool(technical_smoke and production_scaffold and automatic_go)
+    commercial_playable_go = bool(technical_smoke and production_scaffold and manual_go)
     blockers = [
         key
         for key, value in {
@@ -77,10 +78,14 @@ def judge_commercial_readiness_layers(
     if missing_required and not manual_go:
         blockers.append("missing_player_visible_commercial_playable_evidence")
         blockers.extend(f"missing_{item}" for item in missing_required)
+    if machine_player_visible_go and not manual_go:
+        blockers.append("awaiting_human_player_review")
     return {
         "schema_version": "m98_cocos_commercial_readiness_layers_v1",
         "technical_smoke_go": bool(technical_smoke),
         "production_scaffold_go": bool(production_scaffold),
+        "machine_player_visible_go": machine_player_visible_go,
+        "human_player_review_go": manual_go,
         "commercial_playable_go": commercial_playable_go,
         "player_visible_checks": checks,
         "player_visible_required_checks": list(REQUIRED_PLAYER_VISIBLE_CHECKS),
@@ -90,7 +95,7 @@ def judge_commercial_readiness_layers(
             "boolean_only_checks_allowed": False,
         },
         "manual_player_evidence": manual,
-        "judge_priority": "automatic_playwright_then_manual_fallback_default_no_go",
+        "judge_priority": "machine_player_visible_first_then_human_acceptance_required",
         "commercial_playable_blockers": blockers,
     }
 

@@ -361,12 +361,12 @@ def execute_contribution_validation(
             isinstance(production, dict)
             and bool(production.get("commercial_playable_go"))
             and no_degradation["go_no_go"] == "GO"
+            and bool(no_degradation.get("human_player_review_go"))
         )
         machine_ready_awaiting_human_review = (
             isinstance(production, dict)
-            and not bool(production.get("commercial_playable_go"))
             and bool(no_degradation.get("machine_evidence_go"))
-            and no_degradation.get("go_no_go") == "GO"
+            and no_degradation.get("go_no_go") in {"GO", "AWAITING_HUMAN_REVIEW"}
             and not bool(no_degradation.get("human_player_review_go"))
         )
         blockers = []

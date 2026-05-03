@@ -2210,7 +2210,10 @@ def run_cocos_game_e2e(
     if require_commercial and commercial_blockers:
         blockers.extend(f"commercial_missing_{item}" for item in commercial_blockers)
     if require_commercial and not commercial_readiness["commercial_playable_go"]:
-        blockers.append("commercial_playable_no_go")
+        readiness_blockers = list(commercial_readiness.get("commercial_playable_blockers") or ["commercial_playable_no_go"])
+        blockers.extend(readiness_blockers)
+    blockers = list(dict.fromkeys(blockers))
+    awaiting_human_only = blockers == ["awaiting_human_player_review"]
     manifest = CocosGameE2EManifest(
         pdf_path=Path(pdf_path).resolve().as_posix(),
         cocos_creator_path=Path(creator_exe).resolve().as_posix(),
@@ -2219,7 +2222,11 @@ def run_cocos_game_e2e(
         playtest_screenshot_paths=(playtest or {}).get("screenshots", []),
         canvas_hashes=(playtest or {}).get("canvas_hashes", []),
         feature_coverage=(playtest or {}).get("feature_coverage", {}),
-        go_no_go="GO" if not blockers and (not require_build or (build or {}).get("artifact_success")) else "NO-GO",
+        go_no_go="GO"
+        if not blockers and (not require_build or (build or {}).get("artifact_success"))
+        else "AWAITING_HUMAN_REVIEW"
+        if awaiting_human_only and (not require_build or (build or {}).get("artifact_success"))
+        else "NO-GO",
         blockers=blockers,
         metadata={
             "created_at": _utc_now(),

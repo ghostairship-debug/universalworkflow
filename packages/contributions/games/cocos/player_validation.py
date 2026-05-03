@@ -69,11 +69,19 @@ def validate_cocos_player_visible_evidence(
         production_scaffold=production_scaffold,
         player_visible_checks=player_visible_checks,
     )
+    if readiness["commercial_playable_go"]:
+        go_no_go = "GO"
+    elif readiness.get("machine_player_visible_go"):
+        go_no_go = "AWAITING_HUMAN_REVIEW"
+    else:
+        go_no_go = "NO-GO"
     payload = {
         "schema_version": COCOS_PLAYER_VISIBLE_EVIDENCE_SCHEMA,
         "created_at": _utc_now(),
         "technical_smoke_go": bool(technical_smoke),
         "production_scaffold_go": bool(production_scaffold),
+        "machine_player_visible_go": bool(readiness.get("machine_player_visible_go")),
+        "human_player_review_go": bool(readiness.get("human_player_review_go")),
         "commercial_playable_go": readiness["commercial_playable_go"],
         "raw_checks": raw_checks,
         "player_visible_checks": player_visible_checks,
@@ -83,7 +91,7 @@ def validate_cocos_player_visible_evidence(
         "screenshots": screenshots,
         "canvas_hashes": canvas_hashes,
         "events": events,
-        "go_no_go": "GO" if readiness["commercial_playable_go"] else "NO-GO",
+        "go_no_go": go_no_go,
     }
     if evidence_root is not None:
         Path(evidence_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

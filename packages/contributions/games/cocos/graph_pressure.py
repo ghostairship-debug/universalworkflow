@@ -66,12 +66,17 @@ def run_cocos_graph_pressure_test(
                 player_visible_checks=state.get("player_visible_checks") or {},
                 manual_player_evidence=state.get("manual_player_evidence") or {},
             )
+            awaiting_human = bool(readiness.get("machine_player_visible_go")) and not bool(readiness.get("human_player_review_go"))
             return {
                 **state,
                 "node_path": [*state.get("node_path", []), "readiness_judge"],
                 "readiness": readiness,
                 "status": "completed" if readiness["commercial_playable_go"] else "blocked",
-                "failure_class": None if readiness["commercial_playable_go"] else "commercial_playable_no_go",
+                "failure_class": None
+                if readiness["commercial_playable_go"]
+                else "awaiting_human_player_review"
+                if awaiting_human
+                else "commercial_playable_no_go",
             }
 
         def closeout(state: dict[str, Any]) -> dict[str, Any]:

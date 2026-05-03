@@ -410,16 +410,16 @@ def build_commercial_final_gate_evidence(
     )
 
     blockers = list(machine_blockers)
-    if require_human_player_review and not human_player_review_go:
+    if require_commercial and not human_player_review_go:
         blockers.append("awaiting_human_player_review")
     blockers = _dedupe(blockers)
 
     machine_evidence_go = not machine_blockers
-    awaiting_human_only = machine_evidence_go and require_human_player_review and not human_player_review_go
+    awaiting_human_only = machine_evidence_go and require_commercial and not human_player_review_go
     commercial_playable_go = bool(
         require_commercial
         and machine_evidence_go
-        and (human_player_review_go or not require_human_player_review)
+        and human_player_review_go
     )
     go_no_go = "GO" if commercial_playable_go else "AWAITING_HUMAN_REVIEW" if awaiting_human_only else "NO-GO"
     return {

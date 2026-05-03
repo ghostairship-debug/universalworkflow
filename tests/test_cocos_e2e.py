@@ -1112,8 +1112,11 @@ def test_cocos_player_visible_validation_can_pass_with_complete_playtest(tmp_pat
         evidence_dir=tmp_path / "player_validation",
     )
 
-    assert payload["go_no_go"] == "GO"
-    assert payload["commercial_playable_go"] is True
+    assert payload["go_no_go"] == "AWAITING_HUMAN_REVIEW"
+    assert payload["machine_player_visible_go"] is True
+    assert payload["human_player_review_go"] is False
+    assert payload["commercial_playable_go"] is False
+    assert payload["commercial_readiness"]["commercial_playable_blockers"] == ["awaiting_human_player_review"]
     assert all(item["status"] == "pass" for item in payload["player_visible_checks"].values())
     assert Path(payload["evidence_path"]).exists()
 
@@ -1496,7 +1499,7 @@ def test_cocos_e2e_generated_assets_clear_asset_specific_blockers(tmp_path: Path
     assert payload["commercial_go_no_go"] == "GO"
     assert payload["commercial_playable_go"] is False
     assert payload["manifest"]["go_no_go"] == "NO-GO"
-    assert "commercial_playable_no_go" in payload["manifest"]["blockers"]
+    assert "missing_player_visible_commercial_playable_evidence" in payload["manifest"]["blockers"]
     assert payload["commercial_feature_coverage"]["native_cocos_ui_nodes"] is True
     assert payload["commercial_feature_coverage"]["animation_timeline"] is True
     assert payload["commercial_feature_coverage"]["level_switching_ui"] is True
