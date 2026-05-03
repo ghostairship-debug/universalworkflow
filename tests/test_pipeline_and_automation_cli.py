@@ -21,6 +21,23 @@ def _invoke(tmp_path: Path, *args: str):
     )
 
 
+def _visible_cli_session(tmp_path: Path, task_card_id: str = "tc_visible") -> dict[str, object]:
+    session_dir = tmp_path / "visible_cli_sessions" / task_card_id
+    return {
+        "status": "completed",
+        "pid": 1234,
+        "window_title": f"workflowctl {task_card_id}",
+        "argv": ["workflowctl", "run", "from-task-card"],
+        "cwd": tmp_path.as_posix(),
+        "stdout_log_path": (session_dir / "stdout.log").as_posix(),
+        "stderr_log_path": (session_dir / "stderr.log").as_posix(),
+        "stream_log_path": (session_dir / "stream.jsonl").as_posix(),
+        "session_path": (session_dir / "visible_cli_session.json").as_posix(),
+        "started_at": "2026-05-03T00:00:00+00:00",
+        "ended_at": "2026-05-03T00:00:01+00:00",
+    }
+
+
 def _seed_child_workflow_state(
     db_path: Path,
     *,
@@ -900,6 +917,7 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
             "watchdog": {"timeout_type": None, "stream_event_count": 3},
             "timeout_seconds": 900,
             "idle_timeout_seconds": 240,
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_levels"),
         }
 
     def _fake_ecosystem_evidence(**kwargs):
@@ -1413,6 +1431,9 @@ def test_same_project_patch_ledger_records_continuation_for_idle_timeout(tmp_pat
     assert entry["continuation_required"] is True
     assert entry["continuation_reason"] == "blocked_after_three_attempts"
     assert "commercial_game_task_card_resume" in entry["continuation_command"]
+    assert "--execution-visibility-mode" in entry["continuation_command"]
+    assert "human_visible_cli_enforced" in entry["continuation_command"]
+    assert entry["execution_visibility_mode"] == "human_visible_cli_enforced"
     assert "--operator-receipt-id" not in entry["continuation_command"]
     assert entry["task_card_path"].endswith("tc_audio.md")
 
@@ -1471,6 +1492,7 @@ def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_pa
                 "final_test_status": "passed",
             },
             "watchdog": {"stream_event_count": 3, "provider_output_event_count": 2, "material_progress_event_count": 1},
+            "visible_cli_session": _visible_cli_session(tmp_path, task_id),
         }
 
     ledger = execute_same_project_task_cards(
@@ -1497,6 +1519,202 @@ def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_pa
         "receipt_levels_2",
         "receipt_tc_levels_3",
     ]
+
+
+def test_same_project_patch_ledger_uses_fallback_adapter_after_prior_no_material_progress(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    run_root = tmp_path / "pipeline_evidence"
+    ledger_root = run_root / "task_card_worker"
+    ledger_root.mkdir(parents=True)
+    (ledger_root / "same_project_patch_ledger.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "task_card_id": "tc_audio",
+                        "status": "blocked",
+                        "failure_class": "blocked_after_three_attempts",
+                        "final_failure_class": "provider_no_material_progress_timeout",
+                        "worker_adapter": "codex",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_adapter_fallback",
+        task_card_id="tc_audio",
+        title="Task tc_audio",
+        description="Task tc_audio",
+        goal="Patch audio feedback in the same project with fresh receipt retry accounting.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["same project patched", "tests passed"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        blocking_conditions=["provider_no_material_progress_timeout"],
+        model_guidance=["Retry the same card only with fresh receipts."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced", "human_visible_cli_required": True},
+    )
+    adapter_calls: list[str | None] = []
+
+    def _runner(**kwargs):
+        adapter_calls.append(kwargs.get("adapter_name"))
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_audio_fallback",
+            "child_run_id": "run_audio_fallback",
+            "child_attempt_id": "attempt_audio_fallback",
+            "worker_adapter": kwargs.get("adapter_name"),
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/AudioFeedbackController.ts"],
+                "final_test_status": "passed",
+            },
+            "visible_cli_session": {
+                "status": "completed",
+                "pid": 1234,
+                "argv": ["workflowctl", "run", "from-task-card"],
+                "cwd": tmp_path.as_posix(),
+                "stdout_log_path": (tmp_path / "stdout.log").as_posix(),
+                "stderr_log_path": (tmp_path / "stderr.log").as_posix(),
+                "stream_log_path": (tmp_path / "stream.jsonl").as_posix(),
+                "started_at": "2026-05-03T00:00:00+00:00",
+            },
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=run_root,
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_adapter_fallback",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    assert adapter_calls == ["opencode"]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert ledger["entries"][0]["worker_adapter"] == "opencode"
+    assert ledger["entries"][0]["execution_visibility_mode"] == "human_visible_cli_enforced"
+
+
+def test_collect_project_runtime_evidence_refreshes_contracts_from_task_card_artifacts(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import collect_project_runtime_evidence
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    evidence_dir.mkdir(parents=True)
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text(
+        json.dumps({"commercial_feature_coverage": {"chineseUiPanelsVisible": True}}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "gameplay_semantic_evidence.raw.json").write_text(
+        json.dumps(
+            {
+                "board_state": {"rows": 10, "cols": 10},
+                "piece_shapes": [{"id": "single"}],
+                "candidate_tray": [{"slot": 0}, {"slot": 1}, {"slot": 2}],
+                "semantic_traces": {
+                    "placement": "placement.json",
+                    "line_clear": "line_clear.json",
+                    "candidate_refresh": "candidate_refresh.json",
+                    "game_over": "game_over.json",
+                    "anti_stall": "anti_stall.json",
+                },
+                "model_transition_traces": {"placement": {"before": {}, "after": {}}},
+                "baseline_only": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "product_body_evidence.raw.json").write_text(
+        json.dumps(
+            {
+                "scene_nodes": ["Canvas", "Board", "Hud"],
+                "cocos_component_bindings": ["BoardView", "InputController", "AudioFeedbackController"],
+                "scene_path": "assets/scene/product_body.scene",
+                "baseline_only": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "core_loop_runtime_evidence.json").write_text(
+        json.dumps({"state_transitions": [{"to": "failed"}, {"to": "levelComplete"}]}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "level_goal_evidence.json").write_text(
+        json.dumps(
+            {
+                "levels": [
+                    {
+                        "level_id": "level_1",
+                        "goals": [
+                            {"id": f"goal_{index}", "visible_label": f"Goal {index} 0/1"}
+                            for index in range(1, 9)
+                        ],
+                    }
+                ],
+                "revive_and_failure_rules": {"failure_condition": "moves == 0"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "commercial_shop_skin_gallery_evidence.json").write_text(
+        json.dumps(
+            {
+                "shop_ownership_state": {"stored_fields": ["ownedSkinIds"]},
+                "skin_equipped_visual_change": {"player_visible_targets": ["boardPreview.color"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "audio_feedback_polish_evidence.json").write_text(
+        json.dumps(
+            {
+                "audio_runtime_evidence": {"runtime_bound": True, "event_bindings_count": 4},
+                "feedback_animation_evidence": {
+                    "runtime_bound": True,
+                    "binding_count": 4,
+                    "feedback_types": ["placement", "line_clear", "failure", "success"],
+                },
+                "polish_runtime_evidence": {"runtime_bound": True, "effects_count": 3},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "product_depth_evidence.json").write_text(
+        json.dumps({"schema_version": "commercial_game_product_depth_evidence_v1", "blockers": ["blocked_by_same_project_worker"]}),
+        encoding="utf-8",
+    )
+
+    result = collect_project_runtime_evidence(
+        project_dir=project_dir,
+        creator_exe=tmp_path / "CocosCreator.exe",
+        require_build=False,
+        require_playtest=False,
+    )
+
+    product_depth = json.loads((evidence_dir / "product_depth_evidence.json").read_text(encoding="utf-8"))
+    product_body = json.loads((evidence_dir / "product_body_evidence.json").read_text(encoding="utf-8"))
+    build_ledger = json.loads((evidence_dir / "build_ledger.json").read_text(encoding="utf-8"))
+    browser_ledger = json.loads((evidence_dir / "browser_playtest_ledger.json").read_text(encoding="utf-8"))
+    assert result["commercial_feature_coverage"]["audioPlaybackVerified"] is True
+    assert result["commercial_feature_coverage"]["shopOwnershipStates"] is True
+    assert product_depth["go"] is True
+    assert product_body["go"] is True
+    assert product_body["source"]["baseline_only"] is False
+    assert "blocked_by_same_project_worker" not in product_depth["blockers"]
+    assert "blocked_by_same_project_worker" not in product_body["blockers"]
+    assert "blocked_by_same_project_worker" not in build_ledger["blockers"]
+    assert "blocked_by_same_project_worker" not in browser_ledger["blockers"]
 
 
 def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_path: Path) -> None:
@@ -1546,6 +1764,7 @@ def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_pat
                 "final_test_status": "passed",
             },
             "watchdog": {"stream_event_count": 3, "provider_output_event_count": 3, "material_progress_event_count": 1},
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_revive"),
         }
 
     ledger = execute_same_project_task_cards(
@@ -1662,12 +1881,14 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
                         "receipt_id": "receipt_levels_prior",
                         "child_run_id": "run_levels_prior",
                         "child_attempt_id": "attempt_levels_prior",
-                        "worker_adapter": "codex",
-                        "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
-                        "mutation_result": {
+                            "worker_adapter": "codex",
+                            "execution_visibility_mode": "human_visible_cli_enforced",
+                            "visible_cli_session": _visible_cli_session(tmp_path, "tc_levels"),
                             "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
-                            "final_test_status": "passed",
-                        },
+                            "mutation_result": {
+                                "changed_files": ["state/project/assets/scripts/LevelGoalProgression.ts"],
+                                "final_test_status": "passed",
+                            },
                         "continuation_required": False,
                     }
                 ]
@@ -1691,6 +1912,7 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
                 "final_test_status": "passed",
             },
             "watchdog": {"stream_event_count": 5},
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_shop"),
         }
 
     ledger = execute_same_project_task_cards(
@@ -1778,6 +2000,7 @@ def test_same_project_patch_ledger_treats_existing_shop_evidence_as_reference_on
                 "final_test_status": "passed",
             },
             "watchdog": {"stream_event_count": 3},
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_shop"),
         }
 
     ledger = execute_same_project_task_cards(
@@ -1887,6 +2110,7 @@ def test_same_project_patch_ledger_treats_existing_core_loop_evidence_as_referen
                 "final_test_status": "passed",
             },
             "watchdog": {"stream_event_count": 3},
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_core_loop"),
         }
 
     ledger = execute_same_project_task_cards(
@@ -1969,6 +2193,7 @@ def test_same_project_patch_ledger_keeps_human_review_packet_as_reference_until_
                 "final_test_status": "passed",
             },
             "watchdog": {"stream_event_count": 3},
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_human_review"),
         }
 
     ledger = execute_same_project_task_cards(
@@ -2834,6 +3059,169 @@ def test_commercial_task_worker_cli_uses_progress_watchdog(monkeypatch, tmp_path
     assert result["watchdog"]["timeout_type"] == "idle_timeout"
     assert result["watchdog"]["stream_event_count"] == 0
     assert "retry_with_higher_idle_timeout_or_split_task" in result["recoverable_suggestion"]
+
+
+def test_commercial_task_worker_cli_parses_last_json_after_visible_progress_noise() -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    noisy_stdout = "\n".join(
+        [
+            'python.exe : workflow_progress {"event": "workflow_progress", "run_id": "run_noise"}',
+            "NativeCommandError: progress stream was mirrored by the visible PowerShell session",
+            '{"run": {"run_id": "run_final"}, "pr_ready_summary": {"ready": true}}',
+        ]
+    )
+
+    payload = worker_cli._parse_json_from_stdout(noisy_stdout)
+
+    assert payload == {"run": {"run_id": "run_final"}, "pr_ready_summary": {"ready": True}}
+
+
+def test_commercial_task_worker_cli_reads_utf16_visible_log(tmp_path: Path) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    log_path = tmp_path / "stdout.log"
+    log_text = (
+        '\ufeffpython.exe : workflow_progress {"event": "workflow_progress"}\r\n'
+        '{"run": {"run_id": "run_utf16"}, "pr_ready_summary": {"ready": true}}\r\n'
+    )
+    log_path.write_bytes(log_text.encode("utf-16-le"))
+
+    text = worker_cli._read_log_text(log_path)
+    payload = worker_cli._parse_json_from_stdout(text)
+
+    assert payload == {"run": {"run_id": "run_utf16"}, "pr_ready_summary": {"ready": True}}
+
+
+def test_commercial_task_worker_cli_visible_no_material_progress_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from packages.contributions.pipelines import commercial_game_task_worker_cli as worker_cli
+
+    class _FakeVisibleProcess:
+        pid = 4321
+        returncode = 124
+
+        def __init__(self, *args, **kwargs):
+            self._terminated = False
+
+        def poll(self):
+            return self.returncode if self._terminated else None
+
+        def terminate(self):
+            self._terminated = True
+
+        def kill(self):
+            self._terminated = True
+
+        def wait(self, timeout=None):
+            self._terminated = True
+            return self.returncode
+
+    ticks = iter([0.0, 13.0, 13.0, 13.0, 13.0])
+    db_path = tmp_path / "workflow.db"
+    task_goal = "Patch same project from task card: tc_audio"
+    _seed_child_workflow_state(db_path, goal=task_goal, receipt_id="receipt_visible", heartbeat_age_seconds=5)
+
+    monkeypatch.setattr(worker_cli.subprocess, "CREATE_NEW_CONSOLE", 0, raising=False)
+    monkeypatch.setattr(worker_cli.subprocess, "Popen", _FakeVisibleProcess)
+    monkeypatch.setattr(worker_cli, "_terminate_visible_process_tree", lambda proc: proc.terminate())
+    monkeypatch.setattr(worker_cli.time, "monotonic", lambda: next(ticks, 13.0))
+    monkeypatch.setattr(worker_cli.time, "sleep", lambda _seconds: None)
+
+    result = worker_cli._run_json_command(
+        ["python", "-m", "apps.operator_cli.main", "run", "from-task-card"],
+        cwd=tmp_path,
+        timeout_seconds=900,
+        idle_timeout_seconds=240,
+        provider_output_idle_timeout_seconds=480,
+        material_progress_idle_timeout_seconds=12,
+        adaptive_wall_timeout_extension_seconds=900,
+        adaptive_wall_timeout_max_extensions=1,
+        adaptive_wall_timeout_absolute_max_seconds=1800,
+        adaptive_wall_timeout_progress_window_seconds=720,
+        db_path=db_path,
+        task_goal=task_goal,
+        receipt_id="receipt_visible",
+        execution_visibility_mode="human_visible_cli_enforced",
+        visible_session_dir=tmp_path / "visible",
+        visible_session_metadata={"task_card_id": "tc_audio"},
+    )
+
+    assert result["status"] == "failed"
+    assert result["failure_class"] == "provider_no_material_progress_timeout"
+    assert result["watchdog"]["timeout_type"] == "provider_no_material_progress_timeout"
+    assert result["watchdog"]["adaptive_wall_timeout_extension_count"] == 0
+    assert result["visible_cli_session"]["status"] == "timeout"
+    with sqlite3.connect(db_path) as connection:
+        run_status = connection.execute("SELECT status FROM runs WHERE run_id = 'child_run_001'").fetchone()[0]
+        attempt_status, close_reason = connection.execute(
+            "SELECT status, close_reason FROM runtime_attempts WHERE attempt_id = 'attempt_001'"
+        ).fetchone()
+        lease_status, release_reason = connection.execute(
+            "SELECT status, release_reason FROM worker_leases WHERE lease_id = 'lease_001'"
+        ).fetchone()
+    assert run_status == "failed"
+    assert (attempt_status, close_reason) == ("closed", "provider_no_material_progress_timeout")
+    assert (lease_status, release_reason) == ("released", "provider_no_material_progress_timeout")
+
+
+def test_commercial_task_worker_recovers_completed_visible_attempt_after_parser_repair(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import _prior_completed_patch_entries
+
+    ledger_root = tmp_path / "task_card_worker"
+    session_root = ledger_root / "cards" / "visible_cli_sessions" / "tc_core"
+    session_root.mkdir(parents=True)
+    stdout_path = session_root / "stdout.log"
+    log_text = (
+        '\ufeffpython.exe : workflow_progress {"event": "workflow_progress"}\r\n'
+        '{"run": {"run_id": "run_core"}, "evidence_id": "evidence_core", "review_decision": "pass", '
+        '"pr_ready_summary": {"bounded_patch": {"changed_files": ["assets/scripts/Core.ts"], '
+        '"applied_patch_hash": "hash_core"}, "tests": {"status": "passed"}}}\r\n'
+    )
+    stdout_path.write_bytes(log_text.encode("utf-16-le"))
+    ledger = {
+        "schema_version": "commercial_game_same_project_patch_ledger_v1",
+        "entries": [
+            {
+                "task_card_id": "tc_core",
+                "status": "failed",
+                "failure_class": "workflowctl_child_json_parse_failed",
+                "attempts": [
+                    {
+                        "status": "failed",
+                        "failure_class": "workflowctl_child_json_parse_failed",
+                        "receipt_id": "receipt_core",
+                        "child_run_id": "run_core",
+                        "child_attempt_id": "attempt_core",
+                        "worker_adapter": "codex",
+                        "execution_visibility_mode": "human_visible_cli_enforced",
+                        "visible_cli_session": {
+                            "status": "completed",
+                            "pid": 1234,
+                            "argv": ["workflowctl", "run", "from-task-card"],
+                            "cwd": tmp_path.as_posix(),
+                            "stdout_log_path": stdout_path.as_posix(),
+                            "stderr_log_path": (session_root / "stderr.log").as_posix(),
+                            "stream_log_path": (session_root / "stream.jsonl").as_posix(),
+                            "started_at": "2026-05-03T00:00:00+00:00",
+                            "return_code": 0,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    (ledger_root / "same_project_patch_ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
+
+    completed = _prior_completed_patch_entries(ledger_root)
+
+    recovered = completed["tc_core"]
+    assert recovered["status"] == "completed"
+    assert recovered["receipt_id"] == "receipt_core"
+    assert recovered["changed_files"] == ["assets/scripts/Core.ts"]
+    assert recovered["final_test_status"] == "passed"
+    assert recovered["mutation_result"]["recovered_from_visible_cli_log"] is True
 
 
 def test_commercial_task_worker_cli_classifies_stdout_silence_with_live_db_heartbeat(

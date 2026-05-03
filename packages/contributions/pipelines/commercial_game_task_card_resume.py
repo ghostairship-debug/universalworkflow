@@ -18,6 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-card-path", required=True)
     parser.add_argument("--task-card-ref", required=True)
     parser.add_argument("--adapter", default="codex")
+    parser.add_argument("--execution-visibility-mode", default=None)
     parser.add_argument("--max-fix-iterations", type=int, default=3)
     parser.add_argument("--write-set", action="append", default=[])
     parser.add_argument("--read-set", action="append", default=[])
@@ -41,6 +42,12 @@ def main(argv: list[str] | None = None) -> int:
         execution_mode="same_project_patch",
         provider_lane=args.adapter,
         risk_level="high",
+        metadata={
+            "execution_visibility_mode": args.execution_visibility_mode,
+            "human_visible_cli_required": args.execution_visibility_mode == "human_visible_cli_enforced",
+        }
+        if args.execution_visibility_mode
+        else {},
     )
     result = run_task_card_patch_via_workflowctl(
         root=Path(args.workspace_root),
@@ -54,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         test_commands=list(args.test_command),
         max_fix_iterations=args.max_fix_iterations,
         adapter_name=args.adapter,
+        execution_visibility_mode=args.execution_visibility_mode,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") == "completed" else 1

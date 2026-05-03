@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 import inspect
@@ -245,6 +246,10 @@ def _run_json_command(
             idle_timeout_seconds=idle_timeout_seconds,
             provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
             material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+            adaptive_wall_timeout_extension_seconds=adaptive_wall_timeout_extension_seconds,
+            adaptive_wall_timeout_max_extensions=adaptive_wall_timeout_max_extensions,
+            adaptive_wall_timeout_absolute_max_seconds=adaptive_wall_timeout_absolute_max_seconds,
+            adaptive_wall_timeout_progress_window_seconds=adaptive_wall_timeout_progress_window_seconds,
             db_path=db_path,
             task_goal=task_goal,
             receipt_id=receipt_id,
@@ -377,6 +382,10 @@ def _run_visible_json_command(
     idle_timeout_seconds: int,
     provider_output_idle_timeout_seconds: int | None,
     material_progress_idle_timeout_seconds: int | None,
+    adaptive_wall_timeout_extension_seconds: int | None,
+    adaptive_wall_timeout_max_extensions: int | None,
+    adaptive_wall_timeout_absolute_max_seconds: int | None,
+    adaptive_wall_timeout_progress_window_seconds: int | None,
     db_path: Path | None,
     task_goal: str | None,
     receipt_id: str | None,
@@ -412,6 +421,12 @@ def _run_visible_json_command(
     }
     _write_json(session_path, session)
     _append_stream_event(stream_path, {"event": "visible_cli_starting", "created_at": now, "argv": command})
+    command_metadata = {
+        "adaptive_wall_timeout_extension_seconds": adaptive_wall_timeout_extension_seconds,
+        "adaptive_wall_timeout_max_extensions": adaptive_wall_timeout_max_extensions,
+        "adaptive_wall_timeout_absolute_max_seconds": adaptive_wall_timeout_absolute_max_seconds,
+        "adaptive_wall_timeout_progress_window_seconds": adaptive_wall_timeout_progress_window_seconds,
+    }
     if not hasattr(subprocess, "CREATE_NEW_CONSOLE"):
         session.update({"status": "unavailable", "ended_at": datetime.now(UTC).isoformat()})
         _write_json(session_path, session)
@@ -427,6 +442,7 @@ def _run_visible_json_command(
             idle_timeout_seconds=idle_timeout_seconds,
             provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
             material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+            **command_metadata,
             payload=None,
             child_state={},
         )
@@ -435,8 +451,9 @@ def _run_visible_json_command(
     stdout_ps = str(stdout_path).replace("'", "''")
     inner_command = "& " + " ".join(_powershell_quote_arg(item) for item in command)
     powershell_command = (
-        f"& {{ {inner_command} 2>&1 | "
-        f"Tee-Object -FilePath '{stdout_ps}'; exit $LASTEXITCODE }}"
+        f"& {{ {inner_command} 2>&1 | ForEach-Object {{ $_; "
+        f"$_ | Out-File -FilePath '{stdout_ps}' -Encoding utf8 -Append }}; "
+        f"$code = $LASTEXITCODE; exit $code }}"
     )
     launch_cmd = [
         "powershell.exe",
@@ -469,6 +486,7 @@ def _run_visible_json_command(
             idle_timeout_seconds=idle_timeout_seconds,
             provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
             material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+            **command_metadata,
             payload=None,
             child_state={},
         )
@@ -477,6 +495,10 @@ def _run_visible_json_command(
     _append_stream_event(stream_path, {"event": "visible_cli_started", "created_at": datetime.now(UTC).isoformat(), "pid": proc.pid})
     started = time.monotonic()
     last_activity = started
+    last_provider_output = started
+    last_material_progress = started
+    extension_count = 0
+    effective_wall_timeout = timeout_seconds
     last_stdout_size = 0
     last_stderr_size = 0
     timeout_type: str | None = None
@@ -500,25 +522,57 @@ def _run_visible_json_command(
                 probe_payload.get("provider_output_event_count") != last_probe_counts.get("provider_output_event_count")
                 or probe_payload.get("material_progress_event_count") != last_probe_counts.get("material_progress_event_count")
             ):
+                if probe_payload.get("provider_output_event_count") != last_probe_counts.get("provider_output_event_count"):
+                    last_provider_output = now_mono
+                if probe_payload.get("material_progress_event_count") != last_probe_counts.get("material_progress_event_count"):
+                    last_material_progress = now_mono
                 last_probe_counts = dict(probe_payload)
                 last_activity = now_mono
-        if now_mono - started > timeout_seconds:
-            timeout_type = "wall_timeout"
+        if (
+            provider_output_idle_timeout_seconds is not None
+            and now_mono - last_provider_output > provider_output_idle_timeout_seconds
+        ):
+            timeout_type = "provider_output_idle_timeout"
             break
+        if (
+            material_progress_idle_timeout_seconds is not None
+            and now_mono - last_material_progress > material_progress_idle_timeout_seconds
+        ):
+            timeout_type = "provider_no_material_progress_timeout"
+            break
+        if now_mono - started > effective_wall_timeout:
+            progress_window = (
+                adaptive_wall_timeout_progress_window_seconds
+                or material_progress_idle_timeout_seconds
+                or idle_timeout_seconds
+            )
+            can_extend = (
+                adaptive_wall_timeout_extension_seconds is not None
+                and extension_count < (adaptive_wall_timeout_max_extensions or 0)
+                and last_probe_counts.get("material_progress_event_count", 0) > 0
+                and now_mono - last_material_progress <= progress_window
+            )
+            next_effective = effective_wall_timeout + (adaptive_wall_timeout_extension_seconds or 0)
+            within_absolute_max = (
+                adaptive_wall_timeout_absolute_max_seconds is None
+                or next_effective <= adaptive_wall_timeout_absolute_max_seconds
+            )
+            if can_extend and within_absolute_max:
+                effective_wall_timeout = next_effective
+                extension_count += 1
+            else:
+                timeout_type = "adaptive_wall_timeout_exhausted" if adaptive_wall_timeout_extension_seconds is not None else "wall_timeout"
+                break
         if now_mono - last_activity > idle_timeout_seconds:
             timeout_type = "idle_timeout"
             break
         time.sleep(1.0)
     if timeout_type:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _terminate_visible_process_tree(proc)
     return_code = proc.wait()
     ended = datetime.now(UTC).isoformat()
-    stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
-    stderr = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
+    stdout = _read_log_text(stdout_path)
+    stderr = _read_log_text(stderr_path)
     payload = _parse_json_from_stdout(stdout)
     child_state = (
         _inspect_child_workflow_state(db_path=db_path, task_goal=task_goal, receipt_id=receipt_id)
@@ -549,6 +603,12 @@ def _run_visible_json_command(
         "stdout_log_path": stdout_path.as_posix(),
         "stderr_log_path": stderr_path.as_posix(),
         "stream_log_path": stream_path.as_posix(),
+        "last_provider_output_age_seconds": max(0.0, time.monotonic() - last_provider_output),
+        "last_material_progress_age_seconds": max(0.0, time.monotonic() - last_material_progress),
+        "adaptive_wall_timeout_extension_count": extension_count,
+        "adaptive_wall_timeout_effective_seconds": effective_wall_timeout,
+        "adaptive_wall_timeout_absolute_max_seconds": adaptive_wall_timeout_absolute_max_seconds,
+        "adaptive_wall_timeout_exhausted": timeout_type == "adaptive_wall_timeout_exhausted",
         **last_probe_counts,
     }
     status = "completed" if return_code == 0 and isinstance(payload, dict) else "failed"
@@ -565,6 +625,28 @@ def _run_visible_json_command(
                 idle_timeout_seconds=idle_timeout_seconds,
             )
         )
+        if child_state.get("run_id") and _child_was_terminated_by_wrapper(watchdog):
+            _close_child_workflow(
+                db_path=db_path,
+                child_state=child_state,
+                failure_class=failure_class,
+                receipt_id=receipt_id,
+                command=command,
+            )
+            for nested_state in child_state.get("nested_child_states") or []:
+                if isinstance(nested_state, dict) and str(nested_state.get("run_status") or "") not in {
+                    "completed",
+                    "failed",
+                    "blocked",
+                    "cancelled",
+                }:
+                    _close_child_workflow(
+                        db_path=db_path,
+                        child_state=nested_state,
+                        failure_class=failure_class,
+                        receipt_id=receipt_id,
+                        command=command,
+                    )
     result = _visible_command_result(
         status=status,
         failure_class=failure_class,
@@ -577,6 +659,7 @@ def _run_visible_json_command(
         idle_timeout_seconds=idle_timeout_seconds,
         provider_output_idle_timeout_seconds=provider_output_idle_timeout_seconds,
         material_progress_idle_timeout_seconds=material_progress_idle_timeout_seconds,
+        **command_metadata,
         payload=payload,
         child_state=child_state,
         watchdog=watchdog,
@@ -584,6 +667,25 @@ def _run_visible_json_command(
     if isinstance(payload, dict):
         result["child_run_id"] = payload.get("run", {}).get("run_id")
     return result
+
+
+def _terminate_visible_process_tree(proc: subprocess.Popen[Any]) -> None:
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError:
+            proc.terminate()
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 def _visible_command_result(
@@ -599,12 +701,17 @@ def _visible_command_result(
     idle_timeout_seconds: int,
     provider_output_idle_timeout_seconds: int | None,
     material_progress_idle_timeout_seconds: int | None,
-    payload: Any,
-    child_state: dict[str, Any],
+    adaptive_wall_timeout_extension_seconds: int | None = None,
+    adaptive_wall_timeout_max_extensions: int | None = None,
+    adaptive_wall_timeout_absolute_max_seconds: int | None = None,
+    adaptive_wall_timeout_progress_window_seconds: int | None = None,
+    payload: Any = None,
+    child_state: dict[str, Any] | None = None,
     watchdog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
-    stderr = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
+    stdout = _read_log_text(stdout_path)
+    stderr = _read_log_text(stderr_path)
+    child_state = child_state or {}
     return {
         "return_code": return_code,
         "stdout_preview": stdout[-PREVIEW_LIMIT:],
@@ -614,6 +721,10 @@ def _visible_command_result(
         "idle_timeout_seconds": idle_timeout_seconds,
         "provider_output_idle_timeout_seconds": provider_output_idle_timeout_seconds,
         "material_progress_idle_timeout_seconds": material_progress_idle_timeout_seconds,
+        "adaptive_wall_timeout_extension_seconds": adaptive_wall_timeout_extension_seconds,
+        "adaptive_wall_timeout_max_extensions": adaptive_wall_timeout_max_extensions,
+        "adaptive_wall_timeout_absolute_max_seconds": adaptive_wall_timeout_absolute_max_seconds,
+        "adaptive_wall_timeout_progress_window_seconds": adaptive_wall_timeout_progress_window_seconds,
         "status": status,
         "failure_class": failure_class,
         "payload": payload,
@@ -628,7 +739,9 @@ def _visible_command_result(
             "stream_log_path": stream_path.as_posix(),
             "session_path": session.get("session_path"),
         },
-        "recoverable_suggestion": None if status == "completed" else "Inspect mirrored visible CLI logs and rerun with a fresh receipt.",
+        "recoverable_suggestion": None
+        if status == "completed"
+        else _recoverable_suggestion_for_failure(failure_class or "", watchdog or {}),
     }
 
 
@@ -639,6 +752,20 @@ def _append_stream_event(path: Path, payload: dict[str, Any]) -> None:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_log_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    data = path.read_bytes()
+    if not data:
+        return ""
+    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    sample = data[: min(len(data), 4096)]
+    if sample.count(b"\x00") > max(8, len(sample) // 8):
+        return data.decode("utf-16-le", errors="replace")
+    return data.decode("utf-8", errors="replace")
 
 
 def _safe_name(value: str) -> str:
@@ -673,13 +800,23 @@ def _parse_json_from_stdout(stdout: str) -> dict[str, Any] | list[Any] | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if 0 <= start < end:
+        decoder = json.JSONDecoder()
+        best_payload: dict[str, Any] | list[Any] | None = None
+        best_end = -1
+        for index, char in enumerate(text):
+            if char not in {"{", "["}:
+                continue
             try:
-                return json.loads(text[start : end + 1])
+                payload, relative_end = decoder.raw_decode(text[index:])
             except json.JSONDecodeError:
-                return None
+                continue
+            absolute_end = index + relative_end
+            if absolute_end > best_end and isinstance(payload, (dict, list)):
+                best_payload = payload
+                best_end = absolute_end
+            if not text[absolute_end:].strip():
+                return payload if isinstance(payload, (dict, list)) else None
+        return best_payload
     return None
 
 

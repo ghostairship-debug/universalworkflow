@@ -29,7 +29,11 @@ from packages.contributions.pipelines.commercial_game_evidence_contracts import 
     build_product_depth_evidence,
     build_same_project_patch_ledger_contract,
 )
-from packages.contributions.pipelines.commercial_game_task_worker_cli import run_task_card_patch_via_workflowctl
+from packages.contributions.pipelines.commercial_game_task_worker_cli import (
+    _parse_json_from_stdout,
+    _read_log_text,
+    run_task_card_patch_via_workflowctl,
+)
 from packages.core_domain.task_card_store import task_card_execution_eligibility
 
 
@@ -142,6 +146,7 @@ def execute_same_project_task_cards(
     card_root.mkdir(parents=True, exist_ok=True)
     entries: list[dict[str, Any]] = []
     prior_completed_entries = _prior_completed_patch_entries(ledger_root)
+    prior_retry_adapters = _prior_retry_adapter_hints(ledger_root)
     if not task_cards:
         return _write_ledger(
             ledger_root,
@@ -215,6 +220,7 @@ def execute_same_project_task_cards(
             max_fix_iterations=max_repair_attempts,
             max_runtime_attempts=TASK_CARD_RUNTIME_MAX_ATTEMPTS,
             execution_visibility_mode=execution_visibility_mode,
+            preferred_adapter_name=prior_retry_adapters.get(card.task_card_id),
         )
         normalized_entry = _normalize_patch_ledger_entry(
             card,
@@ -268,14 +274,96 @@ def _prior_completed_patch_entries(ledger_root: Path) -> dict[str, dict[str, Any
         return {}
     completed: dict[str, dict[str, Any]] = {}
     for entry in entries:
-        if not isinstance(entry, dict) or entry.get("status") != "completed":
+        if not isinstance(entry, dict):
             continue
-        if not _completed_patch_entry_has_fresh_execution(entry):
+        candidate = entry if entry.get("status") == "completed" else _recover_completed_entry_from_visible_attempt(entry)
+        if candidate is None or not _completed_patch_entry_has_fresh_execution(candidate):
+            continue
+        task_card_id = str(candidate.get("task_card_id") or "")
+        if task_card_id:
+            completed[task_card_id] = candidate
+    return completed
+
+
+def _recover_completed_entry_from_visible_attempt(entry: dict[str, Any]) -> dict[str, Any] | None:
+    attempts = entry.get("attempts") if isinstance(entry.get("attempts"), list) else []
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        session = attempt.get("visible_cli_session")
+        if not isinstance(session, dict) or session.get("return_code") != 0:
+            continue
+        stdout_path = session.get("stdout_log_path")
+        if not stdout_path:
+            continue
+        payload = _parse_json_from_stdout(_read_log_text(Path(str(stdout_path))))
+        if not isinstance(payload, dict):
+            continue
+        summary = payload.get("pr_ready_summary") if isinstance(payload.get("pr_ready_summary"), dict) else {}
+        bounded_patch = summary.get("bounded_patch") if isinstance(summary.get("bounded_patch"), dict) else {}
+        tests = summary.get("tests") if isinstance(summary.get("tests"), dict) else {}
+        changed_files = bounded_patch.get("changed_files") if isinstance(bounded_patch.get("changed_files"), list) else []
+        final_test_status = str(tests.get("status") or "").strip().lower()
+        if not changed_files or final_test_status != "passed":
+            continue
+        recovered = {
+            **entry,
+            "status": "completed",
+            "failure_class": None,
+            "final_failure_class": None,
+            "retry_exhausted": False,
+            "preflight_blocker": False,
+            "receipt_id": attempt.get("receipt_id"),
+            "child_run_id": attempt.get("child_run_id") or payload.get("run", {}).get("run_id"),
+            "child_attempt_id": attempt.get("child_attempt_id"),
+            "worker_adapter": attempt.get("worker_adapter"),
+            "execution_visibility_mode": attempt.get("execution_visibility_mode"),
+            "visible_cli_session": session,
+            "visible_cli_log_paths": attempt.get("visible_cli_log_paths") or _visible_cli_log_paths({"visible_cli_session": session}),
+            "watchdog_source": attempt.get("watchdog_source") or "human_visible_cli_mirrored_logs",
+            "evidence_id": payload.get("evidence_id"),
+            "review_decision": payload.get("review_decision"),
+            "mutation_result": {
+                "changed_files": changed_files,
+                "final_test_status": final_test_status,
+                "applied_patch_hash": bounded_patch.get("applied_patch_hash"),
+                "recovered_from_visible_cli_log": True,
+            },
+            "changed_files": changed_files,
+            "final_test_status": final_test_status,
+            "applied_patch_hash": bounded_patch.get("applied_patch_hash"),
+            "continuation_required": False,
+            "continuation_reason": None,
+            "continuation_argv": None,
+            "next_continuation_argv": None,
+            "continuation_command": None,
+            "satisfaction_mode": "fresh_visible_cli_log_reclassified_after_parser_repair",
+        }
+        return recovered
+    return None
+
+
+def _prior_retry_adapter_hints(ledger_root: Path) -> dict[str, str]:
+    ledger = _read_json_dict(ledger_root / "same_project_patch_ledger.json")
+    entries = ledger.get("entries") if isinstance(ledger.get("entries"), list) else []
+    hints: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("status") == "completed":
             continue
         task_card_id = str(entry.get("task_card_id") or "")
-        if task_card_id:
-            completed[task_card_id] = entry
-    return completed
+        if not task_card_id:
+            continue
+        if _patch_root_failure_class(entry) not in {
+            "provider_no_material_progress_timeout",
+            "provider_output_idle_timeout",
+            "provider_timeout",
+        }:
+            continue
+        current_adapter = _normalize_adapter_name(entry.get("requested_adapter") or entry.get("worker_adapter"))
+        fallback = _fallback_adapter_for(current_adapter)
+        if fallback:
+            hints[task_card_id] = fallback
+    return hints
 
 
 def _ineligible_task_card_entries(
@@ -351,9 +439,12 @@ def _run_task_card_with_retry_policy(
     max_fix_iterations: int,
     max_runtime_attempts: int,
     execution_visibility_mode: str | None,
+    preferred_adapter_name: str | None = None,
 ) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
     last_entry: dict[str, Any] = {}
+    adapter_sequence = _adapter_attempt_sequence(task_card, preferred_adapter_name=preferred_adapter_name)
+    adapter_index = 0
     continuation_argv = _continuation_argv(
         root=root,
         db_path=db_path,
@@ -363,8 +454,10 @@ def _run_task_card_with_retry_policy(
         materialized={"write_set": write_set, "read_set": read_set, "test_commands": test_commands},
         max_repair_attempts=max_fix_iterations,
         entry={},
+        execution_visibility_mode=execution_visibility_mode,
     )
     for attempt_index in range(1, max_runtime_attempts + 1):
+        attempt_adapter = adapter_sequence[min(adapter_index, len(adapter_sequence) - 1)] if adapter_sequence else None
         raw_entry = runner(
             root=root,
             db_path=db_path,
@@ -376,9 +469,12 @@ def _run_task_card_with_retry_policy(
             read_set=read_set,
             test_commands=test_commands,
             max_fix_iterations=max_fix_iterations,
+            adapter_name=attempt_adapter,
             execution_visibility_mode=execution_visibility_mode,
         )
         last_entry = dict(raw_entry)
+        if attempt_adapter and not last_entry.get("requested_adapter"):
+            last_entry["requested_adapter"] = attempt_adapter
         last_entry["attempt_index"] = attempt_index
         last_entry["max_attempts"] = max_runtime_attempts
         attempt_continuation_argv = _continuation_argv(
@@ -390,6 +486,7 @@ def _run_task_card_with_retry_policy(
             materialized={"write_set": write_set, "read_set": read_set, "test_commands": test_commands},
             max_repair_attempts=max_fix_iterations,
             entry=last_entry,
+            execution_visibility_mode=execution_visibility_mode,
         )
         if str(last_entry.get("status") or "") == "completed" and not _completed_patch_entry_has_fresh_execution(last_entry):
             last_entry = {
@@ -448,6 +545,8 @@ def _run_task_card_with_retry_policy(
                 "retry_exhausted": False,
                 "preflight_blocker": False,
             }
+        if _should_switch_adapter_after_failure(last_entry) and adapter_index < len(adapter_sequence) - 1:
+            adapter_index += 1
     final_failure_class = _patch_failure_class(last_entry) or str(last_entry.get("failure_class") or "same_project_task_card_patch_failed")
     return {
         **last_entry,
@@ -537,7 +636,48 @@ def _task_card_visibility_mode(card: TaskCard) -> str | None:
         return mode
     if metadata.get("human_visible_cli_required") is True:
         return "human_visible_cli_enforced"
+    if str(card.execution_mode or "").strip() == "same_project_patch" and str(card.risk_level or "").strip().lower() == "high":
+        return "human_visible_cli_enforced"
     return None
+
+
+def _adapter_attempt_sequence(card: TaskCard, *, preferred_adapter_name: str | None = None) -> list[str]:
+    initial = _normalize_adapter_name(preferred_adapter_name or card.provider_lane or "codex")
+    sequence = [initial]
+    fallback = _fallback_adapter_for(initial)
+    if fallback and fallback not in sequence:
+        sequence.append(fallback)
+    return sequence
+
+
+def _fallback_adapter_for(adapter_name: Any) -> str | None:
+    normalized = _normalize_adapter_name(adapter_name)
+    if normalized == "codex":
+        return "opencode"
+    if normalized == "opencode":
+        return "codex"
+    return None
+
+
+def _normalize_adapter_name(adapter_name: Any) -> str:
+    normalized = str(adapter_name or "codex").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"codex_cli", "codex_cli_login"}:
+        return "codex"
+    if normalized == "opencode_cli":
+        return "opencode"
+    if normalized in {"shell", "noop", "dry_run", "dry-run"}:
+        return "codex"
+    return normalized or "codex"
+
+
+def _should_switch_adapter_after_failure(entry: dict[str, Any]) -> bool:
+    return _patch_root_failure_class(entry) in {
+        "provider_no_material_progress_timeout",
+        "provider_output_idle_timeout",
+        "provider_timeout",
+        "workflow_child_stalled",
+        "child_stdout_silent",
+    }
 
 
 def _visible_cli_session_valid(entry: dict[str, Any]) -> bool:
@@ -622,19 +762,55 @@ def collect_project_runtime_evidence(
         browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path
         _write_json(runtime_evidence_root / "browser_playtest_ledger.json", browser_playtest_ledger)
         blockers.extend(browser_playtest_ledger.get("blockers") or [])
+    runtime_evidence_root.mkdir(parents=True, exist_ok=True)
+    if build_ledger is None:
+        build_ledger = build_build_ledger(None)
+        build_ledger_path = (runtime_evidence_root / "build_ledger.json").as_posix()
+        build_ledger["evidence_path"] = build_ledger_path
+        _write_json(runtime_evidence_root / "build_ledger.json", build_ledger)
+    if browser_playtest_ledger is None:
+        browser_playtest_ledger = build_browser_playtest_ledger(None)
+        browser_playtest_ledger_path = (runtime_evidence_root / "browser_playtest_ledger.json").as_posix()
+        browser_playtest_ledger["evidence_path"] = browser_playtest_ledger_path
+        _write_json(runtime_evidence_root / "browser_playtest_ledger.json", browser_playtest_ledger)
     feature_evidence = _load_project_feature_evidence(project_dir)
+    commercial_feature_coverage = feature_evidence.get("commercial_feature_coverage", {})
+    player_visible_checks = feature_evidence.get("player_visible_checks", {})
+    gameplay_semantic_evidence = build_gameplay_semantic_evidence(
+        feature_evidence.get("gameplay_semantic_evidence"),
+        feature_coverage=commercial_feature_coverage,
+        playtest=playtest,
+    )
+    product_body_evidence = build_product_body_evidence(
+        feature_evidence.get("product_body_evidence"),
+        gameplay_semantic_evidence=gameplay_semantic_evidence,
+        playtest=playtest,
+    )
+    product_depth_evidence = build_product_depth_evidence(
+        product_depth=feature_evidence.get("product_depth_evidence"),
+        feature_coverage=commercial_feature_coverage,
+        player_visible_checks=player_visible_checks,
+        playtest=playtest,
+    )
+    for filename, payload in [
+        ("gameplay_semantic_evidence.json", gameplay_semantic_evidence),
+        ("product_body_evidence.json", product_body_evidence),
+        ("product_depth_evidence.json", product_depth_evidence),
+    ]:
+        payload["evidence_path"] = (runtime_evidence_root / filename).as_posix()
+        _write_json(runtime_evidence_root / filename, payload)
     return {
         "schema_version": "commercial_game_same_project_runtime_evidence_v1",
         "technical_smoke_go": project_dir.exists(),
         "production_scaffold_go": False,
         "commercial_playable_go": False,
         "commercial_playable_blockers": _dedupe_strings(blockers),
-        "commercial_feature_coverage": feature_evidence.get("commercial_feature_coverage", {}),
-        "player_visible_checks": feature_evidence.get("player_visible_checks", {}),
+        "commercial_feature_coverage": commercial_feature_coverage,
+        "player_visible_checks": player_visible_checks,
         "manual_player_evidence": feature_evidence.get("manual_player_evidence", {}),
-        "product_depth_evidence": feature_evidence.get("product_depth_evidence", {}),
-        "gameplay_semantic_evidence": feature_evidence.get("gameplay_semantic_evidence", {}),
-        "product_body_evidence": feature_evidence.get("product_body_evidence", {}),
+        "product_depth_evidence": product_depth_evidence,
+        "gameplay_semantic_evidence": gameplay_semantic_evidence,
+        "product_body_evidence": product_body_evidence,
         "product_body_baseline": feature_evidence.get("product_body_baseline", {}),
         "development_readiness_validation_gates": feature_evidence.get("development_readiness_validation_gates", {}),
         "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
@@ -956,6 +1132,7 @@ def _normalize_patch_ledger_entry(
         materialized=materialized,
         max_repair_attempts=max_repair_attempts,
         entry=entry,
+        execution_visibility_mode=execution_visibility_mode,
     )
     continuation_required = status != "completed"
     watchdog = entry.get("watchdog") if isinstance(entry.get("watchdog"), dict) else {}
@@ -1406,6 +1583,7 @@ def _continuation_argv(
     materialized: dict[str, list[str]],
     max_repair_attempts: int,
     entry: dict[str, Any],
+    execution_visibility_mode: str | None = None,
 ) -> list[str]:
     argv = [
         sys.executable,
@@ -1429,6 +1607,9 @@ def _continuation_argv(
         argv.extend(["--adapter", adapter_name])
     if db_path is not None:
         argv.extend(["--db-path", db_path.as_posix()])
+    mode = str(execution_visibility_mode or entry.get("execution_visibility_mode") or "").strip()
+    if mode:
+        argv.extend(["--execution-visibility-mode", mode])
     for item in materialized["write_set"]:
         argv.extend(["--write-set", item])
     for item in materialized["read_set"]:
@@ -1578,6 +1759,7 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
                 if isinstance(value, list):
                     merged.setdefault(key, [])
                     merged[key].extend(value)
+    _merge_runtime_evidence_artifacts(merged, project_dir)
     baseline = _read_json_dict(project_dir / "workflow_product_body_baseline.json")
     if baseline:
         merged["product_body_baseline"] = baseline
@@ -1592,6 +1774,115 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
         if isinstance(merged.get(key), list):
             merged[key] = _dedupe_strings(merged[key])
     return merged
+
+
+def _merge_runtime_evidence_artifacts(merged: dict[str, Any], project_dir: Path) -> None:
+    evidence_root = project_dir / "workflow_runtime_evidence"
+    runtime_artifacts: list[str] = []
+    gameplay_raw = _read_json_dict(evidence_root / "gameplay_semantic_evidence.raw.json")
+    if gameplay_raw:
+        merged["gameplay_semantic_evidence"] = gameplay_raw
+    product_body_raw = _read_json_dict(evidence_root / "product_body_evidence.raw.json")
+    if product_body_raw:
+        merged["product_body_evidence"] = product_body_raw
+    level_goal = _read_json_dict(evidence_root / "level_goal_evidence.json")
+    if level_goal:
+        runtime_artifacts.append((evidence_root / "level_goal_evidence.json").as_posix())
+        _merge_level_goal_evidence(merged, level_goal)
+    core_loop = _read_json_dict(evidence_root / "core_loop_runtime_evidence.json")
+    if core_loop:
+        runtime_artifacts.append((evidence_root / "core_loop_runtime_evidence.json").as_posix())
+        _merge_core_loop_evidence(merged, core_loop)
+    shop_gallery = _read_json_dict(evidence_root / "commercial_shop_skin_gallery_evidence.json")
+    if shop_gallery:
+        runtime_artifacts.append((evidence_root / "commercial_shop_skin_gallery_evidence.json").as_posix())
+        _merge_shop_skin_gallery_evidence(merged, shop_gallery)
+    audio_polish = _read_json_dict(evidence_root / "audio_feedback_polish_evidence.json")
+    if audio_polish:
+        runtime_artifacts.append((evidence_root / "audio_feedback_polish_evidence.json").as_posix())
+        _merge_audio_feedback_polish_evidence(merged, audio_polish)
+    if core_loop and shop_gallery and audio_polish:
+        for key in ("gameplay_semantic_evidence", "product_body_evidence"):
+            payload = merged.setdefault(key, {})
+            payload["baseline_only"] = False
+            payload["runtime_phase"] = True
+            payload["runtime_artifact_paths"] = runtime_artifacts
+            payload["evidence_path"] = evidence_root.as_posix()
+
+
+def _merge_level_goal_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    product_depth = merged.setdefault("product_depth_evidence", {})
+    goals: list[dict[str, Any]] = []
+    for level in payload.get("levels") or []:
+        if not isinstance(level, dict):
+            continue
+        for goal in level.get("goals") or []:
+            if isinstance(goal, dict):
+                goals.append(
+                    {
+                        "id": goal.get("id"),
+                        "goal": goal.get("visible_label") or goal.get("label") or goal.get("id"),
+                        "level_id": level.get("level_id") or level.get("id"),
+                    }
+                )
+    if goals:
+        product_depth["level_goals"] = goals
+        product_depth["distinctLevelGoalCount"] = len({str(goal.get("id") or goal.get("goal")).lower() for goal in goals})
+        merged["level_goals"] = goals
+        merged["distinctLevelGoalCount"] = product_depth["distinctLevelGoalCount"]
+    features = merged.setdefault("commercial_feature_coverage", {})
+    if payload.get("levels"):
+        features["levelFlowPlayable"] = True
+    if _dict(payload.get("revive_and_failure_rules")):
+        features["failureReviveFeedback"] = True
+
+
+def _merge_core_loop_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    features = merged.setdefault("commercial_feature_coverage", {})
+    if payload.get("state_transitions"):
+        features["levelFlowPlayable"] = True
+    if any("failed" in str(transition.get("to") or "").lower() for transition in payload.get("state_transitions") or [] if isinstance(transition, dict)):
+        features["failureReviveFeedback"] = True
+
+
+def _merge_shop_skin_gallery_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    features = merged.setdefault("commercial_feature_coverage", {})
+    visible = merged.setdefault("player_visible_checks", {})
+    if _dict(payload.get("shop_ownership_state")):
+        features["shopOwnershipStates"] = True
+        visible["shopOwnershipStates"] = True
+    if _dict(payload.get("skin_equipped_visual_change")):
+        features["skinEquippedVisualChange"] = True
+        visible["skinEquippedVisualChange"] = True
+    if _dict(payload.get("gallery_collection_state")):
+        visible["galleryCollectionState"] = True
+
+
+def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    features = merged.setdefault("commercial_feature_coverage", {})
+    visible = merged.setdefault("player_visible_checks", {})
+    audio = _dict(payload.get("audio_runtime_evidence"))
+    feedback = _dict(payload.get("feedback_animation_evidence"))
+    polish = _dict(payload.get("polish_runtime_evidence"))
+    session = _dict(payload.get("human_visible_cli_session"))
+    audio_runtime_verified = bool(audio.get("runtime_bound") and audio.get("event_bindings_count")) or bool(session.get("audio_triggered"))
+    feedback_verified = bool(feedback.get("runtime_bound") and feedback.get("binding_count")) or bool(session.get("feedback_animation_triggered"))
+    polish_verified = bool(polish.get("runtime_bound") and polish.get("effects_count")) or bool(session.get("polish_effects_applied"))
+    if audio_runtime_verified:
+        features["audioPlaybackVerified"] = True
+        features["bgmStarted"] = True
+        features["sfxPlaybackVerified"] = True
+        features["volumeToggleUsable"] = True
+        visible["audioPlaybackVerified"] = True
+        visible["volumeToggleUsable"] = True
+    if feedback_verified:
+        features["animationFeedbackVerified"] = True
+        visible["animationFeedbackVerified"] = True
+    if polish_verified:
+        visible["polishEffectsApplied"] = True
+    feedback_types = {str(item).lower() for item in feedback.get("feedback_types") or []}
+    if {"failure", "success"} & feedback_types:
+        features["failureReviveFeedback"] = True
 
 
 def _failed_browser_playtest_evidence(*, build_output_path: str | Path, evidence_dir: str | Path, exc: Exception) -> dict[str, Any]:
