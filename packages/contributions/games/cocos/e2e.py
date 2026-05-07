@@ -2009,31 +2009,20 @@ def _copy_commercial_runtime_assets_to_build(*, project: Path, build_output: Pat
 
 
 def _install_browser_runtime_bridge(*, project: Path, build_output: Path) -> dict[str, Any]:
-    """Install a post-build browser bridge that exposes model-backed runtime state."""
+    """Install a project-provided post-build bridge without falling back to a gameplay template."""
     index_html = build_output / "index.html"
-    runtime_source_sets = [
-        [
-            project / "assets" / "scripts" / "gameplay" / "CommercialCoreLoopRuntime.ts",
-            project / "assets" / "scripts" / "gameplay" / "CommercialGameplaySemanticBridge.ts",
-            project / "assets" / "scripts" / "AudioFeedbackController.ts",
-        ],
-        [
-            project / "assets" / "scripts" / "BoardModel.ts",
-            project / "assets" / "scripts" / "RuleEngine.ts",
-            project / "assets" / "scripts" / "SemanticTestBridge.ts",
-            project / "assets" / "scripts" / "AudioFeedbackController.ts",
-        ],
+    bridge_source_candidates = [
+        project / "assets" / "scripts" / "workflow-e2e-runtime-bridge.js",
+        project / "assets" / "scripts" / "gameplay" / "workflow-e2e-runtime-bridge.js",
+        project / "workflow_runtime_evidence" / "workflow-e2e-runtime-bridge.js",
     ]
-    runtime_sources = next(
-        (source_set for source_set in runtime_source_sets if all(path.exists() for path in source_set)),
-        runtime_source_sets[0],
-    )
-    missing = [path.relative_to(project).as_posix() for path in runtime_sources if not path.exists()]
-    if missing:
+    bridge_source = next((path for path in bridge_source_candidates if path.exists()), None)
+    if bridge_source is None:
         return {
             "installed": False,
-            "reason": "runtime_source_missing",
-            "missing_runtime_sources": missing,
+            "reason": "project_runtime_bridge_source_missing",
+            "template_policy": "no_default_block_puzzle_browser_bridge",
+            "searched_paths": [path.relative_to(project).as_posix() for path in bridge_source_candidates],
         }
     if not index_html.exists():
         return {
@@ -2042,7 +2031,7 @@ def _install_browser_runtime_bridge(*, project: Path, build_output: Path) -> dic
         }
 
     bridge_path = build_output / "workflow-e2e-runtime-bridge.js"
-    bridge_path.write_text(_browser_runtime_bridge_script(), encoding="utf-8")
+    bridge_path.write_text(bridge_source.read_text(encoding="utf-8"), encoding="utf-8")
     html = index_html.read_text(encoding="utf-8", errors="replace")
     script_tag = '  <script src="workflow-e2e-runtime-bridge.js" charset="utf-8"></script>'
     if "workflow-e2e-runtime-bridge.js" not in html:
@@ -2060,8 +2049,9 @@ def _install_browser_runtime_bridge(*, project: Path, build_output: Path) -> dic
         "installed": True,
         "bridge_script": bridge_path.as_posix(),
         "index_html": index_html.as_posix(),
-        "runtime_source_policy": "model_state_view_only_not_dom_event_substitute",
-        "runtime_sources": [path.as_posix() for path in runtime_sources],
+        "runtime_source_policy": "project_provided_model_state_view_only_not_dom_event_substitute",
+        "runtime_sources": [bridge_source.as_posix()],
+        "template_policy": "no_default_block_puzzle_browser_bridge",
         "forbidden_claim": "browser_bridge_does_not_set_commercial_playable_go",
     }
     evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2069,8 +2059,9 @@ def _install_browser_runtime_bridge(*, project: Path, build_output: Path) -> dic
         "installed": True,
         "bridge_script": bridge_path.as_posix(),
         "evidence_path": evidence_path.as_posix(),
-        "runtime_source_count": len(runtime_sources),
-        "runtime_sources": [path.as_posix() for path in runtime_sources],
+        "runtime_source_count": 1,
+        "runtime_sources": [bridge_source.as_posix()],
+        "template_policy": "no_default_block_puzzle_browser_bridge",
     }
 
 

@@ -5,7 +5,7 @@
   const COLS = 10;
   const BOARD = { x: 18, y: 205, cell: 32, gap: 3 };
   const STEP = BOARD.cell + BOARD.gap;
-  const DRAG_LIFT = 88;
+  const DRAG_LIFT = 0;
   const STORAGE = 'workflow.blockPuzzle.commercial.zh.v2';
   const COLORS = {
     ink: '#f8fbff',
@@ -1124,6 +1124,7 @@
   }
 
   function drawCell(x, y, size, color) {
+    const previousAlpha = ctx.globalAlpha;
     const g = ctx.createLinearGradient(x, y, x + size, y + size);
     g.addColorStop(0, '#ffffff');
     g.addColorStop(0.09, color);
@@ -1134,13 +1135,13 @@
       ctx.save();
       roundedRect(x + 2, y + 2, size - 4, size - 4, 6);
       ctx.clip();
-      ctx.globalAlpha = 0.42;
+      ctx.globalAlpha = previousAlpha * 0.42;
       ctx.drawImage(blockImage, x + 2, y + 2, size - 4, size - 4);
       ctx.restore();
     }
-    ctx.globalAlpha = 0.2;
+    ctx.globalAlpha = previousAlpha * 0.2;
     fillRound(x + 6, y + 5, size - 12, 5, 3, '#ffffff', null);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = previousAlpha;
   }
 
   function drawProps() {

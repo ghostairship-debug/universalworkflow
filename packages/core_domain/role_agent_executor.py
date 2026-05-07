@@ -12,7 +12,10 @@ from packages.core_domain.repositories import RunRepository, TaskRepository
 from packages.core_domain.task_card_store import export_task_cards_markdown, task_card_quality_report
 from packages.core_domain.unified_project_brief import build_unified_project_brief
 from packages.contributions.games.game_design_ir import build_game_design_spec
-from packages.contributions.games.game_task_card_generation import build_game_production_task_cards_from_design_spec
+from packages.contributions.games.game_task_card_generation import (
+    build_game_production_task_cards_from_design_spec,
+    build_product_phase_candidates_from_design_spec,
+)
 
 
 SOURCE_MATERIAL_POLICY = "no_delete_no_merge_no_rename_only_augment"
@@ -490,8 +493,16 @@ def _structured_output_for_role(
             "source_requirement_ids": _role_requirement_ids("multimodal_generation_agent", source_requirements),
         }
     if role_id == "task_card_generation_agent":
+        game_design_spec = _game_design_spec_from_brief_manifest(brief_manifest)
         return {
             "context": context,
+            "product_phase_candidates": [
+                candidate.to_dict()
+                for candidate in build_product_phase_candidates_from_design_spec(
+                    run_id=_safe_id(pipeline_id or stage.stage_id),
+                    spec=game_design_spec,
+                )
+            ],
             "stage_internal_phase_graph": _stage_internal_phase_graph(
                 pipeline_id or stage.stage_id,
                 pipeline_goal=pipeline_goal or stage.goal,
@@ -1062,12 +1073,52 @@ def _candidate_from_task_card(card: TaskCard) -> dict[str, Any]:
     }
 
 
+def _active_phase_blueprint_task_card_candidates(
+    *,
+    base: str,
+    pipeline_goal: str,
+    brief_manifest: dict[str, Any],
+    active_phase_name: str,
+    stage_phase: str,
+) -> list[dict[str, Any]]:
+    spec = _game_design_spec_from_brief_manifest(brief_manifest)
+    cards = build_game_production_task_cards_from_design_spec(
+        run_id=base,
+        phase_name=active_phase_name,
+        spec=spec,
+        status="active",
+    )
+    candidates = [_candidate_from_task_card(card) for card in cards]
+    for index, candidate in enumerate(candidates, start=1):
+        metadata = dict(candidate.get("metadata") or {})
+        metadata.update(
+            {
+                "active_phase_name": active_phase_name,
+                "stage_phase": stage_phase,
+                "phase_order": 1,
+                "depends_on_task_card_ids": [candidates[index - 2]["task_card_id"]] if index > 1 else [],
+                "game_design_spec_schema": spec.get("schema_version"),
+                "pipeline_goal": pipeline_goal,
+                "task_card_materialization": "phase_execution_blueprint_compiled",
+            }
+        )
+        candidate["metadata"] = metadata
+    return _attach_requirement_coverage(candidates, brief_manifest)
+
+
 def _product_body_runtime_task_card_candidates(
     *,
     base: str,
     pipeline_goal: str,
     brief_manifest: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    return _active_phase_blueprint_task_card_candidates(
+        base=base,
+        pipeline_goal=pipeline_goal,
+        brief_manifest=brief_manifest,
+        active_phase_name="Product Body Runtime And Semantic Trace Implementation",
+        stage_phase="product_body_runtime_semantic_trace",
+    )
     phase = "product_body_runtime_semantic_trace"
     active_phase_name = "Product Body Runtime And Semantic Trace Implementation"
     candidates = [
@@ -1210,6 +1261,13 @@ def _commercial_core_content_task_card_candidates(
     pipeline_goal: str,
     brief_manifest: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    return _active_phase_blueprint_task_card_candidates(
+        base=base,
+        pipeline_goal=pipeline_goal,
+        brief_manifest=brief_manifest,
+        active_phase_name="Commercial Game Core Content Implementation",
+        stage_phase="commercial_game_core_content",
+    )
     active_phase_name = "Commercial Game Core Content Implementation"
     phase = "commercial_game_core_content"
     common_write_set = [
@@ -1548,7 +1606,8 @@ def _stage_internal_phase_graph(
             "schema_version": "commercial_game_stage_internal_phase_graph_v1",
             "pipeline_id": pipeline_id,
             "active_materialization_policy": "only_open_active_phase_task_cards",
-            "task_card_materialization": "dynamic_by_source_requirement_category",
+            "task_card_materialization": "phase_execution_blueprint_compiled",
+            "phase_execution_blueprint_required": True,
             "future_phase_task_cards_materialized": False,
             "phases": [
                 {
@@ -1560,40 +1619,50 @@ def _stage_internal_phase_graph(
             ],
         }
     if _is_product_body_runtime_phase(pipeline_goal):
+        candidates = _active_phase_blueprint_task_card_candidates(
+            base=base,
+            pipeline_goal=pipeline_goal,
+            brief_manifest=brief_manifest or {},
+            active_phase_name="Product Body Runtime And Semantic Trace Implementation",
+            stage_phase="product_body_runtime_semantic_trace",
+        )
         return {
             "schema_version": "commercial_game_stage_internal_phase_graph_v1",
             "pipeline_id": pipeline_id,
             "active_materialization_policy": "only_open_active_phase_task_cards",
+            "task_card_materialization": "phase_execution_blueprint_compiled",
+            "phase_execution_blueprint_required": True,
             "future_phase_task_cards_materialized": False,
             "phases": [
                 {
                     "phase_id": f"{base}_product_body_runtime_semantic_trace",
                     "order": 1,
                     "title": "Product Body Runtime And Semantic Trace Implementation",
-                    "task_card_ids": [
-                        f"{base}_runtime_models",
-                        f"{base}_semantic_core_loop_traces",
-                        f"{base}_scene_prefab_component_evidence",
-                    ],
+                    "task_card_ids": [candidate["task_card_id"] for candidate in candidates],
                 }
             ],
         }
     if _is_commercial_core_content_phase(pipeline_goal):
+        candidates = _active_phase_blueprint_task_card_candidates(
+            base=base,
+            pipeline_goal=pipeline_goal,
+            brief_manifest=brief_manifest or {},
+            active_phase_name="Commercial Game Core Content Implementation",
+            stage_phase="commercial_game_core_content",
+        )
         return {
             "schema_version": "commercial_game_stage_internal_phase_graph_v1",
             "pipeline_id": pipeline_id,
             "active_materialization_policy": "only_open_active_phase_task_cards",
+            "task_card_materialization": "phase_execution_blueprint_compiled",
+            "phase_execution_blueprint_required": True,
             "future_phase_task_cards_materialized": False,
             "phases": [
                 {
                     "phase_id": f"{base}_commercial_game_core_content",
                     "order": 1,
                     "title": "Commercial Game Core Content Implementation",
-                    "task_card_ids": [
-                        f"{base}_core_loop_levels",
-                        f"{base}_shop_skin_gallery",
-                        f"{base}_audio_feedback_polish",
-                    ],
+                    "task_card_ids": [candidate["task_card_id"] for candidate in candidates],
                 }
             ],
         }

@@ -399,7 +399,7 @@ def test_cocos_build_copies_commercial_runtime_assets_for_web_playtest(tmp_path:
     assert (copied_root / "audio" / "sfx_clear.mp3").read_bytes() == b"mp3"
 
 
-def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path, monkeypatch) -> None:
+def test_cocos_build_does_not_install_block_puzzle_browser_bridge_by_default(tmp_path: Path, monkeypatch) -> None:
     build_output = tmp_path / "build" / "web-mobile"
     (build_output / "assets").mkdir(parents=True)
     (build_output / "index.html").write_text("<body><canvas id=\"GameCanvas\"></canvas></body>", encoding="utf-8")
@@ -424,44 +424,24 @@ def test_cocos_build_installs_model_backed_browser_runtime_bridge(tmp_path: Path
     )
 
     bridge = build["browser_runtime_bridge"]
-    assert bridge["installed"] is True
-    assert bridge["runtime_source_count"] == 3
+    assert bridge["installed"] is False
+    assert bridge["reason"] == "project_runtime_bridge_source_missing"
+    assert bridge["template_policy"] == "no_default_block_puzzle_browser_bridge"
     index_html = (build_output / "index.html").read_text(encoding="utf-8")
-    bridge_script = (build_output / "workflow-e2e-runtime-bridge.js").read_text(encoding="utf-8")
-    evidence = json.loads((tmp_path / "workflow_runtime_evidence" / "browser_runtime_bridge_injection.json").read_text(encoding="utf-8"))
-    assert "workflow-e2e-runtime-bridge.js" in index_html
-    assert "__COCOS_BLOCK_PUZZLE_E2E__" in bridge_script
-    assert "__COMMERCIAL_BLOCK_PUZZLE_RUNTIME__" in bridge_script
-    assert "CommercialCoreLoopRuntime.getSnapshot" in bridge_script
-    assert "placementResult" in bridge_script
-    assert "lineClearResult" in bridge_script
-    assert "uiLanguage: 'zh-CN'" in bridge_script
-    assert "方块花园" in bridge_script
-    assert "startBgm" in bridge_script
-    assert "audio_manifest.json" in bridge_script
-    assert "commercial_asset_bindings.json" in bridge_script
-    assert "generatedVisualAssetNames" in bridge_script
-    assert "drawGeneratedBackground" in bridge_script
-    assert "generatedBgmAssetPath" in bridge_script
-    assert "generated_audio_runtime_verified" in bridge_script
-    assert "bgmStarted" in bridge_script
-    assert "smoothDragPreview" in bridge_script
-    assert "dragCoordinateAligned" in bridge_script
-    assert "failureReviveFeedback" in bridge_script
-    assert "interstitialAdPoint" in bridge_script
-    assert "commercialPlayableGo: false" in bridge_script
-    assert "1010 Commercial Runtime Proof" not in bridge_script
-    assert evidence["runtime_source_policy"] == "model_state_view_only_not_dom_event_substitute"
+    assert "workflow-e2e-runtime-bridge.js" not in index_html
+    assert not (build_output / "workflow-e2e-runtime-bridge.js").exists()
 
 
-def test_cocos_build_installs_bridge_from_task_card_product_runtime_sources(tmp_path: Path, monkeypatch) -> None:
+def test_cocos_build_installs_project_provided_runtime_bridge_only(tmp_path: Path, monkeypatch) -> None:
     build_output = tmp_path / "build" / "web-mobile"
     (build_output / "assets").mkdir(parents=True)
     (build_output / "index.html").write_text("<body><canvas id=\"GameCanvas\"></canvas></body>", encoding="utf-8")
-    for filename in ["BoardModel.ts", "RuleEngine.ts", "SemanticTestBridge.ts", "AudioFeedbackController.ts"]:
-        path = tmp_path / "assets" / "scripts" / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("export const runtimeSource = true;\n", encoding="utf-8")
+    bridge_source = tmp_path / "assets" / "scripts" / "workflow-e2e-runtime-bridge.js"
+    bridge_source.parent.mkdir(parents=True, exist_ok=True)
+    bridge_source.write_text(
+        "window.__WORKFLOW_GAME_RUNTIME__ = { semanticTraceSource: 'model_transition', commercialPlayableGo: false };\n",
+        encoding="utf-8",
+    )
 
     def _fake_run(command, *, stdout, stderr, timeout, check):
         stdout.write("build Task (web-mobile) Finished")
@@ -476,8 +456,14 @@ def test_cocos_build_installs_bridge_from_task_card_product_runtime_sources(tmp_
 
     bridge = build["browser_runtime_bridge"]
     assert bridge["installed"] is True
-    assert bridge["runtime_source_count"] == 4
-    assert "assets/scripts/SemanticTestBridge.ts" in "\n".join(bridge["runtime_sources"])
+    assert bridge["runtime_source_count"] == 1
+    assert bridge["template_policy"] == "no_default_block_puzzle_browser_bridge"
+    assert "assets/scripts/workflow-e2e-runtime-bridge.js" in "\n".join(bridge["runtime_sources"])
+    bridge_script = (build_output / "workflow-e2e-runtime-bridge.js").read_text(encoding="utf-8")
+    evidence = json.loads((tmp_path / "workflow_runtime_evidence" / "browser_runtime_bridge_injection.json").read_text(encoding="utf-8"))
+    assert "__WORKFLOW_GAME_RUNTIME__" in bridge_script
+    assert "__COCOS_BLOCK_PUZZLE_E2E__" not in bridge_script
+    assert evidence["runtime_source_policy"] == "project_provided_model_state_view_only_not_dom_event_substitute"
 
 
 def test_cocos_browser_playtest_requires_chinese_audio_and_drag_quality() -> None:

@@ -45,10 +45,20 @@ def test_universal_game_pipeline_contract_handles_puzzle_and_non_puzzle_without_
             spec=spec,
             status="active",
         )
-        assert len(cards) == 3
+        assert len(cards) >= 3
         assert set(cards[-1].metadata["covered_requirement_ids"]) == set(spec.input_requirement_ids)
+        assert all(card.metadata["task_card_generation_source"] == "active_phase_execution_blueprint" for card in cards)
 
     assert "10x10" in "\n".join(req.normalized_requirement for req in block_puzzle.requirements)
     assert "10x10" not in "\n".join(req.normalized_requirement for req in platformer.requirements)
+    platformer_cards = build_game_production_task_cards_from_design_spec(
+        run_id="platformer_no_template",
+        phase_name="Commercial Game Core Content Implementation",
+        spec=platformer,
+        status="active",
+    )
+    platformer_card_text = "\n".join(card.title + "\n" + card.description for card in platformer_cards)
+    assert "10x10" not in platformer_card_text
+    assert "CandidateTray" not in platformer_card_text
     assert block_puzzle.genre_model.genre == "puzzle"
     assert platformer.genre_model.genre == "platformer"

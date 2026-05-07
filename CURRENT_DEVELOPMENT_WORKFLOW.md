@@ -4,6 +4,8 @@
 
 本轮以桌面 PDF `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` 作为唯一产品输入，产品实现和返修均通过 `commercial_game_production`/DB task card/`human_visible_cli_enforced` workflow worker 执行；Codex 只直接修改控制面、测试、文档和卫生清理项。
 
+- 2026-05-07 pipeline de-templating: `commercial_game_production` 的默认 Cocos bootstrap 现在只生成通用空项目壳、资源目录、runtime slot 和 workflow metadata，不再自动写入 block-puzzle product-body baseline，也不再把仓库内 block-puzzle browser runtime bridge 注入 build。产品 phase 由 `GameDesignSpec` 生成 `ProductPhaseCandidate`，active phase 再由 agent-style `PhaseExecutionBlueprint` 深度细化，workflow 规则编译为 DB task cards；task card 不是纯规则机械生成。
+- Semantic/product-body gate 已从固定 `10x10`/`CandidateTray`/`anti_stall` 改为 spec-driven：当前策划没有要求 block-puzzle 时，相关术语、组件或 trace 会被记录为 `template_leak_detected`。历史 block-puzzle baseline 仅保留为 diagnostic-only baseline，不是默认商业路径。
 - Current run id: `commercial_game_pdf_only_20260503`
 - Current project/evidence root: `state/commercial_game_pdf_only_20260503/cocos_project`
 - Fresh D-root regeneration: `D:\WorkflowCommercialGameFresh_20260504_R5\cocos_project`, using only `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` as product input. Earlier failed D-root regeneration folders from this loop were removed so the current review path is not polluted by old outputs.

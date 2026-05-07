@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from packages.contributions.games.ai_playtest_quality import AI_PLAYTEST_QUALITY_SCHEMA, evaluate_ai_surrogate_playtest
@@ -291,21 +292,13 @@ def build_gameplay_semantic_evidence(
         blockers.append("model_transition_trace_missing")
     if payload.get("trace_source") in {"dom", "canvas", "browser_event", "runtime_hook"}:
         blockers.append("runtime_hook_not_semantic_model")
-    if not _board_is_10x10(payload):
-        blockers.append("semantic_board_state_missing")
-    if not _has_piece_model(payload):
-        blockers.append("semantic_piece_model_missing")
-    if not _candidate_tray_has_three(payload):
-        blockers.append("semantic_candidate_tray_missing")
-    for trace_name, blocker in [
-        ("placement", "semantic_placement_trace_missing"),
-        ("line_clear", "semantic_line_clear_trace_missing"),
-        ("candidate_refresh", "semantic_candidate_refresh_trace_missing"),
-        ("game_over", "semantic_game_over_trace_missing"),
-        ("anti_stall", "semantic_anti_stall_trace_missing"),
-    ]:
+    blockers.extend(_template_leak_blockers(payload))
+    required_traces = _required_semantic_traces(payload, traces)
+    if not traces and not _has_model_transition_traces(payload):
+        blockers.append("semantic_model_transition_trace_missing")
+    for trace_name in required_traces:
         if not _has_semantic_trace(payload, traces, trace_name):
-            blockers.append(blocker)
+            blockers.append(f"semantic_{trace_name}_trace_missing")
     go = not blockers
     return _contract(
         schema_version=GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA,
@@ -317,8 +310,10 @@ def build_gameplay_semantic_evidence(
             "piece_shape_count": _piece_shape_count(payload),
             "candidate_count": _candidate_count(payload),
             "trace_keys": sorted(traces),
+            "required_trace_keys": sorted(required_traces),
             "feature_coverage_keys": sorted(features),
             "baseline_only": bool(payload.get("baseline_only")),
+            "template_leak_checked": True,
         },
     )
 
@@ -346,6 +341,7 @@ def build_product_body_evidence(
         blockers.append("feature_flag_only_evidence")
     if payload.get("empty_component_only"):
         blockers.append("empty_component_shell_not_runtime_product_body")
+    blockers.extend(_template_leak_blockers(payload))
     if not _has_component_binding(payload):
         blockers.append("cocos_component_binding_missing")
     if not _has_scene_body(payload):
@@ -709,6 +705,78 @@ def _board_is_10x10(payload: dict[str, Any]) -> bool:
 def _board_size_source(payload: dict[str, Any]) -> Any:
     board = _dict_from(payload.get("board_state") or payload.get("board"))
     return payload.get("board_size") or board.get("size") or {"rows": board.get("rows"), "cols": board.get("cols") or board.get("columns")}
+
+
+def _required_semantic_traces(payload: dict[str, Any], traces: dict[str, Any]) -> list[str]:
+    explicit = _strings(
+        payload.get("required_semantic_traces")
+        or payload.get("requiredSemanticTraces")
+        or _dict_from(payload.get("state_model_contract")).get("transitions")
+    )
+    if explicit:
+        return [_trace_key(value) for value in explicit]
+    model_traces = payload.get("model_transition_traces")
+    if isinstance(model_traces, dict) and model_traces:
+        return [_trace_key(key) for key in model_traces]
+    if isinstance(model_traces, list) and model_traces:
+        result = []
+        for item in model_traces:
+            trace = item.get("trace") or item.get("transition") if isinstance(item, dict) else item
+            if trace:
+                result.append(_trace_key(str(trace)))
+        return result
+    return [_trace_key(key) for key in traces]
+
+
+def _trace_key(value: str) -> str:
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _has_model_transition_traces(payload: dict[str, Any]) -> bool:
+    model_traces = payload.get("model_transition_traces")
+    if isinstance(model_traces, dict):
+        return bool(model_traces)
+    if isinstance(model_traces, list):
+        return bool(model_traces)
+    return bool(payload.get("semantic_traces") or payload.get("traces"))
+
+
+_BLOCK_PUZZLE_TEMPLATE_MARKERS = {
+    "10x10",
+    "candidate_tray",
+    "candidatetray",
+    "anti_stall",
+    "boardmodel",
+    "piecemodel",
+    "ruleengine",
+    "line_clear",
+    "candidate_refresh",
+    "block_puzzle",
+}
+
+
+def _template_leak_blockers(payload: dict[str, Any]) -> list[str]:
+    if payload.get("template_leak_detected"):
+        return ["template_leak_detected"]
+    if payload.get("block_puzzle_required") or payload.get("allows_block_puzzle_template"):
+        return []
+    source = payload.get("game_design_spec") or payload.get("source_requirements") or payload.get("requirements")
+    if not source:
+        return []
+    source_text = json.dumps(source, ensure_ascii=False).lower()
+    if any(marker in source_text for marker in _BLOCK_PUZZLE_TEMPLATE_MARKERS):
+        return []
+    payload_text = json.dumps(
+        {
+            "scene_nodes": payload.get("scene_nodes") or payload.get("sceneNodes"),
+            "components": payload.get("cocos_component_bindings") or payload.get("component_bindings") or payload.get("components"),
+            "semantic_traces": payload.get("semantic_traces") or payload.get("traces"),
+            "model_transition_traces": payload.get("model_transition_traces"),
+            "board_state": payload.get("board_state") or payload.get("board"),
+        },
+        ensure_ascii=False,
+    ).lower()
+    return ["template_leak_detected"] if any(marker in payload_text for marker in _BLOCK_PUZZLE_TEMPLATE_MARKERS) else []
 
 
 def _has_piece_model(payload: dict[str, Any]) -> bool:

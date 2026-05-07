@@ -238,6 +238,9 @@ def write_cocos_product_body_baseline(project_dir: str | Path) -> dict[str, Any]
     manifest = {
         "schema_version": COCOS_PRODUCT_BODY_BASELINE_SCHEMA,
         "baseline_only": True,
+        "diagnostic_only": True,
+        "default_commercial_bootstrap": False,
+        "template_scope": "block_puzzle_diagnostic_baseline_not_default_commercial_path",
         "commercial_playable_go": False,
         "forbidden_delivery_claim": "product_body_baseline_is_not_commercial_playable_game",
         "required_component_bindings": REQUIRED_COMPONENT_BINDINGS,

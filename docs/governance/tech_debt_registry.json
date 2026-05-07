@@ -1,8 +1,15 @@
 {
   "schema_version": "v1",
-  "updated_at": "2026-05-03T07:25:00Z",
+  "updated_at": "2026-05-07T00:00:00Z",
   "summary": "M109 is accepted as a pipeline and technical-smoke baseline, not a general-purpose commercial playable guarantee. On 2026-05-02 Trusted Cocos Build Browser Audio Runtime Evidence initially reached machine-only AWAITING_HUMAN_REVIEW, but real human review rejected the launched pipeline_ecf26665254e build as not being a completed game body. On 2026-05-03 the user also rejected the current commercial_game_core_content_20260503 launched build as not genuinely playable, then rejected the first repair slice for missing BGM, incomplete functions, missing Chinese UI, drag stutter, and coordinate mismatch. The active Commercial Playability Repair Loop now replaces the proof-like browser bridge with packages/contributions/games/cocos/browser_runtime_bridge.js, a player-visible 10x10 block puzzle runtime with Chinese UI, procedural Web Audio BGM/SFX, immediate drag-follow placement preview, aligned board targeting, shop/gallery/level/revive/pause panels, and visible BGM state. Playwright evidence covers boot, screenshots, drag-preview, drag-placement, line-clear, candidate refresh, props, revive, shop, gallery, level, pause, audio/BGM/SFX, and console/page-error checks. This agent QA evidence can support repair but cannot set human_player_review_go or commercial_playable_go. Current acceptance truth is commercial_game_development_readiness_go=true, human_player_review_go=false, commercial_playable_go=false, and final delivery remains blocked until explicit human acceptance after repair. No unattended run may convert event-only, canvas-only, scaffold, build-only, browser-event, requirement-untraced, baseline-only, placeholder-asset, missing-visible-CLI, requirement-omission, machine-only, or agent-QA-only evidence into commercial GO.",
   "repaid_items": [
+    {
+      "debt_id": "M109-COCOS-TEMPLATE-LEAK-001",
+      "description": "Commercial Cocos bootstrap and runtime evidence still carried block-puzzle-specific defaults such as 10x10 board, CandidateTray, anti-stall, and a fixed browser bridge, creating template leakage risk for arbitrary game briefs.",
+      "introduced_in": "2026-05-04 PDF-only commercial game repair loop",
+      "repaid_in": "2026-05-07 Cocos commercial pipeline de-templating",
+      "result": "Default commercial bootstrap now creates only a generic empty Cocos shell. Product task cards come from GameDesignSpec, ProductPhaseCandidate, active PhaseExecutionBlueprint, and workflow compile reports. Semantic/product-body contracts are spec-driven and reject block-puzzle artifacts as template_leak_detected unless the current source spec requires them."
+    },
     {
       "debt_id": "TD-STRUCT-001",
       "description": "Orchestrator/CLI/Web/chat surfaces concentrated too much behavior in large facade files.",

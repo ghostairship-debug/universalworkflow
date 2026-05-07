@@ -9,7 +9,6 @@ from typing import Any, Callable
 from packages.contracts import TaskCard
 from packages.contributions.games.cocos.e2e import build_cocos_project
 from packages.contributions.games.cocos.playtest import playtest_cocos_build
-from packages.contributions.games.cocos.product_body_baseline import write_cocos_product_body_baseline
 from packages.contributions.pipelines.commercial_game_development_readiness import (
     build_commercial_game_development_readiness_evidence,
 )
@@ -110,7 +109,36 @@ def bootstrap_cocos_project_shell(
             ),
             encoding="utf-8",
         )
-    product_body_baseline = write_cocos_product_body_baseline(project_dir)
+    generic_shell_path = project_dir / "workflow_generic_cocos_shell.json"
+    generic_shell_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "commercial_game_generic_cocos_shell_v1",
+                "bootstrap_mode": "generic_empty_cocos_project_shell_for_task_card_patches",
+                "gameplay_template_installed": False,
+                "template_policy": "no_default_gameplay_template",
+                "runtime_contract": "task_cards_must_implement_game_specific_runtime_from_GameDesignSpec",
+                "forbidden_default_artifacts": [
+                    "10x10",
+                    "CandidateTray",
+                    "anti_stall",
+                    "fixed_line_clear_trace",
+                    "fixed_candidate_refresh_trace",
+                    "browser_runtime_bridge_template",
+                ],
+                "runtime_slots": [
+                    "assets/scripts",
+                    "assets/scene",
+                    "assets/resources/commercial_assets",
+                    "workflow_runtime_evidence",
+                    "player_visible_evidence",
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     (project_dir / "workflow_project_source.json").write_text(
         json.dumps(
             {
@@ -118,9 +146,12 @@ def bootstrap_cocos_project_shell(
                 "source_path": source_path.resolve().as_posix(),
                 "creator_exe": creator_exe.resolve().as_posix(),
                 "asset_manifest_path": asset_manifest.get("manifest_path") if isinstance(asset_manifest, dict) else None,
-                "bootstrap_mode": "empty_cocos_project_shell_for_task_card_patches",
-                "product_body_baseline_manifest_path": product_body_baseline.get("manifest_path"),
-                "product_body_baseline_only": True,
+                "bootstrap_mode": "generic_empty_cocos_project_shell_for_task_card_patches",
+                "generic_shell_manifest_path": generic_shell_path.as_posix(),
+                "product_body_baseline_manifest_path": None,
+                "product_body_baseline_only": False,
+                "gameplay_template_installed": False,
+                "template_policy": "no_default_gameplay_template",
                 "forbidden_delivery_claim": "bootstrap_shell_is_not_commercial_game",
             },
             ensure_ascii=False,
@@ -1816,10 +1847,6 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
     baseline = _read_json_dict(project_dir / "workflow_product_body_baseline.json")
     if baseline:
         merged["product_body_baseline"] = baseline
-        if isinstance(baseline.get("gameplay_semantic_evidence"), dict) and not merged.get("gameplay_semantic_evidence"):
-            merged["gameplay_semantic_evidence"] = baseline["gameplay_semantic_evidence"]
-        if isinstance(baseline.get("product_body_evidence"), dict) and not merged.get("product_body_evidence"):
-            merged["product_body_evidence"] = baseline["product_body_evidence"]
     readiness_gates = _read_json_dict(project_dir / "workflow_development_readiness_validation_gates.json")
     if readiness_gates:
         merged["development_readiness_validation_gates"] = readiness_gates

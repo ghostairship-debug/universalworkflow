@@ -3,7 +3,12 @@ from __future__ import annotations
 from packages.core_domain.task_card_store import task_card_execution_eligibility, task_card_quality_report
 from packages.contributions.games.game_design_ir import build_game_design_spec
 from packages.contributions.games.game_task_card_generation import (
+    PHASE_EXECUTION_BLUEPRINT_SCHEMA,
+    PRODUCT_PHASE_CANDIDATE_SCHEMA,
+    build_phase_execution_blueprint,
     build_game_production_task_cards_from_design_spec,
+    build_product_phase_candidates_from_design_spec,
+    compile_task_cards_from_phase_execution_blueprint,
     game_task_card_generation_report,
 )
 
@@ -38,7 +43,10 @@ def test_game_design_spec_generates_current_phase_workflow_product_task_cards() 
     assert set(report["covered_requirement_ids"]) == set(spec.input_requirement_ids)
     assert report["workflow_generated_product_proof_required"] is True
     assert report["codex_local_patch_repair_counts_as_product"] is False
+    assert report["task_card_generation_source"] == "active_phase_execution_blueprint"
+    assert report["all_cards_blueprint_compiled"] is True
     assert all(task_card_execution_eligibility(card)["execution_eligible"] for card in cards)
+    assert all(card.metadata["phase_execution_blueprint_schema"] == PHASE_EXECUTION_BLUEPRINT_SCHEMA for card in cards)
     assert any(card.task_card_id.endswith("_runtime_audio_bgm_sfx_mix") for card in cards)
     assert any(card.task_card_id.endswith("_progression_economy_content_depth") for card in cards)
 
@@ -63,3 +71,41 @@ def test_high_risk_game_task_cards_require_visible_cli_and_workflow_proof() -> N
         assert card.metadata["execution_visibility_mode"] == "human_visible_cli_enforced"
         assert card.metadata["workflow_generated_product_required"] is True
         assert card.metadata["codex_local_patch_repair_counts_as_product"] is False
+
+
+def test_phase_candidates_blueprint_and_compile_report_cover_source_requirements() -> None:
+    spec = build_game_design_spec(
+        title="Lantern platformer",
+        genre="platformer",
+        sources=[
+            {
+                "source_id": "brief",
+                "requirements": [
+                    "Player jumps across platforms with checkpoints.",
+                    "Camera follows the player and shows landing targets.",
+                    "BGM and landing SFX are required.",
+                ],
+            }
+        ],
+    )
+
+    phase_candidates = build_product_phase_candidates_from_design_spec(run_id="platformer_run", spec=spec)
+    blueprint = build_phase_execution_blueprint(
+        run_id="platformer_run",
+        phase_name="Commercial Game Core Content Implementation",
+        spec=spec,
+    )
+    cards, compile_report = compile_task_cards_from_phase_execution_blueprint(
+        run_id="platformer_run",
+        phase_name="Commercial Game Core Content Implementation",
+        spec=spec,
+        blueprint=blueprint,
+        status="active",
+    )
+
+    assert phase_candidates[0].schema_version == PRODUCT_PHASE_CANDIDATE_SCHEMA
+    assert blueprint.schema_version == PHASE_EXECUTION_BLUEPRINT_SCHEMA
+    assert compile_report.go is True
+    assert compile_report.missing_requirement_ids == []
+    assert set(compile_report.covered_requirement_ids) == set(spec.input_requirement_ids)
+    assert all(card.metadata["task_card_generation_source"] == "active_phase_execution_blueprint" for card in cards)

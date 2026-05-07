@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from packages.contracts import TaskCard
@@ -8,6 +9,53 @@ from packages.contributions.games.game_design_ir import GameDesignSpec
 
 
 GAME_PRODUCTION_TASK_CARD_SCHEMA = "universal_game_production_task_cards_v1"
+PRODUCT_PHASE_CANDIDATE_SCHEMA = "universal_game_product_phase_candidate_v1"
+PHASE_EXECUTION_BLUEPRINT_SCHEMA = "universal_game_phase_execution_blueprint_v1"
+TASK_CARD_COMPILE_REPORT_SCHEMA = "universal_game_task_card_compile_report_v1"
+
+
+@dataclass(frozen=True)
+class ProductPhaseCandidate:
+    phase_id: str
+    title: str
+    depends_on: list[str] = field(default_factory=list)
+    parallel_group: str | None = None
+    source_requirement_ids: list[str] = field(default_factory=list)
+    deliverables: list[str] = field(default_factory=list)
+    risk_level: str = "high"
+    suggested_task_groups: list[str] = field(default_factory=list)
+    schema_version: str = PRODUCT_PHASE_CANDIDATE_SCHEMA
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class PhaseExecutionBlueprint:
+    phase_id: str
+    phase_name: str
+    source_requirement_ids: list[str]
+    slices: list[dict[str, Any]]
+    generation_mode: str = "agent_phase_blueprint_then_rule_compiler"
+    source_material_policy: str = "no_delete_no_merge_no_rename_only_augment"
+    schema_version: str = PHASE_EXECUTION_BLUEPRINT_SCHEMA
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TaskCardCompileReport:
+    go: bool
+    blockers: list[str]
+    phase_id: str
+    task_card_ids: list[str]
+    covered_requirement_ids: list[str]
+    missing_requirement_ids: list[str]
+    schema_version: str = TASK_CARD_COMPILE_REPORT_SCHEMA
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def build_game_production_task_cards_from_design_spec(
@@ -17,6 +65,73 @@ def build_game_production_task_cards_from_design_spec(
     spec: GameDesignSpec | dict[str, Any],
     status: str = "draft",
 ) -> list[TaskCard]:
+    blueprint = build_phase_execution_blueprint(
+        run_id=run_id,
+        phase_name=phase_name,
+        spec=spec,
+    )
+    cards, _report = compile_task_cards_from_phase_execution_blueprint(
+        run_id=run_id,
+        phase_name=phase_name,
+        spec=spec,
+        blueprint=blueprint,
+        status=status,
+    )
+    return cards
+
+
+def build_product_phase_candidates_from_design_spec(
+    *,
+    run_id: str,
+    spec: GameDesignSpec | dict[str, Any],
+) -> list[ProductPhaseCandidate]:
+    payload = spec.to_dict() if isinstance(spec, GameDesignSpec) else dict(spec)
+    all_req_ids = [str(item) for item in payload.get("preserved_requirement_ids") or []]
+    return [
+        ProductPhaseCandidate(
+            phase_id=f"{run_id}_source_truth_and_design_spec",
+            title="Source Truth And GameDesignSpec",
+            source_requirement_ids=all_req_ids,
+            deliverables=["lossless_intake_receipts", "GameDesignSpec", "source_requirement_matrix"],
+            risk_level="medium",
+            suggested_task_groups=["source_validation", "semantic_design_ir"],
+        ),
+        ProductPhaseCandidate(
+            phase_id=f"{run_id}_engine_native_product_body",
+            title="Engine Native Product Body Implementation",
+            depends_on=[f"{run_id}_source_truth_and_design_spec"],
+            source_requirement_ids=all_req_ids,
+            deliverables=["runtime_state_model", "scene_prefab_bindings", "semantic_transition_traces"],
+            risk_level="high",
+            suggested_task_groups=["runtime", "scene_binding", "semantic_trace"],
+        ),
+        ProductPhaseCandidate(
+            phase_id=f"{run_id}_commercial_content_and_assets",
+            title="Commercial Content Assets And Experience",
+            depends_on=[f"{run_id}_engine_native_product_body"],
+            source_requirement_ids=all_req_ids,
+            deliverables=["content_depth", "non_placeholder_assets", "audio_feedback", "ui_ux_polish"],
+            risk_level="high",
+            suggested_task_groups=["content", "art", "audio", "ui"],
+        ),
+        ProductPhaseCandidate(
+            phase_id=f"{run_id}_ai_playtest_red_team_repair",
+            title="AI Playtest Red-Team And Repair Loop",
+            depends_on=[f"{run_id}_commercial_content_and_assets"],
+            source_requirement_ids=all_req_ids,
+            deliverables=["ai_playtest_report", "quality_scorecard", "repair_cards", "human_review_packet"],
+            risk_level="medium",
+            suggested_task_groups=["playtest", "red_team", "repair"],
+        ),
+    ]
+
+
+def build_phase_execution_blueprint(
+    *,
+    run_id: str,
+    phase_name: str,
+    spec: GameDesignSpec | dict[str, Any],
+) -> PhaseExecutionBlueprint:
     payload = spec.to_dict() if isinstance(spec, GameDesignSpec) else dict(spec)
     requirements = payload.get("requirements") if isinstance(payload.get("requirements"), list) else []
     by_category: dict[str, list[str]] = defaultdict(list)
@@ -25,60 +140,117 @@ def build_game_production_task_cards_from_design_spec(
             continue
         by_category[str(requirement.get("category") or "design")].append(str(requirement.get("req_id")))
     all_req_ids = [str(item) for item in payload.get("preserved_requirement_ids") or []]
-    cards: list[TaskCard] = []
-    cards.append(
-        _task_card(
-            run_id=run_id,
-            phase_name=phase_name,
-            status=status,
-            slug="runtime_state_core_loop",
-            title="Implement engine-native runtime state and core loop",
-            goal=(
+    slices: list[dict[str, Any]] = [
+        {
+            "slug": "runtime_state_core_loop",
+            "title": "Implement engine-native runtime state and core loop",
+            "goal": (
                 "Implement the authoritative runtime state, core player verbs, win/fail/retry transitions, "
                 "save/load fields, and semantic traces defined by the GameDesignSpec."
             ),
-            write_set=["project/runtime/gameplay/**", "project/runtime/model/**", "project/runtime/input/**"],
-            read_set=["GameDesignSpec", "MechanicGraph", "StateModelContract", "InteractionMap"],
-            requirement_ids=_category_ids(by_category, {"mechanic", "rule", "progression", "design"}, fallback=all_req_ids),
-            risk_level="high",
-            evidence=["engine_native_runtime_state", "semantic_model_transition_trace", "scripted_core_loop_replay"],
-        )
+            "write_set": ["project/runtime/gameplay/**", "project/runtime/model/**", "project/runtime/input/**"],
+            "read_set": ["GameDesignSpec", "MechanicGraph", "StateModelContract", "InteractionMap"],
+            "requirement_ids": _category_ids(by_category, {"mechanic", "rule", "progression", "design"}, fallback=all_req_ids),
+            "risk_level": "high",
+            "evidence": ["engine_native_runtime_state", "semantic_model_transition_trace", "scripted_core_loop_replay"],
+        },
+        {
+            "slug": "scene_prefab_component_binding",
+            "title": "Bind player-visible scene prefab and component evidence",
+            "goal": (
+                "Bind the current game's runtime model to player-visible scene, prefab, HUD, input, feedback, "
+                "settings, and review surfaces without relying on a fixed gameplay template."
+            ),
+            "write_set": ["project/runtime/ui/**", "project/scenes/**", "project/prefabs/**", "project/runtime/input/**"],
+            "read_set": ["GameDesignSpec", "UIFlowGraph", "InteractionMap", "AssetStyleBible"],
+            "requirement_ids": _category_ids(by_category, {"ui", "art", "performance", "design"}, fallback=all_req_ids),
+            "risk_level": "high",
+            "evidence": ["scene_prefab_binding_evidence", "player_visible_screenshots", "input_feedback_trace"],
+        },
+    ]
+    slices.extend(_implementation_groups(by_category, all_req_ids))
+    slices.append(
+        {
+            "slug": "ai_surrogate_playtest_quality_gate",
+            "title": "Run AI surrogate playtest and generate repair findings",
+            "goal": (
+                "Run scripted, exploratory, persona, vision, design red-team, performance, device matrix, "
+                "and regression playtests; produce quality scorecard and repair task-card findings."
+            ),
+            "write_set": ["state/ai_playtest/**", "state/task_cards/**"],
+            "read_set": ["TestOracleSpec", "QualityRubric", "latest_build_artifacts"],
+            "requirement_ids": all_req_ids,
+            "risk_level": "medium",
+            "evidence": ["ai_playtest_replays", "screenshots", "ai_quality_scorecard", "repair_task_card_batch"],
+        }
     )
-    for group in _implementation_groups(by_category, all_req_ids):
+    return PhaseExecutionBlueprint(
+        phase_id=f"{run_id}_{_safe_slug(phase_name)}",
+        phase_name=phase_name,
+        source_requirement_ids=all_req_ids,
+        slices=slices,
+    )
+
+
+def compile_task_cards_from_phase_execution_blueprint(
+    *,
+    run_id: str,
+    phase_name: str,
+    spec: GameDesignSpec | dict[str, Any],
+    blueprint: PhaseExecutionBlueprint | dict[str, Any],
+    status: str = "draft",
+) -> tuple[list[TaskCard], TaskCardCompileReport]:
+    payload = spec.to_dict() if isinstance(spec, GameDesignSpec) else dict(spec)
+    blueprint_payload = blueprint.to_dict() if isinstance(blueprint, PhaseExecutionBlueprint) else dict(blueprint)
+    all_req_ids = [str(item) for item in payload.get("preserved_requirement_ids") or []]
+    cards: list[TaskCard] = []
+    for blueprint_slice in blueprint_payload.get("slices") or []:
+        if not isinstance(blueprint_slice, dict):
+            continue
         cards.append(
             _task_card(
                 run_id=run_id,
                 phase_name=phase_name,
                 status=status,
-                slug=group["slug"],
-                title=group["title"],
-                goal=group["goal"],
-                write_set=group["write_set"],
-                read_set=group["read_set"],
-                requirement_ids=group["requirement_ids"],
-                risk_level=group["risk_level"],
-                evidence=group["evidence"],
+                slug=str(blueprint_slice.get("slug") or "phase_slice"),
+                title=str(blueprint_slice.get("title") or "Implement active phase slice"),
+                goal=str(blueprint_slice.get("goal") or "Implement the active phase slice from the PhaseExecutionBlueprint."),
+                write_set=_string_list(blueprint_slice.get("write_set")),
+                read_set=_string_list(blueprint_slice.get("read_set")),
+                requirement_ids=_string_list(blueprint_slice.get("requirement_ids")) or all_req_ids,
+                risk_level=str(blueprint_slice.get("risk_level") or "high"),
+                evidence=_string_list(blueprint_slice.get("evidence")),
+                blueprint=blueprint_payload,
             )
         )
-    cards.append(
-        _task_card(
-            run_id=run_id,
-            phase_name=phase_name,
-            status=status,
-            slug="ai_surrogate_playtest_quality_gate",
-            title="Run AI surrogate playtest and generate repair findings",
-            goal=(
-                "Run scripted, exploratory, persona, vision, design red-team, performance, device matrix, "
-                "and regression playtests; produce quality scorecard and repair task-card findings."
-            ),
-            write_set=["state/ai_playtest/**", "state/task_cards/**"],
-            read_set=["TestOracleSpec", "QualityRubric", "latest_build_artifacts"],
-            requirement_ids=all_req_ids,
-            risk_level="medium",
-            evidence=["ai_playtest_replays", "screenshots", "ai_quality_scorecard", "repair_task_card_batch"],
-        )
+    covered = sorted(
+        {
+            str(req_id)
+            for card in cards
+            for req_id in (card.metadata.get("covered_requirement_ids") or [])
+            if str(req_id).strip()
+        }
     )
-    return cards
+    missing = sorted(set(all_req_ids) - set(covered))
+    blockers = []
+    if not cards:
+        blockers.append("phase_execution_blueprint_slices_missing")
+    if missing:
+        blockers.append("blueprint_requirement_coverage_missing")
+    report = TaskCardCompileReport(
+        go=not blockers,
+        blockers=blockers,
+        phase_id=str(blueprint_payload.get("phase_id") or ""),
+        task_card_ids=[card.task_card_id for card in cards],
+        covered_requirement_ids=covered,
+        missing_requirement_ids=missing,
+    )
+    for card in cards:
+        card.metadata["task_card_compile_report_schema"] = TASK_CARD_COMPILE_REPORT_SCHEMA
+        card.metadata["task_card_compile_go"] = report.go
+        card.metadata["task_card_compile_blockers"] = report.blockers
+        card.metadata["missing_requirement_ids"] = report.missing_requirement_ids
+    return cards, report
 
 
 def game_task_card_generation_report(cards: list[TaskCard]) -> dict[str, Any]:
@@ -96,6 +268,12 @@ def game_task_card_generation_report(cards: list[TaskCard]) -> dict[str, Any]:
         ),
         "workflow_generated_product_proof_required": True,
         "codex_local_patch_repair_counts_as_product": False,
+        "task_card_generation_source": "active_phase_execution_blueprint",
+        "phase_execution_blueprint_required": True,
+        "all_cards_blueprint_compiled": all(
+            card.metadata.get("task_card_generation_source") == "active_phase_execution_blueprint"
+            for card in cards
+        ),
     }
 
 
@@ -112,6 +290,7 @@ def _task_card(
     requirement_ids: list[str],
     risk_level: str,
     evidence: list[str],
+    blueprint: dict[str, Any],
 ) -> TaskCard:
     return TaskCard(
         run_id=run_id,
@@ -155,6 +334,10 @@ def _task_card(
         status=status,
         metadata={
             "schema_version": GAME_PRODUCTION_TASK_CARD_SCHEMA,
+            "task_card_generation_source": "active_phase_execution_blueprint",
+            "phase_execution_blueprint_schema": PHASE_EXECUTION_BLUEPRINT_SCHEMA,
+            "phase_execution_blueprint_id": blueprint.get("phase_id"),
+            "product_phase_candidate_schema": PRODUCT_PHASE_CANDIDATE_SCHEMA,
             "requirement_coverage_required": True,
             "required_requirement_ids": requirement_ids,
             "covered_requirement_ids": requirement_ids,
@@ -167,6 +350,20 @@ def _task_card(
             "codex_local_patch_repair_counts_as_product": False,
         },
     )
+
+
+def _safe_slug(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value)).strip("_") or "active_phase"
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
 
 
 def _category_ids(by_category: dict[str, list[str]], categories: set[str], *, fallback: list[str]) -> list[str]:

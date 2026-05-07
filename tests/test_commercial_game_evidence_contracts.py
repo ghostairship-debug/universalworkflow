@@ -682,8 +682,7 @@ def test_gameplay_semantic_contract_rejects_feature_flags_and_events_only() -> N
 
     assert evidence["go"] is False
     assert "event_only_gameplay_evidence" in evidence["blockers"]
-    assert "semantic_board_state_missing" in evidence["blockers"]
-    assert "semantic_placement_trace_missing" in evidence["blockers"]
+    assert "semantic_model_transition_trace_missing" in evidence["blockers"]
 
 
 def test_gameplay_semantic_contract_rejects_runtime_hook_and_missing_model_transitions() -> None:
@@ -767,6 +766,36 @@ def test_product_body_contract_rejects_empty_component_shell_for_runtime_body() 
     assert semantic["go"] is True
     assert evidence["go"] is False
     assert "empty_component_shell_not_runtime_product_body" in evidence["blockers"]
+
+
+def test_semantic_and_product_body_contracts_reject_template_leak_against_non_puzzle_spec() -> None:
+    spec = {
+        "title": "Lantern platformer",
+        "requirements": [
+            {"req_id": "REQ-1", "normalized_requirement": "Player jumps across platforms with checkpoints."}
+        ],
+    }
+    semantic = build_gameplay_semantic_evidence(
+        {
+            "game_design_spec": spec,
+            "trace_source": "model_transition",
+            "model_transition_traces": {"jump": {"before": {"grounded": True}, "after": {"airborne": True}}},
+            "semantic_traces": {"jump": "trace/jump.json", "anti_stall": "trace/anti_stall.json"},
+        }
+    )
+    product_body = build_product_body_evidence(
+        {
+            "game_design_spec": spec,
+            "scene_nodes": ["Canvas", "CandidateTray"],
+            "cocos_component_bindings": ["PlayerController", "CandidateTray"],
+        },
+        gameplay_semantic_evidence=semantic,
+    )
+
+    assert semantic["go"] is False
+    assert product_body["go"] is False
+    assert "template_leak_detected" in semantic["blockers"]
+    assert "template_leak_detected" in product_body["blockers"]
 
 
 def test_product_depth_contract_accepts_machine_visible_depth() -> None:

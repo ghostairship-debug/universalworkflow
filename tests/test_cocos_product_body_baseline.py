@@ -23,6 +23,8 @@ def test_cocos_product_body_baseline_writes_component_and_semantic_evidence(tmp_
 
     assert manifest["schema_version"] == COCOS_PRODUCT_BODY_BASELINE_SCHEMA
     assert manifest["baseline_only"] is True
+    assert manifest["diagnostic_only"] is True
+    assert manifest["default_commercial_bootstrap"] is False
     assert manifest["commercial_playable_go"] is False
     assert manifest["forbidden_delivery_claim"] == "product_body_baseline_is_not_commercial_playable_game"
     assert len(manifest["required_component_bindings"]) == len(REQUIRED_COMPONENT_BINDINGS)
@@ -69,7 +71,7 @@ def test_model_transition_traces_cover_required_runtime_state_changes() -> None:
     assert traces["anti_stall"]["anti_stall_fallback"] == "inject_single_cell_candidate_when_no_legal_move_exists"
 
 
-def test_bootstrap_cocos_shell_includes_non_commercial_product_body_baseline(tmp_path: Path) -> None:
+def test_bootstrap_cocos_shell_is_generic_and_does_not_install_product_template(tmp_path: Path) -> None:
     project_dir = tmp_path / "cocos_project"
     source = tmp_path / "brief.md"
     creator = tmp_path / "CocosCreator.exe"
@@ -84,10 +86,14 @@ def test_bootstrap_cocos_shell_includes_non_commercial_product_body_baseline(tmp
     )
 
     project_source = json.loads((project_dir / "workflow_project_source.json").read_text(encoding="utf-8"))
-    baseline_path = Path(project_source["product_body_baseline_manifest_path"])
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    shell_path = Path(project_source["generic_shell_manifest_path"])
+    shell = json.loads(shell_path.read_text(encoding="utf-8"))
 
-    assert project_source["product_body_baseline_only"] is True
+    assert project_source["product_body_baseline_only"] is False
+    assert project_source["gameplay_template_installed"] is False
+    assert project_source["template_policy"] == "no_default_gameplay_template"
     assert project_source["forbidden_delivery_claim"] == "bootstrap_shell_is_not_commercial_game"
-    assert baseline["commercial_playable_go"] is False
+    assert shell["gameplay_template_installed"] is False
+    assert "CandidateTray" in shell["forbidden_default_artifacts"]
+    assert not (project_dir / "workflow_product_body_baseline.json").exists()
     assert not (project_dir / "workflow_commercial_feature_evidence.json").exists()

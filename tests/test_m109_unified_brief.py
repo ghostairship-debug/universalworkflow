@@ -254,6 +254,8 @@ def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp
     task_card_output = payload["stage_results"][5]["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
+    assert phase_graph["phase_execution_blueprint_required"] is True
     assert [phase["title"] for phase in phase_graph["phases"]] == ["Product Body Runtime And Semantic Trace Implementation"]
 
     persistence = task_card_output["structured_output"]["task_card_persistence"]
@@ -263,6 +265,8 @@ def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp
     assert len(cards) == 3
     assert {card.phase_name for card in cards} == {"Product Body Runtime And Semantic Trace Implementation"}
     assert all(card.execution_mode == "same_project_patch" for card in cards)
+    assert all(card.metadata.get("task_card_generation_source") == "active_phase_execution_blueprint" for card in cards)
+    assert not any("10x10" in card.description or "CandidateTray" in card.description for card in cards)
     assert all(card.metadata.get("requirement_coverage_required") is True for card in cards)
     assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
     assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
@@ -296,6 +300,8 @@ def test_universal_game_quality_goal_materializes_current_phase_ai_playtest_card
     task_card_output = payload["stage_results"][5]["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
+    assert phase_graph["phase_execution_blueprint_required"] is True
     assert [phase["title"] for phase in phase_graph["phases"]] == [
         "Universal Game Production Quality And AI Playtest Architecture"
     ]
@@ -317,7 +323,7 @@ def test_universal_game_quality_goal_materializes_current_phase_ai_playtest_card
     assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
 
 
-def test_commercial_core_content_goal_materializes_exact_three_visible_cli_cards(tmp_path: Path) -> None:
+def test_commercial_core_content_goal_materializes_blueprint_compiled_visible_cli_cards(tmp_path: Path) -> None:
     source = tmp_path / "brief.md"
     source.write_text(
         "# Commercial Core Content\n\ncore loop, levels, shop skin gallery, audio feedback polish all need implementation.\n",
@@ -345,17 +351,19 @@ def test_commercial_core_content_goal_materializes_exact_three_visible_cli_cards
     task_card_output = payload["stage_results"][5]["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
+    assert phase_graph["phase_execution_blueprint_required"] is True
     assert [phase["title"] for phase in phase_graph["phases"]] == ["Commercial Game Core Content Implementation"]
 
     cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("commercial_core_content_phase")
-    assert len(cards) == 3
-    assert {card.task_card_id for card in cards} == {
-        "commercial_core_content_phase_core_loop_levels",
-        "commercial_core_content_phase_shop_skin_gallery",
-        "commercial_core_content_phase_audio_feedback_polish",
-    }
+    assert len(cards) >= 3
+    assert {card.task_card_id for card in cards} == set(phase_graph["phases"][0]["task_card_ids"])
+    assert any(card.task_card_id.endswith("_runtime_state_core_loop") for card in cards)
+    assert any(card.task_card_id.endswith("_scene_prefab_component_binding") for card in cards)
+    assert not any("10x10" in card.description or "CandidateTray" in card.description for card in cards)
     assert all(card.execution_mode == "same_project_patch" for card in cards)
     assert all(card.metadata.get("generated_by") == "task_card_generation_agent" for card in cards)
+    assert all(card.metadata.get("task_card_generation_source") == "active_phase_execution_blueprint" for card in cards)
     assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
     assert all(card.metadata.get("omitted_requirement_ids") == [] for card in cards)
     assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)

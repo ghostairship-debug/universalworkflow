@@ -9,6 +9,7 @@ __pycache__/
 
 # Local temp work
 tmp/
+output/
 
 # Generated planning scratch docs
 m*_phase_docs/
