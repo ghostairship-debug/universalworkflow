@@ -95,9 +95,9 @@ def run_task_card_patch_via_workflowctl(
         "7200",
     ]
     for item in write_set:
-        issue_cmd.extend(["--write-set", item])
+        issue_cmd.extend(["--write-set", _literal_cli_arg(item)])
     for item in read_set:
-        issue_cmd.extend(["--read-set", item])
+        issue_cmd.extend(["--read-set", _literal_cli_arg(item)])
     for item in test_commands:
         issue_cmd.extend(["--test-command", item])
     receipt = _run_json_command(
@@ -132,9 +132,9 @@ def run_task_card_patch_via_workflowctl(
         str(receipt_id),
     ]
     for item in write_set:
-        run_cmd.extend(["--write-set", item])
+        run_cmd.extend(["--write-set", _literal_cli_arg(item)])
     for item in read_set:
-        run_cmd.extend(["--read-set", item])
+        run_cmd.extend(["--read-set", _literal_cli_arg(item)])
     for item in test_commands:
         run_cmd.extend(["--test-command", item])
     provider_idle_budget_seconds = max(TASK_CARD_IDLE_TIMEOUT_SECONDS, TASK_CARD_PROVIDER_OUTPUT_IDLE_TIMEOUT_SECONDS)
@@ -440,6 +440,15 @@ def _resolve_task_card_adapter(task_card: Any, adapter_name: str | None) -> str:
     if normalized in {"shell", "noop", "dry_run"}:
         return "codex"
     return normalized or "codex"
+
+
+def _literal_cli_arg(value: Any) -> str:
+    text = str(value)
+    if any(marker in text for marker in ("*", "?", "[")) and not (
+        (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'"))
+    ):
+        return f'"{text}"'
+    return text
 
 
 def _run_json_command(

@@ -16,6 +16,24 @@ def _engine_native() -> dict:
     }
 
 
+def _quality_reviews() -> dict:
+    return {
+        "visual_review_evidence": {
+            "visual_go": True,
+            "visual_quality_score": 90,
+            "screenshots_reviewed": ["screen.png"],
+            "blockers": [],
+        },
+        "audio_review_evidence": {
+            "audio_go": True,
+            "bgm_runtime_verified": True,
+            "sfx_runtime_verified": True,
+            "mix_go": True,
+            "blockers": [],
+        },
+    }
+
+
 def test_quality_scorecard_caps_area_scores_by_weight() -> None:
     report = evaluate_ai_surrogate_playtest(
         {
@@ -38,6 +56,7 @@ def test_quality_scorecard_caps_area_scores_by_weight() -> None:
             "screenshots": ["screen.png"],
             "replay_artifacts": ["replay.jsonl"],
             "engine_native_product_body": _engine_native(),
+            **_quality_reviews(),
         }
     )
 
@@ -68,6 +87,7 @@ def test_quality_scorecard_blocks_below_85_even_without_blocking_findings() -> N
             "screenshots": ["screen.png"],
             "replay_artifacts": ["replay.jsonl"],
             "engine_native_product_body": _engine_native(),
+            **_quality_reviews(),
         }
     )
 

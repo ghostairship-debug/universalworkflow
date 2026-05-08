@@ -18,6 +18,19 @@ def _passing_evidence() -> dict:
         "findings": [{"finding_id": "polish-1", "severity": "P2", "category": "visual"}],
         "screenshots": ["first.png", "success.png", "failure.png"],
         "replay_artifacts": ["boot_to_success.jsonl", "failure_retry.jsonl"],
+        "visual_review_evidence": {
+            "visual_go": True,
+            "visual_quality_score": 92,
+            "screenshots_reviewed": ["first.png", "success.png", "failure.png"],
+            "blockers": [],
+        },
+        "audio_review_evidence": {
+            "audio_go": True,
+            "bgm_runtime_verified": True,
+            "sfx_runtime_verified": True,
+            "mix_go": True,
+            "blockers": [],
+        },
         "engine_native_product_body": {
             "engine": "cocos",
             "product_body_mode": "engine_native",
@@ -78,3 +91,15 @@ def test_ai_surrogate_playtest_rejects_missing_modes_and_p1_findings() -> None:
     assert "ai_playtest_modes_incomplete" in report["blockers"]
     assert "blocking_ai_findings_present" in report["blockers"]
     assert report["blocking_findings"][0]["finding_id"] == "core-loop-break"
+
+
+def test_ai_surrogate_playtest_rejects_missing_visual_and_audio_review() -> None:
+    evidence = _passing_evidence()
+    evidence.pop("visual_review_evidence")
+    evidence.pop("audio_review_evidence")
+
+    report = evaluate_ai_surrogate_playtest(evidence)
+
+    assert report["ai_surrogate_playtest_go"] is False
+    assert "ai_visual_review_missing" in report["blockers"]
+    assert "ai_audio_review_missing" in report["blockers"]

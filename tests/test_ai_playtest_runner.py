@@ -48,7 +48,16 @@ def test_ai_playtest_runner_generates_fresh_packet_from_browser_layer(tmp_path: 
             "area_scores": dict(QUALITY_AREAS),
             "vision_review": {
                 "visual_go": True,
+                "visual_quality_score": 90,
                 "targets_checked": plan["vision_review_targets"],
+                "screenshots_reviewed": ["desktop.png"],
+                "blockers": [],
+            },
+            "audio_review": {
+                "audio_go": True,
+                "bgm_runtime_verified": True,
+                "sfx_runtime_verified": True,
+                "mix_go": True,
                 "blockers": [],
             },
         },

@@ -148,24 +148,85 @@ def build_phase_execution_blueprint(
                 "Implement the authoritative runtime state, core player verbs, win/fail/retry transitions, "
                 "save/load fields, and semantic traces defined by the GameDesignSpec."
             ),
-            "write_set": ["project/runtime/gameplay/**", "project/runtime/model/**", "project/runtime/input/**"],
+            "write_set": [
+                "assets/scripts/runtime/gameplay/**",
+                "assets/scripts/runtime/model/**",
+                "assets/scripts/runtime/input/**",
+                "workflow_runtime_evidence/core_loop_runtime_evidence.json",
+                "workflow_runtime_evidence/gameplay_semantic_evidence.raw.json",
+                "workflow_runtime_evidence/product_body_evidence.raw.json",
+            ],
             "read_set": ["GameDesignSpec", "MechanicGraph", "StateModelContract", "InteractionMap"],
             "requirement_ids": _category_ids(by_category, {"mechanic", "rule", "progression", "design"}, fallback=all_req_ids),
             "risk_level": "high",
-            "evidence": ["engine_native_runtime_state", "semantic_model_transition_trace", "scripted_core_loop_replay"],
+            "evidence": [
+                "engine_native_runtime_state",
+                "semantic_model_transition_trace",
+                "workflow_runtime_evidence/gameplay_semantic_evidence.raw.json must include board_size, candidate_count or equivalent runtime state, and model_transition_traces/semantic_traces",
+                "scripted_core_loop_replay",
+                "workflow_runtime_evidence/core_loop_runtime_evidence.json",
+                "workflow_runtime_evidence/gameplay_semantic_evidence.raw.json",
+                "workflow_runtime_evidence/product_body_evidence.raw.json",
+            ],
         },
         {
             "slug": "scene_prefab_component_binding",
-            "title": "Bind player-visible scene prefab and component evidence",
+            "title": "Bind player-visible scene prefab shell and component evidence",
             "goal": (
-                "Bind the current game's runtime model to player-visible scene, prefab, HUD, input, feedback, "
-                "settings, and review surfaces without relying on a fixed gameplay template."
+                "Bind the current game's runtime model to player-visible Cocos scene, prefab, HUD shell, settings shell, "
+                "and review surfaces without relying on a fixed gameplay template."
             ),
-            "write_set": ["project/runtime/ui/**", "project/scenes/**", "project/prefabs/**", "project/runtime/input/**"],
-            "read_set": ["GameDesignSpec", "UIFlowGraph", "InteractionMap", "AssetStyleBible"],
-            "requirement_ids": _category_ids(by_category, {"ui", "art", "performance", "design"}, fallback=all_req_ids),
+            "write_set": [
+                "assets/scripts/workflow-e2e-runtime-bridge.js",
+                "assets/scene/**",
+                "assets/prefabs/**",
+                "settings/v2/packages/scene.json",
+                "workflow_runtime_evidence/scene_prefab_binding_evidence.json",
+                "workflow_runtime_evidence/product_body_evidence.raw.json",
+            ],
+            "read_set": ["GameDesignSpec", "UIFlowGraph", "AssetStyleBible"],
+            "requirement_ids": _category_ids(by_category, {"ui", "art", "design"}, fallback=all_req_ids),
             "risk_level": "high",
-            "evidence": ["scene_prefab_binding_evidence", "player_visible_screenshots", "input_feedback_trace"],
+            "evidence": [
+                "scene_prefab_binding_evidence",
+                "actual Cocos scene files and prefab/component files referenced by evidence must exist in the same patch",
+                "launch .scene must contain an actual runtime component instance object referenced from a cc.Node _components list, not only cc.CompPrefabInfo or text metadata",
+                "assets/scripts/workflow-e2e-runtime-bridge.js project-provided playtest hook derived from runtime model state",
+                "settings/v2/packages/scene.json must bind current-scene to the generated player-visible scene uuid",
+                "workflow_runtime_evidence/scene_prefab_binding_evidence.json",
+                "workflow_runtime_evidence/product_body_evidence.raw.json",
+            ],
+        },
+        {
+            "slug": "scene_input_feedback_binding",
+            "title": "Bind scene input feedback and player-visible capture contract",
+            "goal": (
+                "Bind pointer/touch input feedback, invalid target feedback, drag-follow behavior, and the player-visible "
+                "screenshot capture contract to the scene runtime."
+            ),
+            "write_set": [
+                "assets/scripts/runtime/input/SceneInputFeedbackBinder.ts",
+                "workflow_runtime_evidence/input_feedback_trace.json",
+                "workflow_runtime_evidence/player_visible_screenshots.json",
+            ],
+            "read_set": [
+                "GameDesignSpec",
+                "InteractionMap",
+                "TestOracleSpec",
+                "workflow_runtime_evidence/scene_prefab_binding_evidence.json",
+                "settings/v2/packages/scene.json",
+                "assets/scene/**",
+            ],
+            "requirement_ids": _category_ids(by_category, {"performance", "ui", "design"}, fallback=all_req_ids),
+            "risk_level": "high",
+            "evidence": [
+                "player_visible_screenshots",
+                "input_feedback_trace",
+                "assets/scripts/runtime/input/SceneInputFeedbackBinder.ts",
+                "workflow_runtime_evidence/input_feedback_trace.json",
+                "workflow_runtime_evidence/player_visible_screenshots.json",
+                "input feedback evidence must reference the existing generated launch scene from workflow_runtime_evidence/scene_prefab_binding_evidence.json or settings/v2/packages/scene.json; do not invent assets/scene/WorkflowCommercialGame.scene",
+            ],
         },
     ]
     slices.extend(_implementation_groups(by_category, all_req_ids))
@@ -306,6 +367,7 @@ def _task_card(
             "python -m pytest tests/test_game_design_ir.py tests/test_ai_playtest_quality_gate.py tests/test_game_task_card_generation.py -q",
             "python -m infra.scripts.check_doc_links",
         ],
+        expected_artifacts=_path_like_items([*write_set, *evidence]),
         acceptance_criteria=[
             "All covered source requirements are implemented or explicitly blocked",
             "Evidence comes from workflow worker execution, not Codex/local rescue",
@@ -328,6 +390,16 @@ def _task_card(
         model_guidance=[
             "Use the GameDesignSpec and TestOracleSpec as the source of truth.",
             "Implement behavior and player-visible quality, not only feature flags or screenshots.",
+            "For the Cocos commercial path, mutate the project root directly: use assets/scripts, assets/scene, assets/resources, and workflow_runtime_evidence rather than detached project/runtime folders.",
+            "Cocos .scene artifacts must be real Cocos Creator serialized scene assets with cc.SceneAsset/cc.Scene entries; do not write contract-only JSON into a .scene file.",
+            "Bind the generated player-visible scene as the launch scene: settings/v2/packages/scene.json current-scene must match the generated scene .meta uuid.",
+            "A scene/component binding is only valid when a cc.Node _components list references an actual exported runtime component instance object (for example __type__ equal to the @ccclass name); cc.CompPrefabInfo, script path text, or evidence metadata alone is not a live component binding.",
+            "The runtime controller must register with the project E2E bridge and expose a playtest-compatible runtime packet through window.__UNIVERSAL_GAME_E2E__ or window.__workflowE2ERuntimeBridge.",
+            "Player-visible Chinese UI/localization artifacts must contain readable Simplified Chinese, not mojibake or escaped corrupted text.",
+            "Do not write raw mojibake examples into product artifacts; if a scanner needs forbidden marker metadata, use ASCII marker names such as utf8_as_gbk_mojibake.",
+            "Emit machine-readable runtime evidence JSON under workflow_runtime_evidence and keep it synchronized with the implemented Cocos scene/component bindings.",
+            "Evidence-only references are invalid: every scene_path, prefab_path, component path, asset path, and runtime evidence path named in JSON must exist in the generated Cocos project.",
+            "Do not write multiple JSON documents into one evidence file; each evidence artifact must be one valid JSON object.",
         ],
         risk_level=risk_level,
         execution_mode="same_project_patch",
@@ -356,6 +428,35 @@ def _safe_slug(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value)).strip("_") or "active_phase"
 
 
+def _path_like_items(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        normalized = text.replace("\\", "/")
+        if " " in normalized:
+            continue
+        if normalized == "workflow_commercial_feature_evidence.json":
+            pass
+        elif "/" not in normalized:
+            continue
+        if not normalized.startswith(
+            (
+                "assets/",
+                "settings/",
+                "workflow_runtime_evidence/",
+                "player_visible_evidence/",
+                "state/",
+                "workflow_commercial_feature_evidence.json",
+            )
+        ):
+            continue
+        if text not in result:
+            result.append(text)
+    return result
+
+
 def _string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
@@ -381,50 +482,161 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             "slug": "player_visible_ui_flow",
             "title": "Implement localized player-visible UI flows",
             "goal": "Implement localized first-session UI, HUD, menus, modal states, layout, readable text, and target-platform interaction surfaces.",
-            "write_set": ["project/runtime/ui/**", "project/localization/**"],
+            "write_set": [
+                "assets/scripts/runtime/ui/CommercialHud.ts",
+                "assets/scripts/runtime/ui/CommercialPanels.ts",
+                "assets/resources/localization/zh-CN.json",
+                "workflow_runtime_evidence/chinese_ui_panels_evidence.json",
+                "workflow_runtime_evidence/ui_flow_state_trace.json",
+            ],
             "read_set": ["UIFlowGraph", "InteractionMap"],
             "risk_level": "high",
-            "evidence": ["localized_screenshots", "layout_overlap_report", "ui_flow_state_trace"],
+            "evidence": [
+                "localized_screenshots",
+                "layout_overlap_report",
+                "ui_flow_state_trace",
+                "workflow_runtime_evidence/chinese_ui_panels_evidence.json must include chinese_ui_panels for hud_panel, shop_panel, gallery_panel, settings_panel, and failure_revive_panel with readable Simplified Chinese labels",
+                "assets/resources/localization/zh-CN.json must contain readable Simplified Chinese player text, not mojibake",
+                "assets/resources/localization/zh-CN.json",
+                "workflow_runtime_evidence/chinese_ui_panels_evidence.json",
+                "workflow_runtime_evidence/ui_flow_state_trace.json",
+            ],
         },
         {
-            "categories": {"art"},
+            "categories": {"art", "multimodal"},
             "slug": "art_animation_asset_direction",
             "title": "Implement non-placeholder art direction and animation feedback",
             "goal": "Implement coherent non-placeholder visual assets, animation feedback, effects, and asset bindings required by the source brief.",
-            "write_set": ["project/assets/**", "project/runtime/effects/**"],
+            "write_set": [
+                "assets/resources/commercial_assets/art/art_direction_manifest.json",
+                "assets/resources/commercial_assets/art/board_cell_material.json",
+                "assets/resources/commercial_assets/art/block_palette_set.json",
+                "assets/resources/commercial_assets/art/feedback_text_tokens.json",
+                "assets/resources/commercial_assets/art/reward_gallery_shards.json",
+                "assets/scripts/runtime/effects/CommercialFeedbackAnimator.ts",
+                "workflow_runtime_evidence/feedback_animation_evidence.json",
+                "workflow_commercial_feature_evidence.json",
+            ],
             "read_set": ["AssetStyleBible", "ContentMatrix"],
             "risk_level": "high",
-            "evidence": ["asset_graph", "vision_review_screenshots", "animation_feedback_trace"],
+            "evidence": [
+                "asset_graph",
+                "vision_review_screenshots",
+                "animation_feedback_trace",
+                "assets/scripts/runtime/effects/CommercialFeedbackAnimator.ts",
+                "assets/resources/commercial_assets/art/art_direction_manifest.json",
+                "assets/resources/commercial_assets/art/feedback_text_tokens.json must be valid JSON and contain readable Simplified Chinese feedback labels, not mojibake",
+                "assets/resources/commercial_assets/art/block_palette_set.json and reward_gallery_shards.json must not contain mojibake in player-visible names or labels",
+                "workflow_runtime_evidence/feedback_animation_evidence.json",
+                "generatedArtAssets",
+                "particleEffects",
+            ],
         },
         {
-            "categories": {"audio"},
-            "slug": "runtime_audio_bgm_sfx_mix",
-            "title": "Implement runtime BGM SFX mix and volume controls",
-            "goal": "Implement browser/engine runtime BGM, SFX, trigger timing, mix state, mute/volume controls, and audio error evidence.",
-            "write_set": ["project/assets/audio/**", "project/runtime/audio/**"],
-            "read_set": ["AudioDesignSheet"],
+            "categories": {"audio", "multimodal"},
+            "slug": "audio_asset_manifest_generation",
+            "title": "Generate commercial audio asset manifest",
+            "goal": (
+                "Generate the current game's BGM/SFX design sheet, commercial audio manifest, procedural or provider-backed "
+                "audio bank, and machine-readable proof that the audio assets come from the active GameDesignSpec."
+            ),
+            "write_set": [
+                "assets/resources/commercial_assets/audio/audio_design_sheet.json",
+                "assets/resources/commercial_assets/audio/commercial_audio_manifest.json",
+                "assets/resources/commercial_assets/audio/procedural_audio_bank.json",
+                "workflow_runtime_evidence/audio_asset_manifest_evidence.json",
+            ],
+            "read_set": ["AudioDesignSheet", "AssetStyleBible", "GameDesignSpec"],
             "risk_level": "high",
-            "evidence": ["runtime_audio_proof", "bgm_sfx_trigger_trace", "volume_state_evidence"],
+            "evidence": [
+                "workflow_runtime_evidence/audio_asset_manifest_evidence.json",
+                "assets/resources/commercial_assets/audio/audio_design_sheet.json",
+                "assets/resources/commercial_assets/audio/commercial_audio_manifest.json",
+                "assets/resources/commercial_assets/audio/procedural_audio_bank.json",
+            ],
         },
         {
-            "categories": {"progression", "economy"},
-            "slug": "progression_economy_content_depth",
-            "title": "Implement progression economy and content depth",
-            "goal": "Implement level/progression, rewards, unlocks, economy, inventory, content matrix rows, and persistence required by the source brief.",
-            "write_set": ["project/content/**", "project/runtime/systems/**", "project/runtime/save/**"],
+            "categories": {"audio", "multimodal"},
+            "slug": "runtime_audio_bgm_sfx_controls",
+            "title": "Bind runtime BGM SFX mix and volume controls",
+            "goal": (
+                "Bind browser/engine runtime BGM, SFX trigger timing, mix state, mute/volume controls, audio errors, and "
+                "player-visible audio feedback to the generated commercial audio asset manifest."
+            ),
+            "write_set": [
+                "assets/scripts/runtime/audio/CommercialAudioRuntime.ts",
+                "workflow_runtime_evidence/audio_feedback_polish_evidence.json",
+                "workflow_commercial_feature_evidence.json",
+            ],
+            "read_set": [
+                "AudioDesignSheet",
+                "assets/resources/commercial_assets/audio/audio_design_sheet.json",
+                "assets/resources/commercial_assets/audio/commercial_audio_manifest.json",
+                "assets/resources/commercial_assets/audio/procedural_audio_bank.json",
+            ],
+            "risk_level": "high",
+            "evidence": [
+                "assets/scripts/runtime/audio/CommercialAudioRuntime.ts",
+                "workflow_runtime_evidence/audio_feedback_polish_evidence.json",
+                "workflow_commercial_feature_evidence.json",
+                "bgm_sfx_trigger_trace",
+                "volume_state_evidence",
+                "audioPlaybackVerified",
+                "bgmStarted",
+                "sfxPlaybackVerified",
+                "volumeToggleUsable",
+            ],
+        },
+        {
+            "categories": {"progression", "economy", "product"},
+            "slug": "product_rules_progression_content_depth",
+            "title": "Implement product rules progression and content depth",
+            "goal": (
+                "Implement brief-specific scoring, fail/win/revive rules, level objectives, rewards, unlocks, content matrix rows, "
+                "and persistence required by the source brief."
+            ),
+            "write_set": [
+                "assets/scripts/runtime/systems/CommercialRulesAndScoring.ts",
+                "assets/scripts/runtime/systems/CommercialProgression.ts",
+                "assets/scripts/runtime/save/CommercialSaveState.ts",
+                "assets/resources/content/level_goal_matrix.json",
+                "assets/resources/content/reward_gallery_matrix.json",
+                "workflow_runtime_evidence/level_goal_evidence.json",
+                "workflow_runtime_evidence/commercial_shop_skin_gallery_evidence.json",
+                "workflow_runtime_evidence/product_depth_evidence.raw.json",
+            ],
             "read_set": ["ContentMatrix", "StateModelContract"],
             "risk_level": "high",
-            "evidence": ["content_matrix_state_proof", "progression_replay", "save_load_state_trace"],
+            "evidence": [
+                "content_matrix_state_proof",
+                "progression_replay",
+                "save_load_state_trace",
+                "assets/resources/content/level_goal_matrix.json",
+                "assets/resources/content/reward_gallery_matrix.json",
+                "workflow_runtime_evidence/level_goal_evidence.json",
+                "workflow_runtime_evidence/commercial_shop_skin_gallery_evidence.json",
+            ],
         },
         {
             "categories": {"performance"},
             "slug": "performance_device_input_feel",
             "title": "Implement performance device and input-feel requirements",
             "goal": "Implement input latency, responsive device layouts, frame pacing, low-performance handling, and device-matrix behavior required by the brief.",
-            "write_set": ["project/runtime/input/**", "project/runtime/performance/**", "project/runtime/ui/**"],
+            "write_set": [
+                "assets/scripts/runtime/input/InputFeelMetrics.ts",
+                "assets/scripts/runtime/performance/DevicePerformanceProfile.ts",
+                "workflow_runtime_evidence/input_polish_evidence.json",
+                "workflow_runtime_evidence/performance_device_matrix.json",
+            ],
             "read_set": ["InteractionMap", "TestOracleSpec"],
             "risk_level": "high",
-            "evidence": ["device_matrix_report", "input_latency_report", "frame_pacing_report"],
+            "evidence": [
+                "device_matrix_report",
+                "input_latency_report",
+                "frame_pacing_report",
+                "workflow_runtime_evidence/input_polish_evidence.json",
+                "workflow_runtime_evidence/performance_device_matrix.json",
+            ],
         },
     ]
     covered: set[str] = set()
@@ -443,10 +655,21 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
                 "slug": "brief_specific_product_surface",
                 "title": "Implement brief-specific product requirements",
                 "goal": "Implement preserved source requirements that do not fit a standard game-production category, with direct evidence for each requirement id.",
-                "write_set": ["project/runtime/**", "project/content/**", "project/assets/**"],
+                "write_set": [
+                    "assets/scripts/runtime/brief/BriefSpecificRequirements.ts",
+                    "assets/resources/content/brief_specific_content_matrix.json",
+                    "assets/resources/commercial_assets/brief_specific_asset_bindings.json",
+                    "workflow_runtime_evidence/brief_specific_requirement_evidence.json",
+                    "workflow_commercial_feature_evidence.json",
+                ],
                 "read_set": ["GameDesignSpec", "QualityRubric", "TestOracleSpec"],
                 "risk_level": "high",
-                "evidence": ["brief_specific_requirement_evidence", "source_requirement_trace"],
+                "evidence": [
+                    "brief_specific_requirement_evidence",
+                    "source_requirement_trace",
+                    "assets/scripts/runtime/brief/BriefSpecificRequirements.ts",
+                    "workflow_runtime_evidence/brief_specific_requirement_evidence.json",
+                ],
                 "requirement_ids": uncategorized,
             }
         )

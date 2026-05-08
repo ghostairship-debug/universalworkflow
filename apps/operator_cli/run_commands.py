@@ -266,6 +266,8 @@ def run_issue_receipt(
     scope_json: Optional[str] = typer.Option(None, "--scope-json", help="Raw JSON scope payload override."),
     ttl_seconds: Optional[int] = typer.Option(None, "--ttl-seconds", min=1),
 ) -> None:
+    write_set = _normalize_literal_cli_args(write_set)
+    read_set = _normalize_literal_cli_args(read_set)
     if scope_json:
         try:
             scope_payload = json.loads(scope_json)
@@ -436,6 +438,8 @@ def run_from_task_card(
         help="Receipt id attached to a capability-enforced mutation invocation.",
     ),
 ) -> None:
+    write_set = _normalize_literal_cli_args(write_set)
+    read_set = _normalize_literal_cli_args(read_set)
     path = Path(task_card_path)
     if not path.exists():
         _emit_json(
@@ -527,6 +531,19 @@ def run_from_task_card(
     if isinstance(status_detail.get("orchestration"), dict):
         payload["orchestration"] = status_detail["orchestration"]
     _emit_json(payload)
+
+
+def _normalize_literal_cli_args(values: Optional[list[str]]) -> Optional[list[str]]:
+    if values is None:
+        return None
+    return [_strip_literal_cli_quotes(value) for value in values]
+
+
+def _strip_literal_cli_quotes(value: str) -> str:
+    text = str(value)
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1]
+    return text
 
 
 @run_app.command("suggest-presets")

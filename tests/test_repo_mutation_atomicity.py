@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from packages.core_domain.repo_mutation import apply_unified_diff, capture_workspace_snapshot, restore_workspace_snapshot
+from packages.core_domain.repo_mutation import apply_unified_diff, capture_workspace_snapshot, is_path_allowed, restore_workspace_snapshot
 
 
 def test_apply_unified_diff_does_not_partially_write_when_later_hunk_fails(tmp_path: Path) -> None:
@@ -94,6 +94,15 @@ def test_apply_unified_diff_accepts_codex_apply_patch_add_file(tmp_path: Path) -
 
     assert changed == ["created.txt"]
     assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+
+
+def test_write_set_scope_accepts_recursive_glob_patterns() -> None:
+    allowed_paths = ["project/runtime/gameplay/**", "project/runtime/model/**", "project/runtime/input/**"]
+
+    assert is_path_allowed("project/runtime/model/block_puzzle/BlockPuzzleState.ts", allowed_paths)
+    assert is_path_allowed("project/runtime/gameplay/block_puzzle/BlockPuzzleCoreLoop.ts", allowed_paths)
+    assert is_path_allowed("project/runtime/input/block_puzzle/BlockPuzzleInput.ts", allowed_paths)
+    assert not is_path_allowed("project/runtime/audio/BgmRuntime.ts", allowed_paths)
 
 
 def test_apply_unified_diff_failure_restore_preserves_lf_line_endings(tmp_path: Path) -> None:

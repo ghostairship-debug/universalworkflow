@@ -34,6 +34,8 @@ def build_ai_quality_evidence_from_execution_packet(packet: dict[str, Any]) -> d
         "findings": findings,
         "screenshots": _dedupe(screenshots),
         "replay_artifacts": _dedupe(replay_artifacts),
+        "visual_review_evidence": packet.get("visual_review_evidence") or packet.get("vision_review"),
+        "audio_review_evidence": packet.get("audio_review_evidence") or packet.get("audio_review"),
         "engine_native_product_body": packet.get("engine_native_product_body"),
         "omitted_requirement_ids": _string_list(packet.get("omitted_requirement_ids")),
         "placeholder_only": bool(packet.get("placeholder_only")),

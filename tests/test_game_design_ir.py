@@ -5,6 +5,7 @@ from packages.contributions.games.game_design_ir import (
     SOURCE_MATERIAL_POLICY,
     apply_derived_semantic_enrichment,
     build_game_design_spec,
+    build_game_design_spec_from_requirement_matrix,
     validate_derived_semantic_enrichment,
     validate_game_design_spec,
 )
@@ -40,6 +41,67 @@ def test_game_design_ir_preserves_all_source_requirements_losslessly() -> None:
     assert payload["omitted_requirement_ids"] == []
     assert payload["raw_source_receipts"][0]["sha256"]
     assert validate_game_design_spec(spec)["go"] is True
+
+
+def test_game_design_spec_from_requirement_matrix_preserves_unified_req_ids() -> None:
+    intake_manifest = {
+        "input_count": 1,
+        "source_count": 1,
+        "source_receipts": [
+            {
+                "original_path": "brief.pdf",
+                "sha256": "a" * 64,
+                "size_bytes": 128,
+            }
+        ],
+    }
+    requirement_matrix = {
+        "requirements": [
+            {
+                "req_id": "REQ-S001-C001-001",
+                "source_id": "source_001",
+                "original_path": "brief.pdf",
+                "original_quote": "必须有中文 UI 和 BGM。",
+                "normalized_requirement": "必须有中文 UI 和 BGM。",
+                "category": "ui",
+                "priority": "must",
+                "acceptance_method": "player_visible_screenshot_and_layout_review",
+                "downstream_owner": "ui_experience_agent",
+            },
+            {
+                "req_id": "REQ-S001-C002-001",
+                "source_id": "source_001",
+                "original_path": "brief.pdf",
+                "original_quote": "拖拽交互必须跟手。",
+                "normalized_requirement": "拖拽交互必须跟手。",
+                "category": "mechanic",
+                "priority": "must",
+                "acceptance_method": "scripted_playtest_and_state_assertion",
+                "downstream_owner": "gameplay_engineer_agent",
+            },
+        ]
+    }
+
+    spec = build_game_design_spec_from_requirement_matrix(
+        title="Unified brief game",
+        intake_manifest=intake_manifest,
+        requirement_matrix=requirement_matrix,
+        source_index=[
+            {
+                "source_id": "source_001",
+                "original_path": "brief.pdf",
+                "sha256": "a" * 64,
+                "size_bytes": 128,
+            }
+        ],
+    )
+    payload = spec.to_dict()
+
+    assert payload["input_requirement_ids"] == ["REQ-S001-C001-001", "REQ-S001-C002-001"]
+    assert payload["preserved_requirement_ids"] == payload["input_requirement_ids"]
+    assert payload["requirements"][0]["original_text"] == "必须有中文 UI 和 BGM。"
+    assert payload["raw_source_receipts"][0]["requirement_count"] == 2
+    assert validate_game_design_spec(payload)["go"] is True
 
 
 def test_block_puzzle_requirements_do_not_become_universal_genre_baseline() -> None:

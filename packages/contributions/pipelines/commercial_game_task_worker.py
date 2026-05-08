@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,7 @@ RETRYABLE_RUNTIME_FAILURE_CLASSES = {
     "same_project_patch_parse_failed",
     "same_project_patch_review_failed",
     "same_project_patch_tests_not_passed",
+    "task_card_expected_artifacts_missing",
     "workflow_child_stalled",
 }
 FAIL_FAST_PRECONDITION_FAILURE_CLASSES = {
@@ -76,6 +78,66 @@ def same_project_business_task_cards(task_cards: list[TaskCard]) -> list[TaskCar
         if str(card.execution_mode or "").strip() == "same_project_patch"
         and task_card_execution_eligibility(card)["execution_eligible"]
     ]
+
+
+def validate_same_project_reuse(*, project_dir: Path, source_path: Path) -> dict[str, Any]:
+    source_identity = _source_identity(source_path)
+    existing_files = _project_existing_files(project_dir)
+    if not existing_files:
+        return {
+            "schema_version": "commercial_game_same_project_reuse_guard_v1",
+            "go": True,
+            "blockers": [],
+            "project_dir": project_dir.as_posix(),
+            "source_identity": source_identity,
+            "reuse_mode": "empty_or_new_project_dir",
+        }
+
+    manifest_path = project_dir / "workflow_project_source.json"
+    manifest = _read_json_dict(manifest_path)
+    if not manifest:
+        return {
+            "schema_version": "commercial_game_same_project_reuse_guard_v1",
+            "go": False,
+            "blockers": ["same_project_unmanaged_project_dir"],
+            "project_dir": project_dir.as_posix(),
+            "source_identity": source_identity,
+            "manifest_path": manifest_path.as_posix(),
+            "existing_file_count": len(existing_files),
+            "reuse_mode": "blocked_unmanaged_existing_project",
+        }
+
+    previous_source = str(manifest.get("source_path") or "")
+    previous_sha256 = str(manifest.get("source_sha256") or "")
+    source_path_match = previous_source == source_identity["source_path"]
+    source_hash_match = bool(previous_sha256) and previous_sha256 == source_identity["source_sha256"]
+    legacy_manifest_same_source = not previous_sha256 and source_path_match
+    if not (source_hash_match or legacy_manifest_same_source):
+        return {
+            "schema_version": "commercial_game_same_project_reuse_guard_v1",
+            "go": False,
+            "blockers": ["same_project_source_mismatch"],
+            "project_dir": project_dir.as_posix(),
+            "source_identity": source_identity,
+            "manifest_path": manifest_path.as_posix(),
+            "previous_source_path": previous_source,
+            "previous_source_sha256": previous_sha256,
+            "existing_file_count": len(existing_files),
+            "reuse_mode": "blocked_source_mismatch",
+        }
+
+    return {
+        "schema_version": "commercial_game_same_project_reuse_guard_v1",
+        "go": True,
+        "blockers": [],
+        "project_dir": project_dir.as_posix(),
+        "source_identity": source_identity,
+        "manifest_path": manifest_path.as_posix(),
+        "previous_source_path": previous_source,
+        "previous_source_sha256": previous_sha256,
+        "existing_file_count": len(existing_files),
+        "reuse_mode": "same_source_project_reuse",
+    }
 
 
 def bootstrap_cocos_project_shell(
@@ -144,6 +206,7 @@ def bootstrap_cocos_project_shell(
             {
                 "schema_version": "commercial_game_same_project_bootstrap_v1",
                 "source_path": source_path.resolve().as_posix(),
+                "source_sha256": _sha256_file(source_path),
                 "creator_exe": creator_exe.resolve().as_posix(),
                 "asset_manifest_path": asset_manifest.get("manifest_path") if isinstance(asset_manifest, dict) else None,
                 "bootstrap_mode": "generic_empty_cocos_project_shell_for_task_card_patches",
@@ -223,14 +286,35 @@ def execute_same_project_task_cards(
         )
     runner = task_card_runner or run_task_card_patch_via_workflowctl
     for card in task_cards:
-        prior_entry = prior_completed_entries.get(card.task_card_id)
-        if prior_entry is not None:
-            entries.append(prior_entry)
-            continue
         materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=pipeline_id)
         execution_visibility_mode = _task_card_visibility_mode(card)
         card_path = card_root / f"{_safe_id(card.task_card_id)}.md"
         card_path.write_text(_task_card_markdown(card, materialized), encoding="utf-8")
+        prior_entry = prior_completed_entries.get(card.task_card_id)
+        prior_completed_invalidation: dict[str, Any] | None = None
+        if prior_entry is not None:
+            prior_artifact_validation = _task_card_artifact_validation(
+                card,
+                materialized=materialized,
+                project_dir=project_dir,
+            )
+            if prior_artifact_validation["go"]:
+                revalidated_entry = {
+                    **prior_entry,
+                    "task_card_path": prior_entry.get("task_card_path") or card_path.as_posix(),
+                    "write_set": prior_entry.get("write_set") or materialized["write_set"],
+                    "read_set": prior_entry.get("read_set") or materialized["read_set"],
+                    "test_commands": prior_entry.get("test_commands") or materialized["test_commands"],
+                    "prior_completed_entry_revalidated": True,
+                    "artifact_validation": prior_artifact_validation,
+                }
+                entries.append(revalidated_entry)
+                continue
+            prior_completed_invalidation = {
+                "prior_completed_entry_invalidated": True,
+                "failure_class": "prior_completed_entry_artifact_contract_no_go",
+                "artifact_validation": prior_artifact_validation,
+            }
         reference_evidence = _already_satisfied_task_card_entry(
             card,
             materialized,
@@ -266,6 +350,14 @@ def execute_same_project_task_cards(
         )
         if reference_evidence is not None:
             normalized_entry["reference_evidence"] = reference_evidence
+        if prior_completed_invalidation is not None:
+            normalized_entry.update(
+                {
+                    "prior_completed_entry_invalidated": True,
+                    "prior_completed_entry_failure_class": prior_completed_invalidation["failure_class"],
+                    "prior_completed_entry_artifact_validation": prior_completed_invalidation["artifact_validation"],
+                }
+            )
         entries.append(normalized_entry)
         if entries[-1]["status"] != "completed":
             break
@@ -489,13 +581,18 @@ def _run_task_card_with_retry_policy(
     )
     for attempt_index in range(1, max_runtime_attempts + 1):
         attempt_adapter = adapter_sequence[min(adapter_index, len(adapter_sequence) - 1)] if adapter_sequence else None
+        effective_task_card_path = _task_card_path_with_retry_context(
+            task_card_path,
+            attempt_index=attempt_index,
+            prior_entry=last_entry,
+        )
         raw_entry = runner(
             root=root,
             db_path=db_path,
             project_dir=project_dir,
             pipeline_id=pipeline_id,
             task_card=task_card,
-            task_card_path=task_card_path,
+            task_card_path=effective_task_card_path,
             write_set=write_set,
             read_set=read_set,
             test_commands=test_commands,
@@ -551,6 +648,21 @@ def _run_task_card_with_retry_policy(
                 "final_failure_class": "direct_provider_visible_cli_metadata_missing",
                 "recoverable_suggestion": "rerun_task_card_with_resident_control_plane_and_direct_visible_provider_cli",
             }
+        if str(last_entry.get("status") or "") == "completed":
+            artifact_validation = _task_card_artifact_validation(
+                task_card,
+                materialized={"write_set": write_set, "read_set": read_set, "test_commands": test_commands},
+                project_dir=project_dir,
+            )
+            last_entry["artifact_validation"] = artifact_validation
+            if not artifact_validation["go"]:
+                last_entry = {
+                    **last_entry,
+                    "status": "failed",
+                    "failure_class": "task_card_expected_artifacts_missing",
+                    "final_failure_class": "task_card_expected_artifacts_missing",
+                    "recoverable_suggestion": "rerun_task_card_and_create_every_expected_artifact_and_referenced_scene_prefab_component_file",
+                }
         last_entry["execution_visibility_mode"] = execution_visibility_mode
         attempts.append(
             _patch_attempt_record(
@@ -630,6 +742,7 @@ def _patch_attempt_record(
         "provider_visible_cli_log_paths": entry.get("provider_visible_cli_log_paths"),
         "visible_cli_session": entry.get("visible_cli_session"),
         "visible_cli_log_paths": entry.get("visible_cli_log_paths") or _visible_cli_log_paths(entry),
+        "artifact_validation": entry.get("artifact_validation"),
         "watchdog_source": entry.get("watchdog_source"),
         "watchdog": watchdog,
         "stdout_preview": entry.get("stdout_preview"),
@@ -643,6 +756,416 @@ def _patch_attempt_record(
         "continuation_argv": continuation_argv,
         "continuation_command": subprocess.list2cmdline(continuation_argv),
     }
+
+
+def _task_card_path_with_retry_context(
+    task_card_path: Path,
+    *,
+    attempt_index: int,
+    prior_entry: dict[str, Any],
+) -> Path:
+    validation = prior_entry.get("artifact_validation") if isinstance(prior_entry, dict) else None
+    if attempt_index <= 1 or not isinstance(validation, dict) or validation.get("go"):
+        return task_card_path
+    retry_path = task_card_path.with_name(f"{task_card_path.stem}.retry_attempt_{attempt_index}.md")
+    try:
+        original = task_card_path.read_text(encoding="utf-8")
+    except OSError:
+        return task_card_path
+    validation_summary = {
+        "blockers": validation.get("blockers") or [],
+        "missing_artifacts": validation.get("missing_artifacts") or [],
+        "invalid_json_artifacts": validation.get("invalid_json_artifacts") or [],
+        "invalid_scene_artifacts": validation.get("invalid_scene_artifacts") or [],
+        "mojibake_json_artifacts": validation.get("mojibake_json_artifacts") or [],
+        "referenced_missing_artifacts": validation.get("referenced_missing_artifacts") or [],
+        "launch_scene_blockers": validation.get("launch_scene_blockers") or [],
+    }
+    retry_note = (
+        "\n\n## Previous Artifact Validation Failure\n\n"
+        "The previous worker attempt failed the task-card artifact contract. Fix every listed item in this attempt; "
+        "do not repeat missing or placeholder paths. If a referenced scene path is missing, read "
+        "`workflow_runtime_evidence/scene_prefab_binding_evidence.json` and `settings/v2/packages/scene.json`, then "
+        "reference the existing generated launch scene path only.\n\n"
+        "```json\n"
+        f"{json.dumps(validation_summary, ensure_ascii=False, indent=2)}\n"
+        "```\n"
+    )
+    try:
+        retry_path.write_text(f"{original}{retry_note}", encoding="utf-8")
+    except OSError:
+        return task_card_path
+    return retry_path
+
+
+def _task_card_artifact_validation(
+    card: TaskCard,
+    *,
+    materialized: dict[str, list[str]],
+    project_dir: Path,
+) -> dict[str, Any]:
+    checked: list[str] = []
+    missing: list[str] = []
+    invalid_json: list[str] = []
+    invalid_scene: list[str] = []
+    mojibake_json: list[str] = []
+    referenced_missing: list[str] = []
+    scene_paths: list[Path] = []
+    expected = _dedupe_strings(
+        [
+            *list(card.expected_artifacts or []),
+            *[item for item in card.evidence_requirements if _looks_like_project_artifact_reference(str(item))],
+        ]
+    )
+    for raw in expected:
+        raw_path, raw_pointer = _split_artifact_json_pointer(str(raw))
+        materialized_path = _materialize_project_scope_path(raw_path, project_dir=project_dir, pipeline_id=card.run_id)
+        if _contains_glob(materialized_path):
+            continue
+        path = Path(materialized_path)
+        if not path.is_absolute():
+            path = project_dir / materialized_path
+        checked.append(path.as_posix())
+        if not path.exists():
+            missing.append(path.as_posix())
+            continue
+        if path.suffix.lower() == ".scene":
+            scene_paths.append(path)
+            if not _is_valid_cocos_scene_artifact(path):
+                invalid_scene.append(path.as_posix())
+            continue
+        if path.suffix.lower() != ".json":
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            invalid_json.append(path.as_posix())
+            continue
+        if raw_pointer and not _json_pointer_exists(payload, raw_pointer):
+            referenced_missing.append(f"{path.as_posix()}#{raw_pointer}")
+        if _is_player_visible_chinese_artifact(path) and _json_contains_mojibake(payload):
+            mojibake_json.append(path.as_posix())
+        if isinstance(payload, dict):
+            for referenced in _project_artifact_references_from_payload(payload):
+                if _is_deferred_artifact_reference(payload, referenced):
+                    continue
+                referenced_path_text, referenced_pointer = _split_artifact_json_pointer(referenced)
+                referenced_path = Path(referenced_path_text)
+                if not referenced_path.is_absolute():
+                    referenced_path = project_dir / referenced_path_text
+                if not referenced_path.exists():
+                    referenced_missing.append(
+                        f"{referenced_path.as_posix()}#{referenced_pointer}" if referenced_pointer else referenced_path.as_posix()
+                    )
+                    continue
+                if referenced_pointer and referenced_path.suffix.lower() == ".json":
+                    try:
+                        referenced_payload = json.loads(referenced_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        invalid_json.append(referenced_path.as_posix())
+                        continue
+                    if not _json_pointer_exists(referenced_payload, referenced_pointer):
+                        referenced_missing.append(f"{referenced_path.as_posix()}#{referenced_pointer}")
+                        continue
+                if referenced_path.suffix.lower() == ".scene":
+                    scene_paths.append(referenced_path)
+                    if not _is_valid_cocos_scene_artifact(referenced_path):
+                        invalid_scene.append(referenced_path.as_posix())
+    blockers: list[str] = []
+    if missing:
+        blockers.append("expected_artifact_missing")
+    if invalid_json:
+        blockers.append("expected_json_artifact_invalid")
+    if invalid_scene:
+        blockers.append("expected_cocos_scene_artifact_invalid")
+    if mojibake_json:
+        blockers.append("player_visible_chinese_mojibake_detected")
+    if referenced_missing:
+        blockers.append("referenced_artifact_missing")
+    launch_scene_blockers = _launch_scene_binding_blockers(
+        card=card,
+        project_dir=project_dir,
+        scene_paths=scene_paths,
+    )
+    blockers.extend(launch_scene_blockers)
+    scene_component_blockers = _scene_runtime_component_blockers(card=card, scene_paths=scene_paths)
+    blockers.extend(scene_component_blockers)
+    return {
+        "go": not blockers,
+        "blockers": blockers,
+        "checked_artifacts": _dedupe_strings(checked),
+        "missing_artifacts": _dedupe_strings(missing),
+        "invalid_json_artifacts": _dedupe_strings(invalid_json),
+        "invalid_scene_artifacts": _dedupe_strings(invalid_scene),
+        "mojibake_json_artifacts": _dedupe_strings(mojibake_json),
+        "referenced_missing_artifacts": _dedupe_strings(referenced_missing),
+        "launch_scene_blockers": launch_scene_blockers,
+        "scene_component_blockers": scene_component_blockers,
+        "materialized_write_set": materialized.get("write_set") or [],
+    }
+
+
+def _contains_glob(value: str) -> bool:
+    return any(marker in str(value) for marker in ("*", "?", "["))
+
+
+def _split_artifact_json_pointer(reference: str) -> tuple[str, str]:
+    text = str(reference).strip().replace("\\", "/")
+    if "#" not in text:
+        return text, ""
+    path, pointer = text.split("#", 1)
+    return path, pointer.lstrip("/")
+
+
+def _json_pointer_exists(payload: Any, pointer: str) -> bool:
+    if not pointer:
+        return True
+    current = payload
+    for raw_token in pointer.split("/"):
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if token not in current:
+                return False
+            current = current[token]
+            continue
+        if isinstance(current, list):
+            try:
+                index = int(token)
+            except ValueError:
+                return False
+            if index < 0 or index >= len(current):
+                return False
+            current = current[index]
+            continue
+        return False
+    return True
+
+
+def _looks_like_project_artifact_reference(value: str) -> bool:
+    text = str(value).strip().replace("\\", "/")
+    if not text or " " in text:
+        return False
+    return text.startswith(
+        (
+            "assets/",
+            "settings/",
+            "workflow_runtime_evidence/",
+            "player_visible_evidence/",
+            "workflow_commercial_feature_evidence.json",
+        )
+    )
+
+
+def _project_artifact_references_from_payload(payload: dict[str, Any]) -> list[str]:
+    references: list[str] = []
+
+    def visit(value: Any, *, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                visit(child_value, key=str(child_key))
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item, key=key)
+            return
+        if not isinstance(value, str):
+            return
+        normalized = value.strip().replace("\\", "/")
+        if not normalized:
+            return
+        if " " in normalized:
+            return
+        key_normalized = key.lower()
+        path_key = key_normalized.endswith("path") or key_normalized in {
+            "prefabs",
+            "scene_path",
+            "prefab_path",
+            "script_path",
+            "runtime_component",
+            "product_body_path",
+            "cocos_resource_path",
+            "relative_path",
+            "changed_files",
+        }
+        if not path_key and not normalized.startswith(
+            (
+                "assets/",
+                "settings/",
+                "workflow_runtime_evidence/",
+                "player_visible_evidence/",
+                "workflow_commercial_feature_evidence.json",
+            )
+        ):
+            return
+        if normalized.startswith(
+            (
+                "assets/",
+                "settings/",
+                "workflow_runtime_evidence/",
+                "player_visible_evidence/",
+                "workflow_commercial_feature_evidence.json",
+            )
+        ):
+            references.append(normalized)
+
+    visit(payload)
+    return _dedupe_strings(references)
+
+
+def _is_deferred_artifact_reference(payload: dict[str, Any], reference: str) -> bool:
+    text = str(reference).lower()
+    payload_text = json.dumps(payload, ensure_ascii=False).lower()
+    if "screenshots/" in text and any(
+        marker in payload_text
+        for marker in (
+            "deferred",
+            "pending_browser_capture",
+            "pending_playtest_capture",
+            "pending_runtime_capture",
+            "declared_for_runtime_capture",
+            "capture_required_after",
+            "expected_capture_after_runtime_launch",
+            "expected_capture_paths",
+            "contract_bound",
+            "evidence_is_contract_until_runner_capture",
+            "fresh_capture_required_by_runner",
+            "runner_capture_required",
+            "ready_for_runner_capture",
+            "runner capture targets",
+        )
+    ):
+        return True
+    return False
+
+
+def _is_valid_cocos_scene_artifact(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, list) or len(payload) < 2:
+        return False
+    has_scene_asset = any(isinstance(item, dict) and item.get("__type__") == "cc.SceneAsset" for item in payload)
+    has_scene = any(isinstance(item, dict) and item.get("__type__") == "cc.Scene" for item in payload)
+    has_node = any(isinstance(item, dict) and item.get("__type__") == "cc.Node" for item in payload)
+    return bool(has_scene_asset and has_scene and has_node)
+
+
+def _scene_runtime_component_blockers(*, card: TaskCard, scene_paths: list[Path]) -> list[str]:
+    if "scene_prefab_component_binding" not in str(card.task_card_id):
+        return []
+    valid_scenes = [path for path in _dedupe_paths(scene_paths) if _is_valid_cocos_scene_artifact(path)]
+    if not valid_scenes:
+        return []
+    if any(_scene_has_runtime_component_instance(path) for path in valid_scenes):
+        return []
+    return ["cocos_scene_runtime_component_binding_missing"]
+
+
+def _scene_has_runtime_component_instance(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, list):
+        return False
+    node_component_refs: set[int] = set()
+    fake_component_metadata = False
+    custom_component_ids: set[int] = set()
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict):
+            continue
+        if item.get("__type__") == "cc.Node":
+            for ref in item.get("_components") or []:
+                if isinstance(ref, dict) and isinstance(ref.get("__id__"), int):
+                    node_component_refs.add(ref["__id__"])
+            continue
+        item_type = str(item.get("__type__") or "")
+        if item_type == "cc.CompPrefabInfo" and (item.get("component") or item.get("script")):
+            fake_component_metadata = True
+            continue
+        if item_type and not item_type.startswith("cc.") and item.get("_enabled", True) is not False:
+            custom_component_ids.add(index)
+    return bool(custom_component_ids & node_component_refs) and not (fake_component_metadata and not custom_component_ids)
+
+
+def _launch_scene_binding_blockers(*, card: TaskCard, project_dir: Path, scene_paths: list[Path]) -> list[str]:
+    if "scene_prefab_component_binding" not in str(card.task_card_id):
+        return []
+    valid_scenes = [path for path in _dedupe_paths(scene_paths) if _is_valid_cocos_scene_artifact(path)]
+    if not valid_scenes:
+        return ["cocos_launch_scene_valid_scene_missing"]
+    scene_json = project_dir / "settings" / "v2" / "packages" / "scene.json"
+    if not scene_json.exists():
+        return ["cocos_launch_scene_settings_missing"]
+    try:
+        settings = json.loads(scene_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ["cocos_launch_scene_settings_invalid"]
+    current_scene = str(settings.get("current-scene") or settings.get("currentScene") or "").strip()
+    if not current_scene:
+        return ["cocos_launch_scene_current_scene_missing"]
+    scene_uuids = {_scene_meta_uuid(path) for path in valid_scenes}
+    scene_uuids.discard("")
+    if current_scene not in scene_uuids:
+        return ["cocos_launch_scene_not_bound_to_generated_scene"]
+    return []
+
+
+def _scene_meta_uuid(scene_path: Path) -> str:
+    meta_path = scene_path.with_suffix(scene_path.suffix + ".meta")
+    if not meta_path.exists():
+        return ""
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return str(payload.get("uuid") or "").strip()
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = path.resolve().as_posix() if path.exists() else path.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _is_player_visible_chinese_artifact(path: Path) -> bool:
+    normalized = path.as_posix().lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "localization",
+            "chinese_ui_panels_evidence.json",
+            "feedback_text_tokens",
+            "block_palette_set",
+            "reward_gallery_shards",
+            "art_direction_manifest",
+        )
+    )
+
+
+def _json_contains_mojibake(value: Any, *, key: str = "") -> bool:
+    key_normalized = key.strip().lower()
+    if key_normalized in {
+        "forbidden_garbled_sequences",
+        "forbidden_mojibake_sequences",
+        "mojibake_examples",
+        "blocked_mojibake_examples",
+    }:
+        return False
+    if isinstance(value, dict):
+        return any(_json_contains_mojibake(child, key=str(child_key)) for child_key, child in value.items())
+    if isinstance(value, list):
+        return any(_json_contains_mojibake(child, key=key) for child in value)
+    if isinstance(value, str):
+        return _looks_like_mojibake(value)
+    return False
 
 
 def _is_fail_fast_precondition(entry: dict[str, Any]) -> bool:
@@ -709,7 +1232,14 @@ def _fallback_adapter_for(adapter_name: Any) -> str | None:
 
 def _normalize_adapter_name(adapter_name: Any) -> str:
     normalized = str(adapter_name or "codex").strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized in {"codex_cli", "codex_cli_login"}:
+    if normalized in {
+        "codex_cli",
+        "codex_cli_login",
+        "codex_or_configured_strong_model",
+        "configured_strong_model",
+        "strong_model",
+        "agent",
+    }:
         return "codex"
     if normalized == "opencode_cli":
         return "opencode"
@@ -1151,9 +1681,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _materialize_task_card(card: TaskCard, *, project_dir: Path, pipeline_id: str) -> dict[str, list[str]]:
     return {
-        "write_set": [_materialize_project_path(item, project_dir=project_dir, pipeline_id=pipeline_id) for item in card.write_set],
-        "read_set": [_materialize_project_path(item, project_dir=project_dir, pipeline_id=pipeline_id) for item in card.read_set],
-        "test_commands": [_materialize_project_path(item, project_dir=project_dir, pipeline_id=pipeline_id) for item in card.test_commands],
+        "write_set": [_materialize_project_scope_path(item, project_dir=project_dir, pipeline_id=pipeline_id) for item in card.write_set],
+        "read_set": [_materialize_project_scope_path(item, project_dir=project_dir, pipeline_id=pipeline_id) for item in card.read_set],
+        "test_commands": [_materialize_project_command(item, project_dir=project_dir, pipeline_id=pipeline_id) for item in card.test_commands],
     }
 
 
@@ -1166,6 +1696,57 @@ def _materialize_project_path(value: str, *, project_dir: Path, pipeline_id: str
         .replace("state\\pipeline_runs\\<run>\\cocos_project", project)
         .replace("<run>", safe_pipeline)
     )
+
+
+_COCOS_PROJECT_SCOPED_PREFIXES = (
+    "assets/",
+    "build/",
+    "extensions/",
+    "player_visible_evidence/",
+    "profiles/",
+    "settings/",
+    "temp/",
+    "workflow_commercial_feature_evidence.json",
+    "workflow_project_manifest.json",
+    "workflow_runtime_evidence/",
+)
+
+
+def _materialize_project_scope_path(value: str, *, project_dir: Path, pipeline_id: str) -> str:
+    materialized = _materialize_project_path(value, project_dir=project_dir, pipeline_id=pipeline_id)
+    normalized = materialized.replace("\\", "/")
+    if Path(materialized).is_absolute():
+        return normalized
+    stripped = normalized.lstrip("./")
+    if _is_cocos_project_scoped_path(stripped):
+        return (project_dir / stripped).resolve().as_posix()
+    return normalized
+
+
+def _is_cocos_project_scoped_path(value: str) -> bool:
+    normalized = value.replace("\\", "/").lstrip("./")
+    return any(normalized == prefix.rstrip("/") or normalized.startswith(prefix) for prefix in _COCOS_PROJECT_SCOPED_PREFIXES)
+
+
+def _materialize_project_command(value: str, *, project_dir: Path, pipeline_id: str) -> str:
+    materialized = _materialize_project_path(value, project_dir=project_dir, pipeline_id=pipeline_id)
+    parts = materialized.split()
+    if not parts:
+        return materialized
+    rewritten = [
+        _quote_command_path(_materialize_project_scope_path(part, project_dir=project_dir, pipeline_id=pipeline_id))
+        if _is_cocos_project_scoped_path(part)
+        else part
+        for part in parts
+    ]
+    return " ".join(rewritten)
+
+
+def _quote_command_path(value: str) -> str:
+    if " " not in value:
+        return value
+    escaped = value.replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _task_card_markdown(card: TaskCard, materialized: dict[str, list[str]]) -> str:
@@ -1240,6 +1821,7 @@ def _normalize_patch_ledger_entry(
         "write_set": materialized["write_set"],
         "read_set": materialized["read_set"],
         "test_commands": materialized["test_commands"],
+        "artifact_validation": entry.get("artifact_validation"),
         "mutation_result": mutation_result,
         "changed_files": mutation_result.get("changed_files") or entry.get("changed_files") or [],
         "final_test_status": mutation_result.get("final_test_status") or entry.get("final_test_status"),
@@ -1558,6 +2140,30 @@ def _read_json_dict(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _source_identity(source_path: Path) -> dict[str, str]:
+    return {
+        "source_path": source_path.resolve().as_posix(),
+        "source_sha256": _sha256_file(source_path),
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _project_existing_files(project_dir: Path) -> list[str]:
+    if not project_dir.exists():
+        return []
+    try:
+        return sorted(path.as_posix() for path in project_dir.rglob("*") if path.is_file())
+    except OSError:
+        return []
+
+
 def _ensure_human_review_packet_file(project_dir: Path, *, evidence: dict[str, Any]) -> Path:
     packet_path = project_dir / "player_visible_evidence/human_player_review_packet.json"
     packet_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1686,7 +2292,7 @@ def _continuation_argv(
         "--max-fix-iterations",
         str(max_repair_attempts),
     ]
-    adapter_name = str(entry.get("requested_adapter") or entry.get("worker_adapter") or card.provider_lane or "").strip()
+    adapter_name = _normalize_adapter_name(entry.get("requested_adapter") or entry.get("worker_adapter") or card.provider_lane or "")
     if adapter_name:
         argv.extend(["--adapter", adapter_name])
     if db_path is not None:
@@ -1837,6 +2443,7 @@ def _load_project_feature_evidence(project_dir: Path) -> dict[str, Any]:
             if isinstance(value, list):
                 merged.setdefault(key, [])
                 merged[key].extend(value)
+        _merge_direct_commercial_feature_markers(merged, payload)
         if isinstance(product_depth, dict):
             for key in ("screenshots", "open_panels", "events"):
                 value = product_depth.get(key)
@@ -1865,14 +2472,26 @@ def _merge_runtime_evidence_artifacts(merged: dict[str, Any], project_dir: Path)
     product_body_raw = _read_json_dict(evidence_root / "product_body_evidence.raw.json")
     if product_body_raw:
         merged["product_body_evidence"] = product_body_raw
+        _normalize_product_body_worker_schema(merged["product_body_evidence"])
+    product_depth_raw = _read_json_dict(evidence_root / "product_depth_evidence.raw.json")
+    if product_depth_raw:
+        merged.setdefault("product_depth_evidence", {}).update(product_depth_raw)
     level_goal = _read_json_dict(evidence_root / "level_goal_evidence.json")
     if level_goal:
         runtime_artifacts.append((evidence_root / "level_goal_evidence.json").as_posix())
         _merge_level_goal_evidence(merged, level_goal)
+    level_goal_matrix = _read_json_dict(project_dir / "assets" / "resources" / "content" / "level_goal_matrix.json")
+    if level_goal_matrix:
+        runtime_artifacts.append((project_dir / "assets" / "resources" / "content" / "level_goal_matrix.json").as_posix())
+        _merge_level_goal_evidence(merged, level_goal_matrix)
     core_loop = _read_json_dict(evidence_root / "core_loop_runtime_evidence.json")
     if core_loop:
         runtime_artifacts.append((evidence_root / "core_loop_runtime_evidence.json").as_posix())
         _merge_core_loop_evidence(merged, core_loop)
+    scene_prefab = _read_json_dict(evidence_root / "scene_prefab_binding_evidence.json")
+    if scene_prefab:
+        runtime_artifacts.append((evidence_root / "scene_prefab_binding_evidence.json").as_posix())
+        _merge_scene_prefab_binding_evidence(merged, scene_prefab)
     shop_gallery = _read_json_dict(evidence_root / "commercial_shop_skin_gallery_evidence.json")
     shop_ownership = _read_json_dict(evidence_root / "shop_ownership_state.json")
     skin_equipped = _read_json_dict(evidence_root / "skin_equipped_visual_change.json")
@@ -1892,6 +2511,10 @@ def _merge_runtime_evidence_artifacts(merged: dict[str, Any], project_dir: Path)
         if gallery_collection:
             runtime_artifacts.append((evidence_root / "gallery_collection_state.json").as_posix())
         _merge_shop_skin_gallery_evidence(merged, shop_gallery)
+    audio_assets = _read_json_dict(evidence_root / "audio_asset_manifest_evidence.json")
+    if audio_assets:
+        runtime_artifacts.append((evidence_root / "audio_asset_manifest_evidence.json").as_posix())
+        _merge_audio_asset_manifest_evidence(merged, audio_assets)
     audio_polish = _read_json_dict(evidence_root / "audio_feedback_polish_evidence.json")
     feedback_animation = _read_json_dict(evidence_root / "feedback_animation_evidence.json")
     input_polish = _read_json_dict(evidence_root / "input_polish_evidence.json")
@@ -1920,6 +2543,49 @@ def _merge_runtime_evidence_artifacts(merged: dict[str, Any], project_dir: Path)
             payload["evidence_path"] = evidence_root.as_posix()
 
 
+def _normalize_product_body_worker_schema(product_body: dict[str, Any]) -> None:
+    engine_native = _dict(product_body.get("engine_native_product_body"))
+    component_bindings = list(product_body.get("component_bindings") or product_body.get("cocos_component_bindings") or [])
+    scene_nodes = list(product_body.get("scene_nodes") or [])
+    engine_native_files = [*list(product_body.get("engine_native_files") or []), *list(engine_native.get("runtime_components") or [])]
+    scene_prefab_bindings = [
+        *list(product_body.get("engine_native_scene_prefab_bindings") or []),
+        *list(product_body.get("scene_prefab_component_bindings") or []),
+        *list(engine_native.get("engine_native_scene_prefab_bindings") or []),
+        *list(engine_native.get("scene_prefab_component_bindings") or []),
+    ]
+    for item in engine_native_files:
+        if isinstance(item, dict) and item.get("path"):
+            component_bindings.append(str(item.get("path")))
+    for item in scene_prefab_bindings:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or item.get("scene_path") or item.get("prefab_path") or item.get("component_path") or "")
+        if path:
+            scene_nodes.append(path)
+            if path.endswith(".ts"):
+                component_bindings.append(path)
+        for key in ("scene_meta_path", "prefab_meta_path", "settings_path"):
+            if item.get(key):
+                scene_nodes.append(str(item[key]))
+        for key in ("bound_components", "bound_runtime_fields", "commands"):
+            for value in item.get(key) or []:
+                if value:
+                    scene_nodes.append(str(value))
+    if component_bindings:
+        product_body["component_bindings"] = _dedupe_strings(component_bindings)
+    if scene_nodes:
+        product_body["scene_nodes"] = _dedupe_strings(scene_nodes)
+    if not product_body.get("scene_path"):
+        for item in scene_prefab_bindings:
+            if not isinstance(item, dict):
+                continue
+            scene_path = str(item.get("scene_path") or item.get("path") or "")
+            if scene_path.endswith(".scene"):
+                product_body["scene_path"] = scene_path
+                break
+
+
 def _merge_level_goal_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
     product_depth = merged.setdefault("product_depth_evidence", {})
     goals: list[dict[str, Any]] = []
@@ -1930,9 +2596,17 @@ def _merge_level_goal_evidence(merged: dict[str, Any], payload: dict[str, Any]) 
             if isinstance(goal, dict):
                 goals.append(
                     {
-                        "id": goal.get("id"),
-                        "goal": goal.get("visible_label") or goal.get("label") or goal.get("id"),
-                        "level_id": level.get("level_id") or level.get("id"),
+                        "id": goal.get("id") or goal.get("goal_id") or goal.get("goalId"),
+                        "goal": (
+                            goal.get("visible_label")
+                            or goal.get("label")
+                            or goal.get("description")
+                            or goal.get("id")
+                            or goal.get("goal_id")
+                            or goal.get("goalId")
+                            or _goal_label_from_matrix_goal(goal)
+                        ),
+                        "level_id": level.get("level_id") or level.get("levelId") or level.get("id"),
                     }
                 )
     if not goals:
@@ -1953,29 +2627,154 @@ def _merge_level_goal_evidence(merged: dict[str, Any], payload: dict[str, Any]) 
     features = merged.setdefault("commercial_feature_coverage", {})
     if payload.get("levels"):
         features["levelFlowPlayable"] = True
-    if _dict(payload.get("revive_and_failure_rules")):
+    if _dict(payload.get("revive_and_failure_rules")) or _dict(payload.get("failure_rules")):
         features["failureReviveFeedback"] = True
+    rules_runtime_state = _dict(payload.get("rules_runtime_state_proof"))
+    if _dict(rules_runtime_state.get("revive")):
+        features["failureReviveFeedback"] = True
+
+
+def _goal_label_from_matrix_goal(goal: dict[str, Any]) -> str:
+    kind = str(goal.get("kind") or goal.get("type") or "goal").strip()
+    amount = goal.get("amount") or goal.get("target") or goal.get("count")
+    color = goal.get("color")
+    parts = [kind]
+    if color:
+        parts.append(str(color))
+    if amount:
+        parts.append(str(amount))
+    return "_".join(parts)
 
 
 def _merge_core_loop_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
     features = merged.setdefault("commercial_feature_coverage", {})
-    if payload.get("state_transitions"):
+    semantic = merged.setdefault("gameplay_semantic_evidence", {})
+    runtime_state = _dict(payload.get("engine_native_runtime_state"))
+    if runtime_state:
+        semantic.setdefault("engine_native_runtime_state", runtime_state)
+        if runtime_state.get("board_size"):
+            semantic.setdefault("board_size", runtime_state.get("board_size"))
+        if runtime_state.get("candidate_batch_size"):
+            semantic.setdefault("candidate_count", runtime_state.get("candidate_batch_size"))
+    transition_payload = _dict(payload.get("semantic_model_transition_trace"))
+    transition_events = transition_payload.get("events") if isinstance(transition_payload.get("events"), list) else []
+    if transition_events:
+        semantic.setdefault("semantic_traces", {})
+        for event in transition_events:
+            semantic["semantic_traces"].setdefault(str(event), True)
+    replay = payload.get("scripted_core_loop_replay") if isinstance(payload.get("scripted_core_loop_replay"), list) else []
+    if replay:
+        semantic.setdefault("model_transition_traces", replay)
+    if payload.get("state_transitions") or replay:
         features["levelFlowPlayable"] = True
-    if any("failed" in str(transition.get("to") or "").lower() for transition in payload.get("state_transitions") or [] if isinstance(transition, dict)):
+    if any("failed" in str(transition.get("to") or transition.get("after_phase") or "").lower() for transition in [*list(payload.get("state_transitions") or []), *replay] if isinstance(transition, dict)):
         features["failureReviveFeedback"] = True
+
+
+def _merge_scene_prefab_binding_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    product_body = merged.setdefault("product_body_evidence", {})
+    features = merged.setdefault("commercial_feature_coverage", {})
+    scene_bindings = [item for item in payload.get("scene_bindings") or [] if isinstance(item, dict)]
+    prefab_bindings = [item for item in payload.get("prefab_bindings") or [] if isinstance(item, dict)]
+    scene_payload = _dict(payload.get("scene"))
+    prefabs_payload = [item for item in payload.get("prefabs") or [] if isinstance(item, dict)]
+    if scene_payload:
+        component_paths = [
+            str(item.get("component_path") or item.get("path") or item.get("component"))
+            for item in scene_payload.get("component_bindings") or []
+            if isinstance(item, dict) and (item.get("component_path") or item.get("path") or item.get("component"))
+        ]
+        scene_binding = {
+            "scene_path": scene_payload.get("scene_path"),
+            "scene_id": scene_payload.get("root_node") or scene_payload.get("scene_name"),
+            "prefabs": [str(item.get("prefab_path")) for item in prefabs_payload if item.get("prefab_path")],
+            "components": component_paths,
+        }
+        scene_bindings.append(scene_binding)
+        if component_paths:
+            product_body.setdefault("component_bindings", [])
+            product_body["component_bindings"].extend(component_paths)
+        if scene_payload.get("scene_path"):
+            product_body["scene_path"] = scene_payload.get("scene_path")
+        product_body.setdefault("scene_nodes", [])
+        for value in (
+            scene_payload.get("scene_path"),
+            scene_payload.get("root_node"),
+            scene_payload.get("runtime_controller_node"),
+            *scene_binding["prefabs"],
+            *component_paths,
+        ):
+            if value:
+                product_body["scene_nodes"].append(str(value))
+    if scene_bindings:
+        product_body.setdefault("scene_bindings", scene_bindings)
+        product_body.setdefault("scene_nodes", [])
+        for binding in scene_bindings:
+            if binding.get("scene_id"):
+                product_body["scene_nodes"].append(binding.get("scene_id"))
+            if binding.get("scene_path"):
+                product_body["scene_nodes"].append(binding.get("scene_path"))
+            product_body["scene_nodes"].extend(binding.get("prefabs") or [])
+            product_body["scene_nodes"].extend(binding.get("components") or [])
+        product_body["scene_nodes"] = _dedupe_strings(product_body["scene_nodes"])
+        features["cocosAssetBindings"] = True
+        features["nativeCocosUiNodes"] = True
+    if prefab_bindings:
+        product_body.setdefault("component_bindings", [])
+        for binding in prefab_bindings:
+            product_body["component_bindings"].append(binding.get("prefab_path"))
+            product_body["component_bindings"].extend(binding.get("visible_surfaces") or [])
+        product_body["component_bindings"] = _dedupe_strings(product_body["component_bindings"])
+        features["cocosAssetBindings"] = True
+    if prefabs_payload:
+        product_body.setdefault("component_bindings", [])
+        product_body["component_bindings"].extend(
+            str(item.get("prefab_path")) for item in prefabs_payload if item.get("prefab_path")
+        )
+        product_body["component_bindings"] = _dedupe_strings(product_body["component_bindings"])
+        features["cocosAssetBindings"] = True
+
+
+def _merge_direct_commercial_feature_markers(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    features = merged.setdefault("commercial_feature_coverage", {})
+    if payload.get("generatedArtAssets"):
+        features["generatedArtAssets"] = True
+    if payload.get("particleEffects"):
+        features["particleEffects"] = True
+        features["animationTimeline"] = True
+        features["animationFeedbackVerified"] = True
+    if payload.get("generatedAudioAssets") or _dict(payload.get("runtimeAudio")) or _dict(payload.get("audio_runtime")):
+        features["generatedAudioAssets"] = True
+    runtime_audio = _dict(payload.get("runtimeAudio")) or _dict(payload.get("audio_runtime"))
+    for key in ("audioPlaybackVerified", "bgmStarted", "sfxPlaybackVerified", "volumeToggleUsable"):
+        if runtime_audio.get(key) or payload.get(key):
+            features[key] = True
 
 
 def _merge_shop_skin_gallery_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
     features = merged.setdefault("commercial_feature_coverage", {})
     visible = merged.setdefault("player_visible_checks", {})
-    if _dict(payload.get("shop_ownership_state")):
+    replay = payload.get("skin_gallery_replay") if isinstance(payload.get("skin_gallery_replay"), list) else []
+    unlock_replay = payload.get("unlock_replay") if isinstance(payload.get("unlock_replay"), list) else []
+    state_proof = _dict(payload.get("reward_gallery_state_proof"))
+    runtime_state = _dict(payload.get("shop_skin_gallery_runtime_state"))
+    if _dict(payload.get("shop_ownership_state")) or state_proof.get("unlockable_skin_count") or any(
+        isinstance(item, dict) and item.get("ownedSkinIds") for item in replay
+    ) or runtime_state.get("state_fields_persisted") or any(isinstance(item, dict) and item.get("skin_unlocked") for item in unlock_replay):
         features["shopOwnershipStates"] = True
         visible["shopOwnershipStates"] = True
-    if _dict(payload.get("skin_equipped_visual_change")):
+    if _dict(payload.get("skin_equipped_visual_change")) or state_proof.get("unlockable_skin_count") or any(
+        isinstance(item, dict) and (item.get("activeSkinId") or item.get("step") == "select_mint_tile") for item in replay
+    ) or runtime_state.get("skin_reward_ids") or any(isinstance(item, dict) and item.get("skin_unlocked") for item in unlock_replay):
         features["skinEquippedVisualChange"] = True
         visible["skinEquippedVisualChange"] = True
-    if _dict(payload.get("gallery_collection_state")):
+    if _dict(payload.get("gallery_collection_state")) or state_proof.get("gallery_collection_count") or any(
+        isinstance(item, dict) and item.get("completedArtIds") for item in replay
+    ) or runtime_state.get("gallery_entry_ids") or any(
+        isinstance(item, dict) and (item.get("puzzle_piece_state") or item.get("awarded_reward_ids")) for item in unlock_replay
+    ):
         visible["galleryCollectionState"] = True
+        features["galleryCollectionState"] = True
 
 
 def _combined_shop_skin_gallery_evidence(
@@ -2004,13 +2803,23 @@ def _combined_shop_skin_gallery_evidence(
 
 
 def _merge_chinese_ui_panels_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
-    panels = [panel for panel in payload.get("chinese_ui_panels") or [] if isinstance(panel, dict)]
+    raw_panels = payload.get("chinese_ui_panels")
+    if isinstance(raw_panels, dict):
+        panel_candidates = []
+        for panel_id, panel in raw_panels.items():
+            if isinstance(panel, dict):
+                normalized = dict(panel)
+                normalized.setdefault("panel_id", str(panel_id))
+                panel_candidates.append(normalized)
+    else:
+        panel_candidates = raw_panels or []
+    panels = [panel for panel in panel_candidates if isinstance(panel, dict)]
     if not panels:
         return
     panel_ids = {str(panel.get("panel_id") or "").strip().lower() for panel in panels}
     required = {"hud_panel", "shop_panel", "gallery_panel", "settings_panel", "failure_revive_panel"}
-    all_have_labels = all(bool(_dict(panel.get("chinese_labels"))) for panel in panels)
-    labels_are_readable = all(_labels_are_readable_chinese(_dict(panel.get("chinese_labels"))) for panel in panels)
+    all_have_labels = all(bool(_chinese_panel_label_values(panel)) for panel in panels)
+    labels_are_readable = all(_labels_are_readable_chinese(_chinese_panel_label_values(panel)) for panel in panels)
     if required <= panel_ids and all_have_labels and labels_are_readable:
         features = merged.setdefault("commercial_feature_coverage", {})
         visible = merged.setdefault("player_visible_checks", {})
@@ -2021,8 +2830,17 @@ def _merge_chinese_ui_panels_evidence(merged: dict[str, Any], payload: dict[str,
         product_depth["open_panels"] = [str(panel.get("chinese_name") or panel.get("panel_id")) for panel in panels]
 
 
-def _labels_are_readable_chinese(labels: dict[str, Any]) -> bool:
-    values = [str(value) for value in labels.values() if str(value).strip()]
+def _chinese_panel_label_values(panel: dict[str, Any]) -> list[str]:
+    labels = panel.get("chinese_labels")
+    if isinstance(labels, dict):
+        return [str(value) for value in labels.values() if str(value).strip()]
+    readable_labels = panel.get("readable_simplified_chinese_labels")
+    if isinstance(readable_labels, list):
+        return [str(value) for value in readable_labels if str(value).strip()]
+    return []
+
+
+def _labels_are_readable_chinese(values: list[str]) -> bool:
     if not values:
         return False
     return all(not _looks_like_mojibake(value) for value in values)
@@ -2030,17 +2848,42 @@ def _labels_are_readable_chinese(labels: dict[str, Any]) -> bool:
 
 def _looks_like_mojibake(value: str) -> bool:
     text = str(value)
-    if "�" in text or "€" in text:
+    if _looks_like_reencoded_utf8_mojibake(text):
         return True
-    markers = set("鍒嗆暟鐨偆鍟簵閲竵瀹濈煶鍏抽棴璐拱瑁裝澶垂绋鏈闊頻")
+    if "锟" in text or "鈧" in text or "�" in text:
+        return True
+    markers = set(
+        "閸掑梿鏆熼惃鍋嗛崯绨甸柌绔电€规繄鐓堕崗鎶芥４鐠愭嫳鐟佽"
+        "婢跺瀭缁嬮張闂婇牷閺傜懓娼″☉鍫ユ珟缂佸繐鍚€闂傤垰鍙"
+        "寰楀垎鏈楂杩炲嚮画娑堥櫎妯紡缁忓吀叧鐩爣鏃犳敖鎸戞垬瀹屾垚"
+        "湰泦澶嶆椿暟鏆傚仠鍟嗗簵鏀惰棌璁剧疆鎷栨嫿搴曠儴妫嬬洏"
+        "绌轰綅澗鎵嬪畬濉弧浠绘剰琛屾垨鍒楀嵆緱鏂版柟鍧楀叏"
+        "閮ㄧ敤悗浼氬埛闄ゅ緱鎷煎浘纰庣墖"
+    )
     marker_count = sum(1 for char in text if char in markers)
     cjk_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
     return cjk_count >= 2 and marker_count / max(cjk_count, 1) >= 0.45
 
 
+def _looks_like_reencoded_utf8_mojibake(text: str) -> bool:
+    if not text:
+        return False
+    for codec in ("gbk", "cp936", "latin1"):
+        try:
+            recovered = text.encode(codec).decode("utf-8")
+        except UnicodeError:
+            continue
+        if recovered == text:
+            continue
+        if any("\u4e00" <= char <= "\u9fff" for char in recovered):
+            return True
+    return False
+
+
 def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
     features = merged.setdefault("commercial_feature_coverage", {})
     visible = merged.setdefault("player_visible_checks", {})
+    _merge_direct_commercial_feature_markers(merged, payload)
     audio = _dict(payload.get("audio_runtime_evidence"))
     feedback = _dict(payload.get("feedback_animation_evidence"))
     polish = _dict(payload.get("polish_runtime_evidence"))
@@ -2067,6 +2910,31 @@ def _merge_audio_feedback_polish_evidence(merged: dict[str, Any], payload: dict[
     feedback_types = {str(item).lower() for item in feedback.get("feedback_types") or []}
     if {"failure", "success"} & feedback_types:
         features["failureReviveFeedback"] = True
+
+
+def _merge_audio_asset_manifest_evidence(merged: dict[str, Any], payload: dict[str, Any]) -> None:
+    features = merged.setdefault("commercial_feature_coverage", {})
+    audio_assets = payload.get("audio_assets") if isinstance(payload.get("audio_assets"), list) else []
+    manifest_paths = _strings(payload.get("manifest_paths"))
+    receipt = _dict(payload.get("fresh_worker_receipt"))
+    generated_artifacts = _strings(receipt.get("generated_artifacts"))
+    artifact_consistency = _dict(payload.get("artifact_consistency"))
+    if (
+        audio_assets
+        or manifest_paths
+        or generated_artifacts
+        or payload.get("generatedAudioAssets")
+        or payload.get("generated_audio_assets")
+        or artifact_consistency.get("all_manifest_events_have_bank_asset")
+    ):
+        features["generatedAudioAssets"] = True
+    if payload.get("bgm_tracks") or payload.get("sfx_events"):
+        product_depth = merged.setdefault("product_depth_evidence", {})
+        product_depth["audio_design_depth"] = {
+            "bgm_track_count": len(payload.get("bgm_tracks") or []),
+            "sfx_event_count": len(payload.get("sfx_events") or []),
+        }
+    _merge_direct_commercial_feature_markers(merged, payload)
 
 
 def _combined_audio_feedback_polish_evidence(

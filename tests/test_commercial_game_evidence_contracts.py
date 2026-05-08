@@ -16,6 +16,7 @@ from packages.contributions.pipelines.commercial_game_evidence_contracts import 
     build_asset_graph_contract,
     build_browser_playtest_ledger,
     build_build_ledger,
+    build_cocos_bridge_evidence_contract,
     build_commercial_final_gate_evidence,
     build_product_depth_evidence,
     build_same_project_patch_ledger_contract,
@@ -53,6 +54,19 @@ def _passing_ai_surrogate_evidence() -> dict:
         "findings": [],
         "screenshots": ["first.png"],
         "replay_artifacts": ["replay.jsonl"],
+        "visual_review_evidence": {
+            "visual_go": True,
+            "visual_quality_score": 90,
+            "screenshots_reviewed": ["first.png"],
+            "blockers": [],
+        },
+        "audio_review_evidence": {
+            "audio_go": True,
+            "bgm_runtime_verified": True,
+            "sfx_runtime_verified": True,
+            "mix_go": True,
+            "blockers": [],
+        },
         "engine_native_product_body": {
             "engine": "cocos",
             "product_body_mode": "engine_native",
@@ -150,6 +164,34 @@ def test_browser_playtest_ledger_exposes_missing_runtime_feature_coverage() -> N
     assert ledger["source"]["missing_commercial_features"] == ["volumeToggleUsable"]
 
 
+def test_browser_playtest_ledger_blocks_static_canvas_and_desktop_splash() -> None:
+    feature_coverage = {
+        "mobilePortraitUi": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+    }
+    ledger = build_browser_playtest_ledger(
+        {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png", "after.png", "desktop.png"],
+            "canvas_hashes": ["same", "same"],
+            "desktop_runtime_started": False,
+            "desktop_splash_detected": True,
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": feature_coverage,
+        }
+    )
+
+    assert ledger["go"] is False
+    assert "browser_canvas_hash_static_after_actions" in ledger["blockers"]
+    assert "desktop_cocos_splash_only" in ledger["blockers"]
+    assert "desktop_runtime_not_started" in ledger["blockers"]
+
+
 def test_contracts_reject_skipped_stubbed_simulated_and_placeholder_dependencies() -> None:
     assert build_asset_graph_contract({"status": "skipped", "commercial_assets_go": True})["go"] is False
     assert build_same_project_patch_ledger_contract({"status": "simulated", "same_project_worker_patch_go": True, "entries": [{"status": "completed"}]})["go"] is False
@@ -169,6 +211,26 @@ def test_contracts_reject_skipped_stubbed_simulated_and_placeholder_dependencies
             },
         }
     )["go"] is False
+
+
+def test_cocos_bridge_contract_blocks_report_only_without_fresh_runner() -> None:
+    ledger = build_cocos_bridge_evidence_contract(
+        {
+            "ecosystem_integration_go": True,
+            "bridge_mode": "report_only",
+            "checks": {
+                "assetdb_import_query_evidence": True,
+                "scene_create_save_evidence": True,
+                "node_component_binding_evidence": True,
+                "prefab_create_instantiate_evidence": True,
+                "build_api_evidence": True,
+            },
+            "blockers": [],
+        }
+    )
+
+    assert ledger["go"] is False
+    assert "report_only_bridge_without_fresh_runner" in ledger["blockers"]
 
 
 def test_same_project_contract_rejects_shell_noop_and_fallback_only_execution() -> None:
@@ -683,6 +745,54 @@ def test_gameplay_semantic_contract_rejects_feature_flags_and_events_only() -> N
     assert evidence["go"] is False
     assert "event_only_gameplay_evidence" in evidence["blockers"]
     assert "semantic_model_transition_trace_missing" in evidence["blockers"]
+
+
+def test_gameplay_semantic_contract_accepts_task_card_transition_examples() -> None:
+    evidence = build_gameplay_semantic_evidence(
+        {
+            "schema_version": "gameplay_semantic_evidence_raw_v1",
+            "engine_native_runtime_state": {"board_size": 10, "candidate_batch_size": 3},
+            "semantic_trace_contract": {"covered_verbs": ["start_or_retry", "place_block"]},
+            "transition_examples": [
+                {"verb": "start_or_retry", "events": ["session_started"]},
+                {"verb": "place_block", "events": ["candidate_placed", "line_clear_resolved"]},
+            ],
+        }
+    )
+
+    assert evidence["go"] is True
+    assert evidence["source"]["board_size"] == 10
+    assert set(evidence["source"]["trace_keys"]) >= {"start_or_retry", "place_block", "line_clear_resolved"}
+
+
+def test_product_body_contract_accepts_implemented_components_and_scene_bindings() -> None:
+    semantic = build_gameplay_semantic_evidence(
+        {
+            "engine_native_runtime_state": {"board_size": 10, "candidate_batch_size": 3},
+            "transition_examples": [{"verb": "start_or_retry"}, {"verb": "place_block"}],
+        }
+    )
+    evidence = build_product_body_evidence(
+        {
+            "schema_version": "product_body_evidence_raw_v1",
+            "implemented_components": [
+                {"path": "assets/scripts/runtime/model/GameState.ts", "role": "state"},
+                {"path": "assets/scripts/runtime/input/Input.ts", "role": "input"},
+            ],
+            "scene_bindings": [
+                {
+                    "scene_path": "assets/scene/main.scene",
+                    "prefabs": ["assets/prefabs/hud.prefab"],
+                    "components": ["GameState", "Input"],
+                }
+            ],
+        },
+        gameplay_semantic_evidence=semantic,
+    )
+
+    assert evidence["go"] is True
+    assert evidence["source"]["component_binding_count"] == 2
+    assert evidence["source"]["scene_node_count"] >= 3
 
 
 def test_gameplay_semantic_contract_rejects_runtime_hook_and_missing_model_transitions() -> None:

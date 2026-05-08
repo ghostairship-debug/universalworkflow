@@ -26,6 +26,8 @@ from packages.contributions.games.cocos.inspector import describe_cocos_delivery
 from packages.contributions.games.cocos.player_validation import validate_cocos_player_visible_evidence
 from packages.contributions.games.cocos.playtest import (
     COMMERCIAL_PLAYTEST_FEATURES,
+    GENERIC_COMMERCIAL_PLAYTEST_FEATURES,
+    GENERIC_REQUIRED_PLAYTEST_FEATURES,
     REQUIRED_PLAYTEST_FEATURES,
 )
 from packages.contributions.games.cocos.sample_closeout import run_cocos_small_goal_sample_closeout
@@ -399,6 +401,53 @@ def test_cocos_build_copies_commercial_runtime_assets_for_web_playtest(tmp_path:
     assert (copied_root / "audio" / "sfx_clear.mp3").read_bytes() == b"mp3"
 
 
+def test_cocos_build_syncs_web_launch_scene_from_workflow_scene_settings(tmp_path: Path, monkeypatch) -> None:
+    build_output = tmp_path / "build" / "web-mobile"
+    (build_output / "assets" / "main").mkdir(parents=True)
+    (build_output / "src").mkdir(parents=True)
+    (build_output / "index.html").write_text("<canvas></canvas>", encoding="utf-8")
+    (build_output / "src" / "settings.json").write_text(
+        json.dumps({"launch": {"launchScene": "db://assets/scene/workflow_bridge_scene.scene"}}),
+        encoding="utf-8",
+    )
+    (build_output / "assets" / "main" / "config.json").write_text(
+        json.dumps(
+            {
+                "assets": {
+                    "scenes": {
+                        "db://assets/scene/workflow_bridge_scene.scene": 1,
+                        "db://assets/scene/BlockPuzzleMain.scene": 0,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings_dir = tmp_path / "settings" / "v2" / "packages"
+    settings_dir.mkdir(parents=True)
+    (settings_dir / "scene.json").write_text(
+        json.dumps({"scene": {"launchScene": "assets/scene/BlockPuzzleMain.scene"}}),
+        encoding="utf-8",
+    )
+
+    def _fake_run(command, *, stdout, stderr, timeout, check):
+        stdout.write("build Task (web-mobile) Finished")
+        return subprocess.CompletedProcess(command, 36)
+
+    monkeypatch.setattr(cocos_e2e_module.subprocess, "run", _fake_run)
+
+    build = cocos_e2e_module.build_cocos_project(
+        project_path=tmp_path,
+        creator_exe=tmp_path / "CocosCreator.exe",
+    )
+
+    settings = json.loads((build_output / "src" / "settings.json").read_text(encoding="utf-8"))
+    assert build["artifact_success"] is True
+    assert build["launch_scene_sync"]["synced"] is True
+    assert build["launch_scene_sync"]["previous_launch_scene"] == "db://assets/scene/workflow_bridge_scene.scene"
+    assert settings["launch"]["launchScene"] == "db://assets/scene/BlockPuzzleMain.scene"
+
+
 def test_cocos_build_does_not_install_block_puzzle_browser_bridge_by_default(tmp_path: Path, monkeypatch) -> None:
     build_output = tmp_path / "build" / "web-mobile"
     (build_output / "assets").mkdir(parents=True)
@@ -430,6 +479,30 @@ def test_cocos_build_does_not_install_block_puzzle_browser_bridge_by_default(tmp
     index_html = (build_output / "index.html").read_text(encoding="utf-8")
     assert "workflow-e2e-runtime-bridge.js" not in index_html
     assert not (build_output / "workflow-e2e-runtime-bridge.js").exists()
+
+
+def test_workflow_bridge_feature_coverage_accepts_direct_cocos_runtime_actions() -> None:
+    from packages.contributions.games.cocos.playtest import _workflow_bridge_feature_coverage
+
+    snapshot = {
+        "controller_registered": True,
+        "scene_binding": True,
+        "runtime_state": {
+            "board_size": 10,
+            "candidates": [{"id": "single"}, {"id": "bar"}, {"id": "corner"}],
+            "mode": "classic",
+            "game_over": False,
+        },
+        "bridge_actions": [{"reason": "register_controller"}],
+    }
+    action_results = [{"command": "placeCandidate", "result": {"accepted": True}}]
+
+    coverage = _workflow_bridge_feature_coverage(snapshot, action_results)
+
+    assert coverage["board10x10"] is True
+    assert coverage["threeCandidates"] is True
+    assert coverage["dragPlacement"] is True
+    assert coverage["nativeCocosUiNodes"] is True
 
 
 def test_cocos_build_installs_project_provided_runtime_bridge_only(tmp_path: Path, monkeypatch) -> None:
@@ -466,9 +539,11 @@ def test_cocos_build_installs_project_provided_runtime_bridge_only(tmp_path: Pat
     assert evidence["runtime_source_policy"] == "project_provided_model_state_view_only_not_dom_event_substitute"
 
 
-def test_cocos_browser_playtest_requires_chinese_audio_and_drag_quality() -> None:
+def test_legacy_block_puzzle_features_are_not_generic_playtest_defaults() -> None:
     required = set(REQUIRED_PLAYTEST_FEATURES)
     commercial = set(COMMERCIAL_PLAYTEST_FEATURES)
+    generic_required = set(GENERIC_REQUIRED_PLAYTEST_FEATURES)
+    generic_commercial = set(GENERIC_COMMERCIAL_PLAYTEST_FEATURES)
 
     for feature in {
         "audioPlaybackVerified",
@@ -492,6 +567,10 @@ def test_cocos_browser_playtest_requires_chinese_audio_and_drag_quality() -> Non
         "dragCoordinateAligned",
     }:
         assert feature in commercial
+
+    for legacy_feature in {"board10x10", "threeCandidates", "antiStall", "galleryPuzzleCollection"}:
+        assert legacy_feature in required | commercial
+        assert legacy_feature not in generic_required | generic_commercial
 
 
 def test_cocos_build_stops_new_creator_child_processes(tmp_path: Path, monkeypatch) -> None:

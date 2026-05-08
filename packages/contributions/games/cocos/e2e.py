@@ -1948,6 +1948,7 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     if artifact_success:
         runtime_asset_copy = _copy_commercial_runtime_assets_to_build(project=project, build_output=build_output)
         browser_runtime_bridge = _install_browser_runtime_bridge(project=project, build_output=build_output)
+        launch_scene_sync = _sync_build_launch_scene_from_project(project=project, build_output=build_output)
     else:
         runtime_asset_copy = {
             "copied": False,
@@ -1957,6 +1958,10 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         }
         browser_runtime_bridge = {
             "installed": False,
+            "reason": "build_artifact_not_ready",
+        }
+        launch_scene_sync = {
+            "synced": False,
             "reason": "build_artifact_not_ready",
         }
     return {
@@ -1970,12 +1975,147 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         "index_html": index_html.as_posix() if index_html.exists() else None,
         "runtime_asset_copy": runtime_asset_copy,
         "browser_runtime_bridge": browser_runtime_bridge,
+        "launch_scene_sync": launch_scene_sync,
         "elapsed_ms": elapsed_ms,
         "stdout_path": stdout_path.as_posix(),
         "stderr_path": stderr_path.as_posix(),
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
     }
+
+
+def _sync_build_launch_scene_from_project(*, project: Path, build_output: Path) -> dict[str, Any]:
+    settings_path = build_output / "src" / "settings.json"
+    main_config_path = build_output / "assets" / "main" / "config.json"
+    launch_scene = _resolve_project_launch_scene_db_url(project)
+    if not launch_scene:
+        return {
+            "synced": False,
+            "reason": "project_launch_scene_missing",
+        }
+    if not settings_path.exists():
+        return {
+            "synced": False,
+            "reason": "build_settings_missing",
+            "launch_scene": launch_scene,
+        }
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {
+            "synced": False,
+            "reason": "build_settings_json_invalid",
+            "error": str(exc),
+            "launch_scene": launch_scene,
+        }
+    if not isinstance(settings, dict):
+        return {
+            "synced": False,
+            "reason": "build_settings_not_object",
+            "launch_scene": launch_scene,
+        }
+    previous_launch_scene = _dict(settings.get("launch")).get("launchScene")
+    config_scenes = _build_config_scene_urls(main_config_path)
+    if config_scenes and launch_scene not in config_scenes:
+        return {
+            "synced": False,
+            "reason": "launch_scene_not_in_build_main_config",
+            "launch_scene": launch_scene,
+            "build_scene_urls": sorted(config_scenes),
+            "previous_launch_scene": previous_launch_scene,
+        }
+    settings.setdefault("launch", {})
+    if isinstance(settings["launch"], dict):
+        settings["launch"]["launchScene"] = launch_scene
+    settings_path.write_text(json.dumps(settings, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    evidence_root = project / "workflow_runtime_evidence"
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    evidence_path = evidence_root / "build_launch_scene_sync.json"
+    evidence = {
+        "schema_version": "commercial_build_launch_scene_sync_v1",
+        "synced": True,
+        "launch_scene": launch_scene,
+        "previous_launch_scene": previous_launch_scene,
+        "build_settings_path": settings_path.as_posix(),
+        "build_main_config_path": main_config_path.as_posix() if main_config_path.exists() else None,
+        "policy": "build_web_mobile_launch_scene_must_match_workflow_generated_player_visible_scene",
+    }
+    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "synced": True,
+        "launch_scene": launch_scene,
+        "previous_launch_scene": previous_launch_scene,
+        "evidence_path": evidence_path.as_posix(),
+    }
+
+
+def _resolve_project_launch_scene_db_url(project: Path) -> str | None:
+    candidates: list[str] = []
+    settings = _read_json_dict(project / "settings" / "v2" / "packages" / "scene.json")
+    scene_settings = _dict(settings.get("scene"))
+    for value in (
+        scene_settings.get("launchScene"),
+        settings.get("launchScene"),
+        scene_settings.get("launch_scene"),
+        settings.get("launch_scene"),
+    ):
+        if value:
+            candidates.append(str(value))
+    scene_prefab = _read_json_dict(project / "workflow_runtime_evidence" / "scene_prefab_binding_evidence.json")
+    scene_payload = _dict(scene_prefab.get("scene"))
+    if scene_payload.get("scene_path"):
+        candidates.append(str(scene_payload["scene_path"]))
+    product_body = _read_json_dict(project / "workflow_runtime_evidence" / "product_body_evidence.raw.json")
+    engine_body = _dict(product_body.get("engine_native_product_body"))
+    for binding in engine_body.get("scene_prefab_component_bindings") or product_body.get("scene_prefab_component_bindings") or []:
+        if isinstance(binding, dict) and binding.get("scene_path"):
+            candidates.append(str(binding["scene_path"]))
+    for candidate in candidates:
+        normalized = _scene_path_to_db_url(candidate)
+        if normalized:
+            return normalized
+    current_uuid = str(settings.get("current-scene") or scene_settings.get("current-scene") or scene_settings.get("currentScene") or "").strip()
+    if current_uuid:
+        for scene_meta in (project / "assets").glob("**/*.scene.meta"):
+            meta = _read_json_dict(scene_meta)
+            if str(meta.get("uuid") or "").strip() == current_uuid:
+                scene_path = scene_meta.with_suffix("").relative_to(project).as_posix()
+                return _scene_path_to_db_url(scene_path)
+    return None
+
+
+def _scene_path_to_db_url(value: str) -> str | None:
+    text = str(value or "").strip().replace("\\", "/")
+    if not text:
+        return None
+    if text.startswith("db://") and text.endswith(".scene"):
+        return text
+    if text.startswith("project://"):
+        text = text.removeprefix("project://").lstrip("/")
+    if text.startswith("assets/") and text.endswith(".scene"):
+        return f"db://{text}"
+    return None
+
+
+def _build_config_scene_urls(config_path: Path) -> set[str]:
+    payload = _read_json_dict(config_path)
+    assets = _dict(payload.get("assets"))
+    scenes = assets.get("scenes")
+    if not isinstance(scenes, dict):
+        return set()
+    return {str(key) for key in scenes if str(key).startswith("db://")}
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _copy_commercial_runtime_assets_to_build(*, project: Path, build_output: Path) -> dict[str, Any]:
@@ -2035,7 +2175,11 @@ def _install_browser_runtime_bridge(*, project: Path, build_output: Path) -> dic
     html = index_html.read_text(encoding="utf-8", errors="replace")
     script_tag = '  <script src="workflow-e2e-runtime-bridge.js" charset="utf-8"></script>'
     if "workflow-e2e-runtime-bridge.js" not in html:
-        if "</body>" in html:
+        if "<script>\n    System.import('./index.js')" in html:
+            html = html.replace("<script>\n    System.import('./index.js')", f"{script_tag}\n\n<script>\n    System.import('./index.js')")
+        elif "<script>\r\n    System.import('./index.js')" in html:
+            html = html.replace("<script>\r\n    System.import('./index.js')", f"{script_tag}\r\n\r\n<script>\r\n    System.import('./index.js')")
+        elif "</body>" in html:
             html = html.replace("</body>", f"{script_tag}\n</body>")
         else:
             html = f"{html.rstrip()}\n{script_tag}\n"

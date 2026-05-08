@@ -1,18 +1,32 @@
 # 当前开发工作流
 
+## 2026-05-08 Same-Project Repair Loop Diagnosis And Closure
+
+The failed long rerun sequence showed a workflow problem, not just a weak game implementation: repeated fresh output directories can hide gate failures instead of repairing the current product. Commercial game production must now keep one explicit project directory per source identity and perform same-project task-card repair until the blocker is resolved or the control plane blocks with a concrete failure class.
+
+- Same-project completed ledger entries are now revalidated against the current artifact contract before reuse. Stale completed records with fake or downgraded Cocos scene/component evidence are invalidated and rerun with fresh receipt and visible CLI evidence.
+- Cocos project reuse is now source-bound. `workflow_project_source.json` records the source path and `source_sha256`; directories from a different source block with `same_project_source_mismatch`, and non-empty unmanaged directories block with `same_project_unmanaged_project_dir`.
+- This closes the specific reason the previous loop could run many rounds without convergence. The next commercial generation attempt must use one chosen output directory and feed any no-go result back into same-project repair cards, not a new `WorkflowCommercialGameFresh_*` directory.
+
+## 2026-05-07 No-Downgrade Commercial Pipeline Repair Plan
+
+最新 PDF-only 重新生成暴露出商业游戏管线仍存在实际执行降级：强 agent 设计未真正参与、`GameDesignSpec`/`PhaseExecutionBlueprint` 未成为强制生产链路、Cocos 原生 Scene/Prefab/Component 证据缺失、AI playtest 对视觉质量出现 false positive。下一阶段必须先执行根目录修复计划 [COMMERCIAL_GAME_PIPELINE_NO_DOWNGRADE_REPAIR_PLAN_2026_05_07.md](COMMERCIAL_GAME_PIPELINE_NO_DOWNGRADE_REPAIR_PLAN_2026_05_07.md)，在无降级链路修复前，不得把新的 `commercial_game_production` 输出解释为商业化游戏完成。
+
+2026-05-07 implementation progress: source-truth repair rounds 1-6 are implemented. `commercial_game_production` now validates `GameDesignSpec` before commercial asset/provider work and before Cocos task-card mutation; commercial same-project business cards must come from an active `PhaseExecutionBlueprint` and `TaskCardCompileReport`; active phase persistence writes blueprint/compile-report artifacts and links them from DB task card metadata; role-derived specs use the unified requirement matrix builder; explicit live-role execution is timeout-bounded; final validation requires live-role proof and Cocos ecosystem proof for commercial completion; browser/evidence gates reject static canvas hashes, Cocos splash-only desktop screenshots, report-only bridge evidence without fresh runner metadata, and block-puzzle default playtest leakage. AI surrogate quality now requires screenshot-backed visual scoring and audio/BGM/SFX/mix review evidence, so high numeric area scores alone cannot pass. 2026-05-08 adds same-project repair-loop closure: stale completed task-card evidence is revalidated before reuse, invalid prior artifacts force a fresh same-project rerun, and output directories are source-hash guarded. Verification is green for the targeted control-plane/game suite; the next meaningful validation is a fresh `commercial_game_production` run from a real source brief/PDF into one chosen project directory, not repeated fresh directories.
+
 ## 2026-05-04 Closeout: PDF-Only Workflow Commercial Game Repair Loop
 
 本轮以桌面 PDF `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` 作为唯一产品输入，产品实现和返修均通过 `commercial_game_production`/DB task card/`human_visible_cli_enforced` workflow worker 执行；Codex 只直接修改控制面、测试、文档和卫生清理项。
 
 - 2026-05-07 pipeline de-templating: `commercial_game_production` 的默认 Cocos bootstrap 现在只生成通用空项目壳、资源目录、runtime slot 和 workflow metadata，不再自动写入 block-puzzle product-body baseline，也不再把仓库内 block-puzzle browser runtime bridge 注入 build。产品 phase 由 `GameDesignSpec` 生成 `ProductPhaseCandidate`，active phase 再由 agent-style `PhaseExecutionBlueprint` 深度细化，workflow 规则编译为 DB task cards；task card 不是纯规则机械生成。
 - Semantic/product-body gate 已从固定 `10x10`/`CandidateTray`/`anti_stall` 改为 spec-driven：当前策划没有要求 block-puzzle 时，相关术语、组件或 trace 会被记录为 `template_leak_detected`。历史 block-puzzle baseline 仅保留为 diagnostic-only baseline，不是默认商业路径。
-- Current run id: `commercial_game_pdf_only_20260503`
-- Current project/evidence root: `state/commercial_game_pdf_only_20260503/cocos_project`
-- Fresh D-root regeneration: `D:\WorkflowCommercialGameFresh_20260504_R5\cocos_project`, using only `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` as product input. Earlier failed D-root regeneration folders from this loop were removed so the current review path is not polluted by old outputs.
-- Current machine evidence: `build_ledger.go=true`, `browser_playtest_ledger.go=true`, `product_depth_evidence.go=true`, `commercial_playable_blockers=[]`.
-- Current screenshots: `playtest_evidence/cocos_playtest_initial.png`, `playtest_evidence/cocos_playtest_after_actions.png`, `playtest_evidence/cocos_playtest_desktop.png`.
-- Fresh D-root browser evidence: `D:\WorkflowCommercialGameFresh_20260504_R5\cocos_project\playtest_evidence_visual_polish\cocos_playtest_result.json` with mobile, after-action, and desktop screenshots. The Cocos Web Mobile build succeeded, the model-backed browser bridge installed, console/page errors were empty, `passed=true`, and `commercial_passed=true`.
-- Current player-visible state: Chinese mobile-first UI, BGM/SFX/volume proof, 10x10 board, three candidates, drag placement, line clear, refresh, props, shop/skin/gallery, level switching, failure/revive/pause feedback and desktop/mobile screenshots all pass the browser playtest feature gate.
+- Historical run id: `commercial_game_pdf_only_20260503`
+- Historical project/evidence root: `state/commercial_game_pdf_only_20260503/cocos_project`
+- Historical D-root regeneration evidence only: `D:\WorkflowCommercialGameFresh_20260504_R5\cocos_project`, using only `C:\Users\74755\Desktop\俄罗斯方块消除策划文档4.2.pdf` as product input. This path is not the current commercial development target and must not be used as a fresh-rerun pattern.
+- Historical machine evidence: `build_ledger.go=true`, `browser_playtest_ledger.go=true`, `product_depth_evidence.go=true`, `commercial_playable_blockers=[]`.
+- Historical screenshots: `playtest_evidence/cocos_playtest_initial.png`, `playtest_evidence/cocos_playtest_after_actions.png`, `playtest_evidence/cocos_playtest_desktop.png`.
+- Historical D-root browser evidence: `D:\WorkflowCommercialGameFresh_20260504_R5\cocos_project\playtest_evidence_visual_polish\cocos_playtest_result.json` with mobile, after-action, and desktop screenshots. The Cocos Web Mobile build succeeded, the model-backed browser bridge installed, console/page errors were empty, `passed=true`, and `commercial_passed=true`.
+- Historical player-visible state: Chinese mobile-first UI, BGM/SFX/volume proof, 10x10 board, three candidates, drag placement, line clear, refresh, props, shop/skin/gallery, level switching, failure/revive/pause feedback and desktop/mobile screenshots all pass the browser playtest feature gate.
 - Governance state remains conservative: `commercial_playable_go=false` until explicit human acceptance is recorded. Agent/Playwright QA can support review and repair, but it does not by itself set `human_player_review_go=true`.
 - Workflow bugs fixed in this loop: visible CLI timeout handling for active provider output, deterministic finalizer safety, split evidence merging, browser playtest missing-feature blockers, product-depth mojibake label blocking, and Cocos build syntax/import repair through workflow task cards.
 - 2026-05-04 fresh-regeneration repair: the Cocos browser runtime bridge now reads `commercial_asset_bindings.json` at runtime and renders generated background, block-skin, and clear-particle images into the visible game instead of treating generated art as evidence-only. `generatedArtAssets` is no longer a default true flag; it is set after generated visual assets load.

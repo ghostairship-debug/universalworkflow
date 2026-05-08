@@ -1042,7 +1042,7 @@ def test_compile_run_can_pin_codex_adapter(tmp_path: Path) -> None:
     assert prepared.capability_route is not None
     assert prepared.capability_route.adapter_name == "codex"
     assert prepared.task_packet.env["WORKFLOW_CAPABILITY_ADAPTER"] == "codex"
-    assert prepared.resolved_execution.selected_model == "gpt-5.4"
+    assert prepared.resolved_execution.selected_model == "gpt-5.5"
     assert detail["capability_resolution"]["adapter_name"] == "codex"
     assert detail["resolved_execution"]["selected_model_kind"] == "codex_model"
 
@@ -1055,7 +1055,7 @@ def test_repo_default_adapter_models_match_expected_defaults(monkeypatch: pytest
     monkeypatch.delenv("WORKFLOW_CONFIG_PATH", raising=False)
 
     assert LangChainAgentAdapter(runner=_fake_agent_runner).model == "gpt-5.4-mini"
-    assert CodexAdapter(runner=_fake_codex_runner).model == "gpt-5.4"
+    assert CodexAdapter(runner=_fake_codex_runner).model == "gpt-5.5"
     assert CodexAdapter(runner=_fake_codex_runner).reasoning_effort == "xhigh"
     assert OpenCodeAdapter(runner=_fake_opencode_runner).model == "minimax/MiniMax-M2.7"
 

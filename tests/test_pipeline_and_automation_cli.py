@@ -38,6 +38,53 @@ def _visible_cli_session(tmp_path: Path, task_card_id: str = "tc_visible") -> di
     }
 
 
+def _commercial_blueprint_task_card(pipeline_id: str, task_card_id: str = "tc_core"):
+    from packages.contracts import TaskCard
+
+    return TaskCard(
+        run_id=pipeline_id,
+        task_card_id=task_card_id,
+        title=f"Task {task_card_id}",
+        description=f"{task_card_id} patches the same Cocos project from the active phase blueprint.",
+        goal=f"Patch {task_card_id} in the same project without creating or switching project roots.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
+        acceptance_criteria=["same project patched", "fresh worker evidence remains valid"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["new_project_created"],
+        model_guidance=["Patch the same Cocos project only."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={
+            "task_card_generation_source": "active_phase_execution_blueprint",
+            "phase_execution_blueprint_schema": "universal_game_phase_execution_blueprint_v1",
+            "task_card_compile_report_schema": "universal_game_task_card_compile_report_v1",
+            "task_card_compile_go": True,
+            "task_card_compile_blockers": [],
+            "requirement_coverage_required": True,
+            "required_requirement_ids": ["REQ-S001-C001-001"],
+            "covered_requirement_ids": ["REQ-S001-C001-001"],
+            "missing_requirement_ids": [],
+            "human_visible_cli_required": True,
+            "execution_visibility_mode": "human_visible_cli_enforced",
+        },
+    )
+
+
+def _seed_commercial_worker_db(tmp_path: Path, pipeline_id: str) -> Path:
+    from packages.contracts import Run
+    from packages.core_domain.db import migrate
+    from packages.core_domain.repositories import RunRepository, TaskRepository
+
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    RunRepository(db_path).create(Run(run_id=pipeline_id, goal="commercial worker", preset_id="commercial_game_production"))
+    TaskRepository(db_path).create_task_card(_commercial_blueprint_task_card(pipeline_id))
+    return db_path
+
+
 def _passing_ai_surrogate_evidence() -> dict[str, object]:
     return {
         "schema_version": "universal_ai_surrogate_playtest_quality_v1",
@@ -967,6 +1014,31 @@ def test_real_asset_stage_skips_provider_when_required_source_is_missing(tmp_pat
     assert supervisor["repair_packets"][0]["owner_role"] == "operator_input"
 
 
+def test_commercial_asset_stage_blocks_invalid_game_design_spec_before_provider(tmp_path: Path, monkeypatch) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    def _should_not_call_provider(*_args, **_kwargs):
+        raise AssertionError("asset provider must not run when GameDesignSpec validation fails")
+
+    monkeypatch.setattr(commercial_pipeline, "generate_cocos_local_stable_asset_manifest", _should_not_call_provider)
+    source = tmp_path / "empty.md"
+    source.write_text("", encoding="utf-8")
+
+    payload = commercial_pipeline.execute_commercial_game_asset_generation(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id="commercial_game_production",
+        source_path=source,
+        require_commercial=True,
+    )
+
+    assert payload["status"] == "blocked"
+    assert payload["failure_class"] == "game_design_spec_no_go"
+    assert "source_requirements_missing" in payload["output"]["commercial_asset_blockers"]
+    assert payload["output"]["game_design_spec_contract"]["go"] is False
+
+
 def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tmp_path: Path, monkeypatch) -> None:
     from packages.contracts import Run, TaskCard
     import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
@@ -996,6 +1068,19 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
             execution_mode="same_project_patch",
             risk_level="high",
             status="active",
+            metadata={
+                "task_card_generation_source": "active_phase_execution_blueprint",
+                "phase_execution_blueprint_schema": "universal_game_phase_execution_blueprint_v1",
+                "task_card_compile_report_schema": "universal_game_task_card_compile_report_v1",
+                "task_card_compile_go": True,
+                "task_card_compile_blockers": [],
+                "requirement_coverage_required": True,
+                "required_requirement_ids": ["REQ-S001-C001-001"],
+                "covered_requirement_ids": ["REQ-S001-C001-001"],
+                "missing_requirement_ids": [],
+                "human_visible_cli_required": True,
+                "execution_visibility_mode": "human_visible_cli_enforced",
+            },
         )
     )
     task_repo.create_task_card(
@@ -1018,7 +1103,7 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
         )
     )
     source = tmp_path / "brief.md"
-    source.write_text("# 商业小游戏", encoding="utf-8")
+    source.write_text("# 商业小游戏\n必须实现八个不同关卡目标。\n必须有中文 UI 和 BGM。", encoding="utf-8")
     creator = tmp_path / "CocosCreator.exe"
     creator.write_text("", encoding="utf-8")
     runner_calls: list[dict[str, object]] = []
@@ -1155,6 +1240,153 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
     assert (tmp_path / "cocos_project" / "workflow_project_source.json").exists()
 
 
+def test_commercial_worker_blocks_reusing_project_with_different_source(tmp_path: Path) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    pipeline_id = "pipeline_source_mismatch_guard"
+    db_path = _seed_commercial_worker_db(tmp_path, pipeline_id)
+    source = tmp_path / "brief_current.md"
+    source.write_text("# current commercial game\nImplement a game from this source only.", encoding="utf-8")
+    old_source = tmp_path / "brief_old.md"
+    old_source.write_text("# old game\nDo not reuse this game project for the current source.", encoding="utf-8")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    project_dir = tmp_path / "cocos_project"
+    project_dir.mkdir()
+    (project_dir / "workflow_project_source.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "commercial_game_same_project_bootstrap_v1",
+                "source_path": old_source.resolve().as_posix(),
+                "source_sha256": "old-source-hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("source mismatch must block before task-card execution")
+
+    payload = commercial_pipeline.execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=source,
+        creator_exe=creator,
+        output_dir=project_dir,
+        require_build=False,
+        require_playtest=False,
+        require_commercial=False,
+        task_card_runner=_unexpected_runner,
+    )
+
+    output = payload["output"]
+    assert output["same_project_worker_patch_go"] is False
+    assert "same_project_source_mismatch" in output["commercial_playable_blockers"]
+    assert output["same_project_reuse_guard"]["reuse_mode"] == "blocked_source_mismatch"
+    assert output["same_project_patch_ledger"]["entries"] == []
+
+
+def test_commercial_worker_blocks_unmanaged_nonempty_project_dir(tmp_path: Path) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    pipeline_id = "pipeline_unmanaged_project_guard"
+    db_path = _seed_commercial_worker_db(tmp_path, pipeline_id)
+    source = tmp_path / "brief.md"
+    source.write_text("# current commercial game\nImplement a game from this source only.", encoding="utf-8")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    project_dir = tmp_path / "cocos_project"
+    (project_dir / "assets/scripts").mkdir(parents=True)
+    (project_dir / "assets/scripts/LegacyGame.ts").write_text("// unmanaged stale project", encoding="utf-8")
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("unmanaged project reuse must block before task-card execution")
+
+    payload = commercial_pipeline.execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=source,
+        creator_exe=creator,
+        output_dir=project_dir,
+        require_build=False,
+        require_playtest=False,
+        require_commercial=False,
+        task_card_runner=_unexpected_runner,
+    )
+
+    output = payload["output"]
+    assert output["same_project_worker_patch_go"] is False
+    assert "same_project_unmanaged_project_dir" in output["commercial_playable_blockers"]
+    assert output["same_project_reuse_guard"]["reuse_mode"] == "blocked_unmanaged_existing_project"
+    assert output["same_project_patch_ledger"]["entries"] == []
+
+
+def test_commercial_worker_blocks_business_cards_not_from_active_phase_blueprint(tmp_path: Path) -> None:
+    from packages.contracts import Run, TaskCard
+    from packages.contributions.pipelines.commercial_game_production import execute_commercial_game_task_card_worker
+    from packages.core_domain.db import migrate
+    from packages.core_domain.repositories import RunRepository, TaskRepository
+
+    db_path = tmp_path / "workflow.db"
+    pipeline_id = "pipeline_non_blueprint_card"
+    migrate(db_path)
+    RunRepository(db_path).create(Run(run_id=pipeline_id, goal="commercial worker", preset_id="commercial_game_production"))
+    TaskRepository(db_path).create_task_card(
+        TaskCard(
+            run_id=pipeline_id,
+            task_card_id="tc_manual_gameplay",
+            title="Manual gameplay implementation",
+            description="Manual same-project implementation card must not satisfy the commercial blueprint compiler contract.",
+            goal="Manual same-project implementation card must be blocked unless it came from the active phase blueprint compiler.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["brief.md"],
+            test_commands=["python -m pytest tests/test_task_card_store.py -q"],
+            acceptance_criteria=["blueprint gate blocks", "runner not called"],
+            evidence_requirements=["blueprint_compile_contract"],
+            blocking_conditions=["manual_card_executed"],
+            model_guidance=["Do not execute cards that bypass the active phase blueprint compiler."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+            status="active",
+        )
+    )
+    source = tmp_path / "brief.md"
+    source.write_text("# 商业小游戏\n必须有中文 UI。\n必须有 BGM。", encoding="utf-8")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("non-blueprint business card must block before runner execution")
+
+    payload = execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=source,
+        creator_exe=creator,
+        output_dir=tmp_path / "cocos_project",
+        require_build=False,
+        require_playtest=False,
+        require_commercial=True,
+        task_card_runner=_unexpected_runner,
+    )
+
+    output = payload["output"]
+    assert output["same_project_worker_patch_go"] is False
+    assert output["game_design_spec_contract"]["go"] is True
+    assert any("task_card_not_from_active_phase_blueprint" in item for item in output["commercial_playable_blockers"])
+    assert output["task_card_compile_contract"]["go"] is False
+    assert output["same_project_patch_ledger"]["entries"] == []
+
+
 def test_commercial_worker_short_circuits_downstream_after_same_project_patch_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1180,14 +1412,30 @@ def test_commercial_worker_short_circuits_downstream_after_same_project_patch_fa
             acceptance_criteria=["eight goals visible", "same project patched"],
             evidence_requirements=["same_project_patch", "feature_coverage"],
             blocking_conditions=["workflow_child_stalled"],
-            model_guidance=["Patch the same project only."],
-            execution_mode="same_project_patch",
-            risk_level="high",
-            status="active",
-        )
+                model_guidance=["Patch the same project only."],
+                execution_mode="same_project_patch",
+                risk_level="high",
+                status="active",
+                metadata={
+                    "task_card_generation_source": "active_phase_execution_blueprint",
+                    "phase_execution_blueprint_schema": "universal_game_phase_execution_blueprint_v1",
+                    "task_card_compile_report_schema": "universal_game_task_card_compile_report_v1",
+                    "task_card_compile_go": True,
+                    "task_card_compile_blockers": [],
+                    "requirement_coverage_required": True,
+                    "required_requirement_ids": ["REQ-S001-C001-001"],
+                    "covered_requirement_ids": ["REQ-S001-C001-001"],
+                    "missing_requirement_ids": [],
+                    "human_visible_cli_required": True,
+                    "execution_visibility_mode": "human_visible_cli_enforced",
+                },
+            )
     )
     source = tmp_path / "brief.md"
-    source.write_text("# commercial game", encoding="utf-8")
+    source.write_text(
+        "# commercial game\nThe game must implement eight distinct level goals.\nThe game must have Chinese UI and audio.",
+        encoding="utf-8",
+    )
     creator = tmp_path / "CocosCreator.exe"
     creator.write_text("", encoding="utf-8")
 
@@ -1857,9 +2105,149 @@ def test_collect_project_runtime_evidence_refreshes_contracts_from_task_card_art
     assert "blocked_by_same_project_worker" not in browser_ledger["blockers"]
 
 
+def test_collect_project_runtime_evidence_merges_current_worker_schema(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import collect_project_runtime_evidence
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    content_dir = project_dir / "assets" / "resources" / "content"
+    evidence_dir.mkdir(parents=True)
+    content_dir.mkdir(parents=True)
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text(
+        json.dumps({"generatedArtAssets": [{"asset_id": "board"}], "particleEffects": ["clear_sweep"]}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "gameplay_semantic_evidence.raw.json").write_text(
+        json.dumps(
+            {
+                "board_state": {"rows": 10, "cols": 10},
+                "piece_shapes": [{"cells": [[0, 0]]}],
+                "candidate_tray": [{}, {}, {}],
+                "runtime_phase": True,
+                "semantic_traces": {"placement": True, "line_clear": True},
+                "model_transition_traces": [{"transition": "placement", "before": {}, "after": {}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "product_body_evidence.raw.json").write_text(
+        json.dumps(
+            {
+                "engine_native_product_body": {
+                    "runtime_components": [{"path": "assets/scripts/runtime/model/GameModel.ts"}],
+                    "scene_prefab_component_bindings": [
+                        {
+                            "scene_path": "assets/scene/game.scene",
+                            "scene_meta_path": "assets/scene/game.scene.meta",
+                            "settings_path": "settings/v2/packages/scene.json",
+                        },
+                        {
+                            "prefab_path": "assets/prefabs/hud.prefab",
+                            "bound_components": ["GameModel"],
+                        },
+                    ],
+                },
+                "baseline_only": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "scene_prefab_binding_evidence.json").write_text(
+        json.dumps(
+            {
+                "scene": {
+                    "scene_path": "assets/scene/game.scene",
+                    "root_node": "GameRoot",
+                    "runtime_controller_node": "RuntimeController",
+                    "component_bindings": [{"component_path": "assets/scripts/runtime/model/GameModel.ts"}],
+                },
+                "prefabs": [{"prefab_path": "assets/prefabs/hud.prefab"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (content_dir / "level_goal_matrix.json").write_text(
+        json.dumps(
+            {
+                "levels": [
+                    {"levelId": index, "goals": [{"goalId": f"goal_{index}", "kind": "score", "amount": index * 10}]}
+                    for index in range(1, 9)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "level_goal_evidence.json").write_text(
+        json.dumps({"rules_runtime_state_proof": {"revive": {"max_per_run": 3}}}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "commercial_shop_skin_gallery_evidence.json").write_text(
+        json.dumps(
+            {
+                "shop_skin_gallery_runtime_state": {
+                    "skin_reward_ids": ["mint", "neon"],
+                    "gallery_entry_ids": ["spring_full"],
+                    "state_fields_persisted": ["unlockedRewardIds", "selectedSkinId"],
+                },
+                "unlock_replay": [
+                    {"step": 1, "puzzle_piece_state": {"spring": 1}},
+                    {"step": 2, "awarded_reward_ids": ["spring_full"], "skin_unlocked": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "chinese_ui_panels_evidence.json").write_text(
+        json.dumps(
+            {
+                "chinese_ui_panels": {
+                    "hud_panel": {"title": "HUD", "readable_simplified_chinese_labels": ["分数"]},
+                    "shop_panel": {"title": "商店", "readable_simplified_chinese_labels": ["购买"]},
+                    "gallery_panel": {"title": "图鉴", "readable_simplified_chinese_labels": ["皮肤"]},
+                    "settings_panel": {"title": "设置", "readable_simplified_chinese_labels": ["音乐"]},
+                    "failure_revive_panel": {"title": "复活", "readable_simplified_chinese_labels": ["复活"]},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "audio_asset_manifest_evidence.json").write_text(
+        json.dumps({"fresh_worker_receipt": {"generated_artifacts": ["assets/resources/commercial_assets/audio/bank.json"]}}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "audio_feedback_polish_evidence.json").write_text(
+        json.dumps(
+            {
+                "audioPlaybackVerified": True,
+                "bgmStarted": True,
+                "sfxPlaybackVerified": True,
+                "volumeToggleUsable": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = collect_project_runtime_evidence(
+        project_dir=project_dir,
+        creator_exe=tmp_path / "CocosCreator.exe",
+        require_build=False,
+        require_playtest=False,
+    )
+
+    assert result["product_body_evidence"]["go"] is True
+    assert result["product_depth_evidence"]["go"] is True
+    assert result["commercial_feature_coverage"]["generatedAudioAssets"] is True
+    assert result["commercial_feature_coverage"]["shopOwnershipStates"] is True
+    assert result["commercial_feature_coverage"]["chineseUiPanelsVisible"] is True
+    assert result["commercial_feature_coverage"]["failureReviveFeedback"] is True
+    assert result["product_body_evidence"]["source"]["scene_node_count"] >= 3
+
+
 def test_split_audio_feedback_polish_evidence_merges_for_feature_coverage() -> None:
     from packages.contributions.pipelines.commercial_game_task_worker import (
         _combined_audio_feedback_polish_evidence,
+        _merge_audio_asset_manifest_evidence,
         _merge_audio_feedback_polish_evidence,
     )
 
@@ -1888,6 +2276,16 @@ def test_split_audio_feedback_polish_evidence_merges_for_feature_coverage() -> N
     assert merged["commercial_feature_coverage"]["animationFeedbackVerified"] is True
     assert merged["commercial_feature_coverage"]["failureReviveFeedback"] is True
     assert merged["player_visible_checks"]["polishEffectsApplied"] is True
+    _merge_audio_asset_manifest_evidence(
+        merged,
+        {
+            "manifest_paths": ["assets/resources/commercial_assets/audio/commercial_audio_manifest.json"],
+            "bgm_tracks": [{"id": "main_bgm"}],
+            "sfx_events": [{"id": "place"}],
+        },
+    )
+    assert merged["commercial_feature_coverage"]["generatedAudioAssets"] is True
+    assert merged["product_depth_evidence"]["audio_design_depth"]["bgm_track_count"] == 1
 
 
 def test_level_goal_fallback_and_chinese_ui_mojibake_gate() -> None:
@@ -1912,7 +2310,7 @@ def test_level_goal_fallback_and_chinese_ui_mojibake_gate() -> None:
         merged,
         {
             "chinese_ui_panels": [
-                {"panel_id": "hud_panel", "chinese_name": "HUD", "chinese_labels": {"score": "鍒嗘暟"}},
+                {"panel_id": "hud_panel", "chinese_name": "HUD", "chinese_labels": {"score": "寰楀垎"}},
                 {"panel_id": "shop_panel", "chinese_name": "商店", "chinese_labels": {"buy": "购买"}},
                 {"panel_id": "gallery_panel", "chinese_name": "画廊", "chinese_labels": {"skin": "皮肤"}},
                 {"panel_id": "settings_panel", "chinese_name": "设置", "chinese_labels": {"music": "音乐"}},
@@ -1925,13 +2323,13 @@ def test_level_goal_fallback_and_chinese_ui_mojibake_gate() -> None:
     _merge_chinese_ui_panels_evidence(
         merged,
         {
-            "chinese_ui_panels": [
-                {"panel_id": "hud_panel", "chinese_name": "HUD", "chinese_labels": {"score": "分数"}},
-                {"panel_id": "shop_panel", "chinese_name": "商店", "chinese_labels": {"buy": "购买"}},
-                {"panel_id": "gallery_panel", "chinese_name": "画廊", "chinese_labels": {"skin": "皮肤"}},
-                {"panel_id": "settings_panel", "chinese_name": "设置", "chinese_labels": {"music": "音乐"}},
-                {"panel_id": "failure_revive_panel", "chinese_name": "复活", "chinese_labels": {"revive": "复活"}},
-            ]
+            "chinese_ui_panels": {
+                "hud_panel": {"panel_id": "hud_panel", "chinese_name": "HUD", "readable_simplified_chinese_labels": ["得分", "最高分"]},
+                "shop_panel": {"panel_id": "shop_panel", "chinese_name": "商店", "readable_simplified_chinese_labels": ["购买", "关闭"]},
+                "gallery_panel": {"panel_id": "gallery_panel", "chinese_name": "画廊", "readable_simplified_chinese_labels": ["收藏图鉴", "返回"]},
+                "settings_panel": {"panel_id": "settings_panel", "chinese_name": "设置", "readable_simplified_chinese_labels": ["音乐音量", "保存"]},
+                "failure_revive_panel": {"panel_id": "failure_revive_panel", "chinese_name": "复活", "readable_simplified_chinese_labels": ["游戏结束", "再来一局"]},
+            }
         },
     )
     assert merged["commercial_feature_coverage"]["chineseUiPanelsVisible"] is True
@@ -2150,6 +2548,140 @@ def test_same_project_patch_ledger_resumes_after_prior_completed_entry(tmp_path:
     assert ledger["same_project_worker_patch_go"] is True
     assert ledger["completed_count"] == 2
     assert [entry["task_card_id"] for entry in ledger["entries"]] == ["tc_levels", "tc_shop"]
+
+
+def test_same_project_patch_ledger_revalidates_prior_completed_artifacts_before_skip(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    project_dir = tmp_path / "cocos_project"
+    scene_path = project_dir / "assets/scene/main.scene"
+    scene_path.parent.mkdir(parents=True)
+    (project_dir / "settings/v2/packages").mkdir(parents=True)
+    (project_dir / "workflow_runtime_evidence").mkdir(parents=True)
+    scene_path.write_text(
+        json.dumps(
+            [
+                {"__type__": "cc.SceneAsset"},
+                {"__type__": "cc.Scene"},
+                {"__type__": "cc.Node", "_components": [{"__id__": 3}]},
+                {"__type__": "cc.CompPrefabInfo", "component": "RuntimeBinding", "script": "assets/scripts/RuntimeBinding.ts"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    scene_path.with_suffix(".scene.meta").write_text(json.dumps({"uuid": "scene-uuid"}), encoding="utf-8")
+    (project_dir / "settings/v2/packages/scene.json").write_text(
+        json.dumps({"current-scene": "scene-uuid"}),
+        encoding="utf-8",
+    )
+    (project_dir / "workflow_runtime_evidence/scene_prefab_binding_evidence.json").write_text(
+        json.dumps({"scene_path": "assets/scene/main.scene"}),
+        encoding="utf-8",
+    )
+
+    card = TaskCard(
+        run_id="pipeline_revalidate_prior",
+        task_card_id="tc_scene_prefab_component_binding",
+        title="Scene component binding",
+        description="Bind actual runtime components in the launch scene.",
+        goal="Bind actual custom Cocos runtime components in the launch scene.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scene/main.scene"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_cocos_e2e.py -q"],
+        expected_artifacts=[
+            "assets/scene/main.scene",
+            "workflow_runtime_evidence/scene_prefab_binding_evidence.json",
+        ],
+        acceptance_criteria=["actual runtime component exists", "launch scene is bound to the generated component scene"],
+        evidence_requirements=["scene_prefab_component_binding"],
+        blocking_conditions=["cocos_scene_runtime_component_binding_missing"],
+        model_guidance=["cc.CompPrefabInfo metadata is not enough; add an actual custom component object to a scene node."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    ledger_root = tmp_path / "pipeline_evidence" / "task_card_worker"
+    ledger_root.mkdir(parents=True)
+    (ledger_root / "same_project_patch_ledger.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "task_card_id": "tc_scene_prefab_component_binding",
+                        "title": "Scene component binding",
+                        "status": "completed",
+                        "failure_class": None,
+                        "receipt_id": "receipt_scene_prior",
+                        "child_run_id": "run_scene_prior",
+                        "child_attempt_id": "attempt_scene_prior",
+                        "worker_adapter": "codex",
+                        "execution_visibility_mode": "human_visible_cli_enforced",
+                        "visible_cli_session": _visible_cli_session(tmp_path, "tc_scene_prefab_component_binding"),
+                        "changed_files": ["state/project/assets/scene/main.scene"],
+                        "mutation_result": {
+                            "changed_files": ["state/project/assets/scene/main.scene"],
+                            "final_test_status": "passed",
+                        },
+                        "continuation_required": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner_calls: list[str] = []
+
+    def _runner(**kwargs):
+        runner_calls.append(kwargs["task_card"].task_card_id)
+        scene_path.write_text(
+            json.dumps(
+                [
+                    {"__type__": "cc.SceneAsset"},
+                    {"__type__": "cc.Scene"},
+                    {"__type__": "cc.Node", "_components": [{"__id__": 3}]},
+                    {"__type__": "WorkflowRuntimeSceneBinding", "_enabled": True},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "completed",
+            "failure_class": None,
+            "receipt_id": "receipt_scene_fresh",
+            "child_run_id": "run_scene_fresh",
+            "child_attempt_id": "attempt_scene_fresh",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scene/main.scene"],
+                "final_test_status": "passed",
+            },
+            "watchdog": {"stream_event_count": 5, "provider_output_event_count": 5, "material_progress_event_count": 1},
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_scene_prefab_component_binding"),
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=project_dir,
+        pipeline_id="pipeline_revalidate_prior",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert runner_calls == ["tc_scene_prefab_component_binding"]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert entry["receipt_id"] == "receipt_scene_fresh"
+    assert entry["prior_completed_entry_invalidated"] is True
+    assert entry["prior_completed_entry_failure_class"] == "prior_completed_entry_artifact_contract_no_go"
+    assert entry["prior_completed_entry_artifact_validation"]["scene_component_blockers"] == [
+        "cocos_scene_runtime_component_binding_missing"
+    ]
+    assert entry["artifact_validation"]["go"] is True
 
 
 def test_same_project_patch_ledger_treats_existing_shop_evidence_as_reference_only(tmp_path: Path) -> None:
@@ -3299,6 +3831,676 @@ def test_same_project_patch_ledger_blocks_visible_cli_required_without_session(t
     assert entry["preflight_blocker"] is True
 
 
+def test_same_project_worker_normalizes_strong_model_lane_to_patch_adapter() -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import _adapter_attempt_sequence
+
+    card = TaskCard(
+        run_id="pipeline_strong_lane",
+        task_card_id="tc_strong_lane",
+        title="Strong model lane patch",
+        description="Strong model aliases must resolve to a patch-capable worker adapter.",
+        goal="Strong model aliases must resolve to a patch-capable worker adapter.",
+        write_set=["project/runtime/gameplay/**"],
+        read_set=["GameDesignSpec"],
+        test_commands=["python -m pytest tests/test_game_design_ir.py -q"],
+        acceptance_criteria=["adapter is patch-capable"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["mutation_contract_invalid"],
+        model_guidance=["Use configured strong model lane."],
+        execution_mode="same_project_patch",
+        provider_lane="codex_or_configured_strong_model",
+        risk_level="high",
+        status="active",
+    )
+
+    assert _adapter_attempt_sequence(card) == ["codex", "opencode"]
+
+
+def test_task_worker_cli_protects_glob_write_set_literals() -> None:
+    from apps.operator_cli.run_commands import _normalize_literal_cli_args
+    from packages.contributions.pipelines.commercial_game_task_worker_cli import _literal_cli_arg
+
+    protected = _literal_cli_arg("project/runtime/input/**")
+
+    assert protected == '"project/runtime/input/**"'
+    assert _normalize_literal_cli_args([protected]) == ["project/runtime/input/**"]
+
+
+def test_same_project_materializes_cocos_project_relative_paths_to_external_root(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import _materialize_task_card
+
+    project_dir = tmp_path / "fresh_cocos_project"
+    card = TaskCard(
+        run_id="pipeline_project_scope",
+        task_card_id="tc_project_scope",
+        title="Project-scoped Cocos patch",
+        description="Cocos task cards should mutate the generated project, not the workflow repo.",
+        goal="Patch Cocos project runtime files.",
+        write_set=["assets/scripts/runtime/**", "workflow_runtime_evidence/**"],
+        read_set=["assets/scene/**", "GameDesignSpec"],
+        test_commands=["python -m json.tool workflow_runtime_evidence/gameplay_semantic_evidence.raw.json"],
+        acceptance_criteria=["project root paths are externalized"],
+        evidence_requirements=["same_project_patch"],
+        blocking_conditions=["repo_root_assets_mutated"],
+        model_guidance=["Use the generated Cocos project root."],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id="pipeline_project_scope")
+
+    assert materialized["write_set"] == [
+        (project_dir / "assets/scripts/runtime/**").resolve().as_posix(),
+        (project_dir / "workflow_runtime_evidence/**").resolve().as_posix(),
+    ]
+    assert materialized["read_set"][0] == (project_dir / "assets/scene/**").resolve().as_posix()
+    assert materialized["read_set"][1] == "GameDesignSpec"
+    assert (project_dir / "workflow_runtime_evidence/gameplay_semantic_evidence.raw.json").resolve().as_posix() in materialized[
+        "test_commands"
+    ][0]
+
+
+def test_task_card_artifact_validation_rejects_missing_referenced_scene_prefab(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "scene_prefab_binding_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "scene_prefab_binding_evidence_v1",
+                "scene_bindings": [
+                    {
+                        "scene_path": "assets/scene/commercial.scene",
+                        "prefabs": ["assets/prefabs/runtime/hud.prefab"],
+                        "components": ["HudComponent"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_scene",
+        title="Scene binding",
+        description="Scene evidence must point to real files.",
+        goal="Create scene binding.",
+        write_set=["assets/scene/**", "assets/prefabs/**", "workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        acceptance_criteria=["referenced scene and prefabs exist"],
+        blocking_conditions=["referenced_artifact_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is False
+    assert "referenced_artifact_missing" in validation["blockers"]
+    assert (project_dir / "assets/scene/commercial.scene").as_posix() in validation["referenced_missing_artifacts"]
+
+
+def test_task_card_artifact_validation_rejects_contract_only_scene_and_launch_miss(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    scene_path = project_dir / "assets" / "scene" / "commercial.scene"
+    prefab_path = project_dir / "assets" / "prefabs" / "hud.prefab"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "scene_prefab_binding_evidence.json"
+    settings_path = project_dir / "settings" / "v2" / "packages" / "scene.json"
+    scene_path.parent.mkdir(parents=True)
+    prefab_path.parent.mkdir(parents=True)
+    evidence_path.parent.mkdir(parents=True)
+    settings_path.parent.mkdir(parents=True)
+    scene_path.write_text(json.dumps({"schema_version": "contract_only_scene_v1"}), encoding="utf-8")
+    scene_path.with_suffix(".scene.meta").write_text(json.dumps({"uuid": "scene-uuid"}), encoding="utf-8")
+    prefab_path.write_text("{}", encoding="utf-8")
+    settings_path.write_text(json.dumps({"current-scene": "scene-uuid"}), encoding="utf-8")
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "scene_prefab_binding_evidence_v1",
+                "scene": {"scene_path": "assets/scene/commercial.scene"},
+                "prefabs": [{"prefab_path": "assets/prefabs/hud.prefab"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_scene_prefab_component_binding",
+        title="Scene binding",
+        description="Scene evidence must point to a real Cocos launch scene.",
+        goal="Create scene binding.",
+        write_set=["assets/scene/**", "assets/prefabs/**", "settings/v2/packages/scene.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        acceptance_criteria=["referenced scene is valid Cocos scene"],
+        blocking_conditions=["expected_cocos_scene_artifact_invalid"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is False
+    assert "expected_cocos_scene_artifact_invalid" in validation["blockers"]
+    assert "cocos_launch_scene_valid_scene_missing" in validation["blockers"]
+
+
+def test_task_card_artifact_validation_rejects_fake_scene_component_metadata(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    scene_path = project_dir / "assets" / "scene" / "commercial.scene"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "scene_prefab_binding_evidence.json"
+    settings_path = project_dir / "settings" / "v2" / "packages" / "scene.json"
+    script_path = project_dir / "assets" / "scripts" / "runtime" / "CommercialRuntimeController.ts"
+    scene_path.parent.mkdir(parents=True)
+    evidence_path.parent.mkdir(parents=True)
+    settings_path.parent.mkdir(parents=True)
+    script_path.parent.mkdir(parents=True)
+    scene_path.write_text(
+        json.dumps(
+            [
+                {"__type__": "cc.SceneAsset"},
+                {"__type__": "cc.Scene", "_name": "CommercialScene"},
+                {"__type__": "cc.Node", "_name": "RuntimeController", "_components": [{"__id__": 3}]},
+                {
+                    "__type__": "cc.CompPrefabInfo",
+                    "component": "CommercialRuntimeController",
+                    "script": "assets/scripts/runtime/CommercialRuntimeController.ts",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    scene_path.with_suffix(".scene.meta").write_text(json.dumps({"uuid": "scene-uuid"}), encoding="utf-8")
+    settings_path.write_text(json.dumps({"current-scene": "scene-uuid"}), encoding="utf-8")
+    script_path.write_text("export class CommercialRuntimeController {}\n", encoding="utf-8")
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "scene_prefab_binding_evidence_v1",
+                "scene": {
+                    "scene_path": "assets/scene/commercial.scene",
+                    "component_bindings": [{"component_path": "assets/scripts/runtime/CommercialRuntimeController.ts"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_scene_prefab_component_binding",
+        title="Scene binding",
+        description="Scene evidence must include a runtime component instance.",
+        goal="Create scene binding.",
+        write_set=["assets/scene/**", "assets/scripts/runtime/**", "settings/v2/packages/scene.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/scene_prefab_binding_evidence.json"],
+        acceptance_criteria=["scene node has actual component instance"],
+        blocking_conditions=["cocos_scene_runtime_component_binding_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is False
+    assert "cocos_scene_runtime_component_binding_missing" in validation["blockers"]
+
+
+def test_task_card_artifact_validation_rejects_mojibake_localization(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    localization_path = project_dir / "assets" / "resources" / "localization" / "zh-CN.json"
+    localization_path.parent.mkdir(parents=True)
+    localization_path.write_text(
+        json.dumps({"game": {"title": "1010 \u93c2\u7470\u6f61\u5a11\u5809\u6ace"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_player_visible_ui_flow",
+        title="Chinese UI",
+        description="Chinese localization must be readable.",
+        goal="Create Chinese UI.",
+        write_set=["assets/resources/localization/zh-CN.json"],
+        read_set=[],
+        expected_artifacts=["assets/resources/localization/zh-CN.json"],
+        evidence_requirements=["assets/resources/localization/zh-CN.json"],
+        acceptance_criteria=["readable Chinese"],
+        blocking_conditions=["player_visible_chinese_mojibake_detected"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is False
+    assert "player_visible_chinese_mojibake_detected" in validation["blockers"]
+    assert localization_path.as_posix() in validation["mojibake_json_artifacts"]
+
+
+def test_task_card_artifact_validation_accepts_json_pointer_references(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    manifest_path = project_dir / "assets" / "resources" / "commercial_assets" / "art" / "art_direction_manifest.json"
+    feature_path = project_dir / "workflow_commercial_feature_evidence.json"
+    manifest_path.parent.mkdir(parents=True)
+    feature_path.parent.mkdir(parents=True, exist_ok=True)
+    feature_path.write_text(
+        json.dumps({"asset_graph": {"nodes": []}, "requirement_coverage_trace": []}),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "commercial_art_direction_manifest_v1",
+                "evidence": {
+                    "asset_graph": "workflow_commercial_feature_evidence.json#/asset_graph",
+                    "requirements": "workflow_commercial_feature_evidence.json#/requirement_coverage_trace",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_art",
+        title="Art evidence",
+        description="JSON pointer references should resolve inside existing evidence files.",
+        goal="Create art evidence.",
+        write_set=["assets/resources/commercial_assets/art/art_direction_manifest.json"],
+        read_set=[],
+        expected_artifacts=["assets/resources/commercial_assets/art/art_direction_manifest.json"],
+        evidence_requirements=["assets/resources/commercial_assets/art/art_direction_manifest.json"],
+        acceptance_criteria=["json pointers resolve"],
+        blocking_conditions=["referenced_artifact_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is True
+    assert validation["referenced_missing_artifacts"] == []
+
+
+def test_task_card_artifact_validation_rejects_mojibake_art_tokens(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    tokens_path = project_dir / "assets" / "resources" / "commercial_assets" / "art" / "feedback_text_tokens.json"
+    tokens_path.parent.mkdir(parents=True)
+    tokens_path.write_text(
+        json.dumps({"tokens": [{"id": "score", "text_zh": "寰楀垎"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_art",
+        title="Art tokens",
+        description="Player-visible art feedback tokens must be readable Chinese.",
+        goal="Create art token evidence.",
+        write_set=["assets/resources/commercial_assets/art/feedback_text_tokens.json"],
+        read_set=[],
+        expected_artifacts=["assets/resources/commercial_assets/art/feedback_text_tokens.json"],
+        evidence_requirements=["assets/resources/commercial_assets/art/feedback_text_tokens.json"],
+        acceptance_criteria=["readable Chinese feedback tokens"],
+        blocking_conditions=["player_visible_chinese_mojibake_detected"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is False
+    assert "player_visible_chinese_mojibake_detected" in validation["blockers"]
+    assert tokens_path.as_posix() in validation["mojibake_json_artifacts"]
+
+
+def test_task_card_artifact_validation_allows_forbidden_mojibake_marker_metadata(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    tokens_path = project_dir / "assets" / "resources" / "commercial_assets" / "art" / "feedback_text_tokens.json"
+    tokens_path.parent.mkdir(parents=True)
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "tokens": [{"id": "score", "text_zh": "得分"}],
+                "readability_checks": {"forbidden_garbled_sequences": ["锟斤拷", "�"]},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_art",
+        title="Art tokens",
+        description="Mojibake marker metadata is not player-visible text.",
+        goal="Create art token evidence.",
+        write_set=["assets/resources/commercial_assets/art/feedback_text_tokens.json"],
+        read_set=[],
+        expected_artifacts=["assets/resources/commercial_assets/art/feedback_text_tokens.json"],
+        evidence_requirements=["assets/resources/commercial_assets/art/feedback_text_tokens.json"],
+        acceptance_criteria=["readable Chinese feedback tokens"],
+        blocking_conditions=["player_visible_chinese_mojibake_detected"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is True
+    assert validation["mojibake_json_artifacts"] == []
+
+
+def test_task_card_artifact_validation_defers_pending_browser_screenshots(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "feedback_animation_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "feedback_animation_evidence_v1",
+                "vision_review_screenshots": {
+                    "paths": ["workflow_runtime_evidence/screenshots/line_clear_combo_feedback.png"],
+                    "status": "pending_runtime_capture",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_art",
+        title="Art binding",
+        description="Art evidence can defer screenshots to browser playtest.",
+        goal="Create art evidence.",
+        write_set=["workflow_runtime_evidence/feedback_animation_evidence.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/feedback_animation_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/feedback_animation_evidence.json"],
+        acceptance_criteria=["browser screenshots are captured by later playtest"],
+        blocking_conditions=["referenced_artifact_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is True
+    assert validation["referenced_missing_artifacts"] == []
+
+
+def test_task_card_artifact_validation_defers_runtime_capture_contract_screenshots(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "player_visible_screenshots.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "player_visible_screenshots_contract_v1",
+                "screenshots": [
+                    {
+                        "id": "drag_follow_anti_occlusion",
+                        "evidence_path": "workflow_runtime_evidence/screenshots/drag_follow_anti_occlusion.png",
+                        "acceptance": {"status": "contract_bound"},
+                    }
+                ],
+                "quality_gate_notes": {"evidence_is_contract_until_runner_capture": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_input_feedback",
+        title="Input feedback",
+        description="Screenshot capture contract is fulfilled by later browser playtest.",
+        goal="Create screenshot capture contract.",
+        write_set=["workflow_runtime_evidence/player_visible_screenshots.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/player_visible_screenshots.json"],
+        evidence_requirements=["workflow_runtime_evidence/player_visible_screenshots.json"],
+        acceptance_criteria=["browser screenshots are captured by later playtest"],
+        blocking_conditions=["referenced_artifact_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is True
+    assert validation["referenced_missing_artifacts"] == []
+
+
+def test_task_card_artifact_validation_defers_runner_capture_target_screenshots(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "feedback_animation_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "feedback_animation_evidence_v1",
+                "vision_review_screenshots": {
+                    "expected_capture_paths": [
+                        "workflow_runtime_evidence/screenshots/line_clear_combo_mobile_portrait.png"
+                    ],
+                    "review_contract": {"feedback_text_not_overlapping_board_or_tray": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_art",
+        title="Art evidence",
+        description="Art screenshot targets are captured by the later runner.",
+        goal="Create art evidence.",
+        write_set=["workflow_runtime_evidence/feedback_animation_evidence.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/feedback_animation_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/feedback_animation_evidence.json"],
+        acceptance_criteria=["runner captures screenshots later"],
+        blocking_conditions=["referenced_artifact_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is True
+    assert validation["referenced_missing_artifacts"] == []
+
+
+def test_task_card_artifact_validation_ignores_prose_path_mentions(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "input_feedback_trace.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "input_feedback_trace_v1",
+                "scene_source": "workflow_runtime_evidence/scene_prefab_binding_evidence.json and settings/v2/packages/scene.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_input_feedback",
+        title="Input feedback",
+        description="Prose mentions of two paths are not artifact references.",
+        goal="Create input evidence.",
+        write_set=["workflow_runtime_evidence/input_feedback_trace.json"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/input_feedback_trace.json"],
+        evidence_requirements=["workflow_runtime_evidence/input_feedback_trace.json"],
+        acceptance_criteria=[],
+        blocking_conditions=["referenced_artifact_missing"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is True
+    assert validation["referenced_missing_artifacts"] == []
+
+
+def test_task_card_retry_context_includes_artifact_validation_details(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import _task_card_path_with_retry_context
+
+    card_path = tmp_path / "task.md"
+    card_path.write_text("# Bind input\n", encoding="utf-8")
+
+    retry_path = _task_card_path_with_retry_context(
+        card_path,
+        attempt_index=2,
+        prior_entry={
+            "artifact_validation": {
+                "go": False,
+                "blockers": ["referenced_artifact_missing"],
+                "referenced_missing_artifacts": ["D:/game/assets/scene/WorkflowCommercialGame.scene"],
+            }
+        },
+    )
+
+    assert retry_path != card_path
+    text = retry_path.read_text(encoding="utf-8")
+    assert "Previous Artifact Validation Failure" in text
+    assert "WorkflowCommercialGame.scene" in text
+    assert "settings/v2/packages/scene.json" in text
+
+
+def test_task_card_attempt_record_includes_artifact_validation_details() -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import _patch_attempt_record
+
+    validation = {
+        "go": False,
+        "blockers": ["expected_artifact_missing"],
+        "missing_artifacts": ["D:/game/workflow_runtime_evidence/audio_feedback_polish_evidence.json"],
+    }
+
+    record = _patch_attempt_record(
+        entry={
+            "status": "failed",
+            "failure_class": "task_card_expected_artifacts_missing",
+            "artifact_validation": validation,
+            "mutation_result": {"changed_files": ["assets/scripts/runtime/audio/CommercialAudioRuntime.ts"]},
+            "final_test_status": "passed",
+        },
+        attempt_index=1,
+        max_attempts=3,
+        continuation_argv=["workflowctl", "run"],
+    )
+
+    assert record["artifact_validation"] == validation
+    assert record["changed_files"] == ["assets/scripts/runtime/audio/CommercialAudioRuntime.ts"]
+
+
 def test_same_project_patch_ledger_accepts_visible_cli_session_metadata(tmp_path: Path) -> None:
     from packages.contracts import TaskCard
     from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
@@ -3398,7 +4600,7 @@ def test_commercial_worker_blocks_when_no_same_project_business_cards(tmp_path: 
         )
     )
     source = tmp_path / "brief.md"
-    source.write_text("# 商业小游戏", encoding="utf-8")
+    source.write_text("# 商业小游戏\n必须实现八个不同关卡目标。\n必须有中文 UI 和 BGM。", encoding="utf-8")
     creator = tmp_path / "CocosCreator.exe"
     creator.write_text("", encoding="utf-8")
 

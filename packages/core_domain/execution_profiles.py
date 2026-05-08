@@ -235,7 +235,7 @@ def _adaptive_route_for_scope(
         return (
             adapter,
             model_field,
-            str(adaptive_config.get("complex_model") or "gpt-5.4"),
+            str(adaptive_config.get("complex_model") or "gpt-5.5"),
             "complex",
         )
     if any(marker in role_key for marker in ADAPTIVE_MEDIUM_MARKERS):

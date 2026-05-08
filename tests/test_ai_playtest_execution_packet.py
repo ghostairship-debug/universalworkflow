@@ -56,7 +56,20 @@ def _packet(tmp_path: Path) -> dict:
             {"device": device, "status": "passed"} for device in plan["device_matrix"]
         ],
         "performance_metrics": {"min_fps": 58, "input_latency_ms": 42, "load_time_ms": 900},
-        "vision_review": {"visual_go": True, "targets_checked": plan["vision_review_targets"], "blockers": []},
+        "vision_review": {
+            "visual_go": True,
+            "visual_quality_score": 90,
+            "targets_checked": plan["vision_review_targets"],
+            "screenshots_reviewed": [str(tmp_path / "scripted_bot.png")],
+            "blockers": [],
+        },
+        "audio_review": {
+            "audio_go": True,
+            "bgm_runtime_verified": True,
+            "sfx_runtime_verified": True,
+            "mix_go": True,
+            "blockers": [],
+        },
         "engine_native_product_body": {
             "engine": "cocos",
             "product_body_mode": "engine_native",

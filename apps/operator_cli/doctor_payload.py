@@ -137,7 +137,7 @@ def _external_capability_status(effective: dict[str, object], optional_commands:
                 adaptive_config.get("medium_model") if isinstance(adaptive_config, dict) else "deepseek/deepseek-v4-flash"
             ),
             "complex_model": (
-                adaptive_config.get("complex_model") if isinstance(adaptive_config, dict) else "gpt-5.4"
+                adaptive_config.get("complex_model") if isinstance(adaptive_config, dict) else "gpt-5.5"
             ),
             "coding_adapter": adaptive_config.get("coding_adapter") if isinstance(adaptive_config, dict) else "codex",
         },

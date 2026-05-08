@@ -219,13 +219,136 @@ def build_game_design_spec(
         )
         for index, item in enumerate(list(derived_requirements or []), start=1)
     ]
+    return _assemble_game_design_spec(
+        title=title,
+        source_count=len(source_list),
+        input_count=len(source_list),
+        receipts=receipts,
+        requirements=requirements,
+        derived=derived,
+        genre=genre,
+        camera=camera,
+        target_platforms=target_platforms,
+        input_model=input_model,
+    )
+
+
+def build_game_design_spec_from_requirement_matrix(
+    *,
+    title: str,
+    intake_manifest: dict[str, Any],
+    requirement_matrix: dict[str, Any],
+    source_index: Iterable[dict[str, Any]] | None = None,
+    genre: str = "brief_defined",
+    camera: str = "brief_defined",
+    target_platforms: Iterable[str] | None = None,
+    input_model: Iterable[str] | None = None,
+    derived_requirements: Iterable[dict[str, Any]] | None = None,
+) -> GameDesignSpec:
+    """Build GameDesignSpec from the M109 unified brief without changing req ids."""
+
+    manifest = dict(intake_manifest or {})
+    matrix = dict(requirement_matrix or {})
+    source_items = list(source_index or _dict_list(manifest.get("source_index")))
+    receipt_items = _dict_list(manifest.get("source_receipts"))
+    receipt_by_path = {
+        str(item.get("original_path") or ""): item
+        for item in receipt_items
+        if str(item.get("original_path") or "").strip()
+    }
+    matrix_requirements = _dict_list(matrix.get("requirements"))
+    requirement_count_by_source: dict[str, int] = {}
+    requirements: list[SourceRequirement] = []
+    for index, item in enumerate(matrix_requirements, start=1):
+        normalized = str(item.get("normalized_requirement") or item.get("requirement") or item.get("text") or "").strip()
+        original = str(item.get("original_quote") or normalized).strip()
+        source_id = str(item.get("source_id") or "requirement_matrix")
+        category = str(item.get("category") or classify_requirement(normalized or original))
+        requirement_count_by_source[source_id] = requirement_count_by_source.get(source_id, 0) + 1
+        requirements.append(
+            SourceRequirement(
+                req_id=str(item.get("req_id") or f"REQ-MATRIX-{index:04d}"),
+                source_id=source_id,
+                original_text=original,
+                normalized_requirement=normalized or original,
+                category=category,
+                priority=str(item.get("priority") or _priority_for_requirement(normalized or original)),
+                acceptance_method=str(item.get("acceptance_method") or _acceptance_for_category(category)),
+                role_owner=str(item.get("role_owner") or item.get("downstream_owner") or _owner_for_category(category)),
+                tags=_tags_for_requirement(normalized or original),
+            )
+        )
+
+    if not source_items and receipt_items:
+        source_items = [
+            {
+                "source_id": f"source_{index:03d}",
+                "original_path": item.get("original_path"),
+                "sha256": item.get("sha256"),
+                "size_bytes": item.get("size_bytes"),
+            }
+            for index, item in enumerate(receipt_items, start=1)
+        ]
+    receipts: list[RawSourceReceipt] = []
+    for index, source in enumerate(source_items, start=1):
+        source_id = str(source.get("source_id") or f"source_{index:03d}")
+        original_path = _optional_str(source.get("original_path") or source.get("path"))
+        receipt = receipt_by_path.get(str(original_path or "")) or source
+        receipts.append(
+            RawSourceReceipt(
+                source_id=source_id,
+                original_path=original_path,
+                sha256=str(receipt.get("sha256") or _sha256(str(original_path or source_id))),
+                byte_count=_int_or_zero(receipt.get("size_bytes") or receipt.get("byte_count")),
+                requirement_count=requirement_count_by_source.get(source_id, 0),
+            )
+        )
+
+    derived = [
+        DerivedRequirement(
+            derived_id=str(item.get("derived_id") or f"DERIVED-{index:04d}"),
+            source_requirement_ids=[str(req_id) for req_id in item.get("source_requirement_ids") or []],
+            requirement=str(item.get("requirement") or ""),
+            reason=str(item.get("reason") or "engineering augmentation"),
+            owner=str(item.get("owner") or "technical_plan_agent"),
+        )
+        for index, item in enumerate(list(derived_requirements or []), start=1)
+    ]
+    return _assemble_game_design_spec(
+        title=title,
+        source_count=_int_or_default(manifest.get("source_count"), len(source_items)),
+        input_count=_int_or_default(manifest.get("input_count"), len(source_items)),
+        receipts=receipts,
+        requirements=requirements,
+        derived=derived,
+        genre=genre,
+        camera=camera,
+        target_platforms=target_platforms,
+        input_model=input_model,
+    )
+
+
+def _assemble_game_design_spec(
+    *,
+    title: str,
+    source_count: int,
+    input_count: int,
+    receipts: list[RawSourceReceipt],
+    requirements: list[SourceRequirement],
+    derived: list[DerivedRequirement],
+    genre: str,
+    camera: str,
+    target_platforms: Iterable[str] | None,
+    input_model: Iterable[str] | None,
+) -> GameDesignSpec:
     tags = {tag for requirement in requirements for tag in requirement.tags}
+    input_ids = [requirement.req_id for requirement in requirements]
     return GameDesignSpec(
         schema_version=GAME_DESIGN_SPEC_SCHEMA,
         title=title,
         source_material_policy=SOURCE_MATERIAL_POLICY,
-        source_count=len(source_list),
-        input_count=len(source_list),
+        source_count=source_count,
+        input_count=input_count,
         requirement_count=len(requirements),
         raw_source_receipts=receipts,
         input_requirement_ids=input_ids,
@@ -330,6 +453,8 @@ def validate_game_design_spec(spec: GameDesignSpec | dict[str, Any]) -> dict[str
     omitted_ids = _string_list(payload.get("omitted_requirement_ids"))
     requirement_count = int(payload.get("requirement_count") or 0)
     requirements = payload.get("requirements") if isinstance(payload.get("requirements"), list) else []
+    if requirement_count <= 0:
+        blockers.append("source_requirements_missing")
     if payload.get("source_count") != payload.get("input_count"):
         blockers.append("source_count_input_count_mismatch")
     if requirement_count != len(requirements):
@@ -484,6 +609,17 @@ def _string_list(value: Any) -> list[str]:
 
 def _dict_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _int_or_zero(value: Any) -> int:
+    return _int_or_default(value, 0)
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _normalized_derived_requirements(value: Any) -> list[dict[str, Any]]:

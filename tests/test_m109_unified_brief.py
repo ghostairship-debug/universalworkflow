@@ -259,13 +259,19 @@ def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp
     assert [phase["title"] for phase in phase_graph["phases"]] == ["Product Body Runtime And Semantic Trace Implementation"]
 
     persistence = task_card_output["structured_output"]["task_card_persistence"]
-    assert persistence["task_card_count"] == 3
+    assert persistence["task_card_count"] >= 3
     assert persistence["quality"]["go_no_go"] == "GO"
+    assert persistence["phase_execution_blueprint_paths"]
+    assert persistence["task_card_compile_report_paths"]
+    assert all(Path(path).exists() for path in persistence["phase_execution_blueprint_paths"])
+    assert all(Path(path).exists() for path in persistence["task_card_compile_report_paths"])
     cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("product_body_runtime_phase")
-    assert len(cards) == 3
+    assert len(cards) == persistence["task_card_count"]
     assert {card.phase_name for card in cards} == {"Product Body Runtime And Semantic Trace Implementation"}
     assert all(card.execution_mode == "same_project_patch" for card in cards)
     assert all(card.metadata.get("task_card_generation_source") == "active_phase_execution_blueprint" for card in cards)
+    assert all(card.metadata.get("phase_execution_blueprint_path") for card in cards)
+    assert all(card.metadata.get("task_card_compile_report_path") for card in cards)
     assert not any("10x10" in card.description or "CandidateTray" in card.description for card in cards)
     assert all(card.metadata.get("requirement_coverage_required") is True for card in cards)
     assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
@@ -367,6 +373,47 @@ def test_commercial_core_content_goal_materializes_blueprint_compiled_visible_cl
     assert all(card.metadata.get("execution_visibility_mode") == "human_visible_cli_enforced" for card in cards)
     assert all(card.metadata.get("omitted_requirement_ids") == [] for card in cards)
     assert all("human_visible_cli_session" in card.evidence_requirements for card in cards)
+
+
+def test_commercial_game_production_arbitrary_goal_defaults_to_current_blueprint_phase(tmp_path: Path) -> None:
+    source = tmp_path / "brief.md"
+    source.write_text(
+        "# 商业游戏策划\n\n需要完整核心玩法、中文 UI、商店皮肤、音频反馈、美术动效和 AI 替代性实测。\n",
+        encoding="utf-8",
+    )
+    result = _invoke(
+        tmp_path,
+        "pipeline",
+        "run",
+        "--template",
+        "commercial_game_production",
+        "--goal",
+        "PDF-only commercial game production rerun from desktop design PDF",
+        "--pipeline-id",
+        "commercial_default_phase",
+        "--pdf-path",
+        source.as_posix(),
+        "--execute-agent-roles",
+        "--evidence-dir",
+        (tmp_path / "pipeline_evidence").as_posix(),
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    task_card_output = payload["stage_results"][5]["output"]
+    phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
+    assert phase_graph["future_phase_task_cards_materialized"] is False
+    assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
+    assert phase_graph["phase_execution_blueprint_required"] is True
+    assert [phase["title"] for phase in phase_graph["phases"]] == ["Commercial Game Core Content Implementation"]
+
+    cards = TaskCardStore(tmp_path / "workflow.db").list_for_run("commercial_default_phase")
+    assert {card.task_card_id for card in cards} == set(phase_graph["phases"][0]["task_card_ids"])
+    assert all(card.phase_name == "Commercial Game Core Content Implementation" for card in cards)
+    assert all(card.metadata.get("task_card_generation_source") == "active_phase_execution_blueprint" for card in cards)
+    assert all(card.metadata.get("phase_execution_blueprint_schema") == "universal_game_phase_execution_blueprint_v1" for card in cards)
+    assert all(card.metadata.get("task_card_compile_report_schema") == "universal_game_task_card_compile_report_v1" for card in cards)
+    assert not any("_m109_role_" in card.task_card_id for card in cards)
 
 
 def test_commercial_machine_evidence_goal_materializes_exact_current_phase_cards(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ REQUIRED_AI_PLAYTEST_MODES = {
     "regression_agent",
 }
 BLOCKING_SEVERITIES = {"P0", "P1"}
+VISUAL_SCORE_FLOOR = 85
 
 
 def evaluate_ai_surrogate_playtest(evidence: dict[str, Any] | None) -> dict[str, Any]:
@@ -60,6 +61,31 @@ def evaluate_ai_surrogate_playtest(evidence: dict[str, Any] | None) -> dict[str,
         blockers.append("ai_playtest_replay_artifacts_missing")
     if not _string_list(payload.get("screenshots")):
         blockers.append("ai_playtest_screenshots_missing")
+    visual_review = _visual_review(payload)
+    visual_score = _bounded_score(visual_review.get("visual_quality_score") or visual_review.get("score"), default=0)
+    if not visual_review:
+        blockers.append("ai_visual_review_missing")
+    else:
+        if visual_review.get("visual_go") is False:
+            blockers.append("ai_visual_review_no_go")
+        if visual_score < VISUAL_SCORE_FLOOR:
+            blockers.append("ai_visual_quality_score_below_85")
+        if not (_string_list(visual_review.get("screenshots_reviewed")) or _string_list(payload.get("screenshots"))):
+            blockers.append("ai_visual_review_screenshots_missing")
+        blockers.extend(_string_list(visual_review.get("blockers")))
+    audio_review = _audio_review(payload)
+    if not audio_review:
+        blockers.append("ai_audio_review_missing")
+    else:
+        if audio_review.get("audio_go") is False:
+            blockers.append("ai_audio_review_no_go")
+        if not bool(audio_review.get("bgm_runtime_verified") or audio_review.get("bgmStarted")):
+            blockers.append("ai_audio_bgm_not_verified")
+        if not bool(audio_review.get("sfx_runtime_verified") or audio_review.get("sfxPlaybackVerified")):
+            blockers.append("ai_audio_sfx_not_verified")
+        if not bool(audio_review.get("mix_go", True)):
+            blockers.append("ai_audio_mix_no_go")
+        blockers.extend(_string_list(audio_review.get("blockers")))
     engine_contract = build_engine_native_product_body_contract(payload.get("engine_native_product_body"))
     if not engine_contract["go"]:
         blockers.append("engine_native_product_body_not_proven")
@@ -103,6 +129,9 @@ def evaluate_ai_surrogate_playtest(evidence: dict[str, Any] | None) -> dict[str,
         "status": "completed" if production_vertical_slice_go else "blocked",
         "blockers": _dedupe(blockers),
         "area_scores": area_scores,
+        "visual_review": visual_review,
+        "visual_quality_score": visual_score,
+        "audio_review": audio_review,
         "blocking_findings": blocking_findings,
         "finding_count": len(findings),
         "ai_playtest_modes_run": sorted(modes_run),
@@ -135,6 +164,24 @@ def _findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(findings, list):
         return []
     return [finding for finding in findings if isinstance(finding, dict)]
+
+
+def _visual_review(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("visual_review_evidence") or payload.get("vision_review") or payload.get("visual_review")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _audio_review(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("audio_review_evidence") or payload.get("audio_review")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _bounded_score(value: Any, *, default: int) -> int:
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(100, score))
 
 
 def _string_list(value: Any) -> list[str]:

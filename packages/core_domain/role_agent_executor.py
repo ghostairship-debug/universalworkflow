@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,10 +13,15 @@ from packages.core_domain.multimodal_route_plan import build_multimodal_route_pl
 from packages.core_domain.repositories import RunRepository, TaskRepository
 from packages.core_domain.task_card_store import export_task_cards_markdown, task_card_quality_report
 from packages.core_domain.unified_project_brief import build_unified_project_brief
-from packages.contributions.games.game_design_ir import build_game_design_spec
+from packages.contributions.games.game_design_ir import (
+    build_game_design_spec,
+    build_game_design_spec_from_requirement_matrix,
+)
 from packages.contributions.games.game_task_card_generation import (
     build_game_production_task_cards_from_design_spec,
+    build_phase_execution_blueprint,
     build_product_phase_candidates_from_design_spec,
+    compile_task_cards_from_phase_execution_blueprint,
 )
 
 
@@ -188,15 +195,34 @@ def _call_live_role_llm(
         f"brief_manifest: {json.dumps(_compact_manifest(brief_manifest), ensure_ascii=False)}\n"
         f"structured_draft: {json.dumps(structured_output, ensure_ascii=False)[:6000]}\n"
     )
-    try:
-        chunks = list(
+    timeout_seconds = _live_role_timeout_seconds()
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(
+        lambda: list(
             runtime.stream_reply(
                 content=prompt,
                 context={"role_id": role_id, "stage_id": stage.stage_id},
                 decision=ChatActionDecision(action_type="answer_only", confidence=0.8),
             )
         )
+    )
+    try:
+        chunks = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        return {
+            "status": "blocked",
+            "failure_class": "live_llm_call_timeout",
+            "output_updates": {
+                "llm_call_status": "blocked",
+                "generation_mode": "live_llm_call_timeout",
+                "llm_provider_evidence": description,
+                "llm_timeout_seconds": timeout_seconds,
+            },
+        }
     except Exception as exc:
+        executor.shutdown(wait=False, cancel_futures=True)
         return {
             "status": "blocked",
             "failure_class": "live_llm_call_failed",
@@ -207,6 +233,7 @@ def _call_live_role_llm(
                 "llm_failure": f"{type(exc).__name__}: {exc}",
             },
         }
+    executor.shutdown(wait=False, cancel_futures=True)
     return {
         "status": "completed",
         "failure_class": None,
@@ -224,6 +251,13 @@ def _call_live_role_llm(
             ],
         },
     }
+
+
+def _live_role_timeout_seconds() -> float:
+    try:
+        return max(1.0, float(os.getenv("WORKFLOW_LIVE_ROLE_TIMEOUT_SECONDS") or "60"))
+    except ValueError:
+        return 60.0
 
 
 def _resolve_or_build_brief(
@@ -507,6 +541,7 @@ def _structured_output_for_role(
                 pipeline_id or stage.stage_id,
                 pipeline_goal=pipeline_goal or stage.goal,
                 brief_manifest=brief_manifest,
+                pipeline_template=pipeline_template or str(stage.metadata.get("pipeline_recipe") or ""),
             ),
             "task_card_candidates": _task_card_candidate_payloads(
                 pipeline_id=pipeline_id or stage.stage_id,
@@ -668,7 +703,29 @@ def _brief_signal(brief_text: str, packet_preview: str) -> dict[str, bool]:
 
 
 def _load_requirement_entries(brief_manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = _load_requirement_matrix_payload(brief_manifest)
+    requirements = payload.get("requirements")
+    if not isinstance(requirements, list):
+        return []
+    return [item for item in requirements if isinstance(item, dict) and item.get("req_id")]
+
+
+def _load_requirement_matrix_payload(brief_manifest: dict[str, Any]) -> dict[str, Any]:
     path_value = brief_manifest.get("requirement_matrix_path")
+    if not path_value:
+        return {}
+    path = Path(path_value)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _load_source_index_entries(brief_manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    path_value = brief_manifest.get("source_index_path")
     if not path_value:
         return []
     path = Path(path_value)
@@ -678,10 +735,7 @@ def _load_requirement_entries(brief_manifest: dict[str, Any]) -> list[dict[str, 
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
-    requirements = payload.get("requirements")
-    if not isinstance(requirements, list):
-        return []
-    return [item for item in requirements if isinstance(item, dict) and item.get("req_id")]
+    return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
 
 
 def _requirement_ids(requirements: list[dict[str, Any]]) -> list[str]:
@@ -767,6 +821,12 @@ def _task_card_candidate_payloads(
         return _commercial_machine_evidence_task_card_candidates(base=base, pipeline_goal=pipeline_goal, brief_manifest=brief_manifest)
     if _is_commercial_asset_browser_runtime_phase(pipeline_goal):
         return _commercial_asset_browser_runtime_task_card_candidates(
+            base=base,
+            pipeline_goal=pipeline_goal,
+            brief_manifest=brief_manifest,
+        )
+    if _is_commercial_game_production_template(pipeline_template):
+        return _commercial_core_content_task_card_candidates(
             base=base,
             pipeline_goal=pipeline_goal,
             brief_manifest=brief_manifest,
@@ -1013,37 +1073,15 @@ def _universal_game_quality_task_card_candidates(
 
 
 def _game_design_spec_from_brief_manifest(brief_manifest: dict[str, Any]) -> dict[str, Any]:
-    requirements = _load_requirement_entries(brief_manifest)
+    matrix = _load_requirement_matrix_payload(brief_manifest)
+    requirements = [item for item in matrix.get("requirements") or [] if isinstance(item, dict) and item.get("req_id")]
     if requirements:
-        requirement_texts = [
-            str(item.get("normalized_requirement") or item.get("original_quote") or item.get("req_id"))
-            for item in requirements
-        ]
-        spec = build_game_design_spec(
+        return build_game_design_spec_from_requirement_matrix(
             title="Commercial Game Brief",
-            genre="brief_defined",
-            sources=[
-                {
-                    "source_id": "requirement_matrix",
-                    "original_path": str(brief_manifest.get("requirement_matrix_path") or ""),
-                    "requirements": requirement_texts,
-                    "raw_text": "\n".join(requirement_texts),
-                }
-            ],
+            intake_manifest=brief_manifest,
+            requirement_matrix={**matrix, "requirements": requirements},
+            source_index=_load_source_index_entries(brief_manifest),
         ).to_dict()
-        original_ids = _requirement_ids(requirements)
-        for item, original in zip(spec.get("requirements") or [], requirements):
-            item["req_id"] = str(original.get("req_id"))
-            item["source_id"] = str(original.get("source_id") or item.get("source_id") or "requirement_matrix")
-            item["original_text"] = str(original.get("original_quote") or item.get("original_text") or "")
-            item["normalized_requirement"] = str(
-                original.get("normalized_requirement") or item.get("normalized_requirement") or ""
-            )
-        spec["input_requirement_ids"] = original_ids
-        spec["preserved_requirement_ids"] = list(original_ids)
-        spec["omitted_requirement_ids"] = []
-        spec["requirement_count"] = len(original_ids)
-        return spec
     brief_text = _read_brief_text(brief_manifest, limit=20_000)
     return build_game_design_spec(
         title="Commercial Game Brief",
@@ -1082,12 +1120,20 @@ def _active_phase_blueprint_task_card_candidates(
     stage_phase: str,
 ) -> list[dict[str, Any]]:
     spec = _game_design_spec_from_brief_manifest(brief_manifest)
-    cards = build_game_production_task_cards_from_design_spec(
+    blueprint = build_phase_execution_blueprint(
         run_id=base,
         phase_name=active_phase_name,
         spec=spec,
+    )
+    cards, compile_report = compile_task_cards_from_phase_execution_blueprint(
+        run_id=base,
+        phase_name=active_phase_name,
+        spec=spec,
+        blueprint=blueprint,
         status="active",
     )
+    blueprint_payload = blueprint.to_dict()
+    compile_report_payload = compile_report.to_dict()
     candidates = [_candidate_from_task_card(card) for card in cards]
     for index, candidate in enumerate(candidates, start=1):
         metadata = dict(candidate.get("metadata") or {})
@@ -1100,6 +1146,8 @@ def _active_phase_blueprint_task_card_candidates(
                 "game_design_spec_schema": spec.get("schema_version"),
                 "pipeline_goal": pipeline_goal,
                 "task_card_materialization": "phase_execution_blueprint_compiled",
+                "_phase_execution_blueprint_artifact": blueprint_payload,
+                "_task_card_compile_report_artifact": compile_report_payload,
             }
         )
         candidate["metadata"] = metadata
@@ -1592,6 +1640,7 @@ def _stage_internal_phase_graph(
     *,
     pipeline_goal: str = "",
     brief_manifest: dict[str, Any] | None = None,
+    pipeline_template: str | None = None,
 ) -> dict[str, Any]:
     base = _safe_id(pipeline_id)
     if _is_universal_game_quality_phase(pipeline_goal):
@@ -1701,6 +1750,30 @@ def _stage_internal_phase_graph(
                         f"{base}_browser_interaction_runtime_proof",
                         f"{base}_browser_audio_volume_runtime_proof",
                     ],
+                }
+            ],
+        }
+    if _is_commercial_game_production_template(pipeline_template):
+        candidates = _active_phase_blueprint_task_card_candidates(
+            base=base,
+            pipeline_goal=pipeline_goal,
+            brief_manifest=brief_manifest or {},
+            active_phase_name="Commercial Game Core Content Implementation",
+            stage_phase="commercial_game_core_content",
+        )
+        return {
+            "schema_version": "commercial_game_stage_internal_phase_graph_v1",
+            "pipeline_id": pipeline_id,
+            "active_materialization_policy": "only_open_active_phase_task_cards",
+            "task_card_materialization": "phase_execution_blueprint_compiled",
+            "phase_execution_blueprint_required": True,
+            "future_phase_task_cards_materialized": False,
+            "phases": [
+                {
+                    "phase_id": f"{base}_commercial_game_core_content",
+                    "order": 1,
+                    "title": "Commercial Game Core Content Implementation",
+                    "task_card_ids": [candidate["task_card_id"] for candidate in candidates],
                 }
             ],
         }
@@ -1888,8 +1961,33 @@ def _persist_task_card_candidates(
             )
     )
     stored: list[TaskCard] = []
+    blueprint_paths: dict[str, str] = {}
+    compile_report_paths: dict[str, str] = {}
+    artifact_root = target_dir / "phase_execution_blueprints"
     for candidate in candidates:
         candidate_metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        candidate_metadata = dict(candidate_metadata)
+        blueprint_payload = candidate_metadata.pop("_phase_execution_blueprint_artifact", None)
+        compile_report_payload = candidate_metadata.pop("_task_card_compile_report_artifact", None)
+        phase_id = str(
+            candidate_metadata.get("phase_execution_blueprint_id")
+            or candidate_metadata.get("active_phase_name")
+            or "active_phase"
+        )
+        if isinstance(blueprint_payload, dict) and phase_id not in blueprint_paths:
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            blueprint_path = artifact_root / f"{_safe_id(phase_id)}.json"
+            blueprint_path.write_text(json.dumps(blueprint_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            blueprint_paths[phase_id] = blueprint_path.as_posix()
+        if isinstance(compile_report_payload, dict) and phase_id not in compile_report_paths:
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            report_path = artifact_root / f"{_safe_id(phase_id)}.compile_report.json"
+            report_path.write_text(json.dumps(compile_report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            compile_report_paths[phase_id] = report_path.as_posix()
+        if phase_id in blueprint_paths:
+            candidate_metadata["phase_execution_blueprint_path"] = blueprint_paths[phase_id]
+        if phase_id in compile_report_paths:
+            candidate_metadata["task_card_compile_report_path"] = compile_report_paths[phase_id]
         task_card = TaskCard(
             task_card_id=str(candidate["task_card_id"]),
             run_id=pipeline_id,
@@ -1931,6 +2029,8 @@ def _persist_task_card_candidates(
         "task_card_ids": [card.task_card_id for card in stored],
         "markdown_snapshot_path": output_path.as_posix(),
         "quality_report_path": quality_path.as_posix(),
+        "phase_execution_blueprint_paths": sorted(blueprint_paths.values()),
+        "task_card_compile_report_paths": sorted(compile_report_paths.values()),
         "quality": quality,
     }
 
@@ -1962,6 +2062,10 @@ def _is_commercial_machine_evidence_phase(value: str) -> bool:
 def _is_commercial_asset_browser_runtime_phase(value: str) -> bool:
     normalized = str(value or "").lower()
     return "commercial asset" in normalized and "browser runtime proof" in normalized
+
+
+def _is_commercial_game_production_template(value: str | None) -> bool:
+    return str(value or "").strip() == "commercial_game_production"
 
 
 def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str | None:

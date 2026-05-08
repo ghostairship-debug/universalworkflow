@@ -158,6 +158,19 @@ def test_universal_game_cli_quality_gate_and_repair_cards(tmp_path: Path) -> Non
                 "findings": [{"finding_id": "visual-1", "severity": "P2", "category": "visual"}],
                 "screenshots": ["first.png", "success.png", "failure.png"],
                 "replay_artifacts": ["boot.jsonl"],
+                "visual_review_evidence": {
+                    "visual_go": True,
+                    "visual_quality_score": 90,
+                    "screenshots_reviewed": ["first.png", "success.png", "failure.png"],
+                    "blockers": [],
+                },
+                "audio_review_evidence": {
+                    "audio_go": True,
+                    "bgm_runtime_verified": True,
+                    "sfx_runtime_verified": True,
+                    "mix_go": True,
+                    "blockers": [],
+                },
                 "engine_native_product_body": {
                     "engine": "cocos",
                     "product_body_mode": "engine_native",
@@ -351,7 +364,20 @@ def test_universal_game_cli_execution_gate_checks_ai_playtest_artifacts(tmp_path
                     {"device": "mobile_portrait", "status": "passed"},
                 ],
                 "performance_metrics": {"min_fps": 60, "input_latency_ms": 50},
-                "vision_review": {"visual_go": True, "targets_checked": ["first_screen"], "blockers": []},
+                "vision_review": {
+                    "visual_go": True,
+                    "visual_quality_score": 90,
+                    "targets_checked": ["first_screen"],
+                    "screenshots_reviewed": [next(iter(mode_results.values()))["screenshots"][0]],
+                    "blockers": [],
+                },
+                "audio_review": {
+                    "audio_go": True,
+                    "bgm_runtime_verified": True,
+                    "sfx_runtime_verified": True,
+                    "mix_go": True,
+                    "blockers": [],
+                },
                 "engine_native_product_body": {
                     "engine": "cocos",
                     "product_body_mode": "engine_native",

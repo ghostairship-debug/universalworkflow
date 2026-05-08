@@ -188,6 +188,7 @@ def _build_execution_packet(
     device_results = browser_result.get("device_results") if isinstance(browser_result.get("device_results"), list) else []
     vision_targets = _string_list(plan.get("vision_review_targets"))
     vision_review = quality_overrides.get("vision_review") if isinstance(quality_overrides.get("vision_review"), dict) else {}
+    audio_review = quality_overrides.get("audio_review") if isinstance(quality_overrides.get("audio_review"), dict) else {}
     return {
         "schema_version": AI_PLAYTEST_EXECUTION_PACKET_SCHEMA,
         "plan": plan,
@@ -209,10 +210,19 @@ def _build_execution_packet(
         "performance_metrics": browser_result.get("performance_metrics") if isinstance(browser_result.get("performance_metrics"), dict) else {},
         "vision_review": {
             "visual_go": bool(vision_review.get("visual_go")),
+            "visual_quality_score": int(vision_review.get("visual_quality_score") or vision_review.get("score") or 0),
             "targets_checked": _string_list(vision_review.get("targets_checked")),
             "blockers": _string_list(vision_review.get("blockers"))
             or ([] if vision_review.get("visual_go") else ["vision_review_requires_ai_or_human_annotation"]),
             "screenshots": screenshots,
+            "screenshots_reviewed": _string_list(vision_review.get("screenshots_reviewed")) or screenshots,
+        },
+        "audio_review": {
+            "audio_go": bool(audio_review.get("audio_go")),
+            "bgm_runtime_verified": bool(audio_review.get("bgm_runtime_verified") or audio_review.get("bgmStarted")),
+            "sfx_runtime_verified": bool(audio_review.get("sfx_runtime_verified") or audio_review.get("sfxPlaybackVerified")),
+            "mix_go": bool(audio_review.get("mix_go", True)),
+            "blockers": _string_list(audio_review.get("blockers")),
         },
         "engine_native_product_body": engine_native_product_body or quality_overrides.get("engine_native_product_body"),
         "omitted_requirement_ids": _string_list(quality_overrides.get("omitted_requirement_ids")),

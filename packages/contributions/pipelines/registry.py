@@ -121,6 +121,7 @@ def execute_contribution_capability(
             source_path=source_path,
             creator_exe=resolved_creator_exe,
             require_build=require_build,
+            require_commercial=require_commercial,
         )
         return {
             "handled": True,
@@ -349,12 +350,26 @@ def execute_contribution_validation(
     if validation == "commercial_game_production_go_no_go":
         production = shared_outputs.get("commercial_game_production")
         production_payload = production if isinstance(production, dict) else None
+        effective_require_live_agent_roles = bool(require_live_agent_roles)
+        if (
+            require_commercial
+            and isinstance(production_payload, dict)
+            and production_payload.get("pipeline_id") == "commercial_game_production"
+        ):
+            effective_require_live_agent_roles = True
+        effective_require_cocos_ecosystem = bool(require_cocos_ecosystem)
+        if (
+            require_commercial
+            and isinstance(production_payload, dict)
+            and production_payload.get("pipeline_id") == "commercial_game_production"
+        ):
+            effective_require_cocos_ecosystem = True
         no_degradation = evaluate_no_degradation_contract(
             shared_outputs=shared_outputs,
             production=production_payload,
             require_commercial=require_commercial,
-            require_cocos_ecosystem=require_cocos_ecosystem,
-            require_live_agent_roles=require_live_agent_roles,
+            require_cocos_ecosystem=effective_require_cocos_ecosystem,
+            require_live_agent_roles=effective_require_live_agent_roles,
             require_human_player_review=require_human_player_review,
         )
         gate_go = (

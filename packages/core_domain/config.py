@@ -313,7 +313,7 @@ def build_effective_config(
                 env_key="WORKFLOW_CODEX_MODEL",
                 config=raw_config,
                 config_key="codex.model",
-                default="gpt-5.4",
+                default="gpt-5.5",
                 coerce=str,
             ),
             "reasoning_effort": _resolve_value(
@@ -413,7 +413,7 @@ def build_effective_config(
                 env_key="WORKFLOW_ADAPTIVE_COMPLEX_MODEL",
                 config=raw_config,
                 config_key="adaptive_llm_routing.complex_model",
-                default="gpt-5.4",
+                default="gpt-5.5",
                 coerce=str,
             ),
             "coding_adapter": _resolve_value(

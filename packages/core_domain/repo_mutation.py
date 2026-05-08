@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from packages.runtime_security.safe_command_runner import (
@@ -122,6 +123,13 @@ def is_path_allowed(path: str, allowed_paths: list[str]) -> bool:
     normalized = path.strip("/").replace("\\", "/")
     for allowed in allowed_paths:
         candidate = allowed.strip("/").replace("\\", "/")
+        if any(marker in candidate for marker in ("*", "?", "[")):
+            if candidate.endswith("/**"):
+                directory = candidate[:-3].rstrip("/")
+                if normalized == directory or normalized.startswith(directory + "/"):
+                    return True
+            if fnmatchcase(normalized, candidate):
+                return True
         if normalized == candidate or normalized.startswith(candidate.rstrip("/") + "/"):
             return True
     return False

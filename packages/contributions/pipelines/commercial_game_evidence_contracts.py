@@ -81,6 +81,8 @@ def build_cocos_bridge_evidence_contract(ecosystem: dict[str, Any] | None) -> di
         blockers.append(failure_class)
     if str(payload.get("bridge_mode") or "").lower() in {"filesystem", "filesystem_only"}:
         blockers.append("filesystem_only_bridge_claim")
+    if str(payload.get("bridge_mode") or "").lower() == "report_only" and not payload.get("bridge_runner_evidence"):
+        blockers.append("report_only_bridge_without_fresh_runner")
     go = bool(payload.get("ecosystem_integration_go")) and not blockers
     if not go and "cocos_ecosystem_bridge_missing" not in blockers:
         blockers.append("cocos_ecosystem_bridge_missing")
@@ -213,6 +215,17 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
         blockers.append("browser_playtest_execution_failed")
     if payload and not bool(payload.get("passed") or payload.get("playtest_go")):
         blockers.append("browser_playtest_no_go")
+    quality_blockers = _strings(
+        payload.get("quality_blockers") or payload.get("visual_quality_blockers") or payload.get("playtest_blockers")
+    )
+    blockers.extend(quality_blockers)
+    canvas_hashes = _strings(payload.get("canvas_hashes"))
+    if len(canvas_hashes) >= 2 and len(set(canvas_hashes)) == 1:
+        blockers.append("browser_canvas_hash_static_after_actions")
+    if payload.get("desktop_splash_detected"):
+        blockers.append("desktop_cocos_splash_only")
+    if payload.get("desktop_runtime_started") is False:
+        blockers.append("desktop_runtime_not_started")
     screenshots = list(payload.get("screenshots") or [])
     if not screenshots:
         blockers.append("browser_playtest_screenshots_missing")
@@ -263,6 +276,10 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
             "result_path": payload.get("result_path"),
             "runtime_error_markers": runtime_errors,
             "audio_runtime_proof": audio_runtime_proof,
+            "quality_blockers": quality_blockers,
+            "canvas_hash_count": len(canvas_hashes),
+            "desktop_runtime_started": payload.get("desktop_runtime_started"),
+            "desktop_splash_detected": bool(payload.get("desktop_splash_detected")),
             "feature_coverage_keys": sorted(feature_coverage),
             "missing_required_features": missing_required_features,
             "missing_commercial_features": missing_commercial_features,
@@ -280,7 +297,7 @@ def build_gameplay_semantic_evidence(
     if _is_contract(payload, GAMEPLAY_SEMANTIC_EVIDENCE_SCHEMA):
         return payload
     features = _merge_dicts(_dict_from(_dict_from(playtest).get("feature_coverage")), _dict_from(feature_coverage), _dict_from(payload.get("feature_coverage")))
-    traces = _dict_from(payload.get("semantic_traces") or payload.get("traces"))
+    traces = _semantic_trace_map(payload)
     blockers: list[str] = []
     if payload and _has_non_real_status(payload):
         blockers.append("gameplay_semantic_not_real_execution")
@@ -692,19 +709,24 @@ def _distinct_level_goal_count(level_goals: list[str], *payloads: dict[str, Any]
 
 def _board_is_10x10(payload: dict[str, Any]) -> bool:
     board = _dict_from(payload.get("board_state") or payload.get("board"))
-    size = payload.get("board_size") or board.get("size")
+    runtime_state = _dict_from(payload.get("engine_native_runtime_state"))
+    size = payload.get("board_size") or board.get("size") or runtime_state.get("board_size")
     if isinstance(size, str):
         return size.lower().replace(" ", "") in {"10x10", "10*10"}
     if isinstance(size, (list, tuple)) and len(size) == 2:
         return list(size) == [10, 10]
-    rows = board.get("rows") or payload.get("rows")
-    cols = board.get("cols") or board.get("columns") or payload.get("cols") or payload.get("columns")
+    rows = board.get("rows") or payload.get("rows") or runtime_state.get("rows")
+    cols = board.get("cols") or board.get("columns") or payload.get("cols") or payload.get("columns") or runtime_state.get("cols")
     return rows == 10 and cols == 10
 
 
 def _board_size_source(payload: dict[str, Any]) -> Any:
     board = _dict_from(payload.get("board_state") or payload.get("board"))
-    return payload.get("board_size") or board.get("size") or {"rows": board.get("rows"), "cols": board.get("cols") or board.get("columns")}
+    runtime_state = _dict_from(payload.get("engine_native_runtime_state"))
+    return payload.get("board_size") or board.get("size") or runtime_state.get("board_size") or {
+        "rows": board.get("rows") or runtime_state.get("rows"),
+        "cols": board.get("cols") or board.get("columns") or runtime_state.get("cols"),
+    }
 
 
 def _required_semantic_traces(payload: dict[str, Any], traces: dict[str, Any]) -> list[str]:
@@ -725,6 +747,21 @@ def _required_semantic_traces(payload: dict[str, Any], traces: dict[str, Any]) -
             if trace:
                 result.append(_trace_key(str(trace)))
         return result
+    transition_examples = payload.get("transition_examples")
+    if isinstance(transition_examples, list) and transition_examples:
+        result = []
+        for item in transition_examples:
+            if not isinstance(item, dict):
+                continue
+            trace = item.get("trace") or item.get("transition") or item.get("verb")
+            if trace:
+                result.append(_trace_key(str(trace)))
+        if result:
+            return result
+    contract = _dict_from(payload.get("semantic_trace_contract"))
+    covered_verbs = _strings(contract.get("covered_verbs"))
+    if covered_verbs:
+        return [_trace_key(value) for value in covered_verbs]
     return [_trace_key(key) for key in traces]
 
 
@@ -738,7 +775,41 @@ def _has_model_transition_traces(payload: dict[str, Any]) -> bool:
         return bool(model_traces)
     if isinstance(model_traces, list):
         return bool(model_traces)
+    transition_examples = payload.get("transition_examples")
+    if isinstance(transition_examples, list) and transition_examples:
+        return True
+    contract = _dict_from(payload.get("semantic_trace_contract"))
+    if _strings(contract.get("covered_verbs")):
+        return True
     return bool(payload.get("semantic_traces") or payload.get("traces"))
+
+
+def _semantic_trace_map(payload: dict[str, Any]) -> dict[str, Any]:
+    traces = _dict_from(payload.get("semantic_traces") or payload.get("traces"))
+    model_traces = payload.get("model_transition_traces")
+    if isinstance(model_traces, dict):
+        traces.update({_trace_key(str(key)): value for key, value in model_traces.items()})
+    elif isinstance(model_traces, list):
+        for item in model_traces:
+            if isinstance(item, dict):
+                key = item.get("trace") or item.get("transition") or item.get("verb") or item.get("id")
+                if key:
+                    traces.setdefault(_trace_key(str(key)), item)
+            elif item:
+                traces.setdefault(_trace_key(str(item)), True)
+    transition_examples = payload.get("transition_examples")
+    if isinstance(transition_examples, list):
+        for index, item in enumerate(transition_examples):
+            if not isinstance(item, dict):
+                continue
+            key = item.get("trace") or item.get("transition") or item.get("verb") or f"transition_{index + 1}"
+            traces.setdefault(_trace_key(str(key)), item)
+            for event in _strings(item.get("events")):
+                traces.setdefault(_trace_key(event), item)
+    contract = _dict_from(payload.get("semantic_trace_contract"))
+    for verb in _strings(contract.get("covered_verbs")):
+        traces.setdefault(_trace_key(verb), True)
+    return traces
 
 
 _BLOCK_PUZZLE_TEMPLATE_MARKERS = {
@@ -785,6 +856,9 @@ def _has_piece_model(payload: dict[str, Any]) -> bool:
 
 def _piece_shape_count(payload: dict[str, Any]) -> int:
     shapes = payload.get("piece_shapes") or payload.get("pieceShapes") or _dict_from(payload.get("piece_model")).get("shapes")
+    runtime_state = _dict_from(payload.get("engine_native_runtime_state"))
+    if not isinstance(shapes, list):
+        shapes = runtime_state.get("piece_shapes") or runtime_state.get("pieceShapes")
     return len(shapes) if isinstance(shapes, list) else 0
 
 
@@ -797,7 +871,8 @@ def _candidate_count(payload: dict[str, Any]) -> int:
     if isinstance(tray, list):
         return len(tray)
     tray_dict = _dict_from(tray)
-    count = tray_dict.get("count") or payload.get("candidate_count") or payload.get("candidateCount")
+    runtime_state = _dict_from(payload.get("engine_native_runtime_state"))
+    count = tray_dict.get("count") or payload.get("candidate_count") or payload.get("candidateCount") or runtime_state.get("candidate_batch_size")
     try:
         return int(count)
     except (TypeError, ValueError):
@@ -820,6 +895,16 @@ def _has_component_binding(payload: dict[str, Any]) -> bool:
 
 def _component_binding_count(payload: dict[str, Any]) -> int:
     bindings = payload.get("cocos_component_bindings") or payload.get("component_bindings") or payload.get("components")
+    if not bindings and isinstance(payload.get("implemented_components"), list):
+        bindings = payload.get("implemented_components")
+    if not bindings:
+        scene_contract = _dict_from(payload.get("scene_binding_contract"))
+        contract_components = [
+            scene_contract.get("component"),
+            scene_contract.get("input_component"),
+            *(_strings(scene_contract.get("components"))),
+        ]
+        bindings = [item for item in contract_components if item]
     if isinstance(bindings, list):
         return len(bindings)
     value = payload.get("component_binding_count") or payload.get("componentBindingCount")
@@ -857,13 +942,28 @@ def _provider_visible_cli_session_valid(entry: dict[str, Any]) -> bool:
 
 
 def _has_scene_body(payload: dict[str, Any]) -> bool:
-    return _scene_node_count(payload) > 0 or bool(payload.get("scene_path") or payload.get("sceneGraph"))
+    return _scene_node_count(payload) > 0 or bool(
+        payload.get("scene_path")
+        or payload.get("sceneGraph")
+        or payload.get("scene_bindings")
+        or payload.get("scene_binding_contract")
+    )
 
 
 def _scene_node_count(payload: dict[str, Any]) -> int:
     nodes = payload.get("scene_nodes") or payload.get("sceneNodes") or payload.get("node_hierarchy")
     if isinstance(nodes, list):
         return len(nodes)
+    scene_bindings = payload.get("scene_bindings")
+    if isinstance(scene_bindings, list) and scene_bindings:
+        count = 0
+        for binding in scene_bindings:
+            if not isinstance(binding, dict):
+                continue
+            count += 1
+            count += len(binding.get("prefabs") or [])
+            count += len(binding.get("components") or [])
+        return count
     value = payload.get("scene_node_count") or payload.get("sceneNodeCount")
     try:
         return int(value)

@@ -12,6 +12,14 @@ from packages.contributions.games.cocos.commercial_assets import (
 )
 from packages.contributions.games.cocos.ecosystem_bridge import collect_cocos_ecosystem_bridge_evidence
 from packages.contributions.games.cocos.e2e import discover_cocos_creator_exe
+from packages.contributions.games.game_design_ir import (
+    build_game_design_spec_from_requirement_matrix,
+    validate_game_design_spec,
+)
+from packages.contributions.games.game_task_card_generation import (
+    PHASE_EXECUTION_BLUEPRINT_SCHEMA,
+    TASK_CARD_COMPILE_REPORT_SCHEMA,
+)
 from packages.contributions.pipelines.commercial_game_development_readiness import (
     build_commercial_game_development_readiness_evidence,
 )
@@ -22,8 +30,10 @@ from packages.contributions.pipelines.commercial_game_task_worker import (
     execute_same_project_task_cards,
     production_payload_from_worker,
     same_project_business_task_cards,
+    validate_same_project_reuse,
 )
 from packages.core_domain.task_card_store import TaskCardStore, task_card_quality_report
+from packages.core_domain.unified_project_brief import build_unified_project_brief
 
 
 COMMERCIAL_GAME_PIPELINE_CONFIG_SCHEMA = "commercial_game_pipeline_config_v1"
@@ -160,7 +170,8 @@ def load_commercial_game_pipeline_config(workspace_root: str | Path | None = Non
         "locale": "zh-CN",
         "target_engine": "cocos",
         "quality_mode": "commercial_playable",
-        "live_agent_roles_default": False,
+        "live_agent_roles_default": True,
+        "commercial_high_risk_requires_live_design": True,
         "real_asset_provider_required_for_commercial_go": True,
         "persistent_project_per_run": True,
         "max_repair_attempts_per_finding": 3,
@@ -178,6 +189,7 @@ def execute_commercial_game_asset_generation(
     source_path: str | Path | None = None,
     creator_exe: str | Path | None = None,
     require_build: bool = False,
+    require_commercial: bool = False,
 ) -> dict[str, Any]:
     resolved_creator_exe = discover_cocos_creator_exe(creator_exe) if require_build else creator_exe
     config = load_commercial_game_pipeline_config(root)
@@ -226,6 +238,52 @@ def execute_commercial_game_asset_generation(
                 "commercial_assets": payload["asset_manifest"],
             },
         }
+    game_design_contract: dict[str, Any] = {}
+    if require_commercial and source_path is not None and Path(source_path).exists():
+        game_design_contract = _build_game_design_spec_contract(
+            run_root=run_root,
+            pipeline_id=pipeline_id,
+            source_path=Path(source_path),
+        )
+        if not game_design_contract.get("go"):
+            blockers = ["game_design_spec_no_go", *list(game_design_contract.get("blockers") or [])]
+            payload = {
+                "schema_version": COMMERCIAL_GAME_ASSET_SCHEMA,
+                "created_at": _utc_now(),
+                "pipeline_id": pipeline_id,
+                "locale": config.get("locale", "zh-CN"),
+                "asset_manifest_path": None,
+                "asset_manifest": {
+                    "schema_version": COMMERCIAL_GAME_ASSET_SCHEMA,
+                    "go_no_go": "NO-GO",
+                    "blockers": blockers,
+                    "results": [],
+                    "feature_coverage": {},
+                },
+                "provider_evidence": [],
+                "placeholder_only": False,
+                "require_real_assets": bool(require_real_assets),
+                "commercial_assets_go": False,
+                "commercial_asset_blockers": blockers,
+                "game_design_spec_contract": game_design_contract,
+                "asset_generation_skipped": True,
+                "skip_reason": "game_design_spec_no_go",
+                "forbids_fixed_template": True,
+            }
+            payload_path = asset_root / "commercial_game_asset_stage.json"
+            _write_json(payload_path, payload)
+            payload["evidence_path"] = payload_path.as_posix()
+            return {
+                "status": "blocked",
+                "failure_class": "game_design_spec_no_go",
+                "execution_backend": "commercial_game_asset_generation_precondition_guard_v1",
+                "output": payload,
+                "shared_outputs": {
+                    "commercial_game_assets": payload,
+                    "commercial_assets": payload["asset_manifest"],
+                    "game_design_spec_contract": game_design_contract,
+                },
+            }
     style_prompt = _style_prompt(shared_outputs)
     should_attempt_real_provider = bool(
         require_real_assets
@@ -271,6 +329,7 @@ def execute_commercial_game_asset_generation(
         "require_real_assets": bool(require_real_assets),
         "commercial_assets_go": commercial_assets_go,
         "commercial_asset_blockers": blockers,
+        "game_design_spec_contract": game_design_contract,
         "forbids_fixed_template": True,
     }
     payload_path = asset_root / "commercial_game_asset_stage.json"
@@ -284,6 +343,7 @@ def execute_commercial_game_asset_generation(
         "shared_outputs": {
             "commercial_game_assets": payload,
             "commercial_assets": manifest,
+            **({"game_design_spec_contract": game_design_contract} if game_design_contract else {}),
         },
     }
 
@@ -360,6 +420,53 @@ def execute_commercial_game_task_card_worker(
         _write_worker_manifest(project_dir, payload)
         return _worker_completed(payload)
 
+    game_design_contract: dict[str, Any] = {}
+    if require_commercial:
+        game_design_contract = _build_game_design_spec_contract(
+            run_root=run_root,
+            pipeline_id=pipeline_id,
+            source_path=Path(source_path),
+        )
+        if not game_design_contract.get("go"):
+            blockers = ["game_design_spec_no_go", *list(game_design_contract.get("blockers") or [])]
+            payload = _worker_payload(
+                pipeline_id=pipeline_id,
+                project_dir=project_dir,
+                task_card_quality=quality,
+                commercial_playable_go=False,
+                blockers=_dedupe_strings(blockers),
+                max_repair_attempts=max_repair_attempts,
+            )
+            payload["game_design_spec_contract"] = game_design_contract
+            _write_worker_manifest(project_dir, payload)
+            return _worker_completed(payload)
+
+    business_cards = same_project_business_task_cards(task_cards)
+    compile_blockers = _commercial_task_card_compile_blockers(business_cards) if require_commercial else []
+    if compile_blockers:
+        payload = _worker_payload(
+            pipeline_id=pipeline_id,
+            project_dir=project_dir,
+            task_card_quality=quality,
+            commercial_playable_go=False,
+            blockers=compile_blockers,
+            max_repair_attempts=max_repair_attempts,
+        )
+        payload["game_design_spec_contract"] = game_design_contract
+        payload["task_card_compile_contract"] = {
+            "schema_version": "commercial_game_task_card_compile_contract_v1",
+            "go": False,
+            "blockers": compile_blockers,
+            "business_task_card_ids": [card.task_card_id for card in business_cards],
+        }
+        payload["same_project_patch_ledger"] = {
+            "same_project_worker_patch_go": False,
+            "entries": [],
+            "blockers": compile_blockers,
+        }
+        _write_worker_manifest(project_dir, payload)
+        return _worker_completed(payload)
+
     assets_stage = shared_outputs.get("commercial_game_assets")
     asset_manifest = None
     if isinstance(assets_stage, dict):
@@ -367,13 +474,32 @@ def execute_commercial_game_task_card_worker(
     if not isinstance(asset_manifest, dict):
         asset_manifest = shared_outputs.get("commercial_assets") if isinstance(shared_outputs.get("commercial_assets"), dict) else None
 
+    reuse_guard = validate_same_project_reuse(project_dir=project_dir, source_path=Path(source_path))
+    if not reuse_guard.get("go"):
+        blockers = [*list(reuse_guard.get("blockers") or []), *_asset_blockers_from_shared_outputs(shared_outputs)]
+        payload = _worker_payload(
+            pipeline_id=pipeline_id,
+            project_dir=project_dir,
+            task_card_quality=quality,
+            commercial_playable_go=False,
+            blockers=_dedupe_strings(blockers),
+            max_repair_attempts=max_repair_attempts,
+        )
+        payload["game_design_spec_contract"] = game_design_contract
+        payload["same_project_reuse_guard"] = reuse_guard
+        payload["same_project_patch_ledger"] = {
+            "same_project_worker_patch_go": False,
+            "entries": [],
+            "blockers": _dedupe_strings(blockers),
+        }
+        return _worker_completed(payload)
+
     bootstrap_cocos_project_shell(
         project_dir=project_dir,
         source_path=Path(source_path),
         creator_exe=Path(resolved_creator_exe),
         asset_manifest=asset_manifest if isinstance(asset_manifest, dict) else None,
     )
-    business_cards = same_project_business_task_cards(task_cards)
     patch_ledger = execute_same_project_task_cards(
         root=root,
         run_root=run_root,
@@ -446,6 +572,15 @@ def execute_commercial_game_task_card_worker(
         blocker_details=_blocker_details,
         recoverable_suggestions=_recoverable_suggestions,
     )
+    if game_design_contract:
+        payload["game_design_spec_contract"] = game_design_contract
+    payload["same_project_reuse_guard"] = reuse_guard
+    payload["task_card_compile_contract"] = {
+        "schema_version": "commercial_game_task_card_compile_contract_v1",
+        "go": True,
+        "blockers": [],
+        "business_task_card_ids": [card.task_card_id for card in business_cards],
+    }
     _write_worker_manifest(project_dir, payload)
     completed = _worker_completed(payload)
     completed["shared_outputs"]["cocos_e2e"] = runtime_evidence
@@ -544,6 +679,82 @@ def build_supervisor_repair_packets(
             }
         )
     return packets
+
+
+def _build_game_design_spec_contract(*, run_root: Path, pipeline_id: str, source_path: Path) -> dict[str, Any]:
+    output_root = run_root / "source_truth"
+    try:
+        brief_manifest = build_unified_project_brief(
+            input_paths=[source_path],
+            output_dir=output_root / "unified_brief",
+            title=f"{pipeline_id} commercial game source truth",
+            preserve_raw=True,
+        )
+        requirement_matrix = _read_json_dict(Path(str(brief_manifest.get("requirement_matrix_path") or "")))
+        source_index = _read_json_list(Path(str(brief_manifest.get("source_index_path") or "")))
+        spec = build_game_design_spec_from_requirement_matrix(
+            title=f"{pipeline_id} GameDesignSpec",
+            intake_manifest=brief_manifest,
+            requirement_matrix=requirement_matrix,
+            source_index=source_index,
+        )
+        spec_payload = spec.to_dict()
+        validation = validate_game_design_spec(spec_payload)
+        spec_path = output_root / "game_design_spec.json"
+        validation_path = output_root / "game_design_spec_validation.json"
+        _write_json(spec_path, spec_payload)
+        _write_json(validation_path, validation)
+        return {
+            "schema_version": "commercial_game_design_spec_contract_v1",
+            "go": bool(validation.get("go")),
+            "blockers": list(validation.get("blockers") or []),
+            "game_design_spec_schema": spec_payload.get("schema_version"),
+            "source_material_policy": spec_payload.get("source_material_policy"),
+            "source_count": spec_payload.get("source_count"),
+            "input_count": spec_payload.get("input_count"),
+            "requirement_count": spec_payload.get("requirement_count"),
+            "preserved_requirement_count": len(spec_payload.get("preserved_requirement_ids") or []),
+            "omitted_requirement_ids": spec_payload.get("omitted_requirement_ids") or [],
+            "game_design_spec_path": spec_path.as_posix(),
+            "validation_path": validation_path.as_posix(),
+            "unified_brief_manifest_path": brief_manifest.get("intake_manifest_path"),
+            "requirement_matrix_path": brief_manifest.get("requirement_matrix_path"),
+        }
+    except Exception as exc:
+        blockers = [f"game_design_spec_build_failed:{exc.__class__.__name__}"]
+        if "no chunks or media" in str(exc):
+            blockers.append("source_requirements_missing")
+        payload = {
+            "schema_version": "commercial_game_design_spec_contract_v1",
+            "go": False,
+            "blockers": blockers,
+            "failure": str(exc),
+        }
+        _write_json(output_root / "game_design_spec_contract_failed.json", payload)
+        return payload
+
+
+def _commercial_task_card_compile_blockers(task_cards: list[Any]) -> list[str]:
+    blockers: list[str] = []
+    for card in task_cards:
+        metadata = card.metadata if isinstance(card.metadata, dict) else {}
+        prefix = f"{card.task_card_id}:"
+        if metadata.get("task_card_generation_source") != "active_phase_execution_blueprint":
+            blockers.append(f"{prefix}task_card_not_from_active_phase_blueprint")
+        if metadata.get("phase_execution_blueprint_schema") != PHASE_EXECUTION_BLUEPRINT_SCHEMA:
+            blockers.append(f"{prefix}phase_execution_blueprint_schema_missing")
+        if metadata.get("task_card_compile_report_schema") != TASK_CARD_COMPILE_REPORT_SCHEMA:
+            blockers.append(f"{prefix}task_card_compile_report_missing")
+        if metadata.get("task_card_compile_go") is not True:
+            blockers.append(f"{prefix}task_card_compile_no_go")
+        if metadata.get("task_card_compile_blockers"):
+            blockers.append(f"{prefix}task_card_compile_blockers_present")
+        covered_ids = [str(req_id) for req_id in metadata.get("covered_requirement_ids") or [] if str(req_id).strip()]
+        if not covered_ids:
+            blockers.append(f"{prefix}task_card_req_id_coverage_missing")
+        if metadata.get("missing_requirement_ids"):
+            blockers.append(f"{prefix}task_card_compile_missing_requirement_ids")
+    return _dedupe_strings(blockers)
 
 
 def _worker_completed(payload: dict[str, Any]) -> dict[str, Any]:
@@ -780,6 +991,20 @@ def _safe_id(value: str) -> str:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_json_list(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
 
 
 def _utc_now() -> str:
