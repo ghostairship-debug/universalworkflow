@@ -131,6 +131,30 @@ def _passing_ai_surrogate_evidence() -> dict[str, object]:
     }
 
 
+def _passing_commercial_quality_scorecard() -> dict[str, object]:
+    return {
+        "schema_version": "commercial_game_quality_scorecard_v1",
+        "go": True,
+        "status": "completed",
+        "total_score": 100,
+        "area_scores": {
+            "core_playability": 20,
+            "portrait_mobile_ux": 15,
+            "ui_polish": 15,
+            "art_completeness": 15,
+            "animation_feedback": 10,
+            "audio_fit": 10,
+            "content_depth": 10,
+            "r5_no_regression": 5,
+        },
+        "hard_blockers": [],
+        "blockers": [],
+        "screenshots": ["mobile.png"],
+        "replay_artifacts": ["real_pointer_drag.json"],
+        "source": {"score_source": "test"},
+    }
+
+
 def _passing_commercial_assets(tmp_path: Path) -> dict[str, object]:
     manifest_path = tmp_path / "commercial_asset_manifest.json"
     manifest_path.write_text(json.dumps({"go_no_go": "GO", "assets": ["block_skin_01"]}), encoding="utf-8")
@@ -174,6 +198,10 @@ def _commercial_feature_coverage() -> dict[str, bool]:
         "levelFlowPlayable": True,
         "failureReviveFeedback": True,
         "animationFeedbackVerified": True,
+        "dragPlacement": True,
+        "chineseUi": True,
+        "generatedArtAssets": True,
+        "cocosAssetBindings": True,
     }
 
 
@@ -225,8 +253,18 @@ def _passing_runtime_evidence(tmp_path: Path, project_dir: Path) -> dict[str, ob
             "screenshots": [(tmp_path / "mobile.png").as_posix()],
             "console_errors": [],
             "page_errors": [],
+            "real_pointer_drag_go": True,
+            "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+            "portrait_orientation_go": True,
+            "portrait_orientation": {
+                "go": True,
+                "viewport": {"width": 390, "height": 844},
+                "screen_orientation": "portrait",
+                "design_resolution": {"width": 1080, "height": 1920},
+            },
             "feature_coverage": feature_coverage,
         },
+        "commercial_quality_scorecard": _passing_commercial_quality_scorecard(),
         "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
     }
 
@@ -420,6 +458,7 @@ def test_pipeline_preview_exposes_h5_game_commercialization_pipeline(tmp_path: P
         "ai_playtest_oracle_agent",
         "task_card_generation_agent",
         "qa_player_perspective_agent",
+        "commercial_quality_score_agent",
         "supervisor",
     ]
     capabilities = [stage["metadata"].get("capability") for stage in payload["stages"] if stage["stage_kind"] == "capability"]
@@ -881,6 +920,15 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
         "sfxPlaybackVerified": True,
         "volumeToggleUsable": True,
         "animationFeedbackVerified": True,
+        "mobilePortraitUi": True,
+        "dragPlacement": True,
+        "chineseUi": True,
+        "generatedArtAssets": True,
+        "cocosAssetBindings": True,
+        "dragPlacement": True,
+        "chineseUi": True,
+        "generatedArtAssets": True,
+        "cocosAssetBindings": True,
     }
     semantic_evidence = {
         "board_state": {"rows": 10, "cols": 10},
@@ -952,6 +1000,15 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
                     "screenshots": ["mobile.png"],
                     "console_errors": [],
                     "page_errors": [],
+                    "real_pointer_drag_go": True,
+                    "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+                    "portrait_orientation_go": True,
+                    "portrait_orientation": {
+                        "go": True,
+                        "viewport": {"width": 390, "height": 844},
+                        "screen_orientation": "portrait",
+                        "design_resolution": {"width": 1080, "height": 1920},
+                    },
                     "feature_coverage": {**product_features, "mobilePortraitUi": True},
                 },
                 "commercial_feature_coverage": product_features,
@@ -962,6 +1019,7 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
                 "gameplay_semantic_evidence": semantic_evidence,
                 "product_body_evidence": product_body_evidence,
                 "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
+                "commercial_quality_scorecard": _passing_commercial_quality_scorecard(),
             },
             "commercial_game_assets": {
                 "commercial_assets_go": True,
@@ -1046,6 +1104,15 @@ def test_commercial_gate_allows_unattended_machine_ready_when_human_review_is_no
             "screenshots": ["mobile.png"],
             "console_errors": [],
             "page_errors": [],
+            "real_pointer_drag_go": True,
+            "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+            "portrait_orientation_go": True,
+            "portrait_orientation": {
+                "go": True,
+                "viewport": {"width": 390, "height": 844},
+                "screen_orientation": "portrait",
+                "design_resolution": {"width": 1080, "height": 1920},
+            },
             "feature_coverage": product_features,
         },
         "commercial_feature_coverage": product_features,
@@ -1070,6 +1137,7 @@ def test_commercial_gate_allows_unattended_machine_ready_when_human_review_is_no
             "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
         },
         "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
+        "commercial_quality_scorecard": _passing_commercial_quality_scorecard(),
     }
     payload = pipeline_registry.execute_contribution_validation(
         "commercial_game_production_go_no_go",
@@ -1514,6 +1582,7 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
         "gameplay_semantic_evidence",
         "product_body_evidence",
         "product_depth_evidence",
+        "commercial_quality_scorecard",
     }
     assert output["build_ledger_go"] is True
     assert output["browser_playtest_ledger_go"] is True
@@ -2085,11 +2154,36 @@ def test_collect_project_runtime_evidence_writes_build_and_browser_ledgers(tmp_p
     creator.write_text("", encoding="utf-8")
     feature_coverage = {
         "mobilePortraitUi": True,
+        "dragPlacement": True,
+        "chineseUi": True,
+        "generatedArtAssets": True,
+        "cocosAssetBindings": True,
+        "animationFeedbackVerified": True,
         "audioPlaybackVerified": True,
         "bgmStarted": True,
         "sfxPlaybackVerified": True,
         "volumeToggleUsable": True,
+        "shopOwnershipStates": True,
+        "skinEquippedVisualChange": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
     }
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "workflow_commercial_feature_evidence.json").write_text(
+        json.dumps(
+            {
+                "commercial_feature_coverage": feature_coverage,
+                "player_visible_checks": feature_coverage,
+                "product_depth_evidence": {
+                    "level_goals": [f"goal-{index}" for index in range(8)],
+                    "feature_coverage": feature_coverage,
+                    "player_visible_checks": feature_coverage,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     def _fake_build(**_kwargs):
         return {
@@ -2106,6 +2200,15 @@ def test_collect_project_runtime_evidence_writes_build_and_browser_ledgers(tmp_p
             "screenshots": ["mobile.png", "desktop.png"],
             "console_errors": [],
             "page_errors": [],
+            "real_pointer_drag_go": True,
+            "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+            "portrait_orientation_go": True,
+            "portrait_orientation": {
+                "go": True,
+                "viewport": {"width": 390, "height": 844},
+                "screen_orientation": "portrait",
+                "design_resolution": {"width": 1080, "height": 1920},
+            },
             "feature_coverage": feature_coverage,
             "result_path": (project_dir / "playtest_evidence" / "cocos_playtest_result.json").as_posix(),
         }
@@ -2190,6 +2293,11 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
         "sfxPlaybackVerified": True,
         "volumeToggleUsable": True,
         "animationFeedbackVerified": True,
+        "mobilePortraitUi": True,
+        "dragPlacement": True,
+        "chineseUi": True,
+        "generatedArtAssets": True,
+        "cocosAssetBindings": True,
     }
     semantic_evidence = {
         "board_state": {"rows": 10, "cols": 10},
@@ -2245,8 +2353,18 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
                 "screenshots": ["mobile.png"],
                 "console_errors": [],
                 "page_errors": [],
+                "real_pointer_drag_go": True,
+                "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+                "portrait_orientation_go": True,
+                "portrait_orientation": {
+                    "go": True,
+                    "viewport": {"width": 390, "height": 844},
+                    "screen_orientation": "portrait",
+                    "design_resolution": {"width": 1080, "height": 1920},
+                },
                 "feature_coverage": {"mobilePortraitUi": True, **product_features},
             },
+            "commercial_quality_scorecard": _passing_commercial_quality_scorecard(),
         },
         assets_stage={
             "commercial_assets_go": True,

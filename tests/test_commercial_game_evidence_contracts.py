@@ -80,6 +80,30 @@ def _passing_ai_surrogate_evidence() -> dict:
     }
 
 
+def _passing_commercial_quality_scorecard() -> dict:
+    return {
+        "schema_version": "commercial_game_quality_scorecard_v1",
+        "go": True,
+        "status": "completed",
+        "total_score": 100,
+        "area_scores": {
+            "core_playability": 20,
+            "portrait_mobile_ux": 15,
+            "ui_polish": 15,
+            "art_completeness": 15,
+            "animation_feedback": 10,
+            "audio_fit": 10,
+            "content_depth": 10,
+            "r5_no_regression": 5,
+        },
+        "hard_blockers": [],
+        "blockers": [],
+        "screenshots": ["mobile.png"],
+        "replay_artifacts": ["real_pointer_drag.json"],
+        "source": {"score_source": "test"},
+    }
+
+
 def test_build_ledger_rejects_missing_artifact_and_build_output() -> None:
     ledger = build_build_ledger({"creator_exit_code": 0, "fatal_marker_detected": False})
 
@@ -164,6 +188,33 @@ def test_browser_playtest_ledger_exposes_missing_runtime_feature_coverage() -> N
     assert ledger["source"]["missing_commercial_features"] == ["volumeToggleUsable"]
 
 
+def test_browser_playtest_ledger_rejects_bridge_only_drag_coverage() -> None:
+    ledger = build_browser_playtest_ledger(
+        {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png", "desktop.png"],
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": {
+                "dragPlacement": True,
+                "mobilePortraitUi": True,
+                "audioPlaybackVerified": True,
+                "bgmStarted": True,
+                "sfxPlaybackVerified": True,
+                "volumeToggleUsable": True,
+            },
+            "portrait_orientation_go": True,
+            "portrait_orientation": {"go": True},
+            "used_bridge_actions_for_core_drag": True,
+        }
+    )
+
+    assert ledger["go"] is False
+    assert "real_pointer_drag_failed" in ledger["blockers"]
+    assert "bridge_event_miscounted_as_product_body" in ledger["blockers"]
+
+
 def test_browser_playtest_ledger_blocks_static_canvas_and_desktop_splash() -> None:
     feature_coverage = {
         "mobilePortraitUi": True,
@@ -171,6 +222,7 @@ def test_browser_playtest_ledger_blocks_static_canvas_and_desktop_splash() -> No
         "bgmStarted": True,
         "sfxPlaybackVerified": True,
         "volumeToggleUsable": True,
+        "dragPlacement": True,
     }
     ledger = build_browser_playtest_ledger(
         {
@@ -209,6 +261,15 @@ def test_browser_playtest_ledger_prefers_screenshot_change_over_stale_webgl_canv
             "screenshot_hashes": ["before", "after", "desktop"],
             "desktop_runtime_started": True,
             "desktop_splash_detected": False,
+            "real_pointer_drag_go": True,
+            "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+            "portrait_orientation_go": True,
+            "portrait_orientation": {
+                "go": True,
+                "viewport": {"width": 390, "height": 844},
+                "screen_orientation": "portrait",
+                "design_resolution": {"width": 1080, "height": 1920},
+            },
             "console_errors": [],
             "page_errors": [],
             "feature_coverage": feature_coverage,
@@ -425,6 +486,7 @@ def test_final_gate_reports_upstream_short_circuit_without_product_noise() -> No
         product_feature_blockers=product["blockers"],
         live_role_provider_proof_go=True,
         human_player_review_go=False,
+        commercial_quality_scorecard=_passing_commercial_quality_scorecard(),
     )
 
     assert gate["go_no_go"] == "NO-GO"
@@ -462,6 +524,7 @@ def test_final_gate_can_require_ai_surrogate_playtest_before_human_review() -> N
         gameplay_semantic_evidence=complete,
         product_body_evidence=complete,
         require_ai_surrogate_playtest=True,
+        commercial_quality_scorecard=_passing_commercial_quality_scorecard(),
     )
 
     assert missing_ai["go_no_go"] == "NO-GO"
@@ -487,6 +550,7 @@ def test_final_gate_can_require_ai_surrogate_playtest_before_human_review() -> N
         product_body_evidence=complete,
         require_ai_surrogate_playtest=True,
         ai_surrogate_playtest_evidence=_passing_ai_surrogate_evidence(),
+        commercial_quality_scorecard=_passing_commercial_quality_scorecard(),
     )
 
     assert passing_ai["machine_evidence_go"] is True
@@ -515,6 +579,7 @@ def test_final_gate_stops_at_awaiting_human_review_when_machine_evidence_is_comp
         human_player_review_go=False,
         gameplay_semantic_evidence=complete,
         product_body_evidence=complete,
+        commercial_quality_scorecard=_passing_commercial_quality_scorecard(),
     )
 
     assert evidence["go_no_go"] == "AWAITING_HUMAN_REVIEW"
@@ -538,6 +603,7 @@ def test_no_degradation_only_requires_live_roles_when_flagged() -> None:
         "volumeToggleUsable": True,
         "animationFeedbackVerified": True,
         "mobilePortraitUi": True,
+        "dragPlacement": True,
     }
     production = {
         "technical_smoke_go": True,
@@ -576,6 +642,15 @@ def test_no_degradation_only_requires_live_roles_when_flagged() -> None:
             "screenshots": ["mobile.png"],
             "console_errors": [],
             "page_errors": [],
+            "real_pointer_drag_go": True,
+            "real_pointer_drag": {"go": True, "board_state_changed": True, "score_changed": True},
+            "portrait_orientation_go": True,
+            "portrait_orientation": {
+                "go": True,
+                "viewport": {"width": 390, "height": 844},
+                "screen_orientation": "portrait",
+                "design_resolution": {"width": 1080, "height": 1920},
+            },
             "feature_coverage": product_features,
         },
         "commercial_feature_coverage": product_features,
@@ -600,6 +675,7 @@ def test_no_degradation_only_requires_live_roles_when_flagged() -> None:
             "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
         },
         "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
+        "commercial_quality_scorecard": _passing_commercial_quality_scorecard(),
     }
     no_degradation = evaluate_no_degradation_contract(
         shared_outputs={
@@ -720,6 +796,7 @@ def test_final_gate_rejects_baseline_only_product_body_even_when_other_machine_c
         human_player_review_go=False,
         gameplay_semantic_evidence=semantic,
         product_body_evidence=product_body,
+        commercial_quality_scorecard=_passing_commercial_quality_scorecard(),
     )
 
     assert evidence["commercial_playable_go"] is False

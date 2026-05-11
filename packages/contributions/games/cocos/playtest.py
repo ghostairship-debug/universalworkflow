@@ -220,6 +220,33 @@ def _read_json_dict(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _portrait_orientation_evidence(build_dir: Path, *, viewport: dict[str, int]) -> dict[str, Any]:
+    settings = _read_json_dict(build_dir / "src" / "settings.json")
+    screen = settings.get("screen") if isinstance(settings.get("screen"), dict) else {}
+    design = screen.get("designResolution") if isinstance(screen.get("designResolution"), dict) else {}
+    orientation = str(screen.get("orientation") or "").lower()
+    width = _int(design.get("width"))
+    height = _int(design.get("height"))
+    viewport_width = _int(viewport.get("width"))
+    viewport_height = _int(viewport.get("height"))
+    blockers: list[str] = []
+    if orientation not in {"portrait", "portrait-primary", "portrait-secondary"}:
+        blockers.append("portrait_orientation_failed")
+    if width and height and width > height:
+        blockers.append("portrait_design_resolution_landscape")
+    if viewport_width and viewport_height and viewport_width >= viewport_height:
+        blockers.append("portrait_viewport_not_used")
+    return {
+        "schema_version": "commercial_game_portrait_orientation_evidence_v1",
+        "go": not blockers,
+        "viewport": viewport,
+        "screen_orientation": orientation,
+        "design_resolution": {"width": width, "height": height, "policy": design.get("policy")},
+        "settings_path": (build_dir / "src" / "settings.json").as_posix(),
+        "blockers": blockers,
+    }
+
+
 def _project_runtime_feature_coverage(build_dir: Path) -> dict[str, bool]:
     project_root = _project_root_from_build_dir(build_dir)
     features: dict[str, bool] = {}
@@ -291,6 +318,13 @@ def _payload_has_mojibake(value: Any) -> bool:
     return cjk_count >= 2 and marker_count / max(cjk_count, 1) >= 0.45
 
 
+def _int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _workflow_bridge_snapshot(page: Any) -> dict[str, Any]:
     try:
         payload = page.evaluate(
@@ -349,23 +383,28 @@ def _workflow_action_succeeded(result: dict[str, Any]) -> bool:
     return False
 
 
-def _workflow_bridge_feature_coverage(snapshot: dict[str, Any], action_results: list[dict[str, Any]]) -> dict[str, bool]:
+def _workflow_bridge_feature_coverage(
+    snapshot: dict[str, Any],
+    action_results: list[dict[str, Any]],
+    *,
+    real_pointer_drag_go: bool,
+    portrait_orientation_go: bool,
+) -> dict[str, bool]:
     state = snapshot.get("runtime_state") if isinstance(snapshot.get("runtime_state"), dict) else {}
     candidates = state.get("candidates") if isinstance(state.get("candidates"), list) else []
     actions = snapshot.get("bridge_actions") if isinstance(snapshot.get("bridge_actions"), list) else []
     packet_features = snapshot.get("feature_coverage") if isinstance(snapshot.get("feature_coverage"), dict) else {}
-    any_action_ok = any(_workflow_action_succeeded(result) for result in action_results)
     action_names = {str(item.get("action") or item.get("reason")) for item in actions if isinstance(item, dict)}
     inferred = {
         "board10x10": (state.get("board_rows") == 10 and state.get("board_cols") == 10) or state.get("board_size") == 10,
         "threeCandidates": len(candidates) == 3,
-        "dragPlacement": any_action_ok or "place_candidate" in action_names,
+        "dragPlacement": real_pointer_drag_go,
         "lineClear": "place_candidate" in action_names,
         "refresh": len(candidates) == 3,
         "gameOver": "revive" in action_names or bool(state.get("game_over")) is False,
         "antiStall": True,
         "classicMode": str(state.get("mode") or "").lower() in {"classic", "adventure"},
-        "mobilePortraitUi": True,
+        "mobilePortraitUi": portrait_orientation_go,
         "nativeCocosUiNodes": bool(snapshot.get("scene_binding")),
         "cocosAssetBindings": bool(snapshot.get("scene_binding")),
     }
@@ -373,6 +412,118 @@ def _workflow_bridge_feature_coverage(snapshot: dict[str, Any], action_results: 
     for key, value in inferred.items():
         features[key] = bool(value) or bool(features.get(key))
     return features
+
+
+def _real_pointer_targets(page: Any, canvas_selector: str) -> dict[str, Any]:
+    try:
+        payload = page.evaluate(
+            """(selector) => {
+            const universal = window.__UNIVERSAL_GAME_E2E__ || {};
+            const bridge = window.__workflowE2ERuntimeBridge || {};
+            const packet = universal.workflowBlockPuzzleSceneRuntime
+              || bridge.workflowBlockPuzzleSceneRuntime
+              || (typeof bridge.getRuntimePacket === 'function' ? bridge.getRuntimePacket() : {})
+              || {};
+            const targets = packet.real_pointer_targets || packet.realPointerTargets
+              || universal.realPointerTargets || bridge.realPointerTargets || {};
+            if (targets.candidate && targets.board) {
+              return { ...targets, source: targets.source || 'runtime_packet' };
+            }
+            const canvas = document.querySelector(selector);
+            const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+            return {
+              source: 'fallback_canvas_rect',
+              candidate: { x: rect.left + rect.width * 0.32, y: rect.top + rect.height * 0.82 },
+              board: { x: rect.left + rect.width * 0.50, y: rect.top + rect.height * 0.46 }
+            };
+            }""",
+            canvas_selector,
+        )
+    except Exception as exc:
+        return {"source": "target_eval_failed", "error": str(exc)}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _real_pointer_state(page: Any) -> dict[str, Any]:
+    try:
+        payload = page.evaluate(
+            """() => {
+            const universal = window.__UNIVERSAL_GAME_E2E__ || {};
+            const bridge = window.__workflowE2ERuntimeBridge || {};
+            const packet = universal.workflowBlockPuzzleSceneRuntime
+              || bridge.workflowBlockPuzzleSceneRuntime
+              || (typeof bridge.getRuntimePacket === 'function' ? bridge.getRuntimePacket() : {})
+              || {};
+            const runtime = packet.runtime_state || packet.snapshot || {};
+            const events = Array.isArray(packet.events) ? packet.events
+              : (Array.isArray(runtime.events) ? runtime.events : []);
+            const real = packet.real_pointer_drag || packet.realPointerDrag
+              || universal.realPointerDragEvidence || bridge.realPointerDragEvidence || {};
+            const boardState = packet.board_state || runtime.board || universal.lastBoardBindingEvidence || {};
+            const candidateState = packet.candidate_state || runtime.candidates || {};
+            return {
+              score: Number(packet.score || runtime.score || 0),
+              event_count: events.length,
+              events,
+              board_hash: JSON.stringify(boardState),
+              candidate_hash: JSON.stringify(candidateState),
+              real_pointer_drag: real
+            };
+            }"""
+        )
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _exercise_real_pointer_drag(page: Any, canvas_selector: str) -> dict[str, Any]:
+    targets = _real_pointer_targets(page, canvas_selector)
+    candidate = targets.get("candidate") if isinstance(targets.get("candidate"), dict) else {}
+    board = targets.get("board") if isinstance(targets.get("board"), dict) else {}
+    evidence: dict[str, Any] = {
+        "schema_version": "commercial_game_real_pointer_drag_replay_v1",
+        "attempted": True,
+        "go": False,
+        "target_source": targets.get("source"),
+        "candidate": candidate,
+        "board": board,
+        "forbidden_bridge_api_used": False,
+    }
+    if not candidate or not board:
+        evidence["blockers"] = ["real_pointer_drag_targets_missing"]
+        return evidence
+    before = _real_pointer_state(page)
+    try:
+        page.mouse.move(float(candidate["x"]), float(candidate["y"]))
+        page.mouse.down()
+        page.mouse.move(float(board["x"]), float(board["y"]), steps=16)
+        page.mouse.up()
+        page.wait_for_timeout(250)
+    except Exception as exc:
+        evidence["blockers"] = [f"real_pointer_drag_replay_failed:{type(exc).__name__}"]
+        evidence["error"] = str(exc)
+        return evidence
+    after = _real_pointer_state(page)
+    runtime_real = after.get("real_pointer_drag") if isinstance(after.get("real_pointer_drag"), dict) else {}
+    board_changed = before.get("board_hash") != after.get("board_hash")
+    candidate_changed = before.get("candidate_hash") != after.get("candidate_hash")
+    score_changed = _int(after.get("score")) > _int(before.get("score"))
+    event_changed = _int(after.get("event_count")) > _int(before.get("event_count"))
+    go = bool(runtime_real.get("go") or (board_changed or candidate_changed or score_changed or event_changed))
+    evidence.update(
+        {
+            "go": go,
+            "runtime_evidence": runtime_real,
+            "board_state_changed": board_changed,
+            "candidate_state_changed": candidate_changed,
+            "score_changed": score_changed,
+            "event_count_changed": event_changed,
+            "before": before,
+            "after": after,
+            "blockers": [] if go else ["real_pointer_drag_failed"],
+        }
+    )
+    return evidence
 
 
 def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | Path) -> dict[str, Any]:
@@ -388,12 +539,21 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
     console_errors: list[str] = []
     page_errors: list[str] = []
     quality_blockers: list[str] = []
+    mobile_viewport = {"width": 390, "height": 844}
+    portrait_orientation = _portrait_orientation_evidence(build_dir, viewport=mobile_viewport)
+    real_pointer_drag: dict[str, Any] = {
+        "schema_version": "commercial_game_real_pointer_drag_replay_v1",
+        "attempted": False,
+        "go": False,
+        "blockers": ["real_pointer_drag_not_attempted"],
+    }
+    used_bridge_actions_for_core_drag = False
     desktop_runtime_started = False
     desktop_splash_detected = False
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+            page = browser.new_page(viewport=mobile_viewport, is_mobile=True, has_touch=True)
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
             page.goto(f"http://127.0.0.1:{port}/index.html", wait_until="networkidle", timeout=60000)
@@ -463,6 +623,18 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                     timeout=3000,
                 )
                 after = page.evaluate("() => window.__UNIVERSAL_GAME_E2E__ || window.__COCOS_BLOCK_PUZZLE_E2E__")
+                real_pointer_drag = {
+                    "schema_version": "commercial_game_real_pointer_drag_replay_v1",
+                    "attempted": True,
+                    "go": True,
+                    "target_source": "legacy_runtime_candidate_centers",
+                    "candidate": candidate,
+                    "board": target,
+                    "board_state_changed": True,
+                    "score_changed": True,
+                    "forbidden_bridge_api_used": False,
+                    "blockers": [],
+                }
                 after_hash = page.evaluate(
                     "(selector) => document.querySelector(selector).toDataURL('image/png')",
                     canvas_selector,
@@ -506,15 +678,6 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                         }""",
                         """() => {
                         const bridge = window.__workflowE2ERuntimeBridge;
-                        const packet = bridge?.getRuntimePacket?.() || bridge?.getState?.() || {};
-                        const state = packet.runtime_state || packet;
-                        const candidate = (state.candidates || []).find((item) => !item.used) || (state.candidates || [])[0] || { id: 'candidate_0' };
-                        if (bridge?.placeCandidate) return { command: 'placeCandidate', result: bridge.placeCandidate(candidate.id, 0, 0), packet: bridge.getRuntimePacket?.() };
-                        if (bridge?.command) return bridge.command('placeCandidate', { candidateId: candidate.id, boardX: 0, boardY: 0 });
-                        return { command: 'placeCandidate', result: { ok: false, reason: 'workflow_bridge_place_command_missing' } };
-                        }""",
-                        """() => {
-                        const bridge = window.__workflowE2ERuntimeBridge;
                         if (bridge?.revive) return { command: 'revive', result: bridge.revive(), packet: bridge.getRuntimePacket?.() };
                         if (bridge?.command) return bridge.command('revive', {});
                         return { command: 'revive', result: { ok: false, reason: 'workflow_bridge_revive_command_missing' } };
@@ -533,8 +696,16 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                         if isinstance(result, dict):
                             action_results.append(result)
                         page.wait_for_timeout(120)
+                real_pointer_drag = _exercise_real_pointer_drag(page, canvas_selector)
+                if real_pointer_drag.get("forbidden_bridge_api_used"):
+                    used_bridge_actions_for_core_drag = True
                 snapshot = _workflow_bridge_snapshot(page)
-                feature_coverage = _workflow_bridge_feature_coverage(snapshot, action_results)
+                feature_coverage = _workflow_bridge_feature_coverage(
+                    snapshot,
+                    action_results,
+                    real_pointer_drag_go=bool(real_pointer_drag.get("go")),
+                    portrait_orientation_go=bool(portrait_orientation.get("go")),
+                )
                 if action_results and not any(_workflow_action_succeeded(result) for result in action_results):
                     quality_blockers.append("workflow_bridge_actions_not_runtime_backed")
                 after = {
@@ -544,7 +715,8 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                         str(item.get("action"))
                         for item in snapshot.get("bridge_actions", [])
                         if isinstance(item, dict) and item.get("action")
-                    ],
+                    ]
+                    + (["real_pointer_drag_success"] if real_pointer_drag.get("go") else []),
                     "openPanels": list(snapshot.get("open_panels") or []),
                 }
                 after_hash = page.evaluate(
@@ -614,6 +786,17 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         **_feature_markers_from_payload(playtest_oracle),
         **dict(after.get("featureCoverage") or {}),
     }
+    feature_coverage["dragPlacement"] = bool(real_pointer_drag.get("go"))
+    feature_coverage["mobilePortraitUi"] = bool(portrait_orientation.get("go"))
+    if not real_pointer_drag.get("go"):
+        quality_blockers.append("real_pointer_drag_failed")
+    if not portrait_orientation.get("go"):
+        quality_blockers.append("portrait_orientation_failed")
+    if used_bridge_actions_for_core_drag:
+        quality_blockers.append("bridge_event_miscounted_as_product_body")
+    quality_blockers = list(dict.fromkeys(quality_blockers))
+    real_pointer_drag_replay_path = evidence / "real_pointer_drag_replay.json"
+    real_pointer_drag_replay_path.write_text(json.dumps(real_pointer_drag, ensure_ascii=False, indent=2), encoding="utf-8")
     required_playtest_features = _oracle_feature_list(
         playtest_oracle,
         "required_playtest_features",
@@ -634,6 +817,13 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         "canvas_hashes": canvas_hashes,
         "screenshot_hashes": screenshot_hashes,
         "quality_blockers": quality_blockers,
+        "real_pointer_drag_go": bool(real_pointer_drag.get("go")),
+        "real_pointer_drag": real_pointer_drag,
+        "real_pointer_drag_replay": [real_pointer_drag_replay_path.as_posix()],
+        "portrait_orientation_go": bool(portrait_orientation.get("go")),
+        "portrait_orientation": portrait_orientation,
+        "used_bridge_actions_for_core_drag": used_bridge_actions_for_core_drag,
+        "inspection_overlay": {"counts_as_product_body": False},
         "desktop_runtime_started": desktop_runtime_started,
         "desktop_splash_detected": desktop_splash_detected,
         "feature_coverage": feature_coverage,

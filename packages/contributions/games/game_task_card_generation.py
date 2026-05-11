@@ -241,7 +241,7 @@ def build_phase_execution_blueprint(
             "slug": "ai_surrogate_playtest_quality_gate",
             "title": "Run AI surrogate playtest and generate repair findings",
             "owner_role": "ai_playtest_oracle_agent",
-            "review_roles": ["qa_player_perspective_agent", "supervisor"],
+            "review_roles": ["qa_player_perspective_agent", "commercial_quality_score_agent", "supervisor"],
             "goal": (
                 "Run scripted, exploratory, persona, vision, design red-team, performance, device matrix, "
                 "and regression playtests; produce quality scorecard and repair task-card findings."
@@ -784,7 +784,7 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
                 "slug": "brief_specific_product_surface",
                 "title": "Implement brief-specific product requirements",
                 "owner_role": "product_gameplay_agent",
-                "review_roles": ["technical_plan_agent", "qa_player_perspective_agent"],
+                "review_roles": ["technical_plan_agent", "qa_player_perspective_agent", "commercial_quality_score_agent"],
                 "goal": "Implement preserved source requirements that do not fit a standard game-production category, with direct evidence for each requirement id.",
                 "write_set": [
                     "assets/scripts/runtime/brief/BriefSpecificRequirements.ts",

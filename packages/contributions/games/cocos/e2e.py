@@ -1952,10 +1952,16 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         and not fatal_marker_detected
     )
     if artifact_success:
+        orientation_repair = _enforce_web_mobile_portrait_settings(build_output)
         runtime_asset_copy = _copy_commercial_runtime_assets_to_build(project=project, build_output=build_output)
         browser_runtime_bridge = _install_browser_runtime_bridge(project=project, build_output=build_output)
         launch_scene_sync = _sync_build_launch_scene_from_project(project=project, build_output=build_output)
     else:
+        orientation_repair = {
+            "go": False,
+            "patched": False,
+            "reason": "build_artifact_not_ready",
+        }
         runtime_asset_copy = {
             "copied": False,
             "asset_count": 0,
@@ -1985,11 +1991,55 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         "runtime_asset_copy": runtime_asset_copy,
         "browser_runtime_bridge": browser_runtime_bridge,
         "launch_scene_sync": launch_scene_sync,
+        "orientation_repair": orientation_repair,
         "elapsed_ms": elapsed_ms,
         "stdout_path": stdout_path.as_posix(),
         "stderr_path": stderr_path.as_posix(),
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
+    }
+
+
+def _enforce_web_mobile_portrait_settings(build_output: Path) -> dict[str, Any]:
+    settings_path = build_output / "src" / "settings.json"
+    if not settings_path.exists():
+        return {"go": False, "patched": False, "settings_path": settings_path.as_posix(), "reason": "settings_json_missing"}
+    try:
+        payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "go": False,
+            "patched": False,
+            "settings_path": settings_path.as_posix(),
+            "reason": f"settings_json_read_failed:{type(exc).__name__}",
+        }
+    screen = payload.setdefault("screen", {})
+    if not isinstance(screen, dict):
+        screen = {}
+        payload["screen"] = screen
+    design = screen.setdefault("designResolution", {})
+    if not isinstance(design, dict):
+        design = {}
+        screen["designResolution"] = design
+    before = {
+        "orientation": screen.get("orientation"),
+        "designResolution": dict(design),
+    }
+    screen["orientation"] = "portrait"
+    design["width"] = 1080
+    design["height"] = 1920
+    design.setdefault("policy", 4)
+    after = {
+        "orientation": screen.get("orientation"),
+        "designResolution": dict(design),
+    }
+    settings_path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    return {
+        "go": True,
+        "patched": before != after,
+        "settings_path": settings_path.as_posix(),
+        "before": before,
+        "after": after,
     }
 
 

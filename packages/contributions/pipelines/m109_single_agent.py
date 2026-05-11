@@ -165,19 +165,28 @@ def commercial_game_production_stages(pipeline_id: str = REAL_COMMERCIAL_GAME_PI
         depends_on=[implementation.stage_id],
         specialization="player_visible_quality_red_team",
     )
-    supervisor = _role_stage(
-        name="Supervisor decision agent",
+    quality_score = _role_stage(
+        name="Commercial quality score agent",
         order_index=16,
-        goal="Decide continue, repair, stop, or cluster upgrade based on QA, evidence, and gates.",
-        role_id="supervisor",
+        goal="Score the generated game from real player input, portrait UX, UI polish, art, audio, content, and R5 no-regression evidence.",
+        role_id="commercial_quality_score_agent",
         pipeline_id=pipeline_id,
         depends_on=[qa.stage_id],
+        specialization="commercial_quality_scorecard_and_repair_findings",
+    )
+    supervisor = _role_stage(
+        name="Supervisor decision agent",
+        order_index=17,
+        goal="Decide continue, repair, stop, or cluster upgrade based on QA, commercial quality scorecard, evidence, and gates.",
+        role_id="supervisor",
+        pipeline_id=pipeline_id,
+        depends_on=[quality_score.stage_id],
         specialization="production_governance_and_repair_loop",
     )
     readiness_gate = PipelineStage(
         name="Real commercial readiness gate",
         stage_kind=PipelineStageKind.validation_gate,
-        order_index=17,
+        order_index=18,
         goal="Validate that the actual implemented game, not a fixed template scaffold, satisfies player-visible commercial readiness.",
         depends_on=[supervisor.stage_id],
         validation_commands=[],
@@ -206,6 +215,7 @@ def commercial_game_production_stages(pipeline_id: str = REAL_COMMERCIAL_GAME_PI
         asset_generation,
         implementation,
         qa,
+        quality_score,
         supervisor,
         readiness_gate,
     ]

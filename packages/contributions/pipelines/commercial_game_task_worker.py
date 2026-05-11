@@ -20,6 +20,7 @@ from packages.contributions.games.cocos.reference_quality import (
     build_reference_quality_evidence,
     load_reference_playtest,
 )
+from packages.contributions.games.commercial_quality_score import evaluate_commercial_quality_scorecard
 from packages.contributions.pipelines.commercial_game_development_readiness import (
     build_commercial_game_development_readiness_evidence,
 )
@@ -1933,6 +1934,8 @@ def collect_project_runtime_evidence(
     ai_surrogate_playtest_evidence_path: str | None = None
     ai_playtest_execution_report: dict[str, Any] | None = None
     ai_playtest_execution_report_path: str | None = None
+    commercial_quality_scorecard: dict[str, Any] | None = None
+    commercial_quality_scorecard_path: str | None = None
     blockers: list[str] = []
     runtime_evidence_root = project_dir / "workflow_runtime_evidence"
     runtime_evidence_root.mkdir(parents=True, exist_ok=True)
@@ -2050,6 +2053,18 @@ def collect_project_runtime_evidence(
         ai_playtest_execution_report_path = (runtime_evidence_root / "ai_playtest_execution_report.json").as_posix()
         ai_playtest_execution_report["evidence_path"] = ai_playtest_execution_report_path
         _write_json(runtime_evidence_root / "ai_playtest_execution_report.json", ai_playtest_execution_report)
+    commercial_quality_scorecard = evaluate_commercial_quality_scorecard(
+        playtest=playtest,
+        browser_playtest_ledger=browser_playtest_ledger,
+        reference_quality_evidence=reference_quality_evidence,
+        ai_surrogate_playtest_evidence=ai_surrogate_playtest_evidence,
+        product_depth_evidence=product_depth_evidence,
+        product_body_evidence=product_body_evidence,
+    )
+    commercial_quality_scorecard_path = (runtime_evidence_root / "commercial_quality_scorecard.json").as_posix()
+    commercial_quality_scorecard["evidence_path"] = commercial_quality_scorecard_path
+    _write_json(runtime_evidence_root / "commercial_quality_scorecard.json", commercial_quality_scorecard)
+    blockers.extend(commercial_quality_scorecard.get("blockers") or [])
     for filename, payload in [
         ("gameplay_semantic_evidence.json", gameplay_semantic_evidence),
         ("product_body_evidence.json", product_body_evidence),
@@ -2069,6 +2084,7 @@ def collect_project_runtime_evidence(
         "reference_quality_evidence": reference_quality_evidence or {},
         "ai_surrogate_playtest_evidence": ai_surrogate_playtest_evidence or {},
         "ai_playtest_execution_report": ai_playtest_execution_report or {},
+        "commercial_quality_scorecard": commercial_quality_scorecard or {},
         "product_depth_evidence": product_depth_evidence,
         "gameplay_semantic_evidence": gameplay_semantic_evidence,
         "product_body_evidence": product_body_evidence,
@@ -2084,6 +2100,7 @@ def collect_project_runtime_evidence(
         "reference_quality_evidence_path": reference_quality_evidence_path,
         "ai_surrogate_playtest_evidence_path": ai_surrogate_playtest_evidence_path,
         "ai_playtest_execution_report_path": ai_playtest_execution_report_path,
+        "commercial_quality_scorecard_path": commercial_quality_scorecard_path,
         "cocos_serialized_component_preflight": cocos_serialized_preflight or {},
     }
 
@@ -2244,6 +2261,17 @@ def production_payload_from_worker(
         else {}
     )
     ai_surrogate_contract = _ai_surrogate_playtest_contract_for_worker(ai_surrogate_playtest_evidence)
+    commercial_quality_scorecard = evaluate_commercial_quality_scorecard(
+        runtime_evidence.get("commercial_quality_scorecard")
+        if isinstance(runtime_evidence.get("commercial_quality_scorecard"), dict)
+        else None,
+        playtest=runtime_evidence.get("playtest") if isinstance(runtime_evidence.get("playtest"), dict) else None,
+        browser_playtest_ledger=browser_playtest_ledger,
+        reference_quality_evidence=reference_quality_evidence,
+        ai_surrogate_playtest_evidence=ai_surrogate_playtest_evidence,
+        product_depth_evidence=product_depth_evidence,
+        product_body_evidence=product_body_evidence,
+    )
     evidence_contracts = {
         "asset_graph": asset_graph,
         "cocos_bridge_evidence": cocos_bridge_evidence,
@@ -2258,6 +2286,7 @@ def production_payload_from_worker(
         evidence_contracts["reference_quality_evidence"] = reference_quality_evidence
     if ai_surrogate_contract:
         evidence_contracts["ai_surrogate_playtest_evidence"] = ai_surrogate_contract
+    evidence_contracts["commercial_quality_scorecard"] = commercial_quality_scorecard
     if effective_assets_stage.get("placeholder_only"):
         blockers.append("placeholder_assets_only")
     if effective_assets_stage and not effective_assets_stage.get("commercial_assets_go"):
@@ -2334,6 +2363,9 @@ def production_payload_from_worker(
         "ai_surrogate_playtest_evidence": ai_surrogate_playtest_evidence,
         "ai_playtest_execution_report": ai_playtest_execution_report,
         "ai_surrogate_playtest_go": bool(ai_surrogate_contract.get("go")) if ai_surrogate_contract else None,
+        "commercial_quality_scorecard": commercial_quality_scorecard,
+        "commercial_quality_scorecard_go": bool(commercial_quality_scorecard.get("go")),
+        "commercial_quality_scorecard_path": runtime_evidence.get("commercial_quality_scorecard_path"),
         "same_project_patch_ledger": patch_ledger,
         "skipped_non_worker_task_cards": skipped_task_cards,
         "cocos_ecosystem_evidence": ecosystem_payload,

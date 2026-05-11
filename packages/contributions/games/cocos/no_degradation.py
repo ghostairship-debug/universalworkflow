@@ -19,6 +19,7 @@ from packages.contributions.pipelines.commercial_game_evidence_contracts import 
     build_same_project_patch_ledger_contract,
     runtime_error_markers,
 )
+from packages.contributions.games.commercial_quality_score import evaluate_commercial_quality_scorecard
 
 
 NO_DEGRADATION_CONTRACT_SCHEMA = "commercial_game_no_degradation_contract_v1"
@@ -127,6 +128,7 @@ def evaluate_no_degradation_contract(
     browser_runtime_go = bool(browser_playtest_ledger["go"])
     require_ai_surrogate_playtest = bool(require_commercial and not upstream_implementation_failed)
     ai_surrogate_playtest_evidence = _ai_surrogate_playtest_evidence(shared_outputs, production_payload)
+    commercial_quality_scorecard = _commercial_quality_scorecard(shared_outputs, production_payload)
     final_gate_evidence = build_commercial_final_gate_evidence(
         technical_smoke_go=bool(production_payload.get("technical_smoke_go")),
         production_scaffold_go=bool(production_payload.get("production_scaffold_go")),
@@ -148,6 +150,7 @@ def evaluate_no_degradation_contract(
         reference_quality_evidence=reference_quality_evidence,
         require_ai_surrogate_playtest=require_ai_surrogate_playtest,
         ai_surrogate_playtest_evidence=ai_surrogate_playtest_evidence,
+        commercial_quality_scorecard=commercial_quality_scorecard,
     )
 
     findings: list[dict[str, Any]] = []
@@ -179,6 +182,10 @@ def evaluate_no_degradation_contract(
                 if isinstance(ai_contract, dict) and not bool(ai_contract.get("ai_surrogate_playtest_go")):
                     for blocker in ai_contract.get("blockers") or ["ai_surrogate_playtest_missing"]:
                         findings.append({"finding": str(blocker), "severity": "high"})
+            quality_contract = _dict_from(final_gate_evidence.get("contracts")).get("commercial_quality_scorecard")
+            if isinstance(quality_contract, dict) and not bool(quality_contract.get("go")):
+                for blocker in quality_contract.get("blockers") or ["commercial_quality_scorecard_no_go"]:
+                    findings.append({"finding": str(blocker), "severity": "high"})
         for blocker in asset_graph["blockers"]:
             findings.append({"finding": blocker, "severity": "high"})
     if require_cocos_ecosystem and not ecosystem_go:
@@ -226,6 +233,9 @@ def evaluate_no_degradation_contract(
             "reference_quality_evidence": reference_quality_evidence,
             "ai_surrogate_playtest_evidence": _dict_from(
                 _dict_from(final_gate_evidence.get("contracts")).get("ai_surrogate_playtest_evidence")
+            ),
+            "commercial_quality_scorecard": _dict_from(
+                _dict_from(final_gate_evidence.get("contracts")).get("commercial_quality_scorecard")
             ),
         },
         "commercial_final_gate_evidence": final_gate_evidence,
@@ -287,6 +297,23 @@ def _ai_surrogate_playtest_evidence(shared_outputs: dict[str, Any], production: 
         if payload:
             return payload
     return {}
+
+
+def _commercial_quality_scorecard(shared_outputs: dict[str, Any], production: dict[str, Any]) -> dict[str, Any]:
+    candidates = [
+        production.get("commercial_quality_scorecard"),
+        _dict_from(production.get("evidence_contracts")).get("commercial_quality_scorecard"),
+        shared_outputs.get("commercial_quality_scorecard"),
+        _dict_from(shared_outputs.get("evidence_contracts")).get("commercial_quality_scorecard"),
+        _dict_from(_dict_from(shared_outputs.get("role_output:commercial_quality_score_agent")).get("structured_output")).get(
+            "commercial_quality_scorecard"
+        ),
+    ]
+    for candidate in candidates:
+        payload = _dict_from(candidate)
+        if payload:
+            return evaluate_commercial_quality_scorecard(payload)
+    return evaluate_commercial_quality_scorecard(None)
 
 
 def _append_if_false(findings: list[dict[str, Any]], passed: bool, finding: str) -> None:

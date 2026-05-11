@@ -23,6 +23,7 @@ from packages.contributions.games.game_task_card_generation import (
     build_product_phase_candidates_from_design_spec,
     compile_task_cards_from_phase_execution_blueprint,
 )
+from packages.contributions.games.commercial_quality_score import evaluate_commercial_quality_scorecard
 
 
 SOURCE_MATERIAL_POLICY = "no_delete_no_merge_no_rename_only_augment"
@@ -98,6 +99,11 @@ ROLE_MODEL_PROFILES: dict[str, dict[str, str]] = {
         "model_tier": "medium_strong",
         "default_lane": "configured_text_or_visual_review_model",
         "reason": "reviews player-visible usability and quality",
+    },
+    "commercial_quality_score_agent": {
+        "model_tier": "strong",
+        "default_lane": "configured_text_or_visual_review_model",
+        "reason": "turns real playtest screenshots, pointer replay, and R5 no-regression into a commercial scorecard",
     },
     "supervisor": {
         "model_tier": "strong",
@@ -775,6 +781,44 @@ def _structured_output_for_role(
             ],
             "go_no_go_recommendation": "NO-GO until Cocos build/playtest evidence exists",
         }
+    if role_id == "commercial_quality_score_agent":
+        production = shared_outputs.get("commercial_game_production")
+        production_payload = dict(production) if isinstance(production, dict) else {}
+        browser_playtest_ledger = production_payload.get("browser_playtest_ledger")
+        scorecard = evaluate_commercial_quality_scorecard(
+            production_payload.get("commercial_quality_scorecard")
+            if isinstance(production_payload.get("commercial_quality_scorecard"), dict)
+            else None,
+            playtest=production_payload.get("playtest") if isinstance(production_payload.get("playtest"), dict) else None,
+            browser_playtest_ledger=browser_playtest_ledger if isinstance(browser_playtest_ledger, dict) else None,
+            reference_quality_evidence=production_payload.get("reference_quality_evidence")
+            if isinstance(production_payload.get("reference_quality_evidence"), dict)
+            else None,
+            ai_surrogate_playtest_evidence=production_payload.get("ai_surrogate_playtest_evidence")
+            if isinstance(production_payload.get("ai_surrogate_playtest_evidence"), dict)
+            else None,
+            product_depth_evidence=production_payload.get("product_depth_evidence")
+            if isinstance(production_payload.get("product_depth_evidence"), dict)
+            else None,
+            product_body_evidence=production_payload.get("product_body_evidence")
+            if isinstance(production_payload.get("product_body_evidence"), dict)
+            else None,
+        )
+        return {
+            "context": context,
+            "scorecard_schema": "commercial_game_quality_scorecard_v1",
+            "commercial_quality_scorecard": scorecard,
+            "quality_areas": scorecard["area_scores"],
+            "hard_blockers": scorecard["hard_blockers"],
+            "repair_findings": scorecard["repair_task_card_suggestions"],
+            "go_no_go_recommendation": "GO" if scorecard["go"] else "NO-GO",
+            "policy": {
+                "bridge_or_overlay_can_score_product_body": False,
+                "real_pointer_drag_required": True,
+                "portrait_mobile_required": True,
+                "r5_reference_is_no_regression_input_only": True,
+            },
+        }
     if role_id == "supervisor":
         return {
             "context": context,
@@ -800,6 +844,7 @@ def _structured_output_for_role(
                     "audio_feedback_designer_agent",
                     "ai_playtest_oracle_agent",
                     "qa_player_perspective_agent",
+                    "commercial_quality_score_agent",
                 ],
                 "trigger": "upgrade only if a specialized role repeatedly fails despite clear task cards and evidence",
             },
@@ -982,6 +1027,7 @@ def _role_requirement_ids(role_id: str, requirements: list[dict[str, Any]]) -> l
         "animation_vfx_feedback_agent": {"multimodal", "ui", "product"},
         "audio_feedback_designer_agent": {"multimodal"},
         "ai_playtest_oracle_agent": {"qa", "product", "ui", "technical"},
+        "commercial_quality_score_agent": {"qa", "product", "ui", "technical"},
     }.get(role_id)
     if category_hints:
         selected = [item for item in requirements if str(item.get("category") or "") in category_hints]
@@ -2330,6 +2376,7 @@ def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str |
         "ai_playtest_oracle_agent": "qa_agent",
         "task_card_generation_agent": "tech_agent",
         "qa_player_perspective_agent": "qa_agent",
+        "commercial_quality_score_agent": "qa_agent",
         "supervisor": "qa_agent",
     }
     return packets.get(mapping.get(role_id, "product_agent"))
@@ -2360,6 +2407,7 @@ def _deliverables_for_role(role_id: str) -> list[str]:
         "ai_playtest_oracle_agent": ["playtest_modes", "quality_rubric", "repair_loop_triggers"],
         "task_card_generation_agent": ["database_task_card_inputs", "quality_gate_requirements"],
         "qa_player_perspective_agent": ["player_visible_checks", "repair_findings", "go_no_go_recommendation"],
+        "commercial_quality_score_agent": ["commercial_quality_scorecard", "hard_blockers", "repair_findings"],
         "supervisor": ["continue_repair_stop_decision", "cluster_upgrade_recommendation"],
     }.get(role_id, ["role_artifact"])
 
@@ -2379,7 +2427,8 @@ def _next_handoff_for_role(role_id: str) -> str:
         "multimodal_generation_agent": "ai_playtest_oracle_agent and task_card_generation_agent",
         "ai_playtest_oracle_agent": "task_card_generation_agent",
         "task_card_generation_agent": "workflow_worker",
-        "qa_player_perspective_agent": "supervisor",
+        "qa_player_perspective_agent": "commercial_quality_score_agent",
+        "commercial_quality_score_agent": "supervisor",
         "supervisor": "workflow_gate",
     }.get(role_id, "workflow_gate")
 

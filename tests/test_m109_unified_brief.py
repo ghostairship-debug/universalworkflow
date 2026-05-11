@@ -164,6 +164,7 @@ def test_m109_single_agent_cocos_template_exposes_role_chain(tmp_path: Path) -> 
         "ai_playtest_oracle_agent",
         "task_card_generation_agent",
         "qa_player_perspective_agent",
+        "commercial_quality_score_agent",
         "supervisor",
     ]
     capabilities = [stage["metadata"].get("capability") for stage in payload["stages"] if stage["stage_kind"] == "capability"]

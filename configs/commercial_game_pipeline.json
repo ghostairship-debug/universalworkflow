@@ -55,6 +55,12 @@
       "fallback_provider": "minimax",
       "fallback_model": "MiniMax-M2.7"
     },
+    "commercial_quality_score_agent": {
+      "preferred_provider": "codex_cli",
+      "preferred_model": "gpt-5.5",
+      "fallback_provider": "deepseek",
+      "fallback_model": "deepseek-v4-flash"
+    },
     "supervisor": {
       "preferred_provider": "codex_cli",
       "preferred_model": "gpt-5.5",

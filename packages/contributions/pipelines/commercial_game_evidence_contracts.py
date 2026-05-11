@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from packages.contributions.games.commercial_quality_score import (
+    COMMERCIAL_QUALITY_SCORECARD_SCHEMA,
+    evaluate_commercial_quality_scorecard,
+)
 from packages.contributions.games.ai_playtest_quality import AI_PLAYTEST_QUALITY_SCHEMA, evaluate_ai_surrogate_playtest
 from packages.contributions.games.cocos.e2e import COCOS_BUILD_SUCCESS_EXIT_CODES
 
@@ -255,8 +259,20 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
     if missing_commercial_features:
         blockers.append("browser_commercial_playtest_features_missing")
         blockers.extend(f"missing_commercial_feature_{key}" for key in missing_commercial_features)
+    real_pointer_drag = _dict_from(payload.get("real_pointer_drag"))
+    real_pointer_drag_go = bool(payload.get("real_pointer_drag_go") or real_pointer_drag.get("go"))
+    if payload and not real_pointer_drag_go:
+        blockers.append("real_pointer_drag_failed")
+    if payload.get("used_bridge_actions_for_core_drag") or payload.get("bridge_only_drag"):
+        blockers.append("bridge_event_miscounted_as_product_body")
+    if feature_coverage.get("dragPlacement") and not real_pointer_drag_go:
+        blockers.append("bridge_event_miscounted_as_product_body")
+    portrait_orientation = _dict_from(payload.get("portrait_orientation"))
+    portrait_orientation_go = bool(payload.get("portrait_orientation_go") or portrait_orientation.get("go"))
     if not feature_coverage.get("mobilePortraitUi"):
         blockers.append("mobile_viewport_evidence_missing")
+    if payload and not portrait_orientation_go:
+        blockers.append("portrait_orientation_failed")
     audio_runtime_proof = {
         "audioPlaybackVerified": bool(feature_coverage.get("audioPlaybackVerified")),
         "bgmStarted": bool(feature_coverage.get("bgmStarted")),
@@ -414,6 +430,8 @@ def build_commercial_final_gate_evidence(
     reference_quality_evidence: dict[str, Any] | None = None,
     require_ai_surrogate_playtest: bool = False,
     ai_surrogate_playtest_evidence: dict[str, Any] | None = None,
+    require_commercial_quality_scorecard: bool = True,
+    commercial_quality_scorecard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     gameplay_semantic_contract = gameplay_semantic_evidence or build_gameplay_semantic_evidence(None)
     product_body_contract = product_body_evidence or build_product_body_evidence(
@@ -422,6 +440,7 @@ def build_commercial_final_gate_evidence(
     )
     reference_quality_contract = _dict_from(reference_quality_evidence)
     ai_surrogate_contract = _ai_surrogate_contract(ai_surrogate_playtest_evidence)
+    commercial_quality_contract = evaluate_commercial_quality_scorecard(commercial_quality_scorecard)
     machine_blockers: list[str] = []
     if require_commercial:
         for contract in [
@@ -439,6 +458,10 @@ def build_commercial_final_gate_evidence(
         if require_ai_surrogate_playtest:
             if not ai_surrogate_contract.get("ai_surrogate_playtest_go"):
                 machine_blockers.extend(_strings(ai_surrogate_contract.get("blockers")) or ["ai_surrogate_playtest_missing"])
+        if require_commercial_quality_scorecard and not commercial_quality_contract.get("go"):
+            machine_blockers.extend(
+                _strings(commercial_quality_contract.get("blockers")) or ["commercial_quality_scorecard_no_go"]
+            )
         if reference_quality_contract and not reference_quality_contract.get("go"):
             machine_blockers.extend(_strings(reference_quality_contract.get("blockers")) or ["reference_quality_no_go"])
         if not product_feature_depth_go:
@@ -491,6 +514,7 @@ def build_commercial_final_gate_evidence(
             "product_body_evidence": product_body_contract,
             "reference_quality_evidence": reference_quality_contract,
             "ai_surrogate_playtest_evidence": ai_surrogate_contract,
+            "commercial_quality_scorecard": commercial_quality_contract,
         },
     }
 

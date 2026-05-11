@@ -111,6 +111,9 @@ MACHINE_GATE_REPAIR_BROWSER_BLOCKERS = {
     "browser_required_playtest_features_missing",
     "desktop_cocos_splash_only",
     "desktop_runtime_not_started",
+    "bridge_event_miscounted_as_product_body",
+    "real_pointer_drag_failed",
+    "portrait_orientation_failed",
     "mobile_viewport_evidence_missing",
     "reference_quality_candidate_playtest_missing",
     "reference_quality_event_count_below_reference",
@@ -124,6 +127,14 @@ MACHINE_GATE_REPAIR_BROWSER_BLOCKERS = {
     "bgm_runtime_not_verified",
     "sfx_runtime_not_verified",
     "volume_toggle_missing",
+    "commercial_quality_scorecard_missing",
+    "commercial_quality_scorecard_no_go",
+    "commercial_quality_score_below_85",
+    "commercial_quality_core_playability_below_minimum",
+    "commercial_quality_portrait_mobile_ux_below_minimum",
+    "commercial_quality_ui_polish_below_minimum",
+    "commercial_quality_art_completeness_below_minimum",
+    "commercial_visual_quality_below_bar",
 }
 MACHINE_GATE_REPAIR_DEPTH_BLOCKERS = {
     "product_feature_depth_missing",
@@ -1325,6 +1336,9 @@ def _machine_gate_repair_guidance(cluster: str, blockers: list[str], *, deferred
         return [
             *common,
             "Repair launch/runtime code so browser playtest can start over HTTP and capture desktop and mobile screenshots.",
+            "dragPlacement only passes when a real browser pointer or touch drag starts on a candidate, releases on the board, and changes board, score, or candidate state.",
+            "mobilePortraitUi only passes with a portrait build/screen configuration and 390x844-class viewport evidence; orientation:auto plus 1280x720 is a blocker.",
+            "Do not use window.__workflowE2ERuntimeBridge.placeCandidate() to satisfy core drag; bridge and overlay surfaces count as inspection evidence only.",
             "When reference_quality blockers are present, match or exceed the configured reference playtest feature coverage, score, event depth, open panels, and screenshot evidence.",
             "Audio evidence must come from runtime playback/toggle state, not an asset manifest alone.",
         ]
@@ -1412,6 +1426,12 @@ def build_supervisor_repair_packets(
         qa_structured = qa.get("structured_output")
         if isinstance(qa_structured, dict):
             findings.extend(qa_structured.get("repair_findings") or [])
+    quality = shared_outputs.get("role_output:commercial_quality_score_agent")
+    if isinstance(quality, dict):
+        quality_structured = quality.get("structured_output")
+        if isinstance(quality_structured, dict):
+            findings.extend(quality_structured.get("hard_blockers") or [])
+            findings.extend(quality_structured.get("repair_findings") or [])
     findings.extend(structured_output.get("repair_findings") or [])
 
     packets: list[dict[str, Any]] = []
@@ -1852,6 +1872,12 @@ def _recoverable_suggestions(blockers: list[str]) -> list[str]:
 
 def _repair_owner_for(finding: str) -> str:
     normalized = finding.lower()
+    if any(marker in normalized for marker in ("pointer", "drag", "playability")):
+        return "mechanics_system_designer_agent"
+    if "portrait" in normalized or "orientation" in normalized:
+        return "ui_ux_polish_agent"
+    if "visual" in normalized or "art" in normalized:
+        return "art_direction_agent"
     if any(marker in normalized for marker in ("asset", "audio", "music", "sfx", "placeholder")):
         return "commercial_game_asset_generation"
     if any(marker in normalized for marker in ("ui", "panel", "button", "text", "overlap")):
