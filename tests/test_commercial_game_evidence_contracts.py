@@ -192,6 +192,33 @@ def test_browser_playtest_ledger_blocks_static_canvas_and_desktop_splash() -> No
     assert "desktop_runtime_not_started" in ledger["blockers"]
 
 
+def test_browser_playtest_ledger_prefers_screenshot_change_over_stale_webgl_canvas_hash() -> None:
+    feature_coverage = {
+        "mobilePortraitUi": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+    }
+    ledger = build_browser_playtest_ledger(
+        {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": ["mobile.png", "after.png", "desktop.png"],
+            "canvas_hashes": ["same", "same"],
+            "screenshot_hashes": ["before", "after", "desktop"],
+            "desktop_runtime_started": True,
+            "desktop_splash_detected": False,
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": feature_coverage,
+        }
+    )
+
+    assert ledger["go"] is True
+    assert "browser_canvas_hash_static_after_actions" not in ledger["blockers"]
+
+
 def test_contracts_reject_skipped_stubbed_simulated_and_placeholder_dependencies() -> None:
     assert build_asset_graph_contract({"status": "skipped", "commercial_assets_go": True})["go"] is False
     assert build_same_project_patch_ledger_contract({"status": "simulated", "same_project_worker_patch_go": True, "entries": [{"status": "completed"}]})["go"] is False

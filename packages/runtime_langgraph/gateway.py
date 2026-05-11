@@ -13,7 +13,7 @@ from packages.core_domain.context_budget import (
 from packages.core_domain.errors import RuntimeGatewayConfigurationError, RuntimeGatewayExecutionError
 
 
-DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
+DEFAULT_OPENAI_MODEL = "gpt-5.5"
 DEFAULT_OPENAI_REASONING_EFFORT = "low"
 
 

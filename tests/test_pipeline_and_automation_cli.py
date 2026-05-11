@@ -106,6 +106,164 @@ def _passing_ai_surrogate_evidence() -> dict[str, object]:
     }
 
 
+def _passing_commercial_assets(tmp_path: Path) -> dict[str, object]:
+    manifest_path = tmp_path / "commercial_asset_manifest.json"
+    manifest_path.write_text(json.dumps({"go_no_go": "GO", "assets": ["block_skin_01"]}), encoding="utf-8")
+    return {
+        "schema_version": "commercial_game_asset_stage_v1",
+        "commercial_assets_go": True,
+        "commercial_asset_blockers": [],
+        "asset_manifest_path": manifest_path.as_posix(),
+        "asset_manifest": {"go_no_go": "GO", "manifest_path": manifest_path.as_posix()},
+        "provider_evidence": [{"provider": "local_stable_asset_manifest", "configured": True}],
+        "placeholder_only": False,
+    }
+
+
+def _provider_visible_cli_session(tmp_path: Path, task_card_id: str) -> dict[str, object]:
+    session_dir = tmp_path / "provider_visible_cli_sessions" / task_card_id
+    return {
+        "status": "completed",
+        "provider": "codex",
+        "provider_pid": 5678,
+        "argv": ["codex", "exec"],
+        "cwd": tmp_path.as_posix(),
+        "stdout_log_path": (session_dir / "stdout.log").as_posix(),
+        "stderr_log_path": (session_dir / "stderr.log").as_posix(),
+        "stream_log_path": (session_dir / "stream.jsonl").as_posix(),
+        "started_at": "2026-05-03T00:00:00+00:00",
+        "ended_at": "2026-05-03T00:00:02+00:00",
+    }
+
+
+def _commercial_feature_coverage() -> dict[str, bool]:
+    return {
+        "mobilePortraitUi": True,
+        "audioPlaybackVerified": True,
+        "bgmStarted": True,
+        "sfxPlaybackVerified": True,
+        "volumeToggleUsable": True,
+        "shopOwnershipStates": True,
+        "skinEquippedVisualChange": True,
+        "chineseUiPanelsVisible": True,
+        "levelFlowPlayable": True,
+        "failureReviveFeedback": True,
+        "animationFeedbackVerified": True,
+    }
+
+
+def _passing_runtime_evidence(tmp_path: Path, project_dir: Path) -> dict[str, object]:
+    feature_coverage = _commercial_feature_coverage()
+    level_goals = [f"关卡{i}目标" for i in range(1, 9)]
+    build_output = project_dir / "build" / "web-mobile"
+    return {
+        "technical_smoke_go": True,
+        "production_scaffold_go": True,
+        "commercial_playable_go": True,
+        "commercial_playable_blockers": [],
+        "commercial_feature_coverage": feature_coverage,
+        "player_visible_checks": feature_coverage,
+        "manual_player_evidence": {},
+        "gameplay_semantic_evidence": {
+            "board_state": {"rows": 10, "cols": 10},
+            "piece_shapes": [{"cells": [[0, 0]]}, {"cells": [[0, 0], [1, 0]]}],
+            "candidate_tray": [{}, {}, {}],
+            "semantic_traces": {
+                "placement": "trace/placement.json",
+                "line_clear": "trace/line_clear.json",
+                "candidate_refresh": "trace/candidate_refresh.json",
+                "game_over": "trace/game_over.json",
+                "anti_stall": "trace/anti_stall.json",
+            },
+        },
+        "product_body_evidence": {
+            "scene_nodes": ["Canvas", "Board", "CandidateTray", "LevelPanel", "ShopPanel"],
+            "cocos_component_bindings": ["BoardRuntime", "RuleEngine", "CandidateTray", "LevelFlow", "ShopSkinPanel"],
+            "product_body_path": (project_dir / "workflow_runtime_evidence" / "product_body_evidence.raw.json").as_posix(),
+        },
+        "product_depth_evidence": {
+            "level_goals": level_goals,
+            "distinct_level_goal_count": 8,
+            "feature_coverage": feature_coverage,
+            "player_visible_checks": feature_coverage,
+            "screenshots": [(tmp_path / "mobile.png").as_posix()],
+        },
+        "build": {
+            "creator_exit_code": 0,
+            "fatal_marker_detected": False,
+            "artifact_success": True,
+            "build_output_path": build_output.as_posix(),
+        },
+        "playtest": {
+            "passed": True,
+            "url": "http://127.0.0.1:3000/index.html",
+            "screenshots": [(tmp_path / "mobile.png").as_posix()],
+            "console_errors": [],
+            "page_errors": [],
+            "feature_coverage": feature_coverage,
+        },
+        "manifest_path": (project_dir / "workflow_project_manifest.json").as_posix(),
+    }
+
+
+def _failing_cocos_build_runtime_evidence(tmp_path: Path, project_dir: Path) -> dict[str, object]:
+    payload = _passing_runtime_evidence(tmp_path, project_dir)
+    payload["production_scaffold_go"] = False
+    payload["commercial_playable_go"] = False
+    payload["commercial_playable_blockers"] = [
+        "cocos_build_fatal_marker_detected",
+        "cocos_build_no_artifact_success",
+        "cocos_component_binding_missing",
+    ]
+    payload["product_body_evidence"] = {"scene_nodes": [], "cocos_component_bindings": []}
+    payload["build"] = {
+        "creator_exit_code": 36,
+        "fatal_marker_detected": True,
+        "artifact_success": False,
+        "build_output_path": "",
+        "stderr_tail": "Missing class WorkflowBlockPuzzleBoardBinding",
+    }
+    payload["playtest"] = {
+        "status": "blocked",
+        "passed": False,
+        "failure_class": "missing_build_output",
+        "screenshots": [],
+        "console_errors": [],
+        "page_errors": [],
+        "feature_coverage": {},
+    }
+    return payload
+
+
+def _write_machine_gate_repair_artifacts(project_dir: Path) -> None:
+    artifacts = {
+        project_dir / "workflow_runtime_evidence" / "machine_gate_repair_evidence.json": {"go": True, "blockers": []},
+        project_dir / "workflow_runtime_evidence" / "cocos_ecosystem_bridge_evidence.json": {
+            "ecosystem_integration_go": True,
+            "blockers": [],
+        },
+        project_dir / "workflow_runtime_evidence" / "product_body_evidence.raw.json": {"go": True, "blockers": []},
+        project_dir / "workflow_runtime_evidence" / "scene_prefab_binding_evidence.json": {"go": True, "blockers": []},
+        project_dir / "settings" / "v2" / "packages" / "scene.json": {"currentSceneUuid": "block-puzzle-player-visible"},
+    }
+    for path, payload in artifacts.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    for component in [
+        "WorkflowBlockPuzzleBoardBinding",
+        "WorkflowBlockPuzzleSceneRuntime",
+        "WorkflowCandidateTrayBinding",
+        "WorkflowCandidatePrefabBinding",
+        "WorkflowBuildProductBodyWitness",
+    ]:
+        path = project_dir / "assets" / "scripts" / "runtime" / "workflow" / f"{component}.ts"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"@ccclass('{component}') export class {component} {{}}\n", encoding="utf-8")
+    prefab = project_dir / "assets" / "prefabs" / "workflow_block_puzzle_board_binding.prefab"
+    prefab.parent.mkdir(parents=True, exist_ok=True)
+    prefab.write_text('{"__type__":"cc.Prefab"}\n', encoding="utf-8")
+
+
 def _seed_child_workflow_state(
     db_path: Path,
     *,
@@ -798,7 +956,7 @@ def test_commercial_gate_v2_can_stop_at_human_review_only() -> None:
     assert gate["output"]["commercial_final_gate_evidence"]["commercial_playable_go"] is False
 
 
-def test_commercial_gate_treats_machine_ready_non_playable_as_human_review() -> None:
+def test_commercial_gate_allows_unattended_machine_ready_when_human_review_is_not_required() -> None:
     import packages.contributions.pipelines.registry as pipeline_registry
 
     product_features = {
@@ -893,10 +1051,13 @@ def test_commercial_gate_treats_machine_ready_non_playable_as_human_review() -> 
         require_human_player_review=False,
     )
 
-    assert payload["pipeline_status"] == "blocked"
-    assert payload["stop_reason"] == "awaiting_human_player_review"
-    assert payload["result"]["output"]["go_no_go"] == "AWAITING_HUMAN_REVIEW"
-    assert payload["result"]["output"]["blockers"] == ["awaiting_human_player_review"]
+    assert payload["pipeline_status"] == "completed"
+    assert payload["stop_reason"] is None
+    assert payload["result"]["output"]["go_no_go"] == "GO"
+    assert payload["result"]["output"]["required_gate"] == "machine_commercial_readiness_before_human_review"
+    assert payload["result"]["output"]["blockers"] == []
+    assert payload["result"]["output"]["human_review_skipped_for_unattended_run"] is True
+    assert payload["result"]["output"]["commercial_playable_claim_allowed"] is False
     assert payload["result"]["output"]["machine_evidence_go"] is True
 
 
@@ -1012,6 +1173,129 @@ def test_real_asset_stage_skips_provider_when_required_source_is_missing(tmp_pat
     assert worker_stage["output"]["commercial_playable_blockers"] == ["source_path_missing"]
     supervisor = payload["stage_results"][9]["output"]["structured_output"]
     assert supervisor["repair_packets"][0]["owner_role"] == "operator_input"
+
+
+def test_real_asset_stage_enables_vertex_review_and_provider_fallbacks_for_real_assets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    captured: dict[str, object] = {}
+
+    def _fake_manifest(**kwargs):
+        captured.update(kwargs)
+        manifest_path = Path(kwargs["output_dir"]) / "commercial_asset_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "schema_version": "m77_cocos_commercial_assets_v1",
+            "go_no_go": "GO",
+            "manifest_path": manifest_path.as_posix(),
+            "results": [
+                {
+                    "asset_name": "background",
+                    "provider": "vertex_generation_api",
+                    "status": "completed",
+                    "artifact_paths": [(manifest_path.parent / "background.png").as_posix()],
+                    "metadata": {"provider_fallback_used": True},
+                }
+            ],
+            "feature_coverage": {
+                "generated_art_assets": True,
+                "generated_audio_assets": True,
+                "skin_switching_visual_assets": True,
+                "particle_effects": True,
+                "commercial_polish_pass": True,
+            },
+            "blockers": [],
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        return manifest
+
+    monkeypatch.setattr(commercial_pipeline, "generate_cocos_commercial_asset_manifest", _fake_manifest)
+    source = tmp_path / "design.md"
+    source.write_text("# commercial puzzle design\nvalid source for real assets\n", encoding="utf-8")
+
+    payload = commercial_pipeline.execute_commercial_game_asset_generation(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id="pipeline_real_asset_vertex_fallback",
+        source_path=source,
+        require_real_assets=True,
+        require_commercial=False,
+    )
+
+    assert payload["status"] == "completed"
+    assert payload["output"]["commercial_assets_go"] is True
+    assert captured["include_vertex_review"] is True
+    assert captured["enable_provider_fallbacks"] is True
+
+
+def test_real_asset_stage_reuses_existing_valid_commercial_assets_before_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    def _should_not_call_provider(*_args, **_kwargs):
+        raise AssertionError("valid existing commercial assets should be reused before provider calls")
+
+    monkeypatch.setattr(commercial_pipeline, "generate_cocos_commercial_asset_manifest", _should_not_call_provider)
+    source = tmp_path / "design.md"
+    source.write_text("# 商业小游戏\n必须使用已有真实资产继续修复。", encoding="utf-8")
+    pipeline_id = "commercial_game_reuse_assets"
+    asset_root = tmp_path / "pipeline_evidence" / pipeline_id / "assets"
+    artifact_path = asset_root / "commercial_asset_factory" / "assets" / "images" / "background.png"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_bytes(b"real-image")
+    manifest_path = asset_root / "commercial_asset_manifest.json"
+    manifest = {
+        "go_no_go": "GO",
+        "manifest_path": manifest_path.as_posix(),
+        "results": [
+            {
+                "asset_name": "background",
+                "provider": "mmx_generation_api",
+                "status": "completed",
+                "artifact_paths": [artifact_path.as_posix()],
+            }
+        ],
+        "blockers": [],
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    stage_path = asset_root / "commercial_game_asset_stage.json"
+    stage_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "commercial_game_asset_stage_v1",
+                "pipeline_id": pipeline_id,
+                "asset_manifest_path": manifest_path.as_posix(),
+                "asset_manifest": manifest,
+                "provider_evidence": [{"provider": "mmx_generation_api", "status": "completed"}],
+                "placeholder_only": False,
+                "require_real_assets": True,
+                "commercial_assets_go": True,
+                "commercial_asset_blockers": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = commercial_pipeline.execute_commercial_game_asset_generation(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={},
+        pipeline_id=pipeline_id,
+        source_path=source,
+        require_real_assets=True,
+        require_commercial=False,
+    )
+
+    assert payload["status"] == "completed"
+    assert payload["execution_backend"] == "commercial_game_asset_generation_reuse_v1"
+    assert payload["output"]["commercial_assets_go"] is True
+    assert payload["output"]["reused_existing_asset_stage"] is True
+    assert payload["output"]["source_identity"]["source_sha256"]
 
 
 def test_commercial_asset_stage_blocks_invalid_game_design_spec_before_provider(tmp_path: Path, monkeypatch) -> None:
@@ -1141,53 +1425,7 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
 
     def _fake_runtime_evidence(**_kwargs):
         evidence_order.append("runtime")
-        feature_coverage = {
-            "mobilePortraitUi": True,
-            "audioPlaybackVerified": True,
-            "bgmStarted": True,
-            "sfxPlaybackVerified": True,
-            "volumeToggleUsable": True,
-        }
-        return {
-            "technical_smoke_go": True,
-            "production_scaffold_go": False,
-            "commercial_playable_go": True,
-            "commercial_playable_blockers": [],
-            "commercial_feature_coverage": feature_coverage,
-            "player_visible_checks": {},
-                "manual_player_evidence": {},
-                "gameplay_semantic_evidence": {
-                    "board_state": {"rows": 10, "cols": 10},
-                    "piece_shapes": [{"cells": [[0, 0]]}],
-                    "candidate_tray": [{}, {}, {}],
-                    "semantic_traces": {
-                        "placement": "trace/placement.json",
-                        "line_clear": "trace/line_clear.json",
-                        "candidate_refresh": "trace/candidate_refresh.json",
-                        "game_over": "trace/game_over.json",
-                        "anti_stall": "trace/anti_stall.json",
-                    },
-                },
-                "product_body_evidence": {
-                    "scene_nodes": ["Canvas", "Board", "CandidateTray"],
-                    "cocos_component_bindings": ["BoardModel", "RuleEngine", "CandidateTray"],
-                },
-                "build": {
-                "creator_exit_code": 0,
-                "fatal_marker_detected": False,
-                "artifact_success": True,
-                "build_output_path": (tmp_path / "cocos_project" / "build" / "web-mobile").as_posix(),
-            },
-            "playtest": {
-                "passed": True,
-                "url": "http://127.0.0.1:3000/index.html",
-                "screenshots": ["mobile.png"],
-                "console_errors": [],
-                "page_errors": [],
-                "feature_coverage": feature_coverage,
-            },
-            "manifest_path": (tmp_path / "cocos_project" / "workflow_project_manifest.json").as_posix(),
-        }
+        return _passing_runtime_evidence(tmp_path, tmp_path / "cocos_project")
 
     monkeypatch.setattr(commercial_pipeline, "collect_cocos_ecosystem_bridge_evidence", _fake_ecosystem_evidence)
     monkeypatch.setattr(commercial_pipeline, "collect_project_runtime_evidence", _fake_runtime_evidence)
@@ -1195,7 +1433,10 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
     payload = execute_commercial_game_task_card_worker(
         root=tmp_path,
         target_dir=tmp_path / "pipeline_evidence",
-        shared_outputs={},
+        shared_outputs={
+            "commercial_game_assets": _passing_commercial_assets(tmp_path),
+            "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
+        },
         pipeline_id=pipeline_id,
         db_path=db_path,
         source_path=source,
@@ -1238,6 +1479,283 @@ def test_commercial_worker_executes_same_project_task_cards_with_patch_ledger(tm
     assert output["build_ledger_go"] is True
     assert output["browser_playtest_ledger_go"] is True
     assert (tmp_path / "cocos_project" / "workflow_project_source.json").exists()
+
+
+def test_commercial_worker_auto_repairs_post_worker_cocos_build_blocker(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+    from packages.core_domain.repositories import TaskRepository
+
+    execute_commercial_game_task_card_worker = commercial_pipeline.execute_commercial_game_task_card_worker
+    pipeline_id = "pipeline_auto_repair_build_gate"
+    db_path = _seed_commercial_worker_db(tmp_path, pipeline_id)
+    source = tmp_path / "brief.md"
+    source.write_text("# 商业小游戏\n必须实现俄罗斯方块消除式商业化体验。", encoding="utf-8")
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    project_dir = tmp_path / "cocos_project"
+    runner_calls: list[dict[str, object]] = []
+    runtime_calls: list[str] = []
+    ecosystem_calls: list[str] = []
+
+    def _fake_runner(**kwargs):
+        task_card_id = kwargs["task_card"].task_card_id
+        runner_calls.append(kwargs)
+        if "machine_gate_repair" in task_card_id:
+            _write_machine_gate_repair_artifacts(project_dir)
+        return {
+            "status": "completed",
+            "receipt_id": f"receipt_{task_card_id}",
+            "child_run_id": f"run_{task_card_id}",
+            "child_attempt_id": f"attempt_{task_card_id}",
+            "worker_adapter": "codex",
+            "evidence_id": f"evidence_{task_card_id}",
+            "mutation_result": {
+                "changed_files": [Path(kwargs["write_set"][0]).as_posix()],
+                "applied_patch_hash": f"hash_{task_card_id}",
+                "final_test_status": "passed",
+            },
+            "watchdog": {"timeout_type": None, "stream_event_count": 3},
+            "timeout_seconds": 900,
+            "idle_timeout_seconds": 240,
+            "visible_cli_session": _visible_cli_session(tmp_path, task_card_id),
+            "provider_visible_cli_required": True,
+            "provider_visible_cli_session": _provider_visible_cli_session(tmp_path, task_card_id),
+            "control_plane_visibility": "resident",
+            "provider_visibility": "direct_visible",
+        }
+
+    def _fake_ecosystem_evidence(**kwargs):
+        ecosystem_calls.append(str(kwargs.get("bridge_mode") or ""))
+        return {
+            "strict_required": bool(kwargs.get("require_bridge")),
+            "ecosystem_integration_go": True,
+            "blockers": [],
+            "failure_class": None,
+            "checks": {"build_api_evidence": True, "assetdb_import_query_evidence": True},
+            "bridge_runner_evidence": {"status": "completed", "fresh": True},
+        }
+
+    def _fake_runtime_evidence(**_kwargs):
+        runtime_calls.append("runtime")
+        if len(runtime_calls) == 1:
+            return _failing_cocos_build_runtime_evidence(tmp_path, project_dir)
+        return _passing_runtime_evidence(tmp_path, project_dir)
+
+    monkeypatch.setattr(commercial_pipeline, "collect_cocos_ecosystem_bridge_evidence", _fake_ecosystem_evidence)
+    monkeypatch.setattr(commercial_pipeline, "collect_project_runtime_evidence", _fake_runtime_evidence)
+
+    payload = execute_commercial_game_task_card_worker(
+        root=tmp_path,
+        target_dir=tmp_path / "pipeline_evidence",
+        shared_outputs={
+            "commercial_game_assets": _passing_commercial_assets(tmp_path),
+            "ai_surrogate_playtest_evidence": _passing_ai_surrogate_evidence(),
+        },
+        pipeline_id=pipeline_id,
+        db_path=db_path,
+        source_path=source,
+        creator_exe=creator,
+        output_dir=project_dir,
+        require_build=True,
+        require_playtest=True,
+        require_commercial=True,
+        require_cocos_ecosystem=True,
+        cocos_bridge_mode="auto",
+        task_card_runner=_fake_runner,
+        max_repair_attempts=2,
+    )
+
+    output = payload["output"]
+    repair_card_id = f"{pipeline_id}_machine_gate_repair_01_cocos_build_product_body"
+    assert payload["status"] == "completed"
+    assert [call["task_card"].task_card_id for call in runner_calls] == ["tc_core", repair_card_id]
+    assert runtime_calls == ["runtime", "runtime"]
+    assert ecosystem_calls == ["auto", "report_only", "auto", "report_only"]
+    assert output["same_project_patch_ledger"]["task_card_count"] == 2
+    assert output["same_project_patch_ledger"]["completed_count"] == 2
+    assert output["same_project_patch_ledger"]["entries"][1]["task_card_id"] == repair_card_id
+    assert output["machine_gate_repair_loop"]["repair_attempt_count"] == 1
+    assert output["machine_gate_repair_loop"]["history"][0]["task_card_ids"] == [repair_card_id]
+    assert output["machine_gate_repair_loop"]["history"][0]["remaining_repairable_blockers"] == []
+    assert output["post_worker_machine_gate"]["machine_evidence_go"] is True
+    assert output["post_worker_machine_gate"]["repairable_machine_blockers"] == []
+    assert output["build_ledger_go"] is True
+    assert output["browser_playtest_ledger_go"] is True
+    assert output["product_body_evidence"]["go"] is True
+    assert TaskRepository(db_path).get_task_card(repair_card_id) is not None
+
+
+def test_post_repair_ecosystem_success_is_not_overridden_by_stale_prebuild_failure() -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    fresh_report_only_evidence = {
+        "strict_required": True,
+        "ecosystem_integration_go": True,
+        "blockers": [],
+        "failure_class": None,
+        "operator_action_required": False,
+        "operator_actions": [],
+        "evidence_path": "project/workflow_runtime_evidence/cocos_ecosystem_bridge_evidence.json",
+    }
+    stale_prebuild_failure = {
+        "strict_required": True,
+        "ecosystem_integration_go": False,
+        "failure_class": "cocos_ecosystem_bridge_missing",
+        "blockers": [
+            "assetdb_import_query_evidence",
+            "scene_create_save_evidence",
+            "node_component_binding_evidence",
+            "prefab_create_instantiate_evidence",
+        ],
+        "operator_action_required": True,
+        "operator_actions": [{"kind": "open_cocos_editor"}],
+        "evidence_path": "state/pipeline_runs/run/cocos_ecosystem/cocos_ecosystem_bridge_evidence.json",
+    }
+
+    commercial_pipeline._merge_prebuild_ecosystem_evidence(fresh_report_only_evidence, stale_prebuild_failure)
+
+    assert fresh_report_only_evidence["ecosystem_integration_go"] is True
+    assert fresh_report_only_evidence["blockers"] == []
+    assert fresh_report_only_evidence["operator_action_required"] is False
+    assert "failure_class" not in fresh_report_only_evidence
+    assert fresh_report_only_evidence["prebuild_bridge_evidence"]["failure_class"] == "cocos_ecosystem_bridge_missing"
+
+
+def test_machine_gate_repair_card_scopes_build_blockers_and_precise_cocos_context(tmp_path: Path) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+
+    project_dir = tmp_path / "cocos_project"
+    scene = project_dir / "assets" / "scene" / "block_puzzle_player_visible.scene"
+    runtime = project_dir / "assets" / "scripts" / "runtime" / "gameplay" / "BlockPuzzleRuntimeController.ts"
+    workflow_binding = project_dir / "assets" / "scripts" / "runtime" / "workflow" / "WorkflowBlockPuzzleBoardBinding.ts"
+    repair_evidence = project_dir / "workflow_runtime_evidence" / "machine_gate_repair_evidence.json"
+    scene.parent.mkdir(parents=True)
+    runtime.parent.mkdir(parents=True)
+    workflow_binding.parent.mkdir(parents=True)
+    repair_evidence.parent.mkdir(parents=True)
+    scene.write_text('{"__type__":"WorkflowBlockPuzzleSceneRuntime"}', encoding="utf-8")
+    runtime.write_text("export class BlockPuzzleRuntimeController {}", encoding="utf-8")
+    workflow_binding.write_text("@ccclass('WorkflowBlockPuzzleBoardBinding') export class WorkflowBlockPuzzleBoardBinding {}", encoding="utf-8")
+    repair_evidence.write_text("{}", encoding="utf-8")
+    requirement_matrix = tmp_path / "requirement_matrix.json"
+    requirement_matrix.write_text("{}", encoding="utf-8")
+
+    cards = commercial_pipeline._build_machine_gate_repair_cards(
+        pipeline_id="pipeline_scoped_machine_gate",
+        project_dir=project_dir,
+        run_root=tmp_path / "pipeline_evidence",
+        repair_round=1,
+        post_worker_gate={
+            "repairable_machine_blockers": [
+                "cocos_build_fatal_marker_detected",
+                "browser_playtest_missing",
+                "product_feature_depth_missing",
+                "ai_surrogate_playtest_missing",
+            ]
+        },
+        runtime_evidence={},
+        ecosystem_evidence={},
+        game_design_contract={"requirement_matrix_path": requirement_matrix.as_posix()},
+    )
+
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.task_card_id == "pipeline_scoped_machine_gate_machine_gate_repair_01_cocos_build_product_body"
+    assert card.metadata["machine_gate_blockers"] == ["cocos_build_fatal_marker_detected"]
+    assert card.metadata["deferred_machine_gate_blockers"] == [
+        "browser_playtest_missing",
+        "product_feature_depth_missing",
+        "ai_surrogate_playtest_missing",
+    ]
+    assert scene.as_posix() in card.read_set
+    assert runtime.as_posix() in card.read_set
+    assert workflow_binding.as_posix() in card.read_set
+    assert (project_dir / "assets" / "scripts" / "runtime" / "workflow" / "WorkflowCandidatePrefabBinding.ts").as_posix() in card.read_set
+    assert "assets/workflow_bridge_probe/**" in card.write_set
+    assert "assets/scripts/runtime/workflow/WorkflowBlockPuzzleSceneRuntime.ts" in card.expected_artifacts
+    assert "assets/scripts/runtime/workflow/WorkflowCandidateTrayBinding.ts" in card.expected_artifacts
+    assert "assets/scripts/runtime/workflow/WorkflowCandidatePrefabBinding.ts" in card.expected_artifacts
+    assert "assets/prefabs/workflow_block_puzzle_board_binding.prefab" in card.expected_artifacts
+    assert repair_evidence.as_posix() in card.read_set
+    assert requirement_matrix.as_posix() not in card.read_set
+    assert any("existing-file patch" in item for item in card.model_guidance)
+    assert any("Every Workflow* class" in item for item in card.model_guidance)
+    assert any("exactly one valid JSON document" in item for item in card.model_guidance)
+    assert any("intentionally narrowed" in item for item in card.model_guidance)
+
+
+def test_machine_gate_repair_card_persistence_replaces_stale_db_card(tmp_path: Path) -> None:
+    import packages.contributions.pipelines.commercial_game_production as commercial_pipeline
+    from packages.contracts import TaskCard
+    from packages.core_domain.repositories import TaskRepository
+
+    db_path = _seed_commercial_worker_db(tmp_path, "pipeline_stale_card")
+    repo = TaskRepository(db_path)
+    stale = TaskCard(
+        run_id="pipeline_stale_card",
+        task_card_id="pipeline_stale_card_machine_gate_repair_01_cocos_build_product_body",
+        title="Old repair",
+        description="Old broad repair card.",
+        goal="Old broad repair card.",
+        write_set=["assets/**"],
+        read_set=["GameDesignSpec", "old_requirement_matrix.json"],
+        test_commands=["old-test"],
+        acceptance_criteria=["old"],
+        evidence_requirements=["old"],
+        blocking_conditions=["old"],
+        model_guidance=["old"],
+        risk_level="high",
+        execution_mode="same_project_patch",
+        status="active",
+        metadata={"machine_gate_repair_card": True},
+    )
+    fresh = stale.model_copy(
+        update={
+            "title": "Fresh repair",
+            "read_set": ["cocos_build_stderr.log", "assets/scene/block_puzzle_player_visible.scene"],
+            "model_guidance": ["fresh narrowed card"],
+        }
+    )
+    repo.create_task_card(stale)
+
+    report = commercial_pipeline._persist_machine_gate_repair_cards(db_path=db_path, cards=[fresh])
+    stored = repo.get_task_card(fresh.task_card_id)
+
+    assert report["write_mode"] == "upsert_current_repair_card"
+    assert report["updated_task_card_ids"] == [fresh.task_card_id]
+    assert stored is not None
+    assert stored.title == "Fresh repair"
+    assert stored.read_set == ["cocos_build_stderr.log", "assets/scene/block_puzzle_player_visible.scene"]
+
+
+def test_task_card_retry_context_includes_patch_apply_failure_feedback(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import _task_card_path_with_retry_context
+
+    card_path = tmp_path / "repair_card.md"
+    card_path.write_text("# Repair Card\n", encoding="utf-8")
+
+    retry_path = _task_card_path_with_retry_context(
+        card_path,
+        attempt_index=2,
+        prior_entry={
+            "status": "failed",
+            "failure_class": "same_project_patch_apply_failed",
+            "final_failure_class": "same_project_patch_apply_failed",
+            "mutation_result": {
+                "final_test_status": "patch_apply_failed",
+                "failure_reason": "new-file patch target already exists `assets/scripts/runtime/workflow/WorkflowBlockPuzzleBoardBinding.ts`",
+            },
+            "recoverable_suggestion": "rerun_with_existing_file_diff",
+        },
+    )
+
+    assert retry_path != card_path
+    retry_text = retry_path.read_text(encoding="utf-8")
+    assert "Previous Runtime Repair Failure" in retry_text
+    assert "same_project_patch_apply_failed" in retry_text
+    assert "new-file patch target already exists" in retry_text
 
 
 def test_commercial_worker_blocks_reusing_project_with_different_source(tmp_path: Path) -> None:
@@ -1810,6 +2328,268 @@ def test_same_project_patch_ledger_records_continuation_for_idle_timeout(tmp_pat
     assert entry["task_card_path"].endswith("tc_audio.md")
 
 
+def test_same_project_patch_ledger_recovers_exhausted_provider_when_artifacts_and_tests_pass(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker as worker
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    monkeypatch.setattr(
+        worker,
+        "run_safe_commands",
+        lambda commands, working_directory: [
+            {
+                "command": str(command.command),
+                "argv": ["python", "-c", "print('ok')"],
+                "return_code": 0,
+                "passed": True,
+                "status": "passed",
+            }
+            for command in commands
+        ],
+    )
+    project_dir = tmp_path / "cocos_project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    audio_dir = project_dir / "assets" / "scripts" / "runtime" / "audio"
+    evidence_dir.mkdir(parents=True)
+    audio_dir.mkdir(parents=True)
+    audio_evidence = evidence_dir / "audio_feedback_polish_evidence.json"
+    feature_evidence = project_dir / "workflow_commercial_feature_evidence.json"
+    audio_runtime = audio_dir / "CommercialAudioRuntime.ts"
+    audio_evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": "commercial_audio_feedback_polish_v1",
+                "go": True,
+                "audioPlaybackVerified": True,
+                "bgmStarted": True,
+                "sfxPlaybackVerified": True,
+                "volumeToggleUsable": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    feature_evidence.write_text(
+        json.dumps({"go": True, "feature_coverage": {"audioPlaybackVerified": True, "sfxPlaybackVerified": True}}),
+        encoding="utf-8",
+    )
+    audio_runtime.write_text("export class CommercialAudioRuntime {}\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_recover_exhausted",
+        task_card_id="tc_audio_recovery",
+        title="Repair audio runtime",
+        description="Repair audio runtime evidence in the same project.",
+        goal="Repair audio runtime evidence in the same project.",
+        write_set=[
+            "workflow_runtime_evidence/audio_feedback_polish_evidence.json",
+            "workflow_commercial_feature_evidence.json",
+            "assets/scripts/runtime/audio/CommercialAudioRuntime.ts",
+        ],
+        read_set=["workflow_runtime_evidence/audio_feedback_polish_evidence.json"],
+        test_commands=["python -c \"print('ok')\""],
+        acceptance_criteria=["audio evidence exists", "tests pass"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        expected_artifacts=[
+            "workflow_runtime_evidence/audio_feedback_polish_evidence.json",
+            "workflow_commercial_feature_evidence.json",
+            "assets/scripts/runtime/audio/CommercialAudioRuntime.ts",
+        ],
+        blocking_conditions=["provider_timeout", "same_project_patch_parse_failed"],
+        model_guidance=["Finalize existing valid evidence when provider output parsing fails after retries."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced"},
+    )
+    attempts: list[int] = []
+
+    def _parse_failed_runner(**kwargs):
+        attempts.append(len(attempts) + 1)
+        index = len(attempts)
+        return {
+            "status": "failed",
+            "failure_class": "same_project_patch_parse_failed",
+            "receipt_id": f"receipt_audio_recovery_{index}",
+            "child_run_id": f"child_audio_recovery_{index}",
+            "child_attempt_id": f"attempt_audio_recovery_{index}",
+            "worker_adapter": kwargs.get("adapter_name") or "codex",
+            "execution_visibility_mode": "human_visible_cli_enforced",
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_audio_recovery"),
+            "mutation_result": {"changed_files": [], "final_test_status": "failed"},
+            "stderr_preview": "provider returned prose instead of a parseable patch",
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=project_dir,
+        pipeline_id="pipeline_recover_exhausted",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=2,
+        task_card_runner=_parse_failed_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert "blocked_after_three_attempts" not in ledger["blockers"]
+    assert attempts == [1, 2, 3]
+    assert entry["status"] == "completed"
+    assert entry["failure_class"] is None
+    assert entry["final_failure_class"] is None
+    assert entry["retry_exhausted"] is False
+    assert entry["deterministic_exhausted_provider_recovery"]["go"] is True
+    assert entry["mutation_result"]["satisfaction_mode"] == (
+        "deterministic_existing_project_artifact_validation_after_provider_exhaustion"
+    )
+    assert Path(entry["deterministic_exhausted_provider_recovery"]["artifact_validation"]["checked_artifacts"][0]).exists()
+    assert entry["mutation_result"]["final_test_status"] == "passed"
+
+
+def test_same_project_patch_ledger_recovers_prior_exhausted_entry_without_reinvoking_provider(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines import commercial_game_task_worker as worker
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    monkeypatch.setattr(
+        worker,
+        "run_safe_commands",
+        lambda commands, working_directory: [
+            {
+                "command": str(command.command),
+                "argv": ["python", "-c", "print('ok')"],
+                "return_code": 0,
+                "passed": True,
+                "status": "passed",
+            }
+            for command in commands
+        ],
+    )
+    project_dir = tmp_path / "cocos_project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    evidence_dir.mkdir(parents=True)
+    audio_evidence = evidence_dir / "audio_feedback_polish_evidence.json"
+    audio_evidence.write_text(json.dumps({"go": True, "audioPlaybackVerified": True}), encoding="utf-8")
+    run_root = tmp_path / "pipeline_evidence"
+    ledger_root = run_root / "task_card_worker"
+    ledger_root.mkdir(parents=True)
+    (ledger_root / "same_project_patch_ledger.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "task_card_id": "tc_prior_audio_recovery",
+                        "status": "blocked",
+                        "failure_class": "blocked_after_three_attempts",
+                        "final_failure_class": "same_project_patch_parse_failed",
+                        "retry_exhausted": True,
+                        "receipt_id": "receipt_prior_audio_3",
+                        "child_run_id": "child_prior_audio_3",
+                        "child_attempt_id": "attempt_prior_audio_3",
+                        "worker_adapter": "opencode",
+                        "execution_visibility_mode": "human_visible_cli_enforced",
+                        "visible_cli_session": _visible_cli_session(tmp_path, "tc_prior_audio_recovery"),
+                        "attempts": [
+                            {
+                                "attempt_index": 3,
+                                "status": "failed",
+                                "failure_class": "same_project_patch_parse_failed",
+                                "receipt_id": "receipt_prior_audio_3",
+                                "child_run_id": "child_prior_audio_3",
+                                "child_attempt_id": "attempt_prior_audio_3",
+                                "worker_adapter": "opencode",
+                                "execution_visibility_mode": "human_visible_cli_enforced",
+                                "visible_cli_session": _visible_cli_session(tmp_path, "tc_prior_audio_recovery"),
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    card = TaskCard(
+        run_id="pipeline_prior_recover_exhausted",
+        task_card_id="tc_prior_audio_recovery",
+        title="Recover prior audio runtime",
+        description="Recover prior exhausted provider entry when artifacts and tests pass.",
+        goal="Recover prior exhausted provider entry when artifacts and tests pass.",
+        write_set=["workflow_runtime_evidence/audio_feedback_polish_evidence.json"],
+        read_set=["workflow_runtime_evidence/audio_feedback_polish_evidence.json"],
+        test_commands=["python -c \"print('ok')\""],
+        acceptance_criteria=["audio evidence exists", "tests pass"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        expected_artifacts=["workflow_runtime_evidence/audio_feedback_polish_evidence.json"],
+        blocking_conditions=["same_project_patch_parse_failed"],
+        model_guidance=["Do not reinvoke providers when the exhausted entry has valid artifacts."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced"},
+    )
+
+    def _unexpected_runner(**_kwargs):
+        raise AssertionError("provider should not be reinvoked when prior exhausted artifacts already pass")
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=run_root,
+        project_dir=project_dir,
+        pipeline_id="pipeline_prior_recover_exhausted",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=2,
+        task_card_runner=_unexpected_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert entry["status"] == "completed"
+    assert entry["prior_exhausted_entry_recovered"] is True
+    assert entry["deterministic_exhausted_provider_recovery"]["go"] is True
+    assert entry["mutation_result"]["final_test_status"] == "passed"
+
+
+def test_same_project_business_task_cards_excludes_persisted_machine_gate_repair_cards() -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import same_project_business_task_cards
+
+    def _card(task_card_id: str, metadata: dict[str, object]) -> TaskCard:
+        return TaskCard(
+            run_id="pipeline_business_filter",
+            task_card_id=task_card_id,
+            title=f"Task {task_card_id}",
+            description=f"Task {task_card_id}",
+            goal=f"Patch {task_card_id} in the same project with a real implementation.",
+            write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+            read_set=["brief.md"],
+            test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+            acceptance_criteria=["same project patched", "tests passed"],
+            evidence_requirements=["same_project_patch"],
+            blocking_conditions=["provider_timeout"],
+            model_guidance=["Use the same project only."],
+            execution_mode="same_project_patch",
+            risk_level="high",
+            status="active",
+            metadata=metadata,
+        )
+
+    cards = [
+        _card("tc_core", {}),
+        _card(
+            "tc_machine_gate_repair",
+            {"machine_gate_repair_card": True, "task_card_generation_source": "active_phase_machine_gate_repair"},
+        ),
+    ]
+
+    assert [card.task_card_id for card in same_project_business_task_cards(cards)] == ["tc_core"]
+
+
 def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_path: Path) -> None:
     from packages.contracts import TaskCard
     from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
@@ -1891,6 +2671,150 @@ def test_same_project_patch_ledger_retries_runtime_failures_until_success(tmp_pa
         "receipt_levels_2",
         "receipt_tc_levels_3",
     ]
+
+
+def test_same_project_patch_ledger_retries_adaptive_scope_timeout_with_fallback_adapter(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_scope_timeout",
+        task_card_id="tc_machine_gate_repair",
+        title="Repair Cocos machine gate",
+        description="Narrow and retry Cocos machine gate repair after adaptive wall timeout.",
+        goal="Patch the same project after adaptive wall timeout without losing receipt accounting.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["cocos_build_stderr.log"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["same project patched", "tests passed"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        blocking_conditions=["task_scope_too_large_after_adaptive_wall_timeout"],
+        model_guidance=["Retry with a narrower scope or fallback adapter."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced", "human_visible_cli_required": True},
+    )
+    adapter_calls: list[str | None] = []
+
+    def _runner(**kwargs):
+        adapter_calls.append(kwargs.get("adapter_name"))
+        attempt_index = len(adapter_calls)
+        if attempt_index == 1:
+            return {
+                "status": "failed",
+                "failure_class": "task_scope_too_large_after_adaptive_wall_timeout",
+                "receipt_id": "receipt_scope_1",
+                "worker_adapter": kwargs.get("adapter_name"),
+                "watchdog": {
+                    "timeout_type": "adaptive_wall_timeout_exhausted",
+                    "adaptive_wall_timeout_extension_count": 1,
+                    "adaptive_wall_timeout_exhausted": True,
+                },
+            }
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_scope_2",
+            "child_run_id": "run_scope_2",
+            "child_attempt_id": "attempt_scope_2",
+            "worker_adapter": kwargs.get("adapter_name"),
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/MachineGateRepair.ts"],
+                "final_test_status": "passed",
+            },
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_machine_gate_repair"),
+            "watchdog": {"stream_event_count": 3, "provider_output_event_count": 2, "material_progress_event_count": 1},
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_scope_timeout",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert adapter_calls == ["codex", "opencode"]
+    assert entry["status"] == "completed"
+    assert [attempt["failure_class"] for attempt in entry["attempts"]] == [
+        "task_scope_too_large_after_adaptive_wall_timeout",
+        None,
+    ]
+
+
+def test_same_project_patch_ledger_switches_adapter_after_patch_parse_failure(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import execute_same_project_task_cards
+
+    card = TaskCard(
+        run_id="pipeline_patch_parse_fallback",
+        task_card_id="tc_audio_parse",
+        title="Repair audio runtime",
+        description="Fallback to another patch-capable provider after unparseable patch output.",
+        goal="Patch the same project after provider output parse failure.",
+        write_set=["state/pipeline_runs/<run>/cocos_project/assets/scripts"],
+        read_set=["brief.md"],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        acceptance_criteria=["same project patched", "tests passed"],
+        evidence_requirements=["same_project_patch", "human_visible_cli_session"],
+        blocking_conditions=["same_project_patch_parse_failed"],
+        model_guidance=["Switch provider after parse failure before declaring exhaustion."],
+        provider_lane="codex_cli",
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+        metadata={"execution_visibility_mode": "human_visible_cli_enforced", "human_visible_cli_required": True},
+    )
+    adapter_calls: list[str | None] = []
+
+    def _runner(**kwargs):
+        adapter_calls.append(kwargs.get("adapter_name"))
+        if len(adapter_calls) == 1:
+            return {
+                "status": "failed",
+                "failure_class": "same_project_patch_parse_failed",
+                "receipt_id": "receipt_parse_1",
+                "child_run_id": "run_parse_1",
+                "child_attempt_id": "attempt_parse_1",
+                "worker_adapter": kwargs.get("adapter_name"),
+                "visible_cli_session": _visible_cli_session(tmp_path, "tc_audio_parse"),
+                "mutation_result": {"changed_files": [], "final_test_status": "patch_parse_failed"},
+            }
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_parse_2",
+            "child_run_id": "run_parse_2",
+            "child_attempt_id": "attempt_parse_2",
+            "worker_adapter": kwargs.get("adapter_name"),
+            "mutation_result": {
+                "changed_files": ["state/project/assets/scripts/AudioFeedbackController.ts"],
+                "final_test_status": "passed",
+            },
+            "visible_cli_session": _visible_cli_session(tmp_path, "tc_audio_parse"),
+        }
+
+    ledger = execute_same_project_task_cards(
+        root=tmp_path,
+        run_root=tmp_path / "pipeline_evidence",
+        project_dir=tmp_path / "cocos_project",
+        pipeline_id="pipeline_patch_parse_fallback",
+        db_path=tmp_path / "workflow.db",
+        task_cards=[card],
+        max_repair_attempts=1,
+        task_card_runner=_runner,
+    )
+
+    entry = ledger["entries"][0]
+    assert ledger["same_project_worker_patch_go"] is True
+    assert adapter_calls == ["codex", "opencode"]
+    assert entry["worker_adapter"] == "opencode"
+    assert [attempt["failure_class"] for attempt in entry["attempts"]] == ["same_project_patch_parse_failed", None]
 
 
 def test_same_project_patch_ledger_uses_fallback_adapter_after_prior_no_material_progress(tmp_path: Path) -> None:
@@ -2333,6 +3257,157 @@ def test_level_goal_fallback_and_chinese_ui_mojibake_gate() -> None:
         },
     )
     assert merged["commercial_feature_coverage"]["chineseUiPanelsVisible"] is True
+
+
+def test_collect_project_runtime_evidence_merges_engine_native_worker_schema_v2(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_worker import collect_project_runtime_evidence
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_dir = project_dir / "workflow_runtime_evidence"
+    content_dir = project_dir / "assets" / "resources" / "content"
+    evidence_dir.mkdir(parents=True)
+    content_dir.mkdir(parents=True)
+    (evidence_dir / "gameplay_semantic_evidence.raw.json").write_text(
+        json.dumps(
+            {
+                "board_state": {"rows": 10, "cols": 10},
+                "piece_shapes": [{"cells": [[0, 0]]}],
+                "candidate_tray": [{}, {}, {}],
+                "runtime_phase": True,
+                "semantic_traces": {"placement": True, "line_clear": True},
+                "model_transition_traces": [{"transition": "placement", "before": {}, "after": {}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "product_body_evidence.raw.json").write_text(
+        json.dumps(
+            {
+                "runtime_components": [
+                    {"component_name": "BlockPuzzleRuntimeController", "path": "assets/scripts/runtime/gameplay/BlockPuzzleRuntimeController.ts"},
+                    {"component_name": "BlockPuzzleModel", "path": "assets/scripts/runtime/model/BlockPuzzleModel.ts"},
+                ],
+                "scene_prefab_component_binding": {
+                    "launch_scene": {
+                        "scene_path": "assets/scene/block_puzzle_player_visible.scene",
+                        "scene_meta_path": "assets/scene/block_puzzle_player_visible.scene.meta",
+                        "settings_path": "settings/v2/packages/scene.json",
+                    },
+                    "live_component_instance": {
+                        "node_path": "Canvas",
+                        "component_type": "WorkflowBlockPuzzleSceneRuntime",
+                        "bound_runtime_model_components": ["BlockPuzzleRuntimeController", "BlockPuzzleModel"],
+                    },
+                    "prefab_paths": ["assets/prefabs/block_candidate_bar.prefab"],
+                    "player_visible_surfaces": [{"node_name": "HUD_简体中文"}, {"node_name": "Board_10x10_RuntimeGrid"}],
+                },
+                "baseline_only": False,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "scene_prefab_binding_evidence.json").write_text(
+        json.dumps(
+            {
+                "launch_scene_binding": {
+                    "scene_path": "assets/scene/block_puzzle_player_visible.scene",
+                    "scene_meta_path": "assets/scene/block_puzzle_player_visible.scene.meta",
+                    "settings_path": "settings/v2/packages/scene.json",
+                },
+                "live_component_binding": {
+                    "valid": True,
+                    "component_instance_type": "WorkflowBlockPuzzleSceneRuntime",
+                    "runtime_component_node_path": "Canvas",
+                    "bound_runtime_model_components": ["BlockPuzzleRuntimeController", "BlockPuzzleModel"],
+                },
+                "player_visible_surfaces": {
+                    "hud_shell": {"node_name": "HUD_简体中文"},
+                    "board_shell": {"node_name": "Board_10x10_RuntimeGrid"},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (content_dir / "level_goal_matrix.json").write_text(
+        json.dumps(
+            {
+                "content_matrix_state_proof": {
+                    "classic_mode": {"revive_limit_per_run": 3},
+                    "authored_level_count": 8,
+                },
+                "levels": [
+                    {
+                        "level_id": index,
+                        "title_zh_cn": f"第{index}关",
+                        "target_score": index * 100,
+                        "color_targets": {"red": index},
+                        "failure_condition": "game_over_before_goal_complete",
+                    }
+                    for index in range(1, 9)
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "commercial_shop_skin_gallery_evidence.json").write_text(
+        json.dumps(
+            {
+                "gallery_unlock_trace": [{"reward_id": "gallery_1", "unlocks_skin_id": "skin_1"}],
+                "shop_skin_gallery_state_proof": {
+                    "default_owned_skin": "skin_default",
+                    "unlockable_skin_count": 1,
+                    "gallery_reward_count": 1,
+                    "persistent_fields": ["ownedSkinIds", "selectedSkinId"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "chinese_ui_panels_evidence.json").write_text(
+        json.dumps(
+            {
+                "chinese_ui_panels": {
+                    "hud_panel": {"title": "对局界面", "labels": ["分数", "最高分"]},
+                    "shop_panel": {"title": "商店", "labels": ["购买", "关闭"]},
+                    "gallery_panel": {"title": "收藏图鉴", "labels": ["拼图碎片", "返回"]},
+                    "settings_panel": {"title": "设置", "labels": ["音乐", "音效"]},
+                    "failure_revive_panel": {"title": "游戏结束", "labels": ["复活", "再来一局"]},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (evidence_dir / "audio_asset_manifest_evidence.json").write_text(
+        json.dumps({"audio_assets": [{"id": "bgm"}], "generatedAudioAssets": True}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "audio_feedback_polish_evidence.json").write_text(
+        json.dumps({"audio_runtime_evidence": {"runtime_bound": True, "event_bindings_count": 4}}),
+        encoding="utf-8",
+    )
+    (evidence_dir / "feedback_animation_evidence.json").write_text(
+        json.dumps({"feedback_animation_evidence": {"runtime_bound": True, "binding_count": 4, "feedback_types": ["failure", "success"]}}),
+        encoding="utf-8",
+    )
+
+    result = collect_project_runtime_evidence(
+        project_dir=project_dir,
+        creator_exe=tmp_path / "CocosCreator.exe",
+        require_build=False,
+        require_playtest=False,
+    )
+
+    assert result["product_body_evidence"]["go"] is True
+    assert result["product_depth_evidence"]["go"] is True
+    assert result["commercial_feature_coverage"]["shopOwnershipStates"] is True
+    assert result["commercial_feature_coverage"]["skinEquippedVisualChange"] is True
+    assert result["commercial_feature_coverage"]["chineseUiPanelsVisible"] is True
+    assert result["commercial_feature_coverage"]["failureReviveFeedback"] is True
+    assert result["product_depth_evidence"]["source"]["distinct_level_goal_count"] == 8
 
 
 def test_same_project_patch_ledger_retries_review_failures_until_success(tmp_path: Path) -> None:
@@ -3954,6 +5029,46 @@ def test_task_card_artifact_validation_rejects_missing_referenced_scene_prefab(t
     assert (project_dir / "assets/scene/commercial.scene").as_posix() in validation["referenced_missing_artifacts"]
 
 
+def test_task_card_artifact_validation_reports_concatenated_json_artifact(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _materialize_task_card,
+        _task_card_artifact_validation,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "machine_gate_repair_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text('{"attempt": 1}\n{"attempt": 2}\n', encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_artifact_check",
+        task_card_id="tc_machine_gate_repair",
+        title="Machine repair",
+        description="Machine repair evidence must stay parseable JSON.",
+        goal="Repair machine evidence.",
+        write_set=["workflow_runtime_evidence/**"],
+        read_set=[],
+        expected_artifacts=["workflow_runtime_evidence/machine_gate_repair_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/machine_gate_repair_evidence.json"],
+        acceptance_criteria=["valid JSON evidence"],
+        blocking_conditions=["expected_json_artifact_invalid"],
+        model_guidance=[],
+        execution_mode="same_project_patch",
+        risk_level="high",
+        status="active",
+    )
+
+    materialized = _materialize_task_card(card, project_dir=project_dir, pipeline_id=card.run_id)
+    validation = _task_card_artifact_validation(card, materialized=materialized, project_dir=project_dir)
+
+    assert validation["go"] is False
+    assert "expected_json_artifact_invalid" in validation["blockers"]
+    assert evidence_path.as_posix() in validation["invalid_json_artifacts"]
+    assert validation["invalid_json_reasons"][0]["reason"] == "multiple_top_level_json_documents"
+    assert validation["invalid_json_reasons"][0]["json_document_count"] == 2
+    assert "replace the artifact with exactly one JSON object" in validation["invalid_json_reasons"][0]["repair_hint"]
+
+
 def test_task_card_artifact_validation_rejects_contract_only_scene_and_launch_miss(tmp_path: Path) -> None:
     from packages.contracts import TaskCard
     from packages.contributions.pipelines.commercial_game_task_worker import (
@@ -4463,6 +5578,13 @@ def test_task_card_retry_context_includes_artifact_validation_details(tmp_path: 
             "artifact_validation": {
                 "go": False,
                 "blockers": ["referenced_artifact_missing"],
+                "invalid_json_reasons": [
+                    {
+                        "path": "D:/game/workflow_runtime_evidence/machine_gate_repair_evidence.json",
+                        "reason": "multiple_top_level_json_documents",
+                        "json_document_count": 2,
+                    }
+                ],
                 "referenced_missing_artifacts": ["D:/game/assets/scene/WorkflowCommercialGame.scene"],
             }
         },
@@ -4473,6 +5595,274 @@ def test_task_card_retry_context_includes_artifact_validation_details(tmp_path: 
     assert "Previous Artifact Validation Failure" in text
     assert "WorkflowCommercialGame.scene" in text
     assert "settings/v2/packages/scene.json" in text
+    assert "multiple_top_level_json_documents" in text
+    assert "do not append a second JSON object" in text
+    assert "do not emit a delete-plus-add diff" in text
+
+
+def test_resume_task_card_markdown_preserves_artifact_requirements(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_task_card_resume import _task_card_from_markdown
+
+    card_path = tmp_path / "machine_repair.md"
+    card_path.write_text(
+        "# Repair Cocos build\n\n"
+        "## Goal\n\n"
+        "Repair the same Cocos project.\n\n"
+        "## Acceptance Criteria\n\n"
+        "- next machine gate passes\n\n"
+        "## Evidence Requirements\n\n"
+        "- fresh_worker_receipt\n"
+        "- workflow_runtime_evidence/machine_gate_repair_evidence.json\n\n"
+        "## Blocking Conditions\n\n"
+        "- invalid_json_artifact\n\n"
+        "## Model Guidance\n\n"
+        "- update JSON in place as one document\n",
+        encoding="utf-8",
+    )
+
+    card = _task_card_from_markdown(
+        card_path,
+        pipeline_id="pipeline_resume",
+        task_card_ref="tc_resume",
+        adapter="codex",
+        execution_visibility_mode="human_visible_cli_enforced",
+        write_set=["D:/game/workflow_runtime_evidence/**"],
+        read_set=[],
+        test_commands=[],
+    )
+
+    assert card.goal == "Repair the same Cocos project."
+    assert "workflow_runtime_evidence/machine_gate_repair_evidence.json" in card.evidence_requirements
+    assert "workflow_runtime_evidence/machine_gate_repair_evidence.json" in card.expected_artifacts
+    assert card.metadata["human_visible_cli_required"] is True
+
+
+def test_resume_same_project_task_card_retries_invalid_artifacts(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import resume_same_project_task_card
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "generic_invalid_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text('{"first": true}\n{"second": true}\n', encoding="utf-8")
+    card_path = tmp_path / "machine_repair.md"
+    card_path.write_text("# Repair Cocos build\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_resume_retry",
+        task_card_id="tc_resume_retry",
+        title="Repair Cocos build",
+        description="Repair invalid machine evidence.",
+        goal="Repair invalid machine evidence.",
+        write_set=[(project_dir / "workflow_runtime_evidence" / "**").as_posix()],
+        read_set=[],
+        test_commands=[],
+        expected_artifacts=["workflow_runtime_evidence/generic_invalid_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/generic_invalid_evidence.json"],
+        acceptance_criteria=["artifact validation passes"],
+        blocking_conditions=["expected_json_artifact_invalid"],
+        model_guidance=["update JSON in place as one document"],
+        execution_mode="same_project_patch",
+        provider_lane="codex",
+        risk_level="high",
+    )
+    seen_task_card_texts: list[str] = []
+
+    def _runner(**kwargs):
+        seen_task_card_texts.append(Path(kwargs["task_card_path"]).read_text(encoding="utf-8"))
+        attempt_no = len(seen_task_card_texts)
+        if attempt_no == 2:
+            evidence_path.write_text('{"go": true}\n', encoding="utf-8")
+        return {
+            "status": "completed",
+            "receipt_id": f"receipt_{attempt_no}",
+            "child_run_id": f"run_{attempt_no}",
+            "child_attempt_id": f"attempt_{attempt_no}",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": [evidence_path.as_posix()],
+                "final_test_status": "passed",
+                "applied_patch_hash": f"hash_{attempt_no}",
+            },
+            "changed_files": [evidence_path.as_posix()],
+            "final_test_status": "passed",
+            "review_decision": "pass",
+            "evidence_id": f"evidence_{attempt_no}",
+        }
+
+    result = resume_same_project_task_card(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=project_dir,
+        pipeline_id="pipeline_resume_retry",
+        task_card=card,
+        task_card_path=card_path,
+        write_set=card.write_set,
+        read_set=[],
+        test_commands=[],
+        max_fix_iterations=1,
+        adapter_name="codex",
+        execution_visibility_mode=None,
+        task_card_runner=_runner,
+    )
+
+    assert result["status"] == "completed"
+    assert result["artifact_validation"]["go"] is True
+    assert len(seen_task_card_texts) == 2
+    assert "Previous Artifact Validation Failure" in seen_task_card_texts[1]
+    assert "expected_json_artifact_invalid" in seen_task_card_texts[1]
+
+
+def test_resume_same_project_task_card_repairs_machine_gate_json_artifact_deterministically(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import resume_same_project_task_card
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "machine_gate_repair_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text('{"first": true}\n{"second": true}\n', encoding="utf-8")
+    card_path = tmp_path / "machine_repair.md"
+    card_path.write_text("# Repair Cocos build\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_deterministic_json_repair",
+        task_card_id="tc_machine_gate_json_repair",
+        title="Repair Cocos build",
+        description="Repair invalid machine evidence.",
+        goal="Repair invalid machine evidence.",
+        write_set=[(project_dir / "workflow_runtime_evidence" / "**").as_posix()],
+        read_set=[],
+        test_commands=["python -m pytest tests/test_commercial_game_evidence_contracts.py -q"],
+        expected_artifacts=["workflow_runtime_evidence/machine_gate_repair_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/machine_gate_repair_evidence.json"],
+        acceptance_criteria=["artifact validation passes"],
+        blocking_conditions=["expected_json_artifact_invalid"],
+        model_guidance=["update JSON in place as one document"],
+        execution_mode="same_project_patch",
+        provider_lane="codex",
+        risk_level="high",
+    )
+    seen_task_card_texts: list[str] = []
+
+    def _runner(**kwargs):
+        seen_task_card_texts.append(Path(kwargs["task_card_path"]).read_text(encoding="utf-8"))
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_1",
+            "child_run_id": "run_1",
+            "child_attempt_id": "attempt_1",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": [evidence_path.as_posix()],
+                "final_test_status": "passed",
+                "applied_patch_hash": "hash_1",
+            },
+            "changed_files": [evidence_path.as_posix()],
+            "final_test_status": "passed",
+            "review_decision": "pass",
+            "evidence_id": "evidence_1",
+        }
+
+    result = resume_same_project_task_card(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=project_dir,
+        pipeline_id="pipeline_deterministic_json_repair",
+        task_card=card,
+        task_card_path=card_path,
+        write_set=card.write_set,
+        read_set=[],
+        test_commands=card.test_commands,
+        max_fix_iterations=1,
+        adapter_name="codex",
+        execution_visibility_mode=None,
+        task_card_runner=_runner,
+    )
+
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert result["status"] == "completed"
+    assert result["artifact_validation"]["go"] is True
+    assert result["artifact_validation"]["deterministic_artifact_repair"]["repaired_artifacts"] == [
+        evidence_path.resolve().as_posix()
+    ]
+    assert payload["schema_version"] == "machine_gate_repair_evidence_v2"
+    assert payload["artifact_repair"]["method"] == "workflow_deterministic_json_artifact_rewrite"
+    assert len(seen_task_card_texts) == 1
+
+
+def test_resume_same_project_task_card_repairs_cocos_ecosystem_json_append(tmp_path: Path) -> None:
+    from packages.contracts import TaskCard
+    from packages.contributions.pipelines.commercial_game_task_worker import resume_same_project_task_card
+
+    project_dir = tmp_path / "cocos_project"
+    evidence_path = project_dir / "workflow_runtime_evidence" / "cocos_ecosystem_bridge_evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        '{"schema_version":"cocos_ecosystem_bridge_evidence_v3","ecosystem_integration_go":true}\n'
+        '{"schema_version":"legacy_appended_evidence"}\n',
+        encoding="utf-8",
+    )
+    card_path = tmp_path / "machine_repair.md"
+    card_path.write_text("# Repair Cocos bridge evidence\n", encoding="utf-8")
+    card = TaskCard(
+        run_id="pipeline_ecosystem_json_repair",
+        task_card_id="tc_ecosystem_json_repair",
+        title="Repair Cocos bridge evidence",
+        description="Repair invalid ecosystem evidence.",
+        goal="Repair invalid ecosystem evidence.",
+        write_set=[(project_dir / "workflow_runtime_evidence" / "**").as_posix()],
+        read_set=[],
+        test_commands=[],
+        expected_artifacts=["workflow_runtime_evidence/cocos_ecosystem_bridge_evidence.json"],
+        evidence_requirements=["workflow_runtime_evidence/cocos_ecosystem_bridge_evidence.json"],
+        acceptance_criteria=["artifact validation passes"],
+        blocking_conditions=["expected_json_artifact_invalid"],
+        model_guidance=["update JSON in place as one document"],
+        execution_mode="same_project_patch",
+        provider_lane="codex",
+        risk_level="high",
+    )
+
+    def _runner(**kwargs):
+        return {
+            "status": "completed",
+            "receipt_id": "receipt_1",
+            "child_run_id": "run_1",
+            "child_attempt_id": "attempt_1",
+            "worker_adapter": "codex",
+            "mutation_result": {
+                "changed_files": [evidence_path.as_posix()],
+                "final_test_status": "passed",
+                "applied_patch_hash": "hash_1",
+            },
+            "changed_files": [evidence_path.as_posix()],
+            "final_test_status": "passed",
+            "review_decision": "pass",
+            "evidence_id": "evidence_1",
+        }
+
+    result = resume_same_project_task_card(
+        root=tmp_path,
+        db_path=tmp_path / "workflow.db",
+        project_dir=project_dir,
+        pipeline_id="pipeline_ecosystem_json_repair",
+        task_card=card,
+        task_card_path=card_path,
+        write_set=card.write_set,
+        read_set=[],
+        test_commands=[],
+        max_fix_iterations=1,
+        adapter_name="codex",
+        execution_visibility_mode=None,
+        task_card_runner=_runner,
+    )
+
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert result["status"] == "completed"
+    assert result["artifact_validation"]["go"] is True
+    assert result["artifact_validation"]["deterministic_artifact_repair"]["repaired_artifacts"] == [
+        evidence_path.resolve().as_posix()
+    ]
+    assert payload["schema_version"] == "cocos_ecosystem_bridge_evidence_v3"
+    assert payload["artifact_repair"]["method"] == "workflow_first_valid_json_document_rewrite"
 
 
 def test_task_card_attempt_record_includes_artifact_validation_details() -> None:

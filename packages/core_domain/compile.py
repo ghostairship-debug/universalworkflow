@@ -524,7 +524,7 @@ def compile_run(
     )
     env_passthrough = _execution_env_passthrough(os.environ)
     if env_passthrough:
-        task_packet = task_packet.model_copy(update={"env": {**task_packet.env, **env_passthrough}})
+        task_packet = task_packet.model_copy(update={"env": {**env_passthrough, **task_packet.env}})
     handoff = HandoffLite(
         run_id=run_id,
         from_phase_id=compile_phase.phase_id,

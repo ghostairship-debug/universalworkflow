@@ -11,6 +11,21 @@ from packages.core_domain.execution_profiles import build_effective_execution_de
 
 DEFAULT_CONFIG_FILE_NAME = "workflow.toml"
 WORKFLOW_ROOT_ENV_KEY = "WORKFLOW_WORKSPACE_ROOT"
+OPENAI_FAMILY_MODEL_ENV_KEYS = {
+    "WORKFLOW_AGENT_MODEL",
+    "WORKFLOW_CODEX_MODEL",
+    "WORKFLOW_OPENAI_MODEL",
+    "WORKFLOW_DOGFOOD_MODEL",
+    "WORKFLOW_DOGFOOD_CODEX_MODEL",
+    "WORKFLOW_ADAPTIVE_COMPLEX_MODEL",
+    "WORKFLOW_LANGCHAIN_AGENT_MODEL",
+    "WORKFLOW_RUNTIME_GATEWAY_MODEL",
+}
+LEGACY_OPENAI_MODEL_UPGRADES = {
+    "gpt-5.4": "gpt-5.5",
+    "gpt-5.4-mini": "gpt-5.5",
+    "openai/gpt-5.4": "openai/gpt-5.5",
+}
 
 
 @dataclass(frozen=True)
@@ -81,6 +96,18 @@ def _coerce_int(value: Any) -> int:
     return int(str(value).strip())
 
 
+def _normalize_legacy_model_environment(environment: dict[str, str]) -> dict[str, str]:
+    normalized = dict(environment)
+    for env_key in OPENAI_FAMILY_MODEL_ENV_KEYS:
+        raw_value = normalized.get(env_key)
+        if raw_value is None:
+            continue
+        upgraded = LEGACY_OPENAI_MODEL_UPGRADES.get(str(raw_value).strip().lower())
+        if upgraded:
+            normalized[env_key] = upgraded
+    return normalized
+
+
 def _find_pyproject_path(*, cwd: str | Path | None = None) -> Path | None:
     current = Path(cwd or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
@@ -147,7 +174,7 @@ def build_effective_config(
     env: dict[str, str] | None = None,
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
-    environment = dict(env or os.environ)
+    environment = _normalize_legacy_model_environment(dict(env or os.environ))
     config_path, raw_config = load_raw_workflow_config(
         explicit_path=explicit_config_path,
         env=environment,
@@ -210,7 +237,7 @@ def build_effective_config(
                 env_key="WORKFLOW_OPENAI_MODEL",
                 config=raw_config,
                 config_key="runtime_gateway.openai_model",
-                default="gpt-5.4-mini",
+                default="gpt-5.5",
                 coerce=str,
             ),
             "openai_reasoning_effort": _resolve_value(
@@ -303,7 +330,7 @@ def build_effective_config(
                 env_key="WORKFLOW_AGENT_MODEL",
                 config=raw_config,
                 config_key="agent.model",
-                default="gpt-5.4-mini",
+                default="gpt-5.5",
                 coerce=str,
             )
         },

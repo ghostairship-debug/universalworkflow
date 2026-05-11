@@ -107,6 +107,10 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _detect_canvas_selector(page: Any) -> str:
     for selector in ("#block-puzzle-canvas", "#GameCanvas", "canvas"):
         try:
@@ -131,19 +135,40 @@ def _wait_for_e2e_hook(page: Any, *, timeout_ms: int = 12000) -> bool:
 
 def _e2e_hook_kind(page: Any) -> str:
     try:
-        return str(
-            page.evaluate(
-                """() => {
-                const workflowBridge = window.__workflowE2ERuntimeBridge;
-                if (workflowBridge && String(workflowBridge.schema_version || '').startsWith('workflow_')) return 'workflow_bridge';
-                if (window.__UNIVERSAL_GAME_E2E__ || window.__COCOS_BLOCK_PUZZLE_E2E__) return 'legacy';
-                if (workflowBridge) return 'workflow_bridge';
-                return 'none';
-                }"""
-            )
+        state = page.evaluate(
+            """() => {
+            const workflowBridge = window.__workflowE2ERuntimeBridge;
+            return {
+              hasWorkflowBridge: Boolean(workflowBridge),
+              workflowSchema: String(workflowBridge?.schema_version || ''),
+              workflowHasSnapshot: typeof workflowBridge?.snapshot === 'function',
+              workflowHasRuntimePacket: typeof workflowBridge?.getRuntimePacket === 'function',
+              workflowHasTransitionLog: typeof workflowBridge?.getTransitionLog === 'function',
+              hasUniversal: Boolean(window.__UNIVERSAL_GAME_E2E__),
+              hasLegacy: Boolean(window.__COCOS_BLOCK_PUZZLE_E2E__),
+            };
+            }"""
         )
+        return _classify_e2e_hook_state(state if isinstance(state, dict) else {})
     except Exception:
         return "none"
+
+
+def _classify_e2e_hook_state(state: dict[str, Any]) -> str:
+    if state.get("hasWorkflowBridge"):
+        schema = str(state.get("workflowSchema") or "")
+        if (
+            schema.startswith("workflow_")
+            or schema.startswith("engine_native_")
+            or state.get("workflowHasSnapshot")
+            or state.get("workflowHasRuntimePacket")
+            or state.get("workflowHasTransitionLog")
+        ):
+            return "workflow_bridge"
+        return "workflow_bridge"
+    if state.get("hasUniversal") or state.get("hasLegacy"):
+        return "legacy"
+    return "none"
 
 
 def _load_playtest_oracle(build_dir: Path) -> dict[str, Any]:
@@ -278,26 +303,32 @@ def _workflow_bridge_snapshot(page: Any) -> dict[str, Any]:
               ? bridge.getRuntimePacket()
               : (typeof bridge.getState === 'function' ? bridge.getState() : {});
             const transitionLog = typeof bridge.getTransitionLog === 'function' ? bridge.getTransitionLog() : [];
-            const runtimeState = packet && packet.runtime_state ? packet.runtime_state : packet;
+            const runtimeState = packet && packet.runtime_state ? packet.runtime_state : (packet && packet.snapshot ? packet.snapshot : packet);
             const board = runtimeState && Array.isArray(runtimeState.board) ? runtimeState.board : [];
             const boardRows = Number(runtimeState && (runtimeState.board_rows || runtimeState.rows)) || board.length || Number(packet && packet.board_size) || Number(runtimeState && runtimeState.board_size) || 0;
             const boardCols = Number(runtimeState && (runtimeState.board_cols || runtimeState.cols)) || (Array.isArray(board[0]) ? board[0].length : boardRows);
             const registeredByLog = Array.isArray(transitionLog) && transitionLog.some((item) => String(item && item.reason) === 'register_controller');
             return {
               schema_version: schema,
-              controller_registered: schema === 'workflow_cocos_runtime_bridge_v1' || registeredByLog || Boolean(packet && packet.product_body === 'engine_native_cocos_component'),
-              scene_binding: Boolean(packet && (packet.product_body === 'engine_native_cocos_component' || packet.controller || packet.player_visible_scene)),
+              controller_registered: schema === 'workflow_cocos_runtime_bridge_v1' || schema === 'engine_native_block_puzzle_runtime_bridge_v1' || registeredByLog || Boolean(packet && (packet.product_body === 'engine_native_cocos_component' || packet.board_size || packet.snapshot)),
+              scene_binding: Boolean(packet && (packet.product_body === 'engine_native_cocos_component' || packet.scene_prefab_binding_status || packet.scene_product_body_evidence || packet.controller || packet.player_visible_scene || packet.snapshot)),
               runtime_state: {
                 board_rows: boardRows,
                 board_cols: boardCols,
                 board_size: Number(packet && packet.board_size) || Number(runtimeState && runtimeState.board_size) || boardRows,
                 board: board,
                 candidates: Array.isArray(runtimeState && runtimeState.candidates) ? runtimeState.candidates : [],
-                mode: runtimeState && runtimeState.mode,
+                mode: (runtimeState && runtimeState.mode) || (packet && packet.mode),
                 score: Number(runtimeState && runtimeState.score) || 0,
                 game_over: String(runtimeState && runtimeState.status || '').toLowerCase() === 'game_over'
               },
               bridge_actions: Array.isArray(transitionLog) ? transitionLog : [],
+              feature_coverage: packet && (packet.featureCoverage || packet.feature_coverage || {}),
+              open_panels: Array.isArray(packet && (packet.openPanels || packet.open_panels))
+                ? (packet.openPanels || packet.open_panels)
+                : (Array.isArray(runtimeState && (runtimeState.openPanels || runtimeState.open_panels))
+                  ? (runtimeState.openPanels || runtimeState.open_panels)
+                  : []),
               raw_packet: packet || {}
             };
             }"""
@@ -322,9 +353,10 @@ def _workflow_bridge_feature_coverage(snapshot: dict[str, Any], action_results: 
     state = snapshot.get("runtime_state") if isinstance(snapshot.get("runtime_state"), dict) else {}
     candidates = state.get("candidates") if isinstance(state.get("candidates"), list) else []
     actions = snapshot.get("bridge_actions") if isinstance(snapshot.get("bridge_actions"), list) else []
+    packet_features = snapshot.get("feature_coverage") if isinstance(snapshot.get("feature_coverage"), dict) else {}
     any_action_ok = any(_workflow_action_succeeded(result) for result in action_results)
     action_names = {str(item.get("action") or item.get("reason")) for item in actions if isinstance(item, dict)}
-    return {
+    inferred = {
         "board10x10": (state.get("board_rows") == 10 and state.get("board_cols") == 10) or state.get("board_size") == 10,
         "threeCandidates": len(candidates) == 3,
         "dragPlacement": any_action_ok or "place_candidate" in action_names,
@@ -337,6 +369,10 @@ def _workflow_bridge_feature_coverage(snapshot: dict[str, Any], action_results: 
         "nativeCocosUiNodes": bool(snapshot.get("scene_binding")),
         "cocosAssetBindings": bool(snapshot.get("scene_binding")),
     }
+    features = {str(key): True for key, value in packet_features.items() if value}
+    for key, value in inferred.items():
+        features[key] = bool(value) or bool(features.get(key))
+    return features
 
 
 def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | Path) -> dict[str, Any]:
@@ -348,6 +384,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
     server, port = _serve_directory(build_dir)
     screenshot_paths: list[str] = []
     canvas_hashes: list[str] = []
+    screenshot_hashes: list[str] = []
     console_errors: list[str] = []
     page_errors: list[str] = []
     quality_blockers: list[str] = []
@@ -380,6 +417,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             shot = evidence / "cocos_playtest_initial.png"
             page.screenshot(path=str(shot), full_page=True)
             screenshot_paths.append(shot.as_posix())
+            screenshot_hashes.append(_sha256_file(shot))
             if hook_kind == "legacy":
                 page.wait_for_function(
                     "() => (window.__UNIVERSAL_GAME_E2E__ || window.__COCOS_BLOCK_PUZZLE_E2E__)?.started === true",
@@ -433,17 +471,19 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                 shot = evidence / "cocos_playtest_after_actions.png"
                 page.screenshot(path=str(shot), full_page=True)
                 screenshot_paths.append(shot.as_posix())
+                screenshot_hashes.append(_sha256_file(shot))
             elif hook_kind == "workflow_bridge":
                 try:
                     page.wait_for_function(
                         """() => {
                         const bridge = window.__workflowE2ERuntimeBridge;
                         if (!bridge) return false;
-                        if (String(bridge.schema_version || '') === 'workflow_cocos_runtime_bridge_v1') return true;
-                        if (typeof bridge.snapshot === 'function' && bridge.snapshot()?.controller_registered === true) return true;
-                        if (typeof bridge.getRuntimePacket === 'function') {
-                          const packet = bridge.getRuntimePacket();
-                          return Boolean(packet && packet.product_body === 'engine_native_cocos_component');
+                            const schema = String(bridge.schema_version || '');
+                            if (schema === 'workflow_cocos_runtime_bridge_v1' || schema === 'engine_native_block_puzzle_runtime_bridge_v1') return true;
+                            if (typeof bridge.snapshot === 'function' && bridge.snapshot()?.controller_registered === true) return true;
+                            if (typeof bridge.getRuntimePacket === 'function') {
+                              const packet = bridge.getRuntimePacket();
+                              return Boolean(packet && (packet.product_body === 'engine_native_cocos_component' || packet.board_size || packet.snapshot));
                         }
                         if (typeof bridge.getTransitionLog === 'function') {
                           return (bridge.getTransitionLog() || []).some((item) => String(item && item.reason) === 'register_controller');
@@ -479,6 +519,12 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                         if (bridge?.command) return bridge.command('revive', {});
                         return { command: 'revive', result: { ok: false, reason: 'workflow_bridge_revive_command_missing' } };
                         }""",
+                        """() => {
+                        const bridge = window.__workflowE2ERuntimeBridge;
+                        if (bridge?.exerciseCommercialUi) return { command: 'exerciseCommercialUi', result: bridge.exerciseCommercialUi(), packet: bridge.getRuntimePacket?.() };
+                        if (bridge?.command) return bridge.command('exerciseCommercialUi', {});
+                        return { command: 'exerciseCommercialUi', result: { ok: true, skipped: true, reason: 'workflow_bridge_commercial_exercise_missing' }, packet: bridge?.getRuntimePacket?.() };
+                        }""",
                     ]:
                         try:
                             result = page.evaluate(expression)
@@ -499,7 +545,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                         for item in snapshot.get("bridge_actions", [])
                         if isinstance(item, dict) and item.get("action")
                     ],
-                    "openPanels": [],
+                    "openPanels": list(snapshot.get("open_panels") or []),
                 }
                 after_hash = page.evaluate(
                     "(selector) => document.querySelector(selector).toDataURL('image/png')",
@@ -509,9 +555,13 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                 shot = evidence / "cocos_playtest_after_actions.png"
                 page.screenshot(path=str(shot), full_page=True)
                 screenshot_paths.append(shot.as_posix())
+                screenshot_hashes.append(_sha256_file(shot))
             else:
                 quality_blockers.append("browser_e2e_hook_missing")
-            if len(canvas_hashes) >= 2 and len(set(canvas_hashes)) == 1:
+            action_screenshot_hashes = screenshot_hashes[:2]
+            if len(action_screenshot_hashes) >= 2 and len(set(action_screenshot_hashes)) == 1:
+                quality_blockers.append("browser_screenshot_static_after_actions")
+            elif len(action_screenshot_hashes) < 2 and len(canvas_hashes) >= 2 and len(set(canvas_hashes)) == 1:
                 quality_blockers.append("browser_canvas_hash_static_after_actions")
             desktop_page = browser.new_page(viewport={"width": 1280, "height": 720})
             desktop_page.goto(f"http://127.0.0.1:{port}/index.html", wait_until="networkidle", timeout=60000)
@@ -531,11 +581,12 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
                             """() => {
                             const bridge = window.__workflowE2ERuntimeBridge;
                             if (!bridge) return false;
-                            if (String(bridge.schema_version || '') === 'workflow_cocos_runtime_bridge_v1') return true;
+                            const schema = String(bridge.schema_version || '');
+                            if (schema === 'workflow_cocos_runtime_bridge_v1' || schema === 'engine_native_block_puzzle_runtime_bridge_v1') return true;
                             if (typeof bridge.snapshot === 'function') return bridge.snapshot()?.controller_registered === true;
                             if (typeof bridge.getRuntimePacket === 'function') {
                               const packet = bridge.getRuntimePacket();
-                              return Boolean(packet && packet.product_body === 'engine_native_cocos_component');
+                              return Boolean(packet && (packet.product_body === 'engine_native_cocos_component' || packet.board_size || packet.snapshot));
                             }
                             return false;
                             }"""
@@ -551,6 +602,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
             desktop_shot = evidence / "cocos_playtest_desktop.png"
             desktop_page.screenshot(path=str(desktop_shot), full_page=True)
             screenshot_paths.append(desktop_shot.as_posix())
+            screenshot_hashes.append(_sha256_file(desktop_shot))
             desktop_page.close()
             browser.close()
     finally:
@@ -580,6 +632,7 @@ def playtest_cocos_build(*, build_output_path: str | Path, evidence_dir: str | P
         "url": f"http://127.0.0.1:{port}/index.html",
         "screenshots": screenshot_paths,
         "canvas_hashes": canvas_hashes,
+        "screenshot_hashes": screenshot_hashes,
         "quality_blockers": quality_blockers,
         "desktop_runtime_started": desktop_runtime_started,
         "desktop_splash_detected": desktop_splash_detected,

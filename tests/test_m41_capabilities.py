@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from packages.contracts import AgentRoleType, MutationContract, MutationMode, TaskKind, TaskPacket
 from packages.core_domain.cluster_router import ClusterRouter
+from packages.core_domain.config import build_effective_config
 from packages.core_domain.db import migrate
 from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.core_domain.interaction_catalog import list_default_cluster_templates
@@ -64,6 +65,24 @@ def _packet(tmp_path: Path, *, env: dict[str, str] | None = None, artifact: str 
         },
         expected_artifacts=[artifact],
     )
+
+
+def test_legacy_openai_family_model_env_values_upgrade_to_gpt55() -> None:
+    effective = build_effective_config(
+        env={
+            "WORKFLOW_AGENT_MODEL": "gpt-5.4-mini",
+            "WORKFLOW_CODEX_MODEL": "gpt-5.4",
+            "WORKFLOW_OPENAI_MODEL": "gpt-5.4-mini",
+            "WORKFLOW_DOGFOOD_MODEL": "gpt-5.4",
+            "WORKFLOW_ADAPTIVE_COMPLEX_MODEL": "gpt-5.4",
+        }
+    )
+
+    assert effective["agent"]["model"] == "gpt-5.5"
+    assert effective["codex"]["model"] == "gpt-5.5"
+    assert effective["runtime_gateway"]["openai_model"] == "gpt-5.5"
+    assert effective["dogfood"]["model"] == "gpt-5.5"
+    assert effective["adaptive_llm_routing"]["complex_model"] == "gpt-5.5"
 
 
 def test_dogfood_strong_model_overrides_core_agent_models(tmp_path: Path, monkeypatch) -> None:
@@ -1116,7 +1135,7 @@ def test_codex_command_places_exec_options_before_prompt(tmp_path: Path) -> None
     packet = _packet(
         tmp_path,
         env={
-            "WORKFLOW_CODEX_MODEL": "gpt-5.4",
+            "WORKFLOW_CODEX_MODEL": "gpt-5.5",
             "WORKFLOW_CODEX_REASONING_EFFORT": "xhigh",
         },
         artifact="codex_order.md",
@@ -1136,7 +1155,7 @@ def test_codex_command_places_exec_options_before_prompt(tmp_path: Path) -> None
 def test_codex_command_creates_artifact_parent_directory(tmp_path: Path) -> None:
     packet = _packet(
         tmp_path,
-        env={"WORKFLOW_CODEX_MODEL": "gpt-5.4"},
+        env={"WORKFLOW_CODEX_MODEL": "gpt-5.5"},
         artifact="nested/codex/artifact.md",
     )
     adapter = CodexAdapter(runner=_fake_success_runner, executable=sys.executable)

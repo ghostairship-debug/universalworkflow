@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import inspect
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from packages.worker_adapters.subprocess_support import (
     TIMEOUT_EXIT_CODE,
@@ -244,6 +245,35 @@ def run_task_card_patch_via_workflowctl(
         "recoverable_suggestion": executed.get("recoverable_suggestion"),
         "command": run_cmd,
     }
+    ts_sanity = _typescript_duplicate_declaration_check(changed_files)
+    if result["status"] == "completed" and not ts_sanity["go"]:
+        mutation_result = dict(result.get("mutation_result") or {})
+        static_repair = _deterministic_typescript_static_sanity_repair(
+            project_dir=project_dir,
+            sanity=ts_sanity,
+        )
+        if static_repair["repaired_files"]:
+            changed_files = _dedupe_strings([*changed_files, *static_repair["repaired_files"]])
+            mutation_result["changed_files"] = changed_files
+            ts_sanity = _typescript_duplicate_declaration_check(changed_files)
+            ts_sanity["deterministic_static_sanity_repair"] = static_repair
+            result["changed_files"] = changed_files
+            result["mutation_result"] = mutation_result
+        mutation_result["typescript_sanity"] = ts_sanity
+        if not ts_sanity["go"]:
+            failure_class = str((ts_sanity.get("blockers") or ["typescript_static_sanity_failed"])[0])
+            result.update(
+                {
+                    "status": "failed",
+                    "failure_class": failure_class,
+                    "implementation_readiness": "blocked",
+                    "mutation_result": mutation_result,
+                    "final_test_status": "failed",
+                    "recoverable_suggestion": "repair_typescript_static_sanity_findings_then_rerun_task_card",
+                }
+            )
+        else:
+            result["mutation_result"] = mutation_result
     finalized = _maybe_complete_evidence_finalization(
         root=root,
         project_dir=project_dir,
@@ -256,6 +286,441 @@ def run_task_card_patch_via_workflowctl(
         execution_result=result,
     )
     return finalized or result
+
+
+def _typescript_duplicate_declaration_check(changed_files: list[str]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    for file_name in changed_files:
+        path = Path(str(file_name))
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if path.suffix.lower() in {".scene", ".prefab"}:
+            findings.extend(_cocos_serialized_custom_type_findings(path, text))
+            continue
+        if path.suffix.lower() != ".ts":
+            continue
+        for pattern, kind in [
+            (r"\bexport\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\b", "export_class"),
+            (r"@ccclass\(['\"]([^'\"]+)['\"]\)", "ccclass"),
+        ]:
+            names = re.findall(pattern, text)
+            duplicate_names = sorted({name for name in names if names.count(name) > 1})
+            for name in duplicate_names:
+                findings.append(
+                    {
+                        "path": path.as_posix(),
+                        "kind": kind,
+                        "name": name,
+                        "count": names.count(name),
+                    }
+                )
+        findings.extend(_typescript_missing_relative_named_exports(path, text))
+    blockers = _dedupe_strings(
+        [
+            "typescript_duplicate_declaration"
+            if item.get("kind") in {"export_class", "ccclass"}
+            else str(item.get("kind"))
+            for item in findings
+        ]
+    )
+    return {
+        "schema_version": "task_card_typescript_sanity_v1",
+        "go": not findings,
+        "blockers": blockers,
+        "findings": findings,
+    }
+
+
+def _cocos_serialized_custom_type_findings(path: Path, text: str) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for match in re.finditer(r'"__type__"\s*:\s*"(?P<name>Workflow[A-Za-z0-9_]+)"', text):
+        findings.append(
+            {
+                "path": path.as_posix(),
+                "kind": "cocos_serialized_custom_type_uses_class_name",
+                "name": match.group("name"),
+                "offset": match.start(),
+                "recoverable_suggestion": "replace_custom_component_class_name_with_cocos_script_rf_id",
+            }
+        )
+    findings.extend(_cocos_serialized_cc_comp_alias_findings(path, text))
+    return findings
+
+
+def _deterministic_typescript_static_sanity_repair(*, project_dir: Path, sanity: dict[str, Any]) -> dict[str, Any]:
+    findings = [item for item in sanity.get("findings") or [] if isinstance(item, dict)]
+    cocos_findings = [
+        item
+        for item in findings
+        if item.get("kind")
+        in {
+            "cocos_serialized_custom_type_uses_class_name",
+            "cocos_serialized_custom_type_uses_reserved_cc_comp",
+        }
+    ]
+    if not cocos_findings:
+        return {
+            "schema_version": "task_card_typescript_static_sanity_repair_v1",
+            "go": False,
+            "repaired_files": [],
+            "blockers": ["no_deterministic_static_sanity_repair_available"],
+        }
+    rf_id_map = _cocos_script_rf_id_map(project_dir)
+    uuid_map = _cocos_script_uuid_map(project_dir)
+    repaired_files: list[str] = []
+    generated_files: list[str] = []
+    unresolved: list[str] = []
+    processed: set[tuple[str, str, str]] = set()
+    project_root = project_dir.resolve()
+    for finding in cocos_findings:
+        path = Path(str(finding.get("path") or ""))
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(project_root)
+        except (OSError, ValueError):
+            unresolved.append(f"{path}:outside_project_dir")
+            continue
+        class_name = str(finding.get("name") or "").strip()
+        processed_key = (path.resolve().as_posix(), str(finding.get("kind") or ""), class_name)
+        if processed_key in processed:
+            continue
+        processed.add(processed_key)
+        rf_id = rf_id_map.get(class_name)
+        if not rf_id:
+            generated = _ensure_cocos_workflow_component_script(project_dir=project_dir, class_name=class_name)
+            if generated.get("go"):
+                for generated_file in generated.get("generated_files") or []:
+                    generated_files.append(str(generated_file))
+                rf_id_map = _cocos_script_rf_id_map(project_dir)
+                uuid_map = _cocos_script_uuid_map(project_dir)
+                rf_id = rf_id_map.get(class_name)
+            if not rf_id:
+                unresolved.append(f"{path}:{class_name}:rf_id_missing")
+                continue
+        if finding.get("kind") == "cocos_serialized_custom_type_uses_reserved_cc_comp":
+            replaced = _replace_cocos_serialized_cc_comp_alias(
+                path=path,
+                workflow_component_class=class_name,
+                rf_id=rf_id,
+                uuid=uuid_map.get(class_name) or "",
+            )
+            if replaced <= 0:
+                unresolved.append(f"{path}:{class_name}:cc_comp_alias_missing")
+                continue
+            repaired_files.append(path.as_posix())
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            unresolved.append(f"{path}:{class_name}:read_failed")
+            continue
+        pattern = re.compile(rf'("__type__"\s*:\s*)"{re.escape(class_name)}"')
+        updated, count = pattern.subn(rf'\1"{rf_id}"', text)
+        if count <= 0:
+            unresolved.append(f"{path}:{class_name}:type_reference_missing")
+            continue
+        path.write_text(updated, encoding="utf-8")
+        repaired_files.append(path.as_posix())
+    return {
+        "schema_version": "task_card_typescript_static_sanity_repair_v1",
+        "go": bool(repaired_files) and not unresolved,
+        "repair_type": "cocos_serialized_workflow_component_type_to_rf_id",
+        "repaired_files": _dedupe_strings([*repaired_files, *generated_files]),
+        "generated_files": _dedupe_strings(generated_files),
+        "unresolved": _dedupe_strings(unresolved),
+        "blockers": [] if repaired_files and not unresolved else ["cocos_serialized_custom_type_rf_id_repair_incomplete"],
+    }
+
+
+def _cocos_serialized_cc_comp_alias_findings(path: Path, text: str) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    findings: list[dict[str, Any]] = []
+    for item_path, item in _walk_json_objects(payload):
+        if item.get("__type__") != "cc.Comp":
+            continue
+        workflow_component_class = str(item.get("workflowComponentClass") or "").strip()
+        if not re.match(r"^Workflow[A-Za-z0-9_]+$", workflow_component_class):
+            continue
+        findings.append(
+            {
+                "path": path.as_posix(),
+                "json_path": item_path,
+                "kind": "cocos_serialized_custom_type_uses_reserved_cc_comp",
+                "name": workflow_component_class,
+                "serialized_type": "cc.Comp",
+                "recoverable_suggestion": "replace_reserved_cc_comp_alias_with_cocos_script_rf_id",
+            }
+        )
+    return findings
+
+
+def _replace_cocos_serialized_cc_comp_alias(
+    *,
+    path: Path,
+    workflow_component_class: str,
+    rf_id: str,
+    uuid: str,
+) -> int:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    replaced = 0
+    for _, item in _walk_json_objects(payload):
+        if item.get("__type__") != "cc.Comp":
+            continue
+        if str(item.get("workflowComponentClass") or "").strip() != workflow_component_class:
+            continue
+        item["__type__"] = rf_id
+        script_asset = item.get("__scriptAsset")
+        if uuid and isinstance(script_asset, dict):
+            script_asset["__uuid__"] = uuid
+        replaced += 1
+    if replaced:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return replaced
+
+
+def _walk_json_objects(value: Any, path: str = "$") -> list[tuple[str, dict[str, Any]]]:
+    result: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(value, dict):
+        result.append((path, value))
+        for key, child in value.items():
+            result.extend(_walk_json_objects(child, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            result.extend(_walk_json_objects(child, f"{path}[{index}]"))
+    return result
+
+
+def _ensure_cocos_workflow_component_script(*, project_dir: Path, class_name: str) -> dict[str, Any]:
+    if not re.match(r"^Workflow[A-Za-z0-9_]+$", class_name):
+        return {
+            "go": False,
+            "generated_files": [],
+            "blockers": ["invalid_workflow_component_class_name"],
+        }
+    script_dir = project_dir / "assets" / "scripts" / "runtime" / "workflow"
+    script_path = script_dir / f"{class_name}.ts"
+    meta_path = Path(f"{script_path.as_posix()}.meta")
+    generated_files: list[str] = []
+    script_dir.mkdir(parents=True, exist_ok=True)
+    if not script_path.exists():
+        script_path.write_text(
+            "\n".join(
+                [
+                    "import { _decorator, Component } from 'cc';",
+                    "",
+                    "const { ccclass, property } = _decorator;",
+                    "",
+                    f"@ccclass('{class_name}')",
+                    f"export class {class_name} extends Component {{",
+                    "  @property",
+                    f"  public workflowComponentClass = '{class_name}';",
+                    "",
+                    "  public getRuntimePacket(): Record<string, unknown> {",
+                    "    return {",
+                    "      schema_version: 'workflow_cocos_generated_component_v1',",
+                    f"      component: '{class_name}',",
+                    f"      workflowComponentClass: '{class_name}',",
+                    "      engine_native_product_body: true,",
+                    "      generated_by: 'deterministic_cocos_serialized_component_repair',",
+                    "    };",
+                    "  }",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        generated_files.append(script_path.as_posix())
+    if not meta_path.exists():
+        component_uuid = str(uuid5(NAMESPACE_URL, f"universal-agentic-workflow:cocos-component:{class_name}"))
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "ver": "4.0.24",
+                    "importer": "typescript",
+                    "imported": True,
+                    "uuid": component_uuid,
+                    "files": [],
+                    "subMetas": {},
+                    "userData": {},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        generated_files.append(meta_path.as_posix())
+    return {
+        "go": True,
+        "generated_files": generated_files,
+        "blockers": [],
+    }
+
+
+def _cocos_script_rf_id_map(project_dir: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    script_root = project_dir / "assets" / "scripts"
+    if not script_root.exists():
+        return result
+    for script_path in script_root.rglob("*.ts"):
+        meta_path = Path(f"{script_path.as_posix()}.meta")
+        if not meta_path.exists():
+            continue
+        try:
+            script_text = script_path.read_text(encoding="utf-8")
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        uuid = str(meta.get("uuid") or "").strip()
+        rf_id = _compress_cocos_uuid(uuid)
+        if not rf_id:
+            continue
+        for name in _cocos_ccclass_names(script_text):
+            result[name] = rf_id
+    return result
+
+
+def _cocos_script_uuid_map(project_dir: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    script_root = project_dir / "assets" / "scripts"
+    if not script_root.exists():
+        return result
+    for script_path in script_root.rglob("*.ts"):
+        meta_path = Path(f"{script_path.as_posix()}.meta")
+        if not meta_path.exists():
+            continue
+        try:
+            script_text = script_path.read_text(encoding="utf-8")
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        uuid = str(meta.get("uuid") or "").strip()
+        if not uuid:
+            continue
+        for name in _cocos_ccclass_names(script_text):
+            result[name] = uuid
+    return result
+
+
+def _cocos_ccclass_names(text: str) -> list[str]:
+    names = re.findall(r"@ccclass\(['\"]([^'\"]+)['\"]\)", text)
+    if names:
+        return _dedupe_strings(names)
+    return _dedupe_strings(re.findall(r"\bexport\s+class\s+(Workflow[A-Za-z0-9_]+)\b", text))
+
+
+_COCOS_UUID64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _compress_cocos_uuid(uuid: str) -> str:
+    compact = re.sub(r"[^0-9a-fA-F]", "", uuid)
+    if len(compact) != 32:
+        return ""
+    head = compact[:5]
+    tail = compact[5:]
+    chars: list[str] = []
+    for index in range(0, len(tail), 3):
+        chunk = tail[index : index + 3]
+        if len(chunk) < 3:
+            return ""
+        value = int(chunk, 16)
+        chars.append(_COCOS_UUID64[value >> 6])
+        chars.append(_COCOS_UUID64[value & 0x3F])
+    return head + "".join(chars)
+
+
+def _typescript_missing_relative_named_exports(path: Path, text: str) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    import_pattern = re.compile(
+        r"\bimport\s+(?:type\s+)?\{(?P<names>[^}]+)\}\s+from\s+['\"](?P<source>\.[^'\"]+)['\"]",
+        re.DOTALL,
+    )
+    for match in import_pattern.finditer(text):
+        source = match.group("source")
+        target = _resolve_typescript_relative_import(path, source)
+        imported_names = _typescript_named_imports(match.group("names"))
+        if target is None:
+            for name in imported_names:
+                findings.append(
+                    {
+                        "path": path.as_posix(),
+                        "kind": "typescript_import_target_missing",
+                        "name": name,
+                        "import_source": source,
+                    }
+                )
+            continue
+        try:
+            target_text = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for name in imported_names:
+            if not _typescript_exports_symbol(target_text, name):
+                findings.append(
+                    {
+                        "path": path.as_posix(),
+                        "kind": "typescript_missing_named_export",
+                        "name": name,
+                        "import_source": source,
+                        "resolved_path": target.as_posix(),
+                    }
+                )
+    return findings
+
+
+def _resolve_typescript_relative_import(path: Path, source: str) -> Path | None:
+    base = (path.parent / source).resolve()
+    candidates = [base]
+    if base.suffix:
+        candidates.append(base.with_suffix(".ts"))
+    else:
+        candidates.extend(
+            [
+                base.with_suffix(".ts"),
+                base / "index.ts",
+            ]
+        )
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def _typescript_named_imports(raw_names: str) -> list[str]:
+    names: list[str] = []
+    for raw_part in raw_names.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if part.startswith("type "):
+            part = part[len("type ") :].strip()
+        name = re.split(r"\s+as\s+", part, maxsplit=1)[0].strip()
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            names.append(name)
+    return names
+
+
+def _typescript_exports_symbol(text: str, name: str) -> bool:
+    escaped = re.escape(name)
+    direct_patterns = [
+        rf"\bexport\s+(?:abstract\s+)?class\s+{escaped}\b",
+        rf"\bexport\s+(?:async\s+)?function\s+{escaped}\b",
+        rf"\bexport\s+(?:const|let|var|enum|interface|type)\s+{escaped}\b",
+    ]
+    if any(re.search(pattern, text) for pattern in direct_patterns):
+        return True
+    return bool(re.search(rf"\bexport\s*\{{[^}}]*\b{escaped}\b[^}}]*\}}", text, re.DOTALL))
 
 
 def _maybe_complete_evidence_finalization(

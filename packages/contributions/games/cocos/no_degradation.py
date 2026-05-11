@@ -52,6 +52,9 @@ def evaluate_no_degradation_contract(
     playtest = _dict_from(production_payload.get("playtest")) or _dict_from(cocos_e2e.get("playtest"))
     build = _dict_from(production_payload.get("build")) or _dict_from(cocos_e2e.get("build"))
     feature_coverage = _feature_coverage(production_payload, cocos_e2e, playtest)
+    reference_quality_evidence = _dict_from(production_payload.get("reference_quality_evidence")) or _dict_from(
+        shared_outputs.get("reference_quality_evidence")
+    )
     console_and_page_errors = [*list(playtest.get("console_errors") or []), *list(playtest.get("page_errors") or [])]
     asset_graph = build_asset_graph_contract(
         _dict_from(production_payload.get("assets")) or _dict_from(shared_outputs.get("commercial_game_assets"))
@@ -142,6 +145,7 @@ def evaluate_no_degradation_contract(
         human_player_review_go=human_player_review_go,
         gameplay_semantic_evidence=gameplay_semantic_evidence,
         product_body_evidence=product_body_evidence,
+        reference_quality_evidence=reference_quality_evidence,
         require_ai_surrogate_playtest=require_ai_surrogate_playtest,
         ai_surrogate_playtest_evidence=ai_surrogate_playtest_evidence,
     )
@@ -167,6 +171,9 @@ def evaluate_no_degradation_contract(
                 findings.append({"finding": blocker, "severity": "high"})
             for blocker in product_body_evidence["blockers"]:
                 findings.append({"finding": blocker, "severity": "high"})
+            if reference_quality_evidence and not reference_quality_evidence.get("go"):
+                for blocker in reference_quality_evidence.get("blockers") or ["reference_quality_no_go"]:
+                    findings.append({"finding": str(blocker), "severity": "high"})
             if require_ai_surrogate_playtest:
                 ai_contract = _dict_from(final_gate_evidence.get("contracts")).get("ai_surrogate_playtest_evidence")
                 if isinstance(ai_contract, dict) and not bool(ai_contract.get("ai_surrogate_playtest_go")):
@@ -197,6 +204,7 @@ def evaluate_no_degradation_contract(
         "product_feature_depth_go": product_feature_depth_go,
         "gameplay_semantic_go": bool(gameplay_semantic_evidence["go"]),
         "product_body_go": bool(product_body_evidence["go"]),
+        "reference_quality_go": bool(reference_quality_evidence.get("go")) if reference_quality_evidence else None,
         "build_exit_go": build_exit_go,
         "browser_runtime_go": browser_runtime_go,
         "asset_graph_go": bool(asset_graph["go"]),
@@ -215,6 +223,10 @@ def evaluate_no_degradation_contract(
             "gameplay_semantic_evidence": gameplay_semantic_evidence,
             "product_body_evidence": product_body_evidence,
             "product_depth_evidence": product_depth_evidence,
+            "reference_quality_evidence": reference_quality_evidence,
+            "ai_surrogate_playtest_evidence": _dict_from(
+                _dict_from(final_gate_evidence.get("contracts")).get("ai_surrogate_playtest_evidence")
+            ),
         },
         "commercial_final_gate_evidence": final_gate_evidence,
         "gameplay_semantic_evidence": gameplay_semantic_evidence,
@@ -264,9 +276,11 @@ def _ai_surrogate_playtest_evidence(shared_outputs: dict[str, Any], production: 
         production.get("ai_surrogate_playtest_evidence"),
         production.get("ai_playtest_quality_report"),
         _dict_from(production.get("ai_playtest_execution_report")).get("quality"),
+        _dict_from(production.get("evidence_contracts")).get("ai_surrogate_playtest_evidence"),
         shared_outputs.get("ai_surrogate_playtest_evidence"),
         shared_outputs.get("ai_playtest_quality_report"),
         _dict_from(shared_outputs.get("ai_playtest_execution_report")).get("quality"),
+        _dict_from(shared_outputs.get("evidence_contracts")).get("ai_surrogate_playtest_evidence"),
     ]
     for candidate in candidates:
         payload = _dict_from(candidate)

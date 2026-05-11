@@ -18,7 +18,7 @@ from packages.core_domain.errors import WorkerAdapterUnavailableError
 from packages.worker_adapters.base import ExecutionResult, WorkerAdapter, resolve_artifact_paths, utc_now
 
 
-DEFAULT_AGENT_MODEL = "gpt-5.4-mini"
+DEFAULT_AGENT_MODEL = "gpt-5.5"
 DEFAULT_LANGCHAIN_AGENT_PROVIDER = "auto"
 DEFAULT_MINIMAX_MODEL = "MiniMax-M2.7"
 DEFAULT_MINIMAX_BASE_URL = "https://api.minimaxi.com/v1"

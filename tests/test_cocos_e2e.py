@@ -494,6 +494,10 @@ def test_workflow_bridge_feature_coverage_accepts_direct_cocos_runtime_actions()
             "game_over": False,
         },
         "bridge_actions": [{"reason": "register_controller"}],
+        "feature_coverage": {
+            "generatedAudioAssets": True,
+            "audioPlaybackVerified": True,
+        },
     }
     action_results = [{"command": "placeCandidate", "result": {"accepted": True}}]
 
@@ -503,6 +507,25 @@ def test_workflow_bridge_feature_coverage_accepts_direct_cocos_runtime_actions()
     assert coverage["threeCandidates"] is True
     assert coverage["dragPlacement"] is True
     assert coverage["nativeCocosUiNodes"] is True
+    assert coverage["generatedAudioAssets"] is True
+    assert coverage["audioPlaybackVerified"] is True
+
+
+def test_e2e_hook_kind_prefers_engine_native_workflow_bridge_over_legacy_global() -> None:
+    from packages.contributions.games.cocos.playtest import _classify_e2e_hook_state
+
+    assert (
+        _classify_e2e_hook_state(
+            {
+                "hasWorkflowBridge": True,
+                "workflowSchema": "engine_native_block_puzzle_runtime_bridge_v1",
+                "workflowHasRuntimePacket": True,
+                "hasUniversal": True,
+                "hasLegacy": False,
+            }
+        )
+        == "workflow_bridge"
+    )
 
 
 def test_cocos_build_installs_project_provided_runtime_bridge_only(tmp_path: Path, monkeypatch) -> None:
@@ -617,6 +640,9 @@ def test_cocos_build_rejects_success_code_with_fatal_runtime_marker(tmp_path: Pa
     assert build["creator_exit_code"] == 36
     assert build["artifact_success"] is False
     assert build["fatal_marker_detected"] is True
+    assert build["fatal_markers"] == ["Missing class:"]
+    assert build["missing_classes"] == ["BlockPuzzleGame"]
+    assert build["error_summary"] == ["Missing class: BlockPuzzleGame"]
 
 
 def test_cocos_build_timeout_returns_failed_build_evidence(tmp_path: Path, monkeypatch) -> None:
@@ -909,6 +935,60 @@ def test_cocos_ecosystem_bridge_runner_waits_for_complete_report(tmp_path: Path,
         "editor_status_version",
         "project_open",
     ]
+
+
+def test_cocos_ecosystem_bridge_runner_rejects_complete_but_failed_report(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    creator = tmp_path / "CocosCreator.exe"
+    creator.write_text("", encoding="utf-8")
+    report = project / "temp" / "workflow_cocos_bridge" / "cocos_editor_bridge_report.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": "cocos_editor_bridge_report_v1",
+                "tool_kind": "cocos_editor_extension",
+                "editor_api_used": True,
+                "project_path": project.as_posix(),
+                "operations": {
+                    "editor_status_version": {"status": "completed"},
+                    "project_open": {"status": "completed"},
+                    "assetdb_import_query": {"status": "failed"},
+                    "scene_create_save": {"status": "completed"},
+                    "node_component_binding": {"status": "completed"},
+                    "prefab_create_instantiate": {"status": "completed"},
+                    "build_api_trigger": {"status": "completed"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _FailedReportProcess:
+        pid = 8765
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+    monkeypatch.setattr(ecosystem_bridge_module, "_cocos_creator_processes", lambda: [])
+    monkeypatch.setattr(ecosystem_bridge_module, "_terminate_runner_process_tree", lambda _pid: {"terminated_child_pids": []})
+    monkeypatch.setattr(ecosystem_bridge_module.subprocess, "Popen", lambda *_args, **_kwargs: _FailedReportProcess())
+
+    payload = ecosystem_bridge_module.run_cocos_editor_bridge(
+        project_path=project,
+        creator_exe=creator,
+        evidence_dir=tmp_path / "ecosystem_evidence",
+        timeout_seconds=0,
+    )
+
+    assert payload["status"] == "AWAITING_OPERATOR_ACTION"
+    assert payload["failure_class"] == "cocos_editor_bridge_report_incomplete_timeout"
+    assert "assetdb_import_query" in payload["bridge_report_operation_names"]
 
 
 def test_cocos_ecosystem_bridge_auto_accepts_report_created_by_runner(tmp_path: Path) -> None:
@@ -1429,6 +1509,41 @@ def test_cocos_commercial_asset_manifest_can_batch_generated_assets(tmp_path: Pa
     assert manifest["asset_factory_qa"]["schema_version"] == "m81_asset_factory_qa_v1"
     assert any(item["asset_name"].endswith("_visual_review") for item in manifest["results"])
     assert Path(manifest["manifest_path"]).exists()
+
+
+def test_cocos_commercial_asset_manifest_falls_back_to_vertex_imagen_for_images(tmp_path: Path) -> None:
+    vertex_requests: list[AssetGenerationRequest] = []
+
+    def _blocked_mmx_image(request: AssetGenerationRequest) -> AssetGenerationResult:
+        return AssetGenerationResult(
+            provider=request.provider,
+            modality=request.modality,
+            status="blocked",
+            failure_class="provider_auth_missing",
+            metadata={"api_key_env": "MINIMAX_API_KEY"},
+        )
+
+    def _fake_vertex_image(request: AssetGenerationRequest) -> AssetGenerationResult:
+        vertex_requests.append(request)
+        return _fake_asset_generator(request)
+
+    manifest = generate_cocos_commercial_asset_manifest(
+        output_dir=tmp_path / "commercial_assets",
+        include_vertex_review=False,
+        image_generator=_blocked_mmx_image,
+        image_fallback_generator=_fake_vertex_image,
+        sfx_generator=_fake_asset_generator,
+        speech_generator=_fake_asset_generator,
+        music_generator=_fake_asset_generator,
+        tts_generator=_fake_asset_generator,
+    )
+
+    image_results = [item for item in manifest["results"] if item["modality"] == "image"]
+    assert manifest["go_no_go"] == "GO"
+    assert {request.provider for request in vertex_requests} == {"vertex_generation_api"}
+    assert {item["provider"] for item in image_results} == {"vertex_generation_api"}
+    assert all(item["metadata"]["provider_fallback_used"] is True for item in image_results)
+    assert all(item["metadata"]["primary_failure_class"] == "provider_auth_missing" for item in image_results)
 
 
 def test_cocos_commercial_asset_manifest_routes_sfx_to_dedicated_generator(tmp_path: Path) -> None:

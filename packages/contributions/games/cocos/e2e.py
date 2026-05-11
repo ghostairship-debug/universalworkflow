@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -1935,10 +1936,15 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
     build_output = project / "build" / "web-mobile"
     index_html = build_output / "index.html"
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:]
-    stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:]
-    combined_tail = f"{stdout_tail}\n{stderr_tail}"
-    fatal_marker_detected = any(marker in combined_tail for marker in COCOS_FATAL_BUILD_MARKERS)
+    stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace")
+    stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
+    stdout_tail = stdout_text[-4000:]
+    stderr_tail = stderr_text[-4000:]
+    combined_log = f"{stdout_text}\n{stderr_text}"
+    fatal_markers = [marker for marker in COCOS_FATAL_BUILD_MARKERS if marker in combined_log]
+    fatal_marker_detected = bool(fatal_markers)
+    missing_classes = sorted(set(re.findall(r"Missing class:?\s+([A-Za-z_][A-Za-z0-9_]*)", combined_log)))
+    error_summary = _cocos_build_error_summary(combined_log)
     artifact_success = (
         proc.returncode in COCOS_BUILD_SUCCESS_EXIT_CODES
         and index_html.exists()
@@ -1971,6 +1977,9 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         "timeout_error": timeout_error,
         "artifact_success": artifact_success,
         "fatal_marker_detected": fatal_marker_detected,
+        "fatal_markers": fatal_markers,
+        "missing_classes": missing_classes,
+        "error_summary": error_summary,
         "build_output_path": build_output.as_posix() if build_output.exists() else None,
         "index_html": index_html.as_posix() if index_html.exists() else None,
         "runtime_asset_copy": runtime_asset_copy,
@@ -1982,6 +1991,21 @@ def build_cocos_project(*, project_path: str | Path, creator_exe: str | Path, ti
         "stdout_tail": stdout_tail,
         "stderr_tail": stderr_tail,
     }
+
+
+def _cocos_build_error_summary(log_text: str) -> list[str]:
+    summary: list[str] = []
+    for raw_line in log_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if any(marker in line for marker in COCOS_FATAL_BUILD_MARKERS) or "script-invalid" in line:
+            summary.append(line)
+        elif "Script " in line and " is missing or invalid" in line:
+            summary.append(line)
+        if len(summary) >= 40:
+            break
+    return summary
 
 
 def _sync_build_launch_scene_from_project(*, project: Path, build_output: Path) -> dict[str, Any]:

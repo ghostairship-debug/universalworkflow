@@ -58,7 +58,7 @@ def build_chat_llm_runtime_from_env() -> ChatLLMRuntime:
     if provider == "openai" and api_key:
         try:
             return OpenAIChatLLMRuntime(
-                model=str(chat_model or effective["runtime_gateway"]["openai_model"] or "gpt-5.4-mini"),
+                model=str(chat_model or effective["runtime_gateway"]["openai_model"] or "gpt-5.5"),
                 reasoning_effort=str(effective["runtime_gateway"]["openai_reasoning_effort"] or "low"),
             )
         except Exception:

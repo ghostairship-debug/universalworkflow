@@ -372,13 +372,27 @@ def execute_contribution_validation(
             require_live_agent_roles=effective_require_live_agent_roles,
             require_human_player_review=require_human_player_review,
         )
+        machine_ready_without_human_review = (
+            isinstance(production, dict)
+            and bool(no_degradation.get("machine_evidence_go"))
+            and no_degradation.get("go_no_go") == "GO"
+            and not bool(no_degradation.get("human_player_review_go"))
+        )
         gate_go = (
             isinstance(production, dict)
-            and bool(production.get("commercial_playable_go"))
-            and no_degradation["go_no_go"] == "GO"
-            and bool(no_degradation.get("human_player_review_go"))
+            and (
+                (
+                    bool(require_human_player_review)
+                    and bool(production.get("commercial_playable_go"))
+                    and no_degradation["go_no_go"] == "GO"
+                    and bool(no_degradation.get("human_player_review_go"))
+                )
+                or (not bool(require_human_player_review) and machine_ready_without_human_review)
+            )
         )
         machine_ready_awaiting_human_review = (
+            bool(require_human_player_review)
+            and
             isinstance(production, dict)
             and bool(no_degradation.get("machine_evidence_go"))
             and no_degradation.get("go_no_go") in {"GO", "AWAITING_HUMAN_REVIEW"}
@@ -389,11 +403,14 @@ def execute_contribution_validation(
             blockers.append("missing_real_game_production_evidence")
         elif machine_ready_awaiting_human_review:
             blockers.append("awaiting_human_player_review")
+        elif machine_ready_without_human_review:
+            blockers = []
         elif not production.get("commercial_playable_go"):
             blockers.extend(production.get("commercial_playable_blockers") or ["commercial_playable_no_go"])
         blockers.extend(no_degradation["blockers"])
         blockers = list(dict.fromkeys(blockers))
         awaiting_human = blockers == ["awaiting_human_player_review"]
+        unattended_machine_ready = gate_go and machine_ready_without_human_review and not bool(require_human_player_review)
         return {
             "handled": True,
             "result": {
@@ -405,9 +422,14 @@ def execute_contribution_validation(
                 else "commercial_game_no_degradation_failed",
                 "output": {
                     "go_no_go": "GO" if gate_go else "AWAITING_HUMAN_REVIEW" if awaiting_human else "NO-GO",
-                    "required_gate": "real_commercial_playable_go",
+                    "required_gate": "machine_commercial_readiness_before_human_review"
+                    if unattended_machine_ready
+                    else "real_commercial_playable_go",
                     "blockers": blockers,
                     "forbids_fixed_template": True,
+                    "human_review_required": bool(require_human_player_review),
+                    "human_review_skipped_for_unattended_run": unattended_machine_ready,
+                    "commercial_playable_claim_allowed": bool(no_degradation.get("human_player_review_go")),
                     "ecosystem_integration_go": no_degradation["ecosystem_integration_go"],
                     "live_role_provider_proof_go": no_degradation["live_role_provider_proof_go"],
                     "same_project_worker_patch_go": no_degradation["same_project_worker_patch_go"],

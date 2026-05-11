@@ -1227,6 +1227,12 @@ class TaskRepository(RepositoryBase):
             )
         return task_card
 
+    def upsert_task_card(self, task_card: TaskCard, connection: sqlite3.Connection | None = None) -> TaskCard:
+        with self._connection(connection, commit=True) as conn:
+            conn.execute("DELETE FROM task_cards WHERE task_card_id = ?", (task_card.task_card_id,))
+            self.create_task_card(task_card, connection=conn)
+        return task_card
+
     def get_task_card(self, task_card_id: str, connection: sqlite3.Connection | None = None) -> TaskCard | None:
         with self._connection(connection) as conn:
             row = conn.execute("SELECT * FROM task_cards WHERE task_card_id = ?", (task_card_id,)).fetchone()

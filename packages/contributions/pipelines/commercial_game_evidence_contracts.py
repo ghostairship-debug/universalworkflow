@@ -195,6 +195,9 @@ def build_build_ledger(build: dict[str, Any] | None) -> dict[str, Any]:
             "creator_exit_code": exit_code,
             "artifact_path": payload.get("build_output_path"),
             "artifact_success": bool(payload.get("artifact_success")),
+            "fatal_markers": payload.get("fatal_markers") or [],
+            "missing_classes": payload.get("missing_classes") or [],
+            "error_summary": payload.get("error_summary") or [],
         },
     )
 
@@ -220,7 +223,11 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
     )
     blockers.extend(quality_blockers)
     canvas_hashes = _strings(payload.get("canvas_hashes"))
-    if len(canvas_hashes) >= 2 and len(set(canvas_hashes)) == 1:
+    screenshot_hashes = _strings(payload.get("screenshot_hashes"))
+    action_screenshot_hashes = screenshot_hashes[:2]
+    if len(action_screenshot_hashes) >= 2 and len(set(action_screenshot_hashes)) == 1:
+        blockers.append("browser_screenshot_static_after_actions")
+    elif len(action_screenshot_hashes) < 2 and len(canvas_hashes) >= 2 and len(set(canvas_hashes)) == 1:
         blockers.append("browser_canvas_hash_static_after_actions")
     if payload.get("desktop_splash_detected"):
         blockers.append("desktop_cocos_splash_only")
@@ -278,6 +285,7 @@ def build_browser_playtest_ledger(playtest: dict[str, Any] | None) -> dict[str, 
             "audio_runtime_proof": audio_runtime_proof,
             "quality_blockers": quality_blockers,
             "canvas_hash_count": len(canvas_hashes),
+            "screenshot_hash_count": len(screenshot_hashes),
             "desktop_runtime_started": payload.get("desktop_runtime_started"),
             "desktop_splash_detected": bool(payload.get("desktop_splash_detected")),
             "feature_coverage_keys": sorted(feature_coverage),
@@ -403,6 +411,7 @@ def build_commercial_final_gate_evidence(
     human_player_review_go: bool,
     gameplay_semantic_evidence: dict[str, Any] | None = None,
     product_body_evidence: dict[str, Any] | None = None,
+    reference_quality_evidence: dict[str, Any] | None = None,
     require_ai_surrogate_playtest: bool = False,
     ai_surrogate_playtest_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -411,6 +420,7 @@ def build_commercial_final_gate_evidence(
         None,
         gameplay_semantic_evidence=gameplay_semantic_contract,
     )
+    reference_quality_contract = _dict_from(reference_quality_evidence)
     ai_surrogate_contract = _ai_surrogate_contract(ai_surrogate_playtest_evidence)
     machine_blockers: list[str] = []
     if require_commercial:
@@ -429,6 +439,8 @@ def build_commercial_final_gate_evidence(
         if require_ai_surrogate_playtest:
             if not ai_surrogate_contract.get("ai_surrogate_playtest_go"):
                 machine_blockers.extend(_strings(ai_surrogate_contract.get("blockers")) or ["ai_surrogate_playtest_missing"])
+        if reference_quality_contract and not reference_quality_contract.get("go"):
+            machine_blockers.extend(_strings(reference_quality_contract.get("blockers")) or ["reference_quality_no_go"])
         if not product_feature_depth_go:
             machine_blockers.extend(product_feature_blockers or ["product_feature_depth_missing"])
     if require_cocos_ecosystem and not cocos_bridge_evidence.get("go"):
@@ -477,6 +489,7 @@ def build_commercial_final_gate_evidence(
             "browser_playtest_ledger": browser_playtest_ledger,
             "gameplay_semantic_evidence": gameplay_semantic_contract,
             "product_body_evidence": product_body_contract,
+            "reference_quality_evidence": reference_quality_contract,
             "ai_surrogate_playtest_evidence": ai_surrogate_contract,
         },
     }

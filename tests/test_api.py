@@ -1482,7 +1482,7 @@ def test_api_status_detail_projects_runtime_gateway_brief_when_openai_gateway_is
     db_path = tmp_path / "workflow.db"
     client = build_client(
         db_path,
-        runtime_gateway=OpenAIRuntimeGateway(client=_FakeApiClient(), model="gpt-5.4-mini"),
+        runtime_gateway=OpenAIRuntimeGateway(client=_FakeApiClient()),
     )
 
     create_response = client.post("/runs", json={"goal": "Compile via live gateway", "preset_id": "feature_delivery"})

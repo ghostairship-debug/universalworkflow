@@ -262,7 +262,7 @@ def run_cocos_editor_bridge(
                 if report_path.exists():
                     operation_names = _bridge_report_operation_names(report_path)
                     payload["bridge_report_operation_names"] = operation_names
-                    if _bridge_report_has_required_operations(operation_names):
+                    if _bridge_report_has_required_passed_operations(report_path, project=project):
                         payload.update(
                             {
                                 "status": "completed",
@@ -274,7 +274,7 @@ def run_cocos_editor_bridge(
                         break
                 if process.poll() is not None:
                     payload["exit_code"] = process.returncode
-                    if report_path.exists() and _bridge_report_has_required_operations(_bridge_report_operation_names(report_path)):
+                    if report_path.exists() and _bridge_report_has_required_passed_operations(report_path, project=project):
                         payload.update({"status": "completed", "failure_class": None, "blockers": []})
                     else:
                         payload.update(
@@ -999,6 +999,18 @@ def _bridge_report_operation_names(report_path: Path) -> list[str]:
 def _bridge_report_has_required_operations(operation_names: list[str]) -> bool:
     required = set(REQUIRED_EDITOR_OPERATIONS.values())
     return required.issubset(set(operation_names))
+
+
+def _bridge_report_has_required_passed_operations(report_path: Path, *, project: Path | None) -> bool:
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    validation = _validate_bridge_report(payload if isinstance(payload, dict) else None, project=project)
+    if validation["blockers"]:
+        return False
+    operations = _operations_from_report(payload if isinstance(payload, dict) else None)
+    return all(_operation_passed(operations, operation) for operation in REQUIRED_EDITOR_OPERATIONS.values())
 
 
 def _terminate_runner_process_tree(root_pid: int | None) -> dict[str, Any]:

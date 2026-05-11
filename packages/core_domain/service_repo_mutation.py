@@ -28,6 +28,8 @@ MUTATION_CONTEXT_FILE_PREVIEW_LIMIT = 20000
 MUTATION_CONTEXT_TOTAL_PREVIEW_LIMIT = 60000
 MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT = 80
 MUTATION_CONTEXT_INLINE_ENV_LIMIT = 12000
+MUTATION_FAILURE_FEEDBACK_LIMIT = 12000
+GLOB_MARKERS = ("*", "?", "[")
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -104,6 +106,17 @@ def _paths_context_for_mutation(
             context.append({"path": item, "kind": "truncated", "exists": None})
             continue
         raw_path = Path(item)
+        if _has_glob_marker(item):
+            entry, remaining = _glob_path_context_for_mutation(
+                item,
+                raw_path=raw_path,
+                root=root,
+                external_roots=external,
+                include_file_previews=include_directory_file_previews,
+                remaining=remaining,
+            )
+            context.append(entry)
+            continue
         path = raw_path if raw_path.is_absolute() else root / raw_path
         try:
             resolved = path.resolve()
@@ -167,6 +180,88 @@ def _paths_context_for_mutation(
     return context
 
 
+def _has_glob_marker(value: str | Path) -> bool:
+    text = str(value)
+    return any(marker in text for marker in GLOB_MARKERS)
+
+
+def _glob_path_context_for_mutation(
+    item: str,
+    *,
+    raw_path: Path,
+    root: Path,
+    external_roots: list[Path],
+    include_file_previews: bool,
+    remaining: int,
+) -> tuple[dict[str, Any], int]:
+    split = _split_glob_base_and_pattern(raw_path)
+    if split is None:
+        return ({"path": item, "kind": "unknown", "exists": False}, remaining)
+    raw_base, pattern = split
+    base_path = raw_base if raw_base.is_absolute() else root / raw_base
+    try:
+        resolved_base = base_path.resolve()
+    except OSError:
+        return ({"path": item, "kind": "unknown", "exists": False}, remaining)
+    in_workspace = _is_relative_to(resolved_base, root)
+    in_external = any(_is_relative_to(resolved_base, external_root) for external_root in external_roots)
+    if not in_workspace and not in_external:
+        return (
+            {
+                "path": item,
+                "kind": "outside_workspace",
+                "exists": resolved_base.exists(),
+                "base_path": resolved_base.as_posix(),
+                "pattern": pattern,
+            },
+            remaining,
+        )
+    source_scope = "workspace" if in_workspace else "external_root"
+    entry: dict[str, Any] = {
+        "path": item,
+        "kind": "glob",
+        "exists": resolved_base.exists(),
+        "base_path": resolved_base.relative_to(root).as_posix() if in_workspace else resolved_base.as_posix(),
+        "pattern": pattern,
+        "source_scope": source_scope,
+        "matched_file_count": 0,
+        "children": [],
+        "truncated": False,
+    }
+    if not resolved_base.exists() or not resolved_base.is_dir():
+        return (entry, remaining)
+    matches = _glob_file_matches(resolved_base, pattern)
+    entry["matched_file_count"] = len(matches)
+    entry["children"] = _preview_paths_for_files(matches, root=root)
+    entry["truncated"] = len(matches) > MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT
+    if include_file_previews:
+        file_previews, remaining = _file_previews_for_paths(matches, root=root, remaining=remaining)
+        entry["file_previews"] = file_previews
+    return (entry, remaining)
+
+
+def _split_glob_base_and_pattern(raw_path: Path) -> tuple[Path, str] | None:
+    parts = raw_path.parts
+    for index, part in enumerate(parts):
+        if any(marker in part for marker in GLOB_MARKERS):
+            base_parts = parts[:index]
+            pattern_parts = parts[index:]
+            base = Path(*base_parts) if base_parts else Path(".")
+            return base, "/".join(pattern_parts)
+    return None
+
+
+def _glob_file_matches(base: Path, pattern: str) -> list[Path]:
+    try:
+        if pattern in {"**", "**/*"}:
+            children = [child.resolve() for child in base.rglob("*") if child.is_file()]
+        else:
+            children = [child.resolve() for child in base.glob(pattern) if child.is_file()]
+    except (OSError, ValueError):
+        return []
+    return sorted(children, key=lambda child: child.as_posix())
+
+
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -190,12 +285,24 @@ def _directory_children_preview(path: Path, *, root: Path) -> list[str]:
 
 
 def _directory_file_previews(path: Path, *, root: Path, remaining: int) -> tuple[list[dict[str, Any]], int]:
-    previews: list[dict[str, Any]] = []
     try:
-        children = [child for child in path.rglob("*") if child.is_file()]
+        children = sorted([child.resolve() for child in path.rglob("*") if child.is_file()], key=lambda child: child.as_posix())
     except OSError:
-        return previews, remaining
-    for child in children[:MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT]:
+        return [], remaining
+    return _file_previews_for_paths(children, root=root, remaining=remaining)
+
+
+def _preview_paths_for_files(paths: list[Path], *, root: Path) -> list[str]:
+    children: list[str] = []
+    for child in paths[:MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT]:
+        resolved = child.resolve()
+        children.append(resolved.relative_to(root).as_posix() if _is_relative_to(resolved, root) else resolved.as_posix())
+    return children
+
+
+def _file_previews_for_paths(paths: list[Path], *, root: Path, remaining: int) -> tuple[list[dict[str, Any]], int]:
+    previews: list[dict[str, Any]] = []
+    for child in paths[:MUTATION_CONTEXT_DIRECTORY_CHILD_LIMIT]:
         if remaining <= 0:
             break
         resolved = child.resolve()
@@ -352,6 +459,34 @@ def merge_test_feedback(attempts: list[dict[str, Any]]) -> str:
     return "\n\n".join(chunks)
 
 
+def _patch_apply_failure_feedback(
+    reason: str,
+    touched_paths: list[str],
+    *,
+    working_directory: str,
+    external_roots: list[str],
+) -> str:
+    if not touched_paths:
+        return reason
+    fresh_context = _paths_context_for_mutation(
+        touched_paths[:5],
+        working_directory=working_directory,
+        external_roots=external_roots,
+        include_directory_file_previews=False,
+    )
+    if not fresh_context:
+        return reason
+    context_json = json.dumps(fresh_context, ensure_ascii=False)
+    if len(context_json) > MUTATION_FAILURE_FEEDBACK_LIMIT:
+        context_json = context_json[:MUTATION_FAILURE_FEEDBACK_LIMIT] + "...<truncated>"
+    return (
+        f"{reason}\n"
+        "Current target file context JSON after the failed patch apply. Use these exact current content_preview "
+        "lines when regenerating the unified diff; do not reuse stale context lines:\n"
+        f"{context_json}"
+    )
+
+
 def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
     contract = packet.mutation_contract
     if contract is None or contract.mutation_mode != MutationMode.patch_apply:
@@ -455,7 +590,12 @@ def execute_repo_mutation(adapter: Any, packet: TaskPacket) -> ExecutionResult:
                 external_roots=external_roots,
             )
             last_touched_paths = []
-            failure_feedback = str(exc)
+            failure_feedback = _patch_apply_failure_feedback(
+                str(exc),
+                touched_paths,
+                working_directory=packet.working_directory,
+                external_roots=external_roots,
+            )
             final_test_status = "patch_apply_failed"
             if attempt_index < attempt_limit:
                 continue
@@ -585,7 +725,7 @@ def _rewrite_diff_path_token(raw_path: str, allowed_paths: list[str]) -> str:
 def _allowed_scope_matches_for_project_relative_path(path: str, allowed_paths: list[str]) -> list[str]:
     matches: list[str] = []
     for raw_allowed in allowed_paths:
-        allowed = raw_allowed.strip("/").replace("\\", "/")
+        allowed = _allowed_path_match_base(raw_allowed.strip("/").replace("\\", "/"))
         allowed_parts = allowed.split("/")
         for index in range(len(allowed_parts)):
             suffix = "/".join(allowed_parts[index:])
@@ -600,3 +740,11 @@ def _allowed_scope_matches_for_project_relative_path(path: str, allowed_paths: l
                 matches.append(candidate)
             break
     return matches
+
+
+def _allowed_path_match_base(allowed: str) -> str:
+    parts = allowed.split("/")
+    for index, part in enumerate(parts):
+        if "*" in part or "?" in part or "[" in part:
+            return "/".join(parts[:index])
+    return allowed

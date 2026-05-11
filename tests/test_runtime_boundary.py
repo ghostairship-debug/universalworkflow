@@ -57,7 +57,7 @@ def test_runtime_gateway_state_is_lightweight() -> None:
 
 def test_openai_runtime_gateway_generates_execution_brief_with_fake_client() -> None:
     fake_client = _FakeOpenAIClient()
-    gateway = OpenAIRuntimeGateway(client=fake_client, model="gpt-5.4-mini")
+    gateway = OpenAIRuntimeGateway(client=fake_client)
 
     compiled_state = gateway.start("run_456", "task_456")
     compiled_state = RuntimeStateRef.model_validate(
@@ -76,18 +76,17 @@ def test_openai_runtime_gateway_generates_execution_brief_with_fake_client() -> 
 
     assert gateway.describe()["provider"] == "openai"
     assert resumed_state.state_payload["runtime_gateway_provider"] == "openai"
-    assert resumed_state.state_payload["llm_model"] == "gpt-5.4-mini"
+    assert resumed_state.state_payload["llm_model"] == "gpt-5.5"
     assert resumed_state.state_payload["runtime_brief"].startswith("Outcome:")
     assert resumed_state.state_payload["context_budget"]["status"] == "ok"
     assert resumed_state.state_payload["context_budget"]["runtime_brief_prompt_chars"] > 0
-    assert fake_client.responses.calls[0]["model"] == "gpt-5.4-mini"
+    assert fake_client.responses.calls[0]["model"] == "gpt-5.5"
 
 
 def test_openai_runtime_gateway_rejects_over_budget_runtime_brief_prompt() -> None:
     fake_client = _FakeOpenAIClient()
     gateway = OpenAIRuntimeGateway(
         client=fake_client,
-        model="gpt-5.4-mini",
         warn_input_chars=40,
         max_input_chars=60,
     )

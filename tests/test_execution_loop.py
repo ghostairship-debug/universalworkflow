@@ -323,7 +323,7 @@ def test_openai_runtime_gateway_projects_brief_into_artifact_and_status(tmp_path
     fake_client = _FakeGatewayClient()
     service = OrchestratorService(
         db_path,
-        runtime_gateway=OpenAIRuntimeGateway(client=fake_client, model="gpt-5.4-mini"),
+        runtime_gateway=OpenAIRuntimeGateway(client=fake_client),
     )
 
     run = service.create_run("Build one artifact with a brief", "feature_delivery")
@@ -339,11 +339,11 @@ def test_openai_runtime_gateway_projects_brief_into_artifact_and_status(tmp_path
     assert detail["trace_context"]["run_id"] == run.run_id
     assert detail["trace_context"]["verdict_id"] == bundle.review_verdict.verdict_id
     assert "runtime_gateway: openai" in artifact_text
-    assert "runtime_model: gpt-5.4-mini" in artifact_text
+    assert "runtime_model: gpt-5.5" in artifact_text
     assert "runtime_brief: Outcome:" in artifact_text
     assert timeline[-1].payload_json["trace_context"]["run_id"] == run.run_id
     assert timeline[-1].payload_json["trace_context"]["event_id"] == timeline[-1].event_id
-    assert fake_client.responses.calls[0]["model"] == "gpt-5.4-mini"
+    assert fake_client.responses.calls[0]["model"] == "gpt-5.5"
 
 
 def test_compile_run_projects_resolved_execution_profile_and_trace(tmp_path: Path) -> None:
@@ -394,7 +394,7 @@ def test_explicit_execution_overrides_drive_runtime_gateway_and_adapter_model(tm
     router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_recording_runner), NoopAdapter()])
     service = OrchestratorService(
         db_path,
-        runtime_gateway=OpenAIRuntimeGateway(client=fake_client, model="gpt-5.4-mini"),
+        runtime_gateway=OpenAIRuntimeGateway(client=fake_client),
         worker_router=router,
     )
 
@@ -402,10 +402,10 @@ def test_explicit_execution_overrides_drive_runtime_gateway_and_adapter_model(tm
     prepared = service.compile_run(
         run.run_id,
         adapter_name="opencode",
-        opencode_model="openai/gpt-5.4",
+        opencode_model="openai/gpt-5.5",
         opencode_variant="turbo",
         runtime_gateway_provider="openai",
-        runtime_gateway_model="gpt-5.4",
+        runtime_gateway_model="gpt-5.5",
         runtime_reasoning_effort="medium",
     )
     service.resume_run(run.run_id)
@@ -414,11 +414,11 @@ def test_explicit_execution_overrides_drive_runtime_gateway_and_adapter_model(tm
     command = captured["command"]
     assert isinstance(command, list)
     assert prepared.resolved_execution.adapter_name == "opencode"
-    assert prepared.resolved_execution.selected_model == "openai/gpt-5.4"
-    assert prepared.resolved_execution.runtime_gateway_model == "gpt-5.4"
-    assert command[command.index("--model") + 1] == "openai/gpt-5.4"
+    assert prepared.resolved_execution.selected_model == "openai/gpt-5.5"
+    assert prepared.resolved_execution.runtime_gateway_model == "gpt-5.5"
+    assert command[command.index("--model") + 1] == "openai/gpt-5.5"
     assert command[command.index("--variant") + 1] == "turbo"
-    assert fake_client.responses.calls[0]["model"] == "gpt-5.4"
+    assert fake_client.responses.calls[0]["model"] == "gpt-5.5"
     assert fake_client.responses.calls[0]["reasoning"]["effort"] == "medium"
     assert detail["runtime_gateway"]["provider"] == "openai"
     assert detail["resolved_execution"]["runtime_reasoning_effort"] == "medium"
@@ -1054,7 +1054,7 @@ def test_repo_default_adapter_models_match_expected_defaults(monkeypatch: pytest
     monkeypatch.delenv("WORKFLOW_OPENCODE_MODEL", raising=False)
     monkeypatch.delenv("WORKFLOW_CONFIG_PATH", raising=False)
 
-    assert LangChainAgentAdapter(runner=_fake_agent_runner).model == "gpt-5.4-mini"
+    assert LangChainAgentAdapter(runner=_fake_agent_runner).model == "gpt-5.5"
     assert CodexAdapter(runner=_fake_codex_runner).model == "gpt-5.5"
     assert CodexAdapter(runner=_fake_codex_runner).reasoning_effort == "xhigh"
     assert OpenCodeAdapter(runner=_fake_opencode_runner).model == "minimax/MiniMax-M2.7"
@@ -1071,7 +1071,7 @@ def test_codex_adapter_projects_reasoning_effort_into_command(tmp_path: Path) ->
         env={
             "WORKFLOW_PRESET_ID": "feature_delivery",
             "WORKFLOW_RUN_GOAL": "codex reasoning",
-            "WORKFLOW_CODEX_MODEL": "gpt-5.4",
+            "WORKFLOW_CODEX_MODEL": "gpt-5.5",
             "WORKFLOW_CODEX_REASONING_EFFORT": "xhigh",
         },
     )
@@ -1079,7 +1079,7 @@ def test_codex_adapter_projects_reasoning_effort_into_command(tmp_path: Path) ->
     adapter = CodexAdapter(runner=_fake_codex_runner, executable="codex")
     command = adapter.build_command(packet)
 
-    assert command[command.index("--model") + 1] == "gpt-5.4"
+    assert command[command.index("--model") + 1] == "gpt-5.5"
     assert '-c' in command
     assert 'model_reasoning_effort="xhigh"' in command
 
@@ -2010,6 +2010,71 @@ def test_repo_mutation_patch_apply_failure_projects_mutation_result(
     assert payload["readiness"] == "blocked"
 
 
+def test_repo_mutation_patch_apply_retry_embeds_current_target_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    def _retry_runner(command, cwd, env, capture_output, text, check, timeout):
+        attempt_index = int(env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0"))
+        if attempt_index == 0:
+            patch_text = (
+                "--- mutated.txt\n"
+                "+++ mutated.txt\n"
+                "@@ -1 +1 @@\n"
+                "-stale-before\n"
+                "+after\n"
+            )
+        else:
+            feedback = env.get("WORKFLOW_MUTATION_FAILURE_FEEDBACK", "")
+            assert "Current target file context JSON" in feedback
+            assert "before\\n" in feedback
+            patch_text = (
+                "--- mutated.txt\n"
+                "+++ mutated.txt\n"
+                "@@ -1 +1 @@\n"
+                "-before\n"
+                "+after\n"
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_retry_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+
+    target_file = tmp_path / "mutated.txt"
+    target_file.write_text("before\n", encoding="utf-8")
+
+    run = service.create_run("Retry bad patch with fresh target context", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=["mutated.txt"],
+        max_fix_iterations=1,
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, ["mutated.txt"]),
+    )
+    detail_after = service.get_status_detail(run.run_id)
+
+    assert target_file.read_text(encoding="utf-8") == "after\n"
+    assert detail_after["mutation_result"]["final_test_status"] == "not_requested"
+    assert detail_after["mutation_result"]["fix_iteration_count"] == 1
+
+
 def test_repo_mutation_rejects_delete_patch_without_explicit_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2578,6 +2643,135 @@ def test_repo_mutation_accepts_explicit_external_project_root_write_set(
         "export const externalProjectPatch = true;\n"
     )
     assert not (tmp_path / "assets" / "scripts" / "AudioRuntimeState.ts").exists()
+
+
+def test_repo_mutation_rewrites_project_relative_paths_into_external_glob_write_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    external_project = tmp_path.parent / f"{tmp_path.name}_external_glob_project"
+    external_project.mkdir(parents=True)
+    monkeypatch.setenv("WORKFLOW_MUTATION_EXTERNAL_ROOTS", json.dumps([external_project.as_posix()]))
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    def _project_relative_runner(command, cwd, env, capture_output, text, check, timeout):
+        patch_text = (
+            "diff --git a/assets/scripts/runtime/input/Input.ts b/assets/scripts/runtime/input/Input.ts\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/assets/scripts/runtime/input/Input.ts\n"
+            "@@ -0,0 +1 @@\n"
+            "+export const externalGlobPatch = true;\n"
+            "diff --git a/workflow_runtime_evidence/machine_gate_repair_evidence.json b/workflow_runtime_evidence/machine_gate_repair_evidence.json\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/workflow_runtime_evidence/machine_gate_repair_evidence.json\n"
+            "@@ -0,0 +1 @@\n"
+            "+{\"go\":true}\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_project_relative_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+    write_set = [
+        (external_project / "assets" / "scripts" / "**").as_posix(),
+        (external_project / "workflow_runtime_evidence" / "**").as_posix(),
+    ]
+    run = service.create_run("Accept external project glob mutation", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=write_set,
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, write_set),
+    )
+
+    assert (external_project / "assets" / "scripts" / "runtime" / "input" / "Input.ts").read_text(encoding="utf-8") == (
+        "export const externalGlobPatch = true;\n"
+    )
+    assert (external_project / "workflow_runtime_evidence" / "machine_gate_repair_evidence.json").read_text(
+        encoding="utf-8"
+    ) == '{"go":true}\n'
+    assert not (tmp_path / "assets" / "scripts" / "runtime" / "input" / "Input.ts").exists()
+
+
+def test_repo_mutation_external_glob_snapshot_restores_existing_files_between_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", repo_root.as_posix())
+    external_project = tmp_path.parent / f"{tmp_path.name}_external_glob_restore_project"
+    target_file = external_project / "assets" / "scripts" / "runtime" / "input" / "Input.ts"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("export const value = 'before';\n", encoding="utf-8")
+    monkeypatch.setenv("WORKFLOW_MUTATION_EXTERNAL_ROOTS", json.dumps([external_project.as_posix()]))
+    db_path = tmp_path / "workflow.db"
+    migrate(db_path)
+    PresetRepository(db_path).seed_defaults()
+
+    def _retry_runner(command, cwd, env, capture_output, text, check, timeout):
+        attempt_index = int(env.get("WORKFLOW_MUTATION_ATTEMPT_INDEX", "0"))
+        next_value = "broken" if attempt_index == 0 else "after"
+        patch_text = (
+            "diff --git a/assets/scripts/runtime/input/Input.ts b/assets/scripts/runtime/input/Input.ts\n"
+            "--- a/assets/scripts/runtime/input/Input.ts\n"
+            "+++ b/assets/scripts/runtime/input/Input.ts\n"
+            "@@ -1 +1 @@\n"
+            "-export const value = 'before';\n"
+            f"+export const value = '{next_value}';\n"
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"type": "text", "part": {"text": patch_text}}),
+            stderr="",
+        )
+
+    router = WorkerRouter([ShellAdapter(), OpenCodeAdapter(runner=_retry_runner), NoopAdapter()])
+    service = OrchestratorService(db_path, worker_router=router)
+    verifier = tmp_path / "verify_external_glob_restore.py"
+    verifier.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        f"target = Path({target_file.as_posix()!r})\n"
+        "expected = \"export const value = 'after';\\n\"\n"
+        "sys.exit(0 if target.exists() and target.read_text(encoding='utf-8') == expected else 1)\n",
+        encoding="utf-8",
+    )
+    write_set = [(external_project / "assets" / "scripts" / "**").as_posix()]
+    run = service.create_run("Restore external glob mutation between retries", "feature_delivery")
+    service.compile_run(
+        run.run_id,
+        adapter_name="opencode",
+        write_set=write_set,
+        test_commands=[f"{sys.executable} {verifier.name}"],
+        max_fix_iterations=1,
+        mutation_mode=MutationMode.patch_apply,
+    )
+
+    service.resume_run(
+        run.run_id,
+        operator_receipt_id=_patch_apply_receipt_id(service, run.run_id, write_set),
+    )
+    detail = service.get_status_detail(run.run_id)
+
+    assert target_file.read_text(encoding="utf-8") == "export const value = 'after';\n"
+    assert detail["mutation_result"]["final_test_status"] == "passed"
+    assert detail["mutation_result"]["fix_iteration_count"] == 1
 
 
 def test_repo_mutation_rejects_new_file_patch_when_target_exists(
@@ -3886,6 +4080,32 @@ def test_mutation_write_set_embeds_directory_file_previews(tmp_path: Path) -> No
     assert context[0]["kind"] == "directory"
     assert context[0]["source_scope"] == "external_root"
     assert "LEVELS" in context[0]["file_previews"][0]["content_preview"]
+
+
+def test_mutation_write_set_embeds_external_glob_file_previews(tmp_path: Path) -> None:
+    external_project = tmp_path / "fresh_game"
+    target_file = external_project / "assets" / "scripts" / "runtime" / "input" / "Input.ts"
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("export const CURRENT_INPUT = true;\n", encoding="utf-8")
+    contract = MutationContract(
+        mutation_mode=MutationMode.patch_apply,
+        write_set=[(external_project / "assets" / "scripts" / "**").as_posix()],
+        read_set=[],
+        test_commands=[],
+        task_card_ref="tc_glob_context",
+    )
+
+    context = write_set_context_for_mutation(
+        contract,
+        working_directory=(tmp_path / "workspace").as_posix(),
+        external_roots=[external_project.as_posix()],
+    )
+
+    assert context[0]["kind"] == "glob"
+    assert context[0]["source_scope"] == "external_root"
+    assert context[0]["matched_file_count"] == 1
+    assert context[0]["children"] == [target_file.as_posix()]
+    assert "CURRENT_INPUT" in context[0]["file_previews"][0]["content_preview"]
 
 
 def test_inspection_can_create_repair_runtime_attempt(tmp_path: Path) -> None:

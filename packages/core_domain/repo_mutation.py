@@ -21,6 +21,7 @@ _HUNK_HEADER_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
 _APPLY_PATCH_FILE_HEADER_RE = re.compile(r"^\*\*\* (?P<action>Update|Add|Delete) File: (?P<path>.+)$", re.MULTILINE)
+GLOB_MARKERS = ("*", "?", "[")
 
 
 @dataclass(slots=True)
@@ -146,6 +147,16 @@ def capture_workspace_snapshot(
     snapshot: dict[str, SnapshotEntry] = {}
     for raw_path in write_set:
         rel_path = _normalize_rel_path(root, raw_path, external_roots=external)
+        if _has_glob_marker(raw_path):
+            for child in _existing_glob_files(root, raw_path, external_roots=external):
+                child_resolved = child.resolve()
+                child_rel = (
+                    child_resolved.relative_to(root).as_posix()
+                    if _path_is_under(child_resolved, root)
+                    else child_resolved.as_posix()
+                )
+                snapshot[child_rel] = _snapshot_file(child, child_rel)
+            continue
         absolute = _absolute_for_normalized_path(root, rel_path)
         if absolute.exists() and absolute.is_dir():
             for child in absolute.rglob("*"):
@@ -161,6 +172,48 @@ def capture_workspace_snapshot(
             continue
         snapshot[rel_path] = _snapshot_file(absolute, rel_path) if absolute.exists() else SnapshotEntry(path=rel_path, exists=False, content=None)
     return snapshot
+
+
+def _has_glob_marker(value: str | Path) -> bool:
+    text = str(value)
+    return any(marker in text for marker in GLOB_MARKERS)
+
+
+def _existing_glob_files(workspace_root: Path, raw_path: str | Path, *, external_roots: list[Path]) -> list[Path]:
+    split = _split_glob_base_and_pattern(Path(raw_path))
+    if split is None:
+        return []
+    raw_base, pattern = split
+    base = raw_base if raw_base.is_absolute() else workspace_root / raw_base
+    try:
+        resolved_base = base.resolve()
+    except OSError:
+        return []
+    if not _path_is_under(resolved_base, workspace_root) and not any(
+        _path_is_under(resolved_base, external_root) for external_root in external_roots
+    ):
+        return []
+    if not resolved_base.exists() or not resolved_base.is_dir():
+        return []
+    try:
+        if pattern in {"**", "**/*"}:
+            files = [child.resolve() for child in resolved_base.rglob("*") if child.is_file()]
+        else:
+            files = [child.resolve() for child in resolved_base.glob(pattern) if child.is_file()]
+    except (OSError, ValueError):
+        return []
+    return sorted(files, key=lambda child: child.as_posix())
+
+
+def _split_glob_base_and_pattern(raw_path: Path) -> tuple[Path, str] | None:
+    parts = raw_path.parts
+    for index, part in enumerate(parts):
+        if any(marker in part for marker in GLOB_MARKERS):
+            base_parts = parts[:index]
+            pattern_parts = parts[index:]
+            base = Path(*base_parts) if base_parts else Path(".")
+            return base, "/".join(pattern_parts)
+    return None
 
 
 def _snapshot_file(path: Path, rel_path: str) -> SnapshotEntry:

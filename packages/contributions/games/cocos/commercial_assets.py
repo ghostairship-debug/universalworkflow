@@ -15,6 +15,7 @@ from packages.contributions.asset_factory.asset_generation import (
     generate_procedural_sfx,
     generate_minimax_speech,
     generate_vertex_gemini_visual_review,
+    generate_vertex_imagen,
     write_asset_manifest,
 )
 from packages.contributions.asset_factory.factory import (
@@ -108,12 +109,86 @@ def _generate_with_retries(
     return last_result
 
 
+def _request_for_provider(request: AssetGenerationRequest, *, provider: str) -> AssetGenerationRequest:
+    metadata = dict(request.metadata or {})
+    metadata["fallback_from_provider"] = request.provider
+    return AssetGenerationRequest(
+        provider=provider,
+        modality=request.modality,
+        prompt=request.prompt,
+        output_dir=request.output_dir,
+        filename=request.filename,
+        model=None if provider != request.provider else request.model,
+        mime_type=request.mime_type,
+        metadata=metadata,
+    )
+
+
+def _generator_with_provider_fallback(
+    primary: AssetGenerator,
+    *,
+    fallback_provider: str,
+    fallback: AssetGenerator | None,
+) -> AssetGenerator:
+    def _run(request: AssetGenerationRequest) -> AssetGenerationResult:
+        primary_result = primary(request)
+        if primary_result.status == "completed" and primary_result.artifact_paths:
+            primary_result.metadata = {
+                **(primary_result.metadata or {}),
+                "provider_fallback_considered": bool(fallback),
+                "provider_fallback_used": False,
+            }
+            return primary_result
+        if fallback is None:
+            primary_result.metadata = {
+                **(primary_result.metadata or {}),
+                "provider_fallback_considered": False,
+                "provider_fallback_used": False,
+            }
+            return primary_result
+        fallback_request = _request_for_provider(request, provider=fallback_provider)
+        fallback_result = fallback(fallback_request)
+        fallback_result.metadata = {
+            **(fallback_result.metadata or {}),
+            "provider_fallback_considered": True,
+            "provider_fallback_used": fallback_result.status == "completed" and bool(fallback_result.artifact_paths),
+            "primary_provider": primary_result.provider,
+            "primary_status": primary_result.status,
+            "primary_failure_class": primary_result.failure_class,
+            "fallback_provider": fallback_provider,
+        }
+        if fallback_result.status == "completed" and fallback_result.artifact_paths:
+            return fallback_result
+        return AssetGenerationResult(
+            provider=primary_result.provider,
+            modality=primary_result.modality,
+            status=primary_result.status,
+            artifact_paths=primary_result.artifact_paths,
+            mime_type=primary_result.mime_type,
+            model=primary_result.model,
+            failure_class=primary_result.failure_class,
+            metadata={
+                **(primary_result.metadata or {}),
+                "provider_fallback_considered": True,
+                "provider_fallback_used": False,
+                "fallback_provider": fallback_provider,
+                "fallback_status": fallback_result.status,
+                "fallback_failure_class": fallback_result.failure_class,
+                "fallback_metadata": fallback_result.metadata,
+            },
+        )
+
+    return _run
+
+
 def generate_cocos_commercial_asset_manifest(
     *,
     output_dir: str | Path,
     style_prompt: str = "premium neon 1010 block puzzle mobile game, polished casual commercial art",
     include_vertex_review: bool = True,
+    enable_provider_fallbacks: bool = True,
     image_generator: AssetGenerator = generate_minimax_image,
+    image_fallback_generator: AssetGenerator | None = generate_vertex_imagen,
     sfx_generator: AssetGenerator = generate_procedural_sfx,
     speech_generator: AssetGenerator = generate_minimax_speech,
     music_generator: AssetGenerator = generate_minimax_music,
@@ -132,7 +207,15 @@ def generate_cocos_commercial_asset_manifest(
         manifest_path=prompt_manifest_path,
         output_dir=root / "commercial_asset_factory",
         generators=AssetFactoryGenerators(
-            image=image_generator,
+            image=(
+                _generator_with_provider_fallback(
+                    image_generator,
+                    fallback_provider="vertex_generation_api",
+                    fallback=image_fallback_generator,
+                )
+                if enable_provider_fallbacks
+                else image_generator
+            ),
             sfx=sfx_generator,
             speech=speech_generator,
             music=music_generator,
