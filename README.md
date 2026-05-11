@@ -6,7 +6,8 @@ Use these documents in this order for commercial game pipeline work:
 
 1. [CURRENT_DEVELOPMENT_WORKFLOW.md](CURRENT_DEVELOPMENT_WORKFLOW.md) is the active workflow truth.
 2. [COMMERCIAL_GAME_PIPELINE_NO_DOWNGRADE_REPAIR_PLAN_2026_05_07.md](COMMERCIAL_GAME_PIPELINE_NO_DOWNGRADE_REPAIR_PLAN_2026_05_07.md) is the current no-downgrade repair and same-project loop plan.
-3. [COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md](COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md), [POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md](POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md), [UNIVERSAL_GAME_PRODUCTION_AI_PLAYTEST_UPGRADE_PLAN_2026_05_03.md](UNIVERSAL_GAME_PRODUCTION_AI_PLAYTEST_UPGRADE_PLAN_2026_05_03.md), and [commercial_game_cycle_postmortem_2026_05_02.md](commercial_game_cycle_postmortem_2026_05_02.md) are retained background/design records, not competing current truth sources.
+3. [COMMERCIAL_GAME_SPECIALIZED_AGENT_PIPELINE_DESIGN_2026_05_08.md](COMMERCIAL_GAME_SPECIALIZED_AGENT_PIPELINE_DESIGN_2026_05_08.md) records the post-repair specialist-role pipeline upgrade for commercial game quality.
+4. [COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md](COMMERCIAL_GAME_PRODUCTION_V2_PIPELINE_DESIGN.md), [POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md](POST_M109_LONG_RUNNING_DEVELOPMENT_PLAN_2026_05_02.md), [UNIVERSAL_GAME_PRODUCTION_AI_PLAYTEST_UPGRADE_PLAN_2026_05_03.md](UNIVERSAL_GAME_PRODUCTION_AI_PLAYTEST_UPGRADE_PLAN_2026_05_03.md), and [commercial_game_cycle_postmortem_2026_05_02.md](commercial_game_cycle_postmortem_2026_05_02.md) are retained background/design records, not competing current truth sources.
 
 Operationally, future commercial game generation must use one explicit same-source project directory. A failed gate must flow back into same-project task-card repair; it must not be hidden by creating a sequence of fresh output directories.
 
@@ -16,7 +17,7 @@ Operationally, future commercial game generation must use one explicit same-sour
 - Completed: unified project brief, single-agent role pipeline, design/planning outputs, multimodal route truth table, DB-backed task-card gate, bounded Cocos technical-smoke trial, and cluster-upgrade review.
 - Cocos trial result: `technical_smoke_go=true`, `production_scaffold_go=true`, `commercial_playable_go=false`.
 - Current claim: pipeline technical trial completed; machine evidence for the current commercial build is ready for human review, but commercial playable game acceptance is still not proven.
-- Cluster decision: keep single-agent roles for now; no automatic M110 task cards.
+- Cluster decision: keep executable single-agent-role backend for now; the commercial pipeline now splits the role chain into specialist single-agent roles for mechanics, level/economy, UI polish, art direction, animation/VFX, audio, multimodal routes, AI playtest oracle, QA, and supervision. No automatic M110 task cards.
 
 ## Real Game Pipeline Correction (2026-04-28)
 

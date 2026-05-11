@@ -2198,7 +2198,11 @@ def production_payload_from_worker(
 ) -> dict[str, Any]:
     blockers = list(runtime_evidence.get("commercial_playable_blockers") or [])
     ecosystem_payload = dict(ecosystem_evidence or {})
-    asset_graph = build_asset_graph_contract(assets_stage)
+    effective_assets_stage = _effective_assets_stage_from_same_project_repair(
+        project_dir=project_dir,
+        assets_stage=assets_stage,
+    )
+    asset_graph = build_asset_graph_contract(effective_assets_stage)
     cocos_bridge_evidence = build_cocos_bridge_evidence_contract(ecosystem_payload)
     same_project_patch_ledger_contract = build_same_project_patch_ledger_contract(patch_ledger)
     build_ledger = build_build_ledger(runtime_evidence.get("build_ledger") or runtime_evidence.get("build"))
@@ -2254,10 +2258,10 @@ def production_payload_from_worker(
         evidence_contracts["reference_quality_evidence"] = reference_quality_evidence
     if ai_surrogate_contract:
         evidence_contracts["ai_surrogate_playtest_evidence"] = ai_surrogate_contract
-    if assets_stage.get("placeholder_only"):
+    if effective_assets_stage.get("placeholder_only"):
         blockers.append("placeholder_assets_only")
-    if assets_stage and not assets_stage.get("commercial_assets_go"):
-        blockers.extend(assets_stage.get("commercial_asset_blockers") or ["commercial_assets_no_go"])
+    if effective_assets_stage and not effective_assets_stage.get("commercial_assets_go"):
+        blockers.extend(effective_assets_stage.get("commercial_asset_blockers") or ["commercial_assets_no_go"])
     if not patch_ledger.get("same_project_worker_patch_go"):
         blockers.extend(patch_ledger.get("blockers") or ["same_project_worker_patch_missing"])
         blockers.append("blocked_by_same_project_worker")
@@ -2352,7 +2356,7 @@ def production_payload_from_worker(
         "manifest_path": runtime_evidence.get("manifest_path"),
         "build": runtime_evidence.get("build"),
         "playtest": runtime_evidence.get("playtest"),
-        "assets": assets_stage,
+        "assets": effective_assets_stage,
         "max_repair_attempts": max_repair_attempts,
         "repair_policy": "same_project_incremental_repair",
         "forbids_fixed_template": True,
@@ -3098,6 +3102,57 @@ def _blocked_evidence_contract(
         "go": False,
         "blockers": list(blockers),
         "source": {"stage": stage, **source},
+    }
+
+
+def _effective_assets_stage_from_same_project_repair(
+    *,
+    project_dir: Path,
+    assets_stage: dict[str, Any],
+) -> dict[str, Any]:
+    payload = dict(assets_stage or {})
+    if payload.get("commercial_assets_go") is True and not payload.get("placeholder_only"):
+        return payload
+    manifest_path = project_dir / "assets" / "resources" / "commercial_assets" / "art" / "player_visible_asset_manifest.json"
+    manifest = _read_json_dict(manifest_path)
+    if not manifest:
+        return payload
+    if manifest.get("placeholder_assets_only") is not False:
+        return payload
+    non_placeholder_count = int(manifest.get("non_placeholder_player_visible_asset_count") or 0)
+    if non_placeholder_count <= 0:
+        return payload
+    blockers = [str(item) for item in payload.get("commercial_asset_blockers") or [] if str(item) != "placeholder_assets_only"]
+    provider_evidence = list(payload.get("provider_evidence") or [])
+    provider_evidence.append(
+        {
+            "asset_name": "same_project_player_visible_asset_manifest",
+            "provider": "same_project_worker_asset_repair",
+            "status": "completed",
+            "artifact_paths": [manifest_path.as_posix()],
+            "non_placeholder_player_visible_asset_count": non_placeholder_count,
+        }
+    )
+    effective_manifest = dict(payload.get("asset_manifest") or {})
+    effective_manifest.update(
+        {
+            "go_no_go": "GO",
+            "manifest_path": manifest_path.as_posix(),
+            "player_visible_asset_manifest_path": manifest_path.as_posix(),
+            "placeholder_assets_only": False,
+            "non_placeholder_player_visible_asset_count": non_placeholder_count,
+        }
+    )
+    return {
+        **payload,
+        "commercial_assets_go": True,
+        "placeholder_only": False,
+        "commercial_asset_blockers": blockers,
+        "asset_manifest_path": manifest_path.as_posix(),
+        "asset_manifest": effective_manifest,
+        "provider_evidence": provider_evidence,
+        "same_project_asset_repair_applied": True,
+        "same_project_player_visible_asset_manifest": manifest,
     }
 
 

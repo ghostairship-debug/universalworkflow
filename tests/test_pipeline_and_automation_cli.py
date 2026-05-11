@@ -21,6 +21,31 @@ def _invoke(tmp_path: Path, *args: str):
     )
 
 
+def _pipeline_stage_by_capability(payload: dict, capability: str) -> dict:
+    for stage in payload["stage_results"]:
+        if stage.get("metadata", {}).get("capability") == capability:
+            return stage
+    raise AssertionError(f"missing capability stage result: {capability}")
+
+
+def _pipeline_stage_by_role(payload: dict, role_id: str) -> dict:
+    for stage in payload["stage_results"]:
+        if stage.get("metadata", {}).get("role_id") == role_id:
+            return stage
+    raise AssertionError(f"missing role stage result: {role_id}")
+
+
+def _completed_pre_capability_agent_roles(payload: dict, capability: str) -> list[dict]:
+    target = _pipeline_stage_by_capability(payload, capability)
+    target_order = int(target.get("order_index") or 0)
+    return [
+        stage
+        for stage in payload["stage_results"]
+        if stage.get("metadata", {}).get("role_id")
+        and int(stage.get("order_index") or 0) < target_order
+    ]
+
+
 def _visible_cli_session(tmp_path: Path, task_card_id: str = "tc_visible") -> dict[str, object]:
     session_dir = tmp_path / "visible_cli_sessions" / task_card_id
     return {
@@ -379,15 +404,26 @@ def test_pipeline_preview_exposes_h5_game_commercialization_pipeline(tmp_path: P
     payload = json.loads(result.stdout)
     assert payload["name"] == "commercial_game_production_pipeline"
     assert payload["execution_mode"] == "serial"
-    assert [stage["stage_kind"] for stage in payload["stages"]] == ["agent_role"] * 6 + [
-        "capability",
-        "capability",
-        "agent_role",
-        "agent_role",
-        "validation_gate",
+    role_ids = [stage["metadata"].get("role_id") for stage in payload["stages"] if stage["stage_kind"] == "agent_role"]
+    assert role_ids == [
+        "intake_packaging_agent",
+        "product_gameplay_agent",
+        "mechanics_system_designer_agent",
+        "level_economy_designer_agent",
+        "ui_experience_agent",
+        "ui_ux_polish_agent",
+        "art_direction_agent",
+        "animation_vfx_feedback_agent",
+        "audio_feedback_designer_agent",
+        "technical_plan_agent",
+        "multimodal_generation_agent",
+        "ai_playtest_oracle_agent",
+        "task_card_generation_agent",
+        "qa_player_perspective_agent",
+        "supervisor",
     ]
-    assert payload["stages"][6]["metadata"]["capability"] == "commercial_game_asset_generation"
-    assert payload["stages"][7]["metadata"]["capability"] == "commercial_game_task_card_worker"
+    capabilities = [stage["metadata"].get("capability") for stage in payload["stages"] if stage["stage_kind"] == "capability"]
+    assert capabilities == ["commercial_game_asset_generation", "commercial_game_task_card_worker"]
     assert all(stage["metadata"].get("forbids_fixed_template") is True for stage in payload["stages"])
 
 
@@ -1077,12 +1113,15 @@ def test_real_commercial_game_pipeline_runs_registered_stages_and_blocks_on_miss
     )
 
     assert payload["status"] == "blocked"
-    assert [stage["status"] for stage in payload["stage_results"][:6]] == ["completed"] * 6
-    asset_stage = payload["stage_results"][6]
+    assert all(
+        stage["status"] == "completed"
+        for stage in _completed_pre_capability_agent_roles(payload, "commercial_game_asset_generation")
+    )
+    asset_stage = _pipeline_stage_by_capability(payload, "commercial_game_asset_generation")
     assert asset_stage["status"] == "completed"
     assert asset_stage["execution_backend"] == "commercial_game_asset_generation_v1"
     assert asset_stage["metadata"]["forbids_fixed_template"] is True
-    worker_stage = payload["stage_results"][7]
+    worker_stage = _pipeline_stage_by_capability(payload, "commercial_game_task_card_worker")
     assert worker_stage["status"] == "blocked"
     assert worker_stage["failure_class"] == "task_card_quality_no_go"
     assert worker_stage["output"]["persistent_project_per_run"] is True
@@ -1105,7 +1144,7 @@ def test_commercial_game_repair_packet_classifies_missing_source_as_operator_inp
     )
 
     assert payload["status"] == "failed"
-    worker_stage = payload["stage_results"][7]
+    worker_stage = _pipeline_stage_by_capability(payload, "commercial_game_task_card_worker")
     assert worker_stage["status"] == "completed"
     assert worker_stage["output"]["commercial_playable_blockers"] == [
         "source_path_missing",
@@ -1120,7 +1159,7 @@ def test_commercial_game_repair_packet_classifies_missing_source_as_operator_inp
             "recoverable_suggestion": "Rerun the pipeline with --pdf-path pointing to an existing source brief or PDF.",
         }
     ]
-    supervisor = payload["stage_results"][9]["output"]["structured_output"]
+    supervisor = _pipeline_stage_by_role(payload, "supervisor")["output"]["structured_output"]
     assert supervisor["repair_packets"][0] == (
         {
             "repair_packet_id": "repair_001_operator_input",
@@ -1165,13 +1204,13 @@ def test_real_asset_stage_skips_provider_when_required_source_is_missing(tmp_pat
         require_commercial=True,
     )
 
-    asset_stage = payload["stage_results"][6]
+    asset_stage = _pipeline_stage_by_capability(payload, "commercial_game_asset_generation")
     assert asset_stage["status"] == "completed"
     assert asset_stage["failure_class"] is None
     assert asset_stage["output"]["asset_generation_skipped"] is True
-    worker_stage = payload["stage_results"][7]
+    worker_stage = _pipeline_stage_by_capability(payload, "commercial_game_task_card_worker")
     assert worker_stage["output"]["commercial_playable_blockers"] == ["source_path_missing"]
-    supervisor = payload["stage_results"][9]["output"]["structured_output"]
+    supervisor = _pipeline_stage_by_role(payload, "supervisor")["output"]["structured_output"]
     assert supervisor["repair_packets"][0]["owner_role"] == "operator_input"
 
 
@@ -2252,6 +2291,54 @@ def test_production_worker_generates_human_review_packet_without_human_go(tmp_pa
     assert payload["human_player_review_go"] is False
     assert payload["commercial_playable_go"] is False
     assert payload["commercial_game_development_readiness"]["commercial_game_development_readiness_go"] is True
+
+
+def test_same_project_asset_repair_overrides_placeholder_asset_stage(tmp_path: Path) -> None:
+    from packages.contributions.pipelines.commercial_game_evidence_contracts import build_asset_graph_contract
+    from packages.contributions.pipelines.commercial_game_task_worker import (
+        _effective_assets_stage_from_same_project_repair,
+    )
+
+    project_dir = tmp_path / "cocos_project"
+    manifest_path = (
+        project_dir
+        / "assets"
+        / "resources"
+        / "commercial_assets"
+        / "art"
+        / "player_visible_asset_manifest.json"
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "commercial_player_visible_asset_manifest_v1",
+                "placeholder_assets_only": False,
+                "non_placeholder_player_visible_asset_count": 18,
+                "real_player_visible_files": [{"path": "assets/resources/commercial_assets/art/generated_jelly_atlas.json"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    effective = _effective_assets_stage_from_same_project_repair(
+        project_dir=project_dir,
+        assets_stage={
+            "commercial_assets_go": False,
+            "placeholder_only": True,
+            "commercial_asset_blockers": ["placeholder_assets_only"],
+            "provider_evidence": [],
+        },
+    )
+
+    assert effective["commercial_assets_go"] is True
+    assert effective["placeholder_only"] is False
+    assert effective["commercial_asset_blockers"] == []
+    assert effective["same_project_asset_repair_applied"] is True
+    contract = build_asset_graph_contract(effective)
+    assert contract["go"] is True
+    assert contract["blockers"] == []
 
 
 def test_same_project_patch_ledger_records_continuation_for_idle_timeout(tmp_path: Path) -> None:

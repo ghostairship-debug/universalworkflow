@@ -144,6 +144,8 @@ def build_phase_execution_blueprint(
         {
             "slug": "runtime_state_core_loop",
             "title": "Implement engine-native runtime state and core loop",
+            "owner_role": "mechanics_system_designer_agent",
+            "review_roles": ["technical_plan_agent", "ai_playtest_oracle_agent"],
             "goal": (
                 "Implement the authoritative runtime state, core player verbs, win/fail/retry transitions, "
                 "save/load fields, and semantic traces defined by the GameDesignSpec."
@@ -172,6 +174,8 @@ def build_phase_execution_blueprint(
         {
             "slug": "scene_prefab_component_binding",
             "title": "Bind player-visible scene prefab shell and component evidence",
+            "owner_role": "technical_plan_agent",
+            "review_roles": ["ui_ux_polish_agent", "art_direction_agent"],
             "goal": (
                 "Bind the current game's runtime model to player-visible Cocos scene, prefab, HUD shell, settings shell, "
                 "and review surfaces without relying on a fixed gameplay template."
@@ -200,6 +204,8 @@ def build_phase_execution_blueprint(
         {
             "slug": "scene_input_feedback_binding",
             "title": "Bind scene input feedback and player-visible capture contract",
+            "owner_role": "ui_ux_polish_agent",
+            "review_roles": ["mechanics_system_designer_agent", "technical_plan_agent"],
             "goal": (
                 "Bind pointer/touch input feedback, invalid target feedback, drag-follow behavior, and the player-visible "
                 "screenshot capture contract to the scene runtime."
@@ -234,6 +240,8 @@ def build_phase_execution_blueprint(
         {
             "slug": "ai_surrogate_playtest_quality_gate",
             "title": "Run AI surrogate playtest and generate repair findings",
+            "owner_role": "ai_playtest_oracle_agent",
+            "review_roles": ["qa_player_perspective_agent", "supervisor"],
             "goal": (
                 "Run scripted, exploratory, persona, vision, design red-team, performance, device matrix, "
                 "and regression playtests; produce quality scorecard and repair task-card findings."
@@ -281,6 +289,8 @@ def compile_task_cards_from_phase_execution_blueprint(
                 requirement_ids=_string_list(blueprint_slice.get("requirement_ids")) or all_req_ids,
                 risk_level=str(blueprint_slice.get("risk_level") or "high"),
                 evidence=_string_list(blueprint_slice.get("evidence")),
+                owner_role=str(blueprint_slice.get("owner_role") or "task_card_generation_agent"),
+                review_roles=_string_list(blueprint_slice.get("review_roles")),
                 blueprint=blueprint_payload,
             )
         )
@@ -351,8 +361,11 @@ def _task_card(
     requirement_ids: list[str],
     risk_level: str,
     evidence: list[str],
+    owner_role: str,
+    review_roles: list[str],
     blueprint: dict[str, Any],
 ) -> TaskCard:
+    specialist_role_reads = _specialist_role_read_set(owner_role, review_roles)
     return TaskCard(
         run_id=run_id,
         task_card_id=f"{run_id}_{slug}",
@@ -362,7 +375,7 @@ def _task_card(
         milestone="Universal Game Production Quality",
         phase_name=phase_name,
         write_set=write_set,
-        read_set=["UNIVERSAL_GAME_PRODUCTION_AI_PLAYTEST_UPGRADE_PLAN_2026_05_03.md", *read_set],
+        read_set=["UNIVERSAL_GAME_PRODUCTION_AI_PLAYTEST_UPGRADE_PLAN_2026_05_03.md", *specialist_role_reads, *read_set],
         test_commands=[
             "python -m pytest tests/test_game_design_ir.py tests/test_ai_playtest_quality_gate.py tests/test_game_task_card_generation.py -q",
             "python -m infra.scripts.check_doc_links",
@@ -388,6 +401,8 @@ def _task_card(
             "ai_surrogate_playtest_no_go",
         ],
         model_guidance=[
+            f"Primary specialist owner: {owner_role}.",
+            *([f"Review with specialist roles: {', '.join(review_roles)}."] if review_roles else []),
             "Use the GameDesignSpec and TestOracleSpec as the source of truth.",
             "Implement behavior and player-visible quality, not only feature flags or screenshots.",
             "For the Cocos commercial path, mutate the project root directly: use assets/scripts, assets/scene, assets/resources, and workflow_runtime_evidence rather than detached project/runtime folders.",
@@ -420,8 +435,23 @@ def _task_card(
             "provider_output_mode": "human_readable" if risk_level == "high" else "machine_readable",
             "workflow_generated_product_required": True,
             "codex_local_patch_repair_counts_as_product": False,
+            "specialist_owner_role": owner_role,
+            "specialist_review_roles": review_roles,
         },
     )
+
+
+def _specialist_role_read_set(owner_role: str, review_roles: list[str]) -> list[str]:
+    roles = [owner_role, *review_roles]
+    result: list[str] = []
+    for role in roles:
+        role_id = str(role).strip()
+        if not role_id or role_id == "task_card_generation_agent":
+            continue
+        item = f"role_output:{role_id}"
+        if item not in result:
+            result.append(item)
+    return result
 
 
 def _safe_slug(value: str) -> str:
@@ -481,6 +511,8 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             "categories": {"ui"},
             "slug": "player_visible_ui_flow",
             "title": "Implement localized player-visible UI flows",
+            "owner_role": "ui_ux_polish_agent",
+            "review_roles": ["art_direction_agent", "ai_playtest_oracle_agent"],
             "goal": "Implement localized first-session UI, HUD, menus, modal states, layout, readable text, and target-platform interaction surfaces.",
             "write_set": [
                 "assets/scripts/runtime/ui/CommercialHud.ts",
@@ -503,18 +535,87 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             ],
         },
         {
+            "categories": {"mechanic", "rule"},
+            "slug": "mechanics_rules_feel_tuning",
+            "title": "Implement mechanics rules and input-feel tuning",
+            "owner_role": "mechanics_system_designer_agent",
+            "review_roles": ["ui_ux_polish_agent", "ai_playtest_oracle_agent"],
+            "goal": "Implement mechanic-specific rule tuning, invalid action handling, input feel, fail/revive rules, and anti-soft-lock behavior.",
+            "write_set": [
+                "assets/scripts/runtime/systems/MechanicsRuleTuning.ts",
+                "assets/resources/content/mechanics_tuning_matrix.json",
+                "workflow_runtime_evidence/mechanics_rule_tuning_evidence.json",
+                "workflow_runtime_evidence/input_feedback_trace.json",
+            ],
+            "read_set": ["MechanicGraph", "StateModelContract", "InteractionMap"],
+            "risk_level": "high",
+            "evidence": [
+                "mechanics_rule_tuning_trace",
+                "invalid_action_feedback_trace",
+                "anti_soft_lock_or_no_move_state_proof",
+                "assets/resources/content/mechanics_tuning_matrix.json",
+                "workflow_runtime_evidence/mechanics_rule_tuning_evidence.json",
+            ],
+        },
+        {
+            "categories": {"progression"},
+            "slug": "level_goal_difficulty_curve",
+            "title": "Implement level goals and difficulty curve",
+            "owner_role": "level_economy_designer_agent",
+            "review_roles": ["mechanics_system_designer_agent", "ai_playtest_oracle_agent"],
+            "goal": "Implement distinct level goals, tutorial pacing, difficulty curve rows, unlock state, and per-level replay evidence.",
+            "write_set": [
+                "assets/resources/content/level_goal_matrix.json",
+                "assets/resources/content/difficulty_curve_matrix.json",
+                "workflow_runtime_evidence/level_goal_evidence.json",
+                "workflow_runtime_evidence/difficulty_curve_evidence.json",
+            ],
+            "read_set": ["ContentMatrix", "MechanicGraph", "QualityRubric"],
+            "risk_level": "high",
+            "evidence": [
+                "at_least_8_distinct_level_goals",
+                "difficulty_curve_replay",
+                "assets/resources/content/level_goal_matrix.json",
+                "assets/resources/content/difficulty_curve_matrix.json",
+                "workflow_runtime_evidence/difficulty_curve_evidence.json",
+            ],
+        },
+        {
+            "categories": {"economy"},
+            "slug": "economy_reward_skin_balance",
+            "title": "Implement economy reward and skin balance",
+            "owner_role": "level_economy_designer_agent",
+            "review_roles": ["ui_ux_polish_agent", "ai_playtest_oracle_agent"],
+            "goal": "Implement reward sources, skin/gallery sinks, owned/equipped states, affordability, and persistence evidence.",
+            "write_set": [
+                "assets/resources/content/economy_balance_matrix.json",
+                "assets/resources/content/reward_gallery_matrix.json",
+                "workflow_runtime_evidence/economy_balance_evidence.json",
+                "workflow_runtime_evidence/commercial_shop_skin_gallery_evidence.json",
+            ],
+            "read_set": ["ContentMatrix", "UIFlowGraph", "StateModelContract"],
+            "risk_level": "high",
+            "evidence": [
+                "reward_source_sink_trace",
+                "skin_gallery_locked_affordable_owned_equipped_states",
+                "save_load_state_trace",
+                "assets/resources/content/economy_balance_matrix.json",
+                "workflow_runtime_evidence/economy_balance_evidence.json",
+            ],
+        },
+        {
             "categories": {"art", "multimodal"},
-            "slug": "art_animation_asset_direction",
-            "title": "Implement non-placeholder art direction and animation feedback",
-            "goal": "Implement coherent non-placeholder visual assets, animation feedback, effects, and asset bindings required by the source brief.",
+            "slug": "art_direction_style_bible_assets",
+            "title": "Implement art direction style bible and asset graph",
+            "owner_role": "art_direction_agent",
+            "review_roles": ["ui_ux_polish_agent", "multimodal_generation_agent"],
+            "goal": "Implement coherent non-placeholder visual style, asset graph, board materials, icon family, and reward gallery bindings required by the source brief.",
             "write_set": [
                 "assets/resources/commercial_assets/art/art_direction_manifest.json",
                 "assets/resources/commercial_assets/art/board_cell_material.json",
                 "assets/resources/commercial_assets/art/block_palette_set.json",
                 "assets/resources/commercial_assets/art/feedback_text_tokens.json",
                 "assets/resources/commercial_assets/art/reward_gallery_shards.json",
-                "assets/scripts/runtime/effects/CommercialFeedbackAnimator.ts",
-                "workflow_runtime_evidence/feedback_animation_evidence.json",
                 "workflow_commercial_feature_evidence.json",
             ],
             "read_set": ["AssetStyleBible", "ContentMatrix"],
@@ -522,20 +623,42 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             "evidence": [
                 "asset_graph",
                 "vision_review_screenshots",
-                "animation_feedback_trace",
-                "assets/scripts/runtime/effects/CommercialFeedbackAnimator.ts",
                 "assets/resources/commercial_assets/art/art_direction_manifest.json",
                 "assets/resources/commercial_assets/art/feedback_text_tokens.json must be valid JSON and contain readable Simplified Chinese feedback labels, not mojibake",
                 "assets/resources/commercial_assets/art/block_palette_set.json and reward_gallery_shards.json must not contain mojibake in player-visible names or labels",
-                "workflow_runtime_evidence/feedback_animation_evidence.json",
                 "generatedArtAssets",
+            ],
+        },
+        {
+            "categories": {"art", "multimodal"},
+            "slug": "animation_vfx_feedback_polish",
+            "title": "Implement animation VFX and feedback polish",
+            "owner_role": "animation_vfx_feedback_agent",
+            "review_roles": ["mechanics_system_designer_agent", "ui_ux_polish_agent", "ai_playtest_oracle_agent"],
+            "goal": "Implement success, failure, combo, reward, panel-transition, and invalid-action motion feedback with replayable evidence.",
+            "write_set": [
+                "assets/scripts/runtime/effects/CommercialFeedbackAnimator.ts",
+                "assets/resources/commercial_assets/art/vfx_timing_manifest.json",
+                "workflow_runtime_evidence/feedback_animation_evidence.json",
+                "workflow_commercial_feature_evidence.json",
+            ],
+            "read_set": ["AssetStyleBible", "MechanicGraph", "InteractionMap"],
+            "risk_level": "high",
+            "evidence": [
+                "animation_feedback_trace",
                 "particleEffects",
+                "reduced_motion_safe_state",
+                "assets/scripts/runtime/effects/CommercialFeedbackAnimator.ts",
+                "assets/resources/commercial_assets/art/vfx_timing_manifest.json",
+                "workflow_runtime_evidence/feedback_animation_evidence.json",
             ],
         },
         {
             "categories": {"audio", "multimodal"},
             "slug": "audio_asset_manifest_generation",
             "title": "Generate commercial audio asset manifest",
+            "owner_role": "audio_feedback_designer_agent",
+            "review_roles": ["multimodal_generation_agent"],
             "goal": (
                 "Generate the current game's BGM/SFX design sheet, commercial audio manifest, procedural or provider-backed "
                 "audio bank, and machine-readable proof that the audio assets come from the active GameDesignSpec."
@@ -559,6 +682,8 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             "categories": {"audio", "multimodal"},
             "slug": "runtime_audio_bgm_sfx_controls",
             "title": "Bind runtime BGM SFX mix and volume controls",
+            "owner_role": "audio_feedback_designer_agent",
+            "review_roles": ["ui_ux_polish_agent", "ai_playtest_oracle_agent"],
             "goal": (
                 "Bind browser/engine runtime BGM, SFX trigger timing, mix state, mute/volume controls, audio errors, and "
                 "player-visible audio feedback to the generated commercial audio asset manifest."
@@ -591,6 +716,8 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             "categories": {"progression", "economy", "product"},
             "slug": "product_rules_progression_content_depth",
             "title": "Implement product rules progression and content depth",
+            "owner_role": "level_economy_designer_agent",
+            "review_roles": ["mechanics_system_designer_agent", "ui_ux_polish_agent"],
             "goal": (
                 "Implement brief-specific scoring, fail/win/revive rules, level objectives, rewards, unlocks, content matrix rows, "
                 "and persistence required by the source brief."
@@ -621,6 +748,8 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             "categories": {"performance"},
             "slug": "performance_device_input_feel",
             "title": "Implement performance device and input-feel requirements",
+            "owner_role": "technical_plan_agent",
+            "review_roles": ["ui_ux_polish_agent", "ai_playtest_oracle_agent"],
             "goal": "Implement input latency, responsive device layouts, frame pacing, low-performance handling, and device-matrix behavior required by the brief.",
             "write_set": [
                 "assets/scripts/runtime/input/InputFeelMetrics.ts",
@@ -654,6 +783,8 @@ def _implementation_groups(by_category: dict[str, list[str]], all_req_ids: list[
             {
                 "slug": "brief_specific_product_surface",
                 "title": "Implement brief-specific product requirements",
+                "owner_role": "product_gameplay_agent",
+                "review_roles": ["technical_plan_agent", "qa_player_perspective_agent"],
                 "goal": "Implement preserved source requirements that do not fit a standard game-production category, with direct evidence for each requirement id.",
                 "write_set": [
                     "assets/scripts/runtime/brief/BriefSpecificRequirements.ts",

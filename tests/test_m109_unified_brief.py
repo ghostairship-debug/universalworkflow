@@ -25,6 +25,28 @@ def _invoke(tmp_path: Path, *args: str):
     )
 
 
+def _stage_result_by_role(payload: dict, role_id: str) -> dict:
+    for stage in payload["stage_results"]:
+        if stage.get("metadata", {}).get("role_id") == role_id:
+            return stage
+    raise AssertionError(f"missing role stage result: {role_id}")
+
+
+def _stage_result_by_capability(payload: dict, capability: str) -> dict:
+    for stage in payload["stage_results"]:
+        if stage.get("metadata", {}).get("capability") == capability:
+            return stage
+    raise AssertionError(f"missing capability stage result: {capability}")
+
+
+def _completed_agent_role_results(payload: dict) -> list[dict]:
+    return [
+        stage
+        for stage in payload["stage_results"]
+        if stage.get("metadata", {}).get("role_id") and stage.get("status") == "completed"
+    ]
+
+
 def test_unified_project_brief_preserves_long_text_and_writes_agent_packets(tmp_path: Path) -> None:
     source = tmp_path / "brief.md"
     long_text = "玩法目标：玩家需要清晰的关卡目标。\n\n" + ("UI 面板必须可见可点，资产风格必须统一。\n" * 900)
@@ -130,15 +152,22 @@ def test_m109_single_agent_cocos_template_exposes_role_chain(tmp_path: Path) -> 
     assert role_ids == [
         "intake_packaging_agent",
         "product_gameplay_agent",
+        "mechanics_system_designer_agent",
+        "level_economy_designer_agent",
         "ui_experience_agent",
+        "ui_ux_polish_agent",
+        "art_direction_agent",
+        "animation_vfx_feedback_agent",
+        "audio_feedback_designer_agent",
         "technical_plan_agent",
         "multimodal_generation_agent",
+        "ai_playtest_oracle_agent",
         "task_card_generation_agent",
         "qa_player_perspective_agent",
         "supervisor",
     ]
-    assert payload["stages"][6]["metadata"]["capability"] == "commercial_game_asset_generation"
-    assert payload["stages"][7]["metadata"]["capability"] == "commercial_game_task_card_worker"
+    capabilities = [stage["metadata"].get("capability") for stage in payload["stages"] if stage["stage_kind"] == "capability"]
+    assert capabilities == ["commercial_game_asset_generation", "commercial_game_task_card_worker"]
     assert all(stage["metadata"].get("forbids_fixed_template") is True for stage in payload["stages"])
 
 
@@ -162,13 +191,13 @@ def test_pipeline_execute_agent_roles_writes_role_output_before_capability_block
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    assert [stage["status"] for stage in payload["stage_results"][:6]] == ["completed"] * 6
+    assert all(stage["status"] == "completed" for stage in _completed_agent_role_results(payload))
     first_stage = payload["stage_results"][0]
     assert first_stage["execution_backend"] == "single_agent_role_protocol_v1"
     assert Path(first_stage["output"]["role_output_path"]).exists()
     assert first_stage["output"]["generation_mode"] == "deterministic_offline_role_builder"
     assert first_stage["output"]["structured_output"]["normalized_materials"]["project_brief_path"]
-    assert payload["stage_results"][6]["status"] == "blocked"
+    assert _stage_result_by_capability(payload, "commercial_game_asset_generation")["status"] == "blocked"
 
 
 def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: Path) -> None:
@@ -191,9 +220,9 @@ def test_m109_template_execute_agent_roles_reaches_capability_handoff(tmp_path: 
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    assert [stage["status"] for stage in payload["stage_results"][:6]] == ["completed"] * 6
-    assert payload["stage_results"][6]["status"] == "blocked"
-    task_card_output = payload["stage_results"][5]["output"]
+    assert all(stage["status"] == "completed" for stage in _completed_agent_role_results(payload))
+    assert _stage_result_by_capability(payload, "commercial_game_asset_generation")["status"] == "blocked"
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     assert task_card_output["schema_version"] == "post_m109_single_agent_role_output_v2"
     assert task_card_output["source_material_policy"] == "no_delete_no_merge_no_rename_only_augment"
     assert task_card_output["preservation_go"] is True
@@ -251,7 +280,7 @@ def test_product_body_runtime_goal_materializes_only_active_phase_task_cards(tmp
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    task_card_output = payload["stage_results"][5]["output"]
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
     assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
@@ -303,7 +332,7 @@ def test_universal_game_quality_goal_materializes_current_phase_ai_playtest_card
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    task_card_output = payload["stage_results"][5]["output"]
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
     assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
@@ -354,7 +383,7 @@ def test_commercial_core_content_goal_materializes_blueprint_compiled_visible_cl
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    task_card_output = payload["stage_results"][5]["output"]
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
     assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
@@ -400,7 +429,7 @@ def test_commercial_game_production_arbitrary_goal_defaults_to_current_blueprint
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    task_card_output = payload["stage_results"][5]["output"]
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
     assert phase_graph["task_card_materialization"] == "phase_execution_blueprint_compiled"
@@ -441,7 +470,7 @@ def test_commercial_machine_evidence_goal_materializes_exact_current_phase_cards
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    task_card_output = payload["stage_results"][5]["output"]
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
     assert [phase["title"] for phase in phase_graph["phases"]] == [
@@ -488,7 +517,7 @@ def test_commercial_asset_browser_runtime_goal_materializes_exact_current_phase_
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    task_card_output = payload["stage_results"][5]["output"]
+    task_card_output = _stage_result_by_role(payload, "task_card_generation_agent")["output"]
     phase_graph = task_card_output["structured_output"]["stage_internal_phase_graph"]
     assert phase_graph["future_phase_task_cards_materialized"] is False
     assert [phase["title"] for phase in phase_graph["phases"]] == [
@@ -530,20 +559,34 @@ def test_m109_role_outputs_are_role_specific(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
-    product = payload["stage_results"][1]["output"]["structured_output"]
-    ui = payload["stage_results"][2]["output"]["structured_output"]
-    tech = payload["stage_results"][3]["output"]["structured_output"]
-    multimodal = payload["stage_results"][4]["output"]["structured_output"]
-    product_output = payload["stage_results"][1]["output"]
+    product_output = _stage_result_by_role(payload, "product_gameplay_agent")["output"]
+    product = product_output["structured_output"]
+    mechanics = _stage_result_by_role(payload, "mechanics_system_designer_agent")["output"]["structured_output"]
+    level_economy = _stage_result_by_role(payload, "level_economy_designer_agent")["output"]["structured_output"]
+    ui = _stage_result_by_role(payload, "ui_experience_agent")["output"]["structured_output"]
+    ui_polish = _stage_result_by_role(payload, "ui_ux_polish_agent")["output"]["structured_output"]
+    art = _stage_result_by_role(payload, "art_direction_agent")["output"]["structured_output"]
+    animation = _stage_result_by_role(payload, "animation_vfx_feedback_agent")["output"]["structured_output"]
+    audio = _stage_result_by_role(payload, "audio_feedback_designer_agent")["output"]["structured_output"]
+    tech = _stage_result_by_role(payload, "technical_plan_agent")["output"]["structured_output"]
+    multimodal = _stage_result_by_role(payload, "multimodal_generation_agent")["output"]["structured_output"]
+    ai_oracle = _stage_result_by_role(payload, "ai_playtest_oracle_agent")["output"]["structured_output"]
     assert product_output["schema_version"] == "post_m109_single_agent_role_output_v2"
     assert product_output["source_material_policy"] == "no_delete_no_merge_no_rename_only_augment"
     assert product_output["preservation_go"] is True
     assert product_output["omitted_requirement_ids"] == []
     assert product["preserved_requirement_ids"] == product_output["preserved_requirement_ids"]
     assert product["core_loop"]
+    assert mechanics["mechanic_contract"]
+    assert level_economy["level_progression_plan"]
     assert ui["screen_flow"]
+    assert ui_polish["commercial_ui_polish_rubric"]
+    assert art["asset_style_bible"]
+    assert animation["motion_feedback_plan"]
+    assert audio["audio_design_sheet"]
     assert tech["implementation_plan"]
     assert multimodal["provider_route_requirements"]
+    assert ai_oracle["playtest_modes"]
     assert multimodal["route_plan"]["schema_version"] == "m109_multimodal_route_plan_v1"
     assert {lane["lane"] for lane in multimodal["route_plan"]["lanes"]} == {
         "image_or_sprite",

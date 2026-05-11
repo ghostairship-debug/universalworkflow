@@ -1,5 +1,14 @@
 # 当前开发工作流
 
+## 2026-05-08 Specialist Commercial Game Role Split
+
+After the same-project repair-loop closure, `commercial_game_production` now advances to the requested specialist-role upgrade while keeping the proven `single_agent_role_v1` executor. This is a role-contract split, not an unverified cluster-backend claim.
+
+- New root design record: [COMMERCIAL_GAME_SPECIALIZED_AGENT_PIPELINE_DESIGN_2026_05_08.md](COMMERCIAL_GAME_SPECIALIZED_AGENT_PIPELINE_DESIGN_2026_05_08.md).
+- The role chain now separates product gameplay, mechanics, level/economy, UI flow, UI/UX polish, art direction, animation/VFX feedback, audio feedback, technical integration, multimodal/provider routing, AI playtest oracle, task-card compilation, player QA, and supervisor governance.
+- `PhaseExecutionBlueprint` task-card compilation now records `specialist_owner_role`, `specialist_review_roles`, and corresponding `role_output:<role_id>` read sets. Mechanics, level curve, economy, art direction, animation/VFX, audio, UI, performance, and AI playtest cards are no longer collapsed into one broad product card.
+- External research used for the design update covered GameCI test/build artifact loops, Cocos Creator 3.8 command-line build requirements, open Cocos match-3 examples, and public game-studio discipline maps.
+
 ## 2026-05-08 Same-Project Repair Loop Diagnosis And Closure
 
 The failed long rerun sequence showed a workflow problem, not just a weak game implementation: repeated fresh output directories can hide gate failures instead of repairing the current product. Commercial game production must now keep one explicit project directory per source identity and perform same-project task-card repair until the blocker is resolved or the control plane blocks with a concrete failure class.

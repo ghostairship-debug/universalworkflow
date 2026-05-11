@@ -1625,9 +1625,15 @@ def _write_worker_manifest(project_dir: Path, payload: dict[str, Any]) -> None:
 
 def _style_prompt(shared_outputs: dict[str, Any]) -> str:
     ui = shared_outputs.get("role_output:ui_experience_agent")
+    ui_polish = shared_outputs.get("role_output:ui_ux_polish_agent")
+    art = shared_outputs.get("role_output:art_direction_agent")
+    animation = shared_outputs.get("role_output:animation_vfx_feedback_agent")
+    audio = shared_outputs.get("role_output:audio_feedback_designer_agent")
     product = shared_outputs.get("role_output:product_gameplay_agent")
+    mechanics = shared_outputs.get("role_output:mechanics_system_designer_agent")
+    level_economy = shared_outputs.get("role_output:level_economy_designer_agent")
     signals = []
-    for item in (product, ui):
+    for item in (product, mechanics, level_economy, ui, ui_polish, art, animation, audio):
         if isinstance(item, dict):
             structured = item.get("structured_output")
             if isinstance(structured, dict):

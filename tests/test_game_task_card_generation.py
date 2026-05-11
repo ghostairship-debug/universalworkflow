@@ -83,9 +83,10 @@ def test_phase_candidates_blueprint_and_compile_report_cover_source_requirements
                 "source_id": "brief",
                 "requirements": [
                     "Player jumps across platforms with checkpoints.",
+                    "Eight levels unlock with a visible difficulty curve and reward pacing.",
                     "Camera follows the player and shows landing targets.",
                     "BGM and landing SFX are required.",
-                    "Generated art assets and particle effects are required.",
+                    "Sprite art assets and particle effects define the visual style.",
                 ],
             }
         ],
@@ -114,6 +115,11 @@ def test_phase_candidates_blueprint_and_compile_report_cover_source_requirements
     assert any(card.task_card_id.endswith("_audio_asset_manifest_generation") for card in cards)
     assert any(card.task_card_id.endswith("_runtime_audio_bgm_sfx_controls") for card in cards)
     assert all(not path.startswith("project/") for card in cards for path in card.write_set)
+    assert all(card.metadata.get("specialist_owner_role") for card in cards)
+    assert any(card.metadata.get("specialist_owner_role") == "mechanics_system_designer_agent" for card in cards)
+    assert any(card.metadata.get("specialist_owner_role") == "level_economy_designer_agent" for card in cards)
+    assert any(card.metadata.get("specialist_owner_role") == "art_direction_agent" for card in cards)
+    assert any(card.metadata.get("specialist_owner_role") == "animation_vfx_feedback_agent" for card in cards)
     assert any(path.startswith("assets/scripts/runtime/") for card in cards for path in card.write_set)
     assert any(path.startswith("workflow_runtime_evidence/") for card in cards for path in card.write_set)
     scene_card = next(card for card in cards if card.task_card_id.endswith("_scene_prefab_component_binding"))
@@ -156,6 +162,7 @@ def test_multimodal_requirements_materialize_art_and_audio_cocos_slices() -> Non
     )
 
     assert compile_report.go is True
-    assert any(card.task_card_id.endswith("_art_animation_asset_direction") for card in cards)
+    assert any(card.task_card_id.endswith("_art_direction_style_bible_assets") for card in cards)
+    assert any(card.task_card_id.endswith("_animation_vfx_feedback_polish") for card in cards)
     assert any(card.task_card_id.endswith("_audio_asset_manifest_generation") for card in cards)
     assert any(card.task_card_id.endswith("_runtime_audio_bgm_sfx_controls") for card in cards)

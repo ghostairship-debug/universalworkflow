@@ -39,10 +39,40 @@ ROLE_MODEL_PROFILES: dict[str, dict[str, str]] = {
         "default_lane": "configured_text_model",
         "reason": "needs product judgment and gameplay design",
     },
+    "mechanics_system_designer_agent": {
+        "model_tier": "strong",
+        "default_lane": "codex_or_configured_strong_model",
+        "reason": "turns source rules into stateful mechanics, edge cases, and feel constraints",
+    },
+    "level_economy_designer_agent": {
+        "model_tier": "medium_strong",
+        "default_lane": "configured_text_model",
+        "reason": "balances level pacing, progression, rewards, and retention loops",
+    },
     "ui_experience_agent": {
         "model_tier": "medium_strong",
         "default_lane": "configured_text_model",
         "reason": "needs visual and interaction judgment",
+    },
+    "ui_ux_polish_agent": {
+        "model_tier": "medium_strong",
+        "default_lane": "configured_text_or_visual_review_model",
+        "reason": "reviews commercial UI polish, readability, ergonomic flow, and screenshot quality",
+    },
+    "art_direction_agent": {
+        "model_tier": "medium_strong",
+        "default_lane": "configured_text_or_visual_model",
+        "reason": "defines coherent art direction and non-placeholder asset acceptance",
+    },
+    "animation_vfx_feedback_agent": {
+        "model_tier": "medium_strong",
+        "default_lane": "configured_text_or_visual_model",
+        "reason": "sets motion grammar, VFX feedback, and animation evidence requirements",
+    },
+    "audio_feedback_designer_agent": {
+        "model_tier": "medium_strong",
+        "default_lane": "configured_text_or_audio_model",
+        "reason": "designs BGM, SFX event mapping, mix rules, and runtime audio proof",
     },
     "technical_plan_agent": {
         "model_tier": "strong",
@@ -58,6 +88,11 @@ ROLE_MODEL_PROFILES: dict[str, dict[str, str]] = {
         "model_tier": "strong",
         "default_lane": "codex_or_configured_strong_model",
         "reason": "bad task cards cause downstream execution drift",
+    },
+    "ai_playtest_oracle_agent": {
+        "model_tier": "strong",
+        "default_lane": "configured_text_or_visual_review_model",
+        "reason": "defines automated player personas, scorecards, and repair-loop triggers",
     },
     "qa_player_perspective_agent": {
         "model_tier": "medium_strong",
@@ -448,6 +483,54 @@ def _structured_output_for_role(
             "source_requirement_ids": _role_requirement_ids("product_gameplay_agent", source_requirements),
             "brief_signal": _brief_signal(brief_text, packet_preview),
         }
+    if role_id == "mechanics_system_designer_agent":
+        return {
+            "context": context,
+            "mechanic_contract": {
+                "core_verbs": ["brief_defined_primary_move", "evaluate_move", "resolve_feedback", "advance_or_fail"],
+                "state_invariants": [
+                    "the runtime state, not a browser-only hook, decides valid moves and progress",
+                    "every fail, revive, reward, and unlock transition emits semantic evidence",
+                    "invalid input must produce visible feedback without corrupting saved progress",
+                ],
+                "edge_case_policy": [
+                    "prevent soft-lock or no-move board states when the source game rules imply continuous play",
+                    "make retry and recovery states explicit instead of relying on page reload",
+                    "tie score, combo, or clear feedback to actual state transitions",
+                ],
+            },
+            "feel_requirements": [
+                "input response must be immediate and visually legible",
+                "success and failure feedback must be readable without opening debug panels",
+                "core loop replay evidence must show at least one win path and one invalid-action path",
+            ],
+            "handoff_to_level_economy": [
+                "Expose tunable rule parameters that level pacing can vary safely.",
+                "Mark mechanics that need level-specific tutorials or early-session constraints.",
+            ],
+            "source_requirement_ids": _role_requirement_ids("mechanics_system_designer_agent", source_requirements),
+            "brief_signal": _brief_signal(brief_text, packet_preview),
+        }
+    if role_id == "level_economy_designer_agent":
+        return {
+            "context": context,
+            "level_progression_plan": {
+                "minimum_distinct_goals": 8,
+                "difficulty_curve": ["teach_one_rule", "combine_two_constraints", "introduce_pressure", "reward_mastery"],
+                "goal_evidence": "level_goal_matrix plus scripted progression replay",
+            },
+            "economy_balance_plan": {
+                "sources": ["clear_reward", "daily_or_session_bonus", "achievement_or_gallery_unlock"],
+                "sinks": ["skin_unlock", "revive_or_hint_cost", "gallery_completion_reward"],
+                "anti_stall": "reward pacing must encourage replay without blocking first-session progress",
+            },
+            "content_depth_checks": [
+                "each level objective is visible in HUD and result screens",
+                "rewards, skins, gallery, or collection states have locked, affordable, owned, and equipped variants",
+                "save/load evidence proves progression persistence",
+            ],
+            "source_requirement_ids": _role_requirement_ids("level_economy_designer_agent", source_requirements),
+        }
     if role_id == "ui_experience_agent":
         return {
             "context": context,
@@ -464,6 +547,76 @@ def _structured_output_for_role(
                 "no_text_overlap": True,
             },
             "source_requirement_ids": _role_requirement_ids("ui_experience_agent", source_requirements),
+        }
+    if role_id == "ui_ux_polish_agent":
+        return {
+            "context": context,
+            "commercial_ui_polish_rubric": {
+                "first_session": ["clear objective", "obvious primary action", "no debug-looking labels"],
+                "hud": ["target", "progress", "score_or_moves", "level", "audio/settings access"],
+                "panels": ["shop", "gallery", "settings", "pause", "result", "failure_revive"],
+                "layout": ["safe_area", "thumb_reach", "text_fit", "playfield_not_obscured"],
+            },
+            "visual_hierarchy_rules": [
+                "primary playfield stays dominant during gameplay",
+                "secondary panels are dismissible and never block normal input by accident",
+                "Chinese copy must be readable, localized, and free of mojibake",
+            ],
+            "evidence_expectations": [
+                "desktop and mobile screenshots from normal gameplay and at least two open panels",
+                "layout overlap report",
+                "open panel trace from browser playtest bridge",
+            ],
+            "source_requirement_ids": _role_requirement_ids("ui_ux_polish_agent", source_requirements),
+        }
+    if role_id == "art_direction_agent":
+        return {
+            "context": context,
+            "asset_style_bible": {
+                "visual_target": "polished casual mobile puzzle, coherent theme, readable board materials",
+                "asset_families": ["board_cells", "pieces_or_tiles", "buttons", "panel_frames", "reward_gallery", "icons"],
+                "non_placeholder_definition": [
+                    "asset files or manifests are tied to source requirements",
+                    "palette, material, and icon language are consistent across HUD, shop, gallery, and results",
+                    "generated or imported assets include provenance and usage bindings",
+                ],
+            },
+            "art_review_gates": [
+                "vision review must inspect screenshots, not only manifest text",
+                "asset names and player-facing labels must be localized and readable",
+                "style drift between gameplay board and panels is a repair finding",
+            ],
+            "source_requirement_ids": _role_requirement_ids("art_direction_agent", source_requirements),
+        }
+    if role_id == "animation_vfx_feedback_agent":
+        return {
+            "context": context,
+            "motion_feedback_plan": {
+                "core_events": ["valid_move", "invalid_move", "clear_success", "combo_or_streak", "reward_unlock", "fail_or_revive"],
+                "timing_budget_ms": {"tap_feedback": 120, "clear_resolution": 650, "panel_transition": 280},
+                "accessibility": ["reduced_motion_safe", "feedback_not_color_only"],
+            },
+            "vfx_quality_checks": [
+                "effects reinforce state transitions instead of playing as detached decoration",
+                "success/failure animations are visible in screenshot or replay evidence",
+                "animation does not obscure the board target or active input zone",
+            ],
+            "source_requirement_ids": _role_requirement_ids("animation_vfx_feedback_agent", source_requirements),
+        }
+    if role_id == "audio_feedback_designer_agent":
+        return {
+            "context": context,
+            "audio_design_sheet": {
+                "bgm": ["short_loop", "non_jarring_start", "pause_or_mute_respect"],
+                "sfx_events": ["tap", "valid_move", "invalid_move", "clear", "reward", "fail", "panel_open"],
+                "mix_rules": ["sfx_ducking_over_bgm", "volume_toggle", "mute_state_persists"],
+            },
+            "runtime_audio_evidence": [
+                "audio asset manifest references generated or deterministic audio files",
+                "browser playtest proves BGM started, SFX triggered, and volume toggle is usable",
+                "audio errors or autoplay failures are blockers in unattended mode",
+            ],
+            "source_requirement_ids": _role_requirement_ids("audio_feedback_designer_agent", source_requirements),
         }
     if role_id == "technical_plan_agent":
         return {
@@ -526,10 +679,41 @@ def _structured_output_for_role(
             "generation_policy": "Planning can run offline; actual media generation must use a live provider or be marked as placeholder.",
             "source_requirement_ids": _role_requirement_ids("multimodal_generation_agent", source_requirements),
         }
+    if role_id == "ai_playtest_oracle_agent":
+        return {
+            "context": context,
+            "playtest_modes": [
+                "scripted_core_loop",
+                "exploratory_ui_panel_walk",
+                "first_session_persona",
+                "visual_screenshot_review",
+                "audio_feedback_review",
+                "regression_replay",
+                "device_matrix_smoke",
+            ],
+            "quality_rubric": {
+                "target_score": 88,
+                "visual_minimum": 85,
+                "audio_minimum": 80,
+                "core_loop_minimum": 90,
+                "p0_allowed": 0,
+                "p1_allowed": 0,
+            },
+            "repair_loop_triggers": [
+                "score_below_target",
+                "missing_required_playtest_mode",
+                "screenshot_density_below_reference",
+                "audio_runtime_error",
+                "open_panel_trace_missing",
+                "source_requirement_fidelity_not_proven",
+            ],
+            "source_requirement_ids": _role_requirement_ids("ai_playtest_oracle_agent", source_requirements),
+        }
     if role_id == "task_card_generation_agent":
         game_design_spec = _game_design_spec_from_brief_manifest(brief_manifest)
         return {
             "context": context,
+            "specialist_role_handoff": _specialist_role_handoff_summary(shared_outputs),
             "product_phase_candidates": [
                 candidate.to_dict()
                 for candidate in build_product_phase_candidates_from_design_spec(
@@ -609,12 +793,57 @@ def _structured_output_for_role(
                 "missing explicit human acceptance",
             ],
             "cluster_upgrade_recommendation": {
-                "default": "keep_single_agent",
-                "upgrade_candidates": ["multimodal_generation_agent", "qa_player_perspective_agent"],
-                "trigger": "upgrade only if one role repeatedly fails despite clear task cards and evidence",
+                "default": "keep_specialized_single_agent_roles",
+                "upgrade_candidates": [
+                    "art_direction_agent",
+                    "animation_vfx_feedback_agent",
+                    "audio_feedback_designer_agent",
+                    "ai_playtest_oracle_agent",
+                    "qa_player_perspective_agent",
+                ],
+                "trigger": "upgrade only if a specialized role repeatedly fails despite clear task cards and evidence",
             },
         }
     return {"context": context, "role_note": "No specialized structured output registered for this role."}
+
+
+def _specialist_role_handoff_summary(shared_outputs: dict[str, Any]) -> dict[str, Any]:
+    role_ids = [
+        "product_gameplay_agent",
+        "mechanics_system_designer_agent",
+        "level_economy_designer_agent",
+        "ui_experience_agent",
+        "ui_ux_polish_agent",
+        "art_direction_agent",
+        "animation_vfx_feedback_agent",
+        "audio_feedback_designer_agent",
+        "technical_plan_agent",
+        "multimodal_generation_agent",
+        "ai_playtest_oracle_agent",
+    ]
+    roles: list[dict[str, Any]] = []
+    for role_id in role_ids:
+        output = shared_outputs.get(f"role_output:{role_id}")
+        if not isinstance(output, dict):
+            roles.append({"role_id": role_id, "status": "missing"})
+            continue
+        structured = output.get("structured_output") if isinstance(output.get("structured_output"), dict) else {}
+        roles.append(
+            {
+                "role_id": role_id,
+                "status": "present",
+                "preservation_go": bool(output.get("preservation_go")),
+                "deliverables": list(output.get("deliverables") or []),
+                "structured_keys": sorted(structured.keys()),
+                "source_requirement_count": len(output.get("preserved_requirement_ids") or []),
+            }
+        )
+    return {
+        "schema_version": "commercial_game_specialist_role_handoff_v1",
+        "role_count": len(roles),
+        "present_role_count": sum(1 for item in roles if item["status"] == "present"),
+        "roles": roles,
+    }
 
 
 def _qa_output_from_cocos_e2e(*, shared_outputs: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
@@ -745,6 +974,20 @@ def _requirement_ids(requirements: list[dict[str, Any]]) -> list[str]:
 def _role_requirement_ids(role_id: str, requirements: list[dict[str, Any]]) -> list[str]:
     if role_id in {"intake_packaging_agent", "task_card_generation_agent", "supervisor"}:
         return _requirement_ids(requirements)
+    category_hints = {
+        "mechanics_system_designer_agent": {"product", "general"},
+        "level_economy_designer_agent": {"product", "general"},
+        "ui_ux_polish_agent": {"ui", "qa"},
+        "art_direction_agent": {"multimodal", "ui"},
+        "animation_vfx_feedback_agent": {"multimodal", "ui", "product"},
+        "audio_feedback_designer_agent": {"multimodal"},
+        "ai_playtest_oracle_agent": {"qa", "product", "ui", "technical"},
+    }.get(role_id)
+    if category_hints:
+        selected = [item for item in requirements if str(item.get("category") or "") in category_hints]
+        if not selected and requirements:
+            selected = [item for item in requirements if str(item.get("priority") or "") == "high"]
+        return _requirement_ids(selected or requirements)
     selected = [item for item in requirements if item.get("downstream_owner") == role_id]
     return _requirement_ids(selected)
 
@@ -2075,9 +2318,16 @@ def _packet_path_for_role(role_id: str, brief_manifest: dict[str, Any]) -> str |
     mapping = {
         "intake_packaging_agent": "product_agent",
         "product_gameplay_agent": "product_agent",
+        "mechanics_system_designer_agent": "product_agent",
+        "level_economy_designer_agent": "product_agent",
         "ui_experience_agent": "ui_agent",
+        "ui_ux_polish_agent": "ui_agent",
+        "art_direction_agent": "multimodal_agent",
+        "animation_vfx_feedback_agent": "multimodal_agent",
+        "audio_feedback_designer_agent": "multimodal_agent",
         "technical_plan_agent": "tech_agent",
         "multimodal_generation_agent": "multimodal_agent",
+        "ai_playtest_oracle_agent": "qa_agent",
         "task_card_generation_agent": "tech_agent",
         "qa_player_perspective_agent": "qa_agent",
         "supervisor": "qa_agent",
@@ -2098,9 +2348,16 @@ def _deliverables_for_role(role_id: str) -> list[str]:
     return {
         "intake_packaging_agent": ["unified_project_brief", "source_index", "agent_packets"],
         "product_gameplay_agent": ["gameplay_goals", "core_loop", "acceptance_outline"],
+        "mechanics_system_designer_agent": ["mechanic_contract", "feel_requirements", "state_invariants"],
+        "level_economy_designer_agent": ["level_progression_plan", "economy_balance_plan", "content_depth_checks"],
         "ui_experience_agent": ["screen_flow", "panel_requirements", "mobile_ux_constraints"],
+        "ui_ux_polish_agent": ["commercial_ui_polish_rubric", "visual_hierarchy_rules", "evidence_expectations"],
+        "art_direction_agent": ["asset_style_bible", "art_review_gates"],
+        "animation_vfx_feedback_agent": ["motion_feedback_plan", "vfx_quality_checks"],
+        "audio_feedback_designer_agent": ["audio_design_sheet", "runtime_audio_evidence"],
         "technical_plan_agent": ["implementation_plan", "write_set_boundaries", "test_plan"],
         "multimodal_generation_agent": ["asset_manifest_requirements", "style_requirements", "provider_route_requirements"],
+        "ai_playtest_oracle_agent": ["playtest_modes", "quality_rubric", "repair_loop_triggers"],
         "task_card_generation_agent": ["database_task_card_inputs", "quality_gate_requirements"],
         "qa_player_perspective_agent": ["player_visible_checks", "repair_findings", "go_no_go_recommendation"],
         "supervisor": ["continue_repair_stop_decision", "cluster_upgrade_recommendation"],
@@ -2110,10 +2367,17 @@ def _deliverables_for_role(role_id: str) -> list[str]:
 def _next_handoff_for_role(role_id: str) -> str:
     return {
         "intake_packaging_agent": "product_gameplay_agent",
-        "product_gameplay_agent": "ui_experience_agent",
-        "ui_experience_agent": "technical_plan_agent",
-        "technical_plan_agent": "multimodal_generation_agent",
-        "multimodal_generation_agent": "task_card_generation_agent",
+        "product_gameplay_agent": "mechanics_system_designer_agent and ui_experience_agent",
+        "mechanics_system_designer_agent": "level_economy_designer_agent and animation_vfx_feedback_agent",
+        "level_economy_designer_agent": "art_direction_agent",
+        "ui_experience_agent": "ui_ux_polish_agent",
+        "ui_ux_polish_agent": "art_direction_agent and audio_feedback_designer_agent",
+        "art_direction_agent": "animation_vfx_feedback_agent and multimodal_generation_agent",
+        "animation_vfx_feedback_agent": "technical_plan_agent",
+        "audio_feedback_designer_agent": "technical_plan_agent and multimodal_generation_agent",
+        "technical_plan_agent": "multimodal_generation_agent and task_card_generation_agent",
+        "multimodal_generation_agent": "ai_playtest_oracle_agent and task_card_generation_agent",
+        "ai_playtest_oracle_agent": "task_card_generation_agent",
         "task_card_generation_agent": "workflow_worker",
         "qa_player_perspective_agent": "supervisor",
         "supervisor": "workflow_gate",
